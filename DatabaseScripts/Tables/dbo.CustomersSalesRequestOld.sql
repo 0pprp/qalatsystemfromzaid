@@ -1,0 +1,21 @@
+﻿CREATE TABLE [dbo].[CustomersSalesRequestOld] (
+    [CustomersSalesRequestOldID] INT IDENTITY(1,1) NOT NULL,
+    [CustomerID] INT NULL,
+    [Notes] NVARCHAR(MAX) NULL,
+    [DateCreate] DATETIME NULL,
+    [DateModify] DATETIME NULL,
+    [BoundNumber] INT NULL,
+    [StoreID] INT NULL,
+    [DelegateID] INT NULL,
+    [AccountZero] BIT NULL,
+    [DelegateState] BIT NULL,
+    [DiscountAmountTotal] FLOAT NULL,
+    [DiscountAmountTotalDay] FLOAT NULL,
+    [AsyncState] BIT NULL,
+    [AsyncID] NVARCHAR(255) NULL,
+    [CreatedDate] DATETIME NOT NULL DEFAULT (getdate()),
+    [UpdatedDate] DATETIME NULL,
+    CONSTRAINT [FK_CustomersSalesRequestOld_Customers] FOREIGN KEY ([CustomerID]) REFERENCES [dbo].[Customers] ([CustomerID]),
+    CONSTRAINT [FK_CustomersSalesRequestOld_Delegates] FOREIGN KEY ([DelegateID]) REFERENCES [dbo].[Delegates] ([DelegateID]),
+    CONSTRAINT [FK_CustomersSalesRequestOld_Stores] FOREIGN KEY ([StoreID]) REFERENCES [dbo].[Stores] ([StoreID])
+);

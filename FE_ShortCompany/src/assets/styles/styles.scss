@@ -1,0 +1,173 @@
+// Write your overrides
+@font-face {
+  font-family: Bahij;
+  font-style: normal;
+  font-weight: 200;
+  src:
+    url("../fonts/BahijTheSansArabic-ExtraLight.woff2") format("woff2"),
+    url("../fonts/BahijTheSansArabic-ExtraLight.woff") format("woff");
+}
+
+@font-face {
+  font-family: Bahij;
+  font-style: normal;
+  font-weight: 300;
+  src:
+    url("../fonts/BahijTheSansArabic-Light.woff") format("woff"),
+    url("../fonts/BahijTheSansArabic-Light.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Bahij;
+  font-style: normal;
+  font-weight: 400;
+  src:
+    url("../fonts/BahijTheSansArabic-Plain.woff2") format("woff2"),
+    url("../fonts/BahijTheSansArabic-Plain.woff") format("woff");
+}
+
+@font-face {
+  font-family: Bahij;
+  font-style: normal;
+  font-weight: 500;
+  src:
+    url("../fonts/BahijTheSansArabic-Bold.woff2") format("woff2"),
+    url("../fonts/BahijTheSansArabic-Bold.woff") format("woff");
+}
+
+@font-face {
+  font-family: Bahij;
+  font-style: normal;
+  font-weight: 800;
+  src:
+    url("../fonts/BahijTheSansArabic-ExtraBold.woff") format("woff"),
+    url("../fonts/BahijTheSansArabic-ExtraBold.woff2") format("woff2");
+}
+
+/* =========================================================================
+   GLOBAL OVERRIDES (Aggressive Application)
+   ========================================================================= */
+
+/* 1. Typography (Universal) */
+* {
+  font-family: Cairo, Bahij, sans-serif !important;
+}
+
+html,
+body {
+  font-family: Cairo, Bahij, sans-serif !important;
+  background-color: rgb(var(--v-theme-background)) !important;
+}
+
+/* 2. Global V-Card Style (Applies to ALL cards automatically) */
+.v-card {
+  border-radius: 16px !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 5%) !important;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Optional hover effect for all cards to make them feel "modern" like stats */
+.v-card:hover {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 10%) !important;
+}
+
+/* 3. Global Stats Cards Layout
+   (Attempting to style generic cards often used for stats if they can't use .modern-card structure)
+   We can't inject HTML, but we can make VCards look better.
+*/
+
+/* 4. Global Dialogs (Universal Rounding) */
+.v-dialog .v-overlay__content {
+  border-radius: 16px !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 20%) !important;
+}
+
+/* 5. VDataTable (Universal Seamless Style) - TARGETING .v-data-table directly */
+.v-data-table,
+.v-table {
+  border: none !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Header */
+.v-data-table .v-table__wrapper > table > thead > tr > th,
+.v-table .v-table__wrapper > table > thead > tr > th {
+  background-color: transparent !important;
+  border-block-end: 1px solid rgba(var(--v-border-color), 0.16) !important;
+  color: rgba(var(--v-theme-on-surface), 0.7) !important;
+  font-size: 0.8125rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 1px !important;
+  padding-block: 14px !important;
+  text-transform: uppercase !important;
+  white-space: nowrap !important;
+}
+
+/* Rows */
+.v-data-table .v-table__wrapper > table > tbody > tr,
+.v-table .v-table__wrapper > table > tbody > tr {
+  background-color: transparent !important;
+  block-size: 60px !important; /* Force all rows to be tall */
+  box-shadow: none !important;
+  transition: background-color 0.2s ease;
+}
+
+.v-data-table .v-table__wrapper > table > tbody > tr > td,
+.v-table .v-table__wrapper > table > tbody > tr > td {
+  border-block-end: 1px solid rgba(var(--v-border-color), 0.06) !important;
+  color: rgba(var(--v-theme-on-surface), 0.87);
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding-block: 0 !important; /* Reset padding for fixed height */
+}
+
+/* Hover */
+.v-data-table .v-table__wrapper > table > tbody > tr:hover > td,
+.v-table .v-table__wrapper > table > tbody > tr:hover > td {
+  background-color: rgba(var(--v-theme-on-surface), 0.04) !important;
+}
+
+/* Footer */
+.v-data-table-footer {
+  background-color: transparent !important;
+  border-block-start: 1px solid rgba(var(--v-border-color), 0.12);
+}
+
+/* 6. Buttons Inside Tables (Fixing Size Globally)
+   Target buttons inside data tables and FORCE them to normal size,
+   overriding 'size="small"' (density compact) styles.
+*/
+.v-data-table .v-btn--size-small,
+.v-table .v-btn--size-small {
+  /* Resetting properties usually set by size="small" */
+  block-size: 36px !important; /* Standard height */
+  font-size: 0.875rem !important;
+  padding-inline: 16px !important;
+
+  /* Ensure icons look normal too */
+  .v-icon {
+    font-size: 1.25rem !important; /* roughly 20px */
+  }
+}
+
+/* General Button Tweaks */
+.v-btn {
+  border-radius: 8px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.5px !important;
+  text-transform: none !important;
+}
+
+/* Media Query for Layout */
+@media (max-width: 1279px) {
+  .layout-vertical-nav:not(.visible) {
+    transform: translateX(260px);
+  }
+}
+
+/* Global Zoom Preference */
+html {
+  zoom: 90%;
+}

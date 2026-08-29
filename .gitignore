@@ -1,0 +1,47 @@
+﻿# Node / Frontend
+node_modules/
+dist/
+build/
+.next/
+.cache/
+
+# .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+build/
+
+# Environment / Secrets
+.env
+.env.*
+!.env.example
+appsettings.json
+appsettings.*.json
+!appsettings.example.json
+secrets.json
+
+# Database / backups
+*.bak
+*.mdf
+*.ldf
+*.sql.bak
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

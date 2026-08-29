@@ -1,0 +1,40 @@
+﻿CREATE proc [dbo].[GetDelegateSevenMonthOrWeek]
+@FromDate1 datetime,
+@ToDate1 datetime,
+@FromDate2 datetime,
+@ToDate2 datetime,
+@FromDate3 datetime,
+@ToDate3 datetime,
+@FromDate4 datetime,
+@ToDate4 datetime,
+@FromDate5 datetime,
+@ToDate5 datetime,
+@FromDate6 datetime,
+@ToDate6 datetime,
+@FromDate7 datetime,
+@ToDate7 datetime,
+@FromDate8 datetime,
+@ToDate8 datetime 
+as
+select DelegateID,DelegateName,
+(select ISNULL(sum(AmountTotalSalesDenar),0) from View_CustomersSalesDelegate where DelegateID=Delegates.DelegateID)as AmountPriceTotal,
+(select ISNULL(sum(AmountTotalSalesDenar),0) from View_CustomersSalesDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,DateCreate)>=CONVERT(date,@FromDate1) and CONVERT(date,DateCreate)<=CONVERT(date,@ToDate1))as AmountPrice1,
+(select ISNULL(sum(AmountTotalSalesDenar),0) from View_CustomersSalesDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,DateCreate)>=CONVERT(date,@FromDate2) and CONVERT(date,DateCreate)<=CONVERT(date,@ToDate2))as AmountPrice2,
+(select ISNULL(sum(AmountTotalSalesDenar),0) from View_CustomersSalesDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,DateCreate)>=CONVERT(date,@FromDate3) and CONVERT(date,DateCreate)<=CONVERT(date,@ToDate3))as AmountPrice3,
+(select ISNULL(sum(AmountTotalSalesDenar),0) from View_CustomersSalesDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,DateCreate)>=CONVERT(date,@FromDate4) and CONVERT(date,DateCreate)<=CONVERT(date,@ToDate4))as AmountPrice4,
+(select ISNULL(sum(AmountTotalSalesDenar),0) from View_CustomersSalesDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,DateCreate)>=CONVERT(date,@FromDate5) and CONVERT(date,DateCreate)<=CONVERT(date,@ToDate5))as AmountPrice5,
+(select ISNULL(sum(AmountTotalSalesDenar),0) from View_CustomersSalesDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,DateCreate)>=CONVERT(date,@FromDate6) and CONVERT(date,DateCreate)<=CONVERT(date,@ToDate6))as AmountPrice6,
+(select ISNULL(sum(AmountTotalSalesDenar),0) from View_CustomersSalesDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,DateCreate)>=CONVERT(date,@FromDate7) and CONVERT(date,DateCreate)<=CONVERT(date,@ToDate7))as AmountPrice7,
+(select ISNULL(sum(AmountTotalSalesDenar),0) from View_CustomersSalesDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,DateCreate)>=CONVERT(date,@FromDate8) and CONVERT(date,DateCreate)<=CONVERT(date,@ToDate8))as AmountPrice8,
+
+(select ISNULL(sum(AmountDenar),0) from View_CustomersPaymentsDelegate where DelegateID=Delegates.DelegateID)as AmountReceiptTotal,
+(select ISNULL(sum(AmountDenar),0) from View_CustomersPaymentsDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,PaymentDate)>=CONVERT(date,@FromDate1) and CONVERT(date,PaymentDate)<=CONVERT(date,@ToDate1))as AmountReceipt1,
+(select ISNULL(sum(AmountDenar),0) from View_CustomersPaymentsDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,PaymentDate)>=CONVERT(date,@FromDate2) and CONVERT(date,PaymentDate)<=CONVERT(date,@ToDate2))as AmountReceipt2,
+(select ISNULL(sum(AmountDenar),0) from View_CustomersPaymentsDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,PaymentDate)>=CONVERT(date,@FromDate3) and CONVERT(date,PaymentDate)<=CONVERT(date,@ToDate3))as AmountReceipt3,
+(select ISNULL(sum(AmountDenar),0) from View_CustomersPaymentsDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,PaymentDate)>=CONVERT(date,@FromDate4) and CONVERT(date,PaymentDate)<=CONVERT(date,@ToDate4))as AmountReceipt4,
+(select ISNULL(sum(AmountDenar),0) from View_CustomersPaymentsDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,PaymentDate)>=CONVERT(date,@FromDate5) and CONVERT(date,PaymentDate)<=CONVERT(date,@ToDate5))as AmountReceipt5,
+(select ISNULL(sum(AmountDenar),0) from View_CustomersPaymentsDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,PaymentDate)>=CONVERT(date,@FromDate6) and CONVERT(date,PaymentDate)<=CONVERT(date,@ToDate6))as AmountReceipt6,
+(select ISNULL(sum(AmountDenar),0) from View_CustomersPaymentsDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,PaymentDate)>=CONVERT(date,@FromDate7) and CONVERT(date,PaymentDate)<=CONVERT(date,@ToDate7))as AmountReceipt7,
+(select ISNULL(sum(AmountDenar),0) from View_CustomersPaymentsDelegate where DelegateID=Delegates.DelegateID and CONVERT(date,PaymentDate)>=CONVERT(date,@FromDate8) and CONVERT(date,PaymentDate)<=CONVERT(date,@ToDate8))as AmountReceipt8
+from Delegates where DelegateState='true'
+

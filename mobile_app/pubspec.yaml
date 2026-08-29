@@ -1,0 +1,60 @@
+name: management_app
+description: "تطبيق الإدارة - نظام ERP متكامل لإدارة المبيعات والعملاء والمخازن"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  # HTTP & API
+  dio: ^5.7.0
+  # State Management
+  provider: ^6.1.2
+  # Storage
+  shared_preferences: ^2.2.2
+  # Formatting
+  intl: ^0.20.2
+  # Export
+  pdf: ^3.11.1
+  printing: ^5.12.0
+  excel: ^4.0.6
+  # UI Components
+  google_fonts: ^6.2.1
+  shimmer: ^3.0.0
+  # Charts
+  fl_chart: ^0.68.0
+  # Utilities
+  url_launcher: ^6.1.7
+  path_provider: ^2.1.2
+  permission_handler: ^11.3.0
+  # Notifications
+  flutter_local_notifications: ^18.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/logo.png"
+  adaptive_icon_background: "#1e5799"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logos/
+    - assets/icons/
+    - assets/fonts/
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-VariableFont_slnt,wght.ttf

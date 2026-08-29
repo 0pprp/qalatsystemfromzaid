@@ -1,0 +1,289 @@
+<script setup>
+import AppAutocomplete from "@core/components/app-form-elements/AppAutocomplete.vue"
+import AppTextField from "@core/components/app-form-elements/AppTextField.vue"
+import { jwtDecode } from 'jwt-decode'
+import { useTheme } from 'vuetify'
+import { useCities, isLocalLab, LOCAL_API } from '@/composables/useCities'
+
+// Import assets
+import bgImage from '@images/background.png'
+import logo from '@images/logo.png'
+
+definePage({ meta: { layout: 'blank' } })
+
+const form = ref({
+  userName: '',
+  password: '',
+})
+
+const theme = useTheme()
+const loginLoadingBtn = ref(false)
+const errorMessage = ref("")
+const router = useRouter()
+const showAlert = ref(false)
+const refForm = ref({})
+const selectCity = ref(null)
+
+// جلب المدن من API ديناميكياً
+const { provinces, isLoading: isLoadingCities, error: citiesError, fetchCities } = useCities()
+
+const validateForm = async () => {
+  return await refForm.value?.validate()
+}
+
+async function login() {
+  showAlert.value = false
+  loginLoadingBtn.value = false
+
+  const validForm = await validateForm()
+  if (validForm.valid === true) {
+    loginLoadingBtn.value = true
+
+    if (!selectCity.value) {
+      showAlert.value = true
+      errorMessage.value = "يجب اختيار المحافظة"
+      loginLoadingBtn.value = false
+
+      return
+    }
+
+    // البحث عن المحافظة المختارة في البيانات
+    const selectedProvince = provinces.value.find(p => p.value === selectCity.value)
+    const selectedApi = isLocalLab() ? LOCAL_API : selectedProvince?.link
+    const cityName = selectedProvince?.name || ''
+    const database = selectedProvince?.database || ''
+
+    if (!selectedApi) {
+      showAlert.value = true
+      errorMessage.value = "لا يوجد رابط API لهذه المحافظة"
+      loginLoadingBtn.value = false
+
+      return
+    }
+
+    const postLogin = endpoint => fetch(`${selectedApi}${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(form.value),
+    }).then(res => res.json())
+
+    try {
+      let resData = await postLogin('Users/Users_LoginEmployee')
+
+      // على اللوكال: المحاسب الرئيسي (ahmed1) يدخل من نفس الصفحة
+      if (resData.message && isLocalLab())
+        resData = await postLogin('Users/Users_LoginAdmin')
+
+      if (resData.message) {
+        loginLoadingBtn.value = false
+        showAlert.value = true
+        errorMessage.value = resData.message
+      } else {
+        loginLoadingBtn.value = false
+
+        const user = jwtDecode(resData.token)
+
+        localStorage.setItem("Token", resData.token)
+        localStorage.setItem('Expiration', resData.expiration)
+        localStorage.setItem('UserID', user.UserID)
+        localStorage.setItem('UserName', user.UserName)
+        localStorage.setItem('UserImage', user.UserImage)
+        localStorage.setItem('UserType', user.UserType || user.userType || 'محاسب فرعي')
+        localStorage.setItem("LinkCity", selectedApi)
+        localStorage.setItem("CityName", cityName)
+        localStorage.setItem("Password", form.value.password)
+        localStorage.setItem("Database", database)
+
+        router.push('/')
+      }
+    } catch (err) {
+      loginLoadingBtn.value = false
+      showAlert.value = true
+      errorMessage.value = err.message || 'تعذر الاتصال بالخادم المحلي. تأكد أن الـ API يعمل على المنفذ 5180.'
+    }
+  } else {
+    showAlert.value = true
+    errorMessage.value = "يجب ادخال اسم المستخدم وكلمة المرور"
+  }
+}
+
+const isPasswordVisible = ref(false)
+</script>
+
+<template>
+  <div class="auth-wrapper d-flex align-center justify-center pa-4">
+    <!-- Full Background with Fixed Position -->
+    <div 
+      class="auth-bg-layer"
+      :style="{ backgroundImage: `url(${bgImage})` }"
+    >
+      <div class="auth-bg-overlay" />
+    </div>
+
+    <!-- Floating Professional Card -->
+    <VCard
+      class="auth-card elevation-24 rounded-xl"
+      max-width="480"
+      width="100%"
+      color="surface"
+    >
+      <div class="pa-8 d-flex flex-column align-center text-center">
+        <!-- Logo Area -->
+        <div class="mb-6">
+          <VImg
+            :src="logo"
+            width="120"
+            class="mx-auto"
+          />
+        </div>
+
+        <h3 class="text-h4 font-weight-bold text-primary mb-2">
+          مرحباً بعودتك!
+        </h3>
+        <p class="text-body-1 text-medium-emphasis mb-8">
+          شركة قلعة الضمان لأنظمة الإدارة
+        </p>
+
+        <VForm
+          ref="refForm"
+          class="w-100"
+          @submit.prevent="login"
+        >
+          <VAlert
+            v-if="showAlert"
+            color="error"
+            variant="tonal"
+            closable
+            class="mb-6 text-start"
+            density="compact"
+            @click:close="showAlert = false"
+          >
+            {{ errorMessage }}
+          </VAlert>
+
+          <VRow>
+            <VCol cols="12">
+              <AppAutocomplete
+                v-model="selectCity"
+                :items="provinces"
+                item-title="name"
+                item-value="value"
+                label="اختر المحافظة"
+                placeholder="المحافظة"
+                :rules="[v => !!v || 'هذا الحقل مطلوب']"
+                variant="outlined"
+                density="comfortable"
+                color="primary"
+                cache-items
+                prepend-inner-icon="tabler-map-pin"
+              />
+            </VCol>
+
+            <VCol cols="12">
+              <AppTextField
+                v-model="form.userName"
+                label="اسم المستخدم"
+                placeholder="ادخل اسم المستخدم"
+                type="text"
+                autofocus
+                :rules="[requiredValidator]"
+                variant="outlined"
+                density="comfortable"
+                color="primary"
+                prepend-inner-icon="tabler-user"
+              />
+            </VCol>
+
+            <VCol cols="12">
+              <AppTextField
+                v-model="form.password"
+                label="كلمة المرور"
+                placeholder="············"
+                :type="isPasswordVisible ? 'text' : 'password'"
+                :rules="[requiredValidator]"
+                :append-inner-icon="isPasswordVisible ? 'tabler-eye-off' : 'tabler-eye'"
+                variant="outlined"
+                density="comfortable"
+                color="primary"
+                prepend-inner-icon="tabler-lock"
+                @click:append-inner="isPasswordVisible = !isPasswordVisible"
+              />
+            </VCol>
+
+            <VCol
+              cols="12"
+              class="mt-2"
+            >
+              <VBtn
+                block
+                type="submit"
+                size="large"
+                :loading="loginLoadingBtn"
+                color="primary"
+                elevation="4"
+                class="font-weight-bold"
+                rounded="lg"
+              >
+                تسجيل الدخول
+              </VBtn>
+            </VCol>
+          </VRow>
+        </VForm>
+      </div>
+      
+      <!-- Footer Decoration -->
+      <div class="auth-card-footer py-3 bg-grey-100 dark:bg-grey-900 text-center text-caption text-disabled">
+        جميع الحقوق محفوظة &copy; {{ new Date().getFullYear() }} قلعة الضمان
+      </div>
+    </VCard>
+  </div>
+</template>
+
+<style lang="scss" scoped>
+@use "@core/scss/template/pages/page-auth.scss";
+
+.auth-wrapper {
+  min-block-size: 100dvh;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-bg-layer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  z-index: 0;
+  transform: scale(1.05); /* Slight zoom for premium feel */
+}
+
+.auth-bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(var(--v-theme-primary), 0.7), rgba(0, 0, 0, 0.85));
+  backdrop-filter: blur(6px);
+  z-index: 1;
+}
+
+.auth-card {
+  position: relative;
+  z-index: 2;
+  // Professional shadow
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2) !important;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+}
+
+
+
+// Ensure full height on mobile
+.auth-wrapper {
+  padding-block: 2rem;
+}
+</style>

@@ -1,0 +1,173 @@
+
+export const hasPermission = permissionId => {
+  const stored = localStorage.getItem('UserPermissionsTabs')
+  if (!stored) return false
+  try {
+    const parsed = JSON.parse(stored)
+    
+    if (parsed && Array.isArray(parsed.Result)) {
+      return parsed.Result.some(p => p.PermissionID === permissionId)
+    }
+    
+    return false
+  } catch (e) {
+    console.error("Error parsing permissions", e)
+    
+    return false
+  }
+}
+
+export const Permissions = {
+  // Users
+  VIEW_USERS: 1,
+  ADD_USER: 2,
+  EDIT_USER: 3,
+  DELETE_USER: 4,
+  TOGGLE_USER: 5,
+  EXPORT_USERS: 6,
+
+  // Cities
+  VIEW_CITIES: 7,
+  ADD_CITY: 8,
+  EDIT_CITY: 9,
+  DELETE_CITY: 10,
+  TOGGLE_CITY: 11,
+  EXPORT_CITIES: 12,
+
+  // Type Prices
+  VIEW_TYPE_PRICES: 13,
+  ADD_TYPE_PRICE: 14,
+  EDIT_TYPE_PRICE: 15,
+  DELETE_TYPE_PRICE: 16,
+  TOGGLE_TYPE_PRICE: 17,
+  EXPORT_TYPE_PRICES: 18,
+
+  // Categories
+  VIEW_CATEGORIES: 19,
+  ADD_CATEGORY: 20,
+  EDIT_CATEGORY: 21,
+  DELETE_CATEGORY: 22,
+  TOGGLE_CATEGORY: 23,
+  EXPORT_CATEGORIES: 24,
+
+  // Stores
+  VIEW_STORES: 26,
+  ADD_STORE: 27,
+  EDIT_STORE: 28,
+  DELETE_STORE: 29,
+  TOGGLE_STORE: 30,
+  EXPORT_STORES: 31,
+
+  // Items
+  VIEW_ITEMS: 32,
+  ADD_ITEM: 33,
+  EDIT_ITEM: 34,
+  DELETE_ITEM: 35,
+  TOGGLE_ITEM: 36,
+  EXPORT_ITEMS: 37,
+
+  // Suppliers
+  VIEW_SUPPLIERS: 38,
+  ADD_SUPPLIER: 39,
+  EDIT_SUPPLIER: 40,
+  DELETE_SUPPLIER: 41,
+  TOGGLE_SUPPLIER: 42,
+  EXPORT_SUPPLIERS: 43,
+
+  // Buys
+  VIEW_BUYS: 44,
+  ADD_BUY: 45,
+  EDIT_BUY: 46,
+  DELETE_BUY: 47,
+  TOGGLE_BUY: 48,
+  EXPORT_BUYS: 49,
+
+  // Delegates
+  VIEW_DELEGATES: 50,
+  ADD_DELEGATE: 51,
+  EDIT_DELEGATE: 52,
+  DELETE_DELEGATE: 53,
+  TOGGLE_DELEGATE: 54,
+  EXPORT_DELEGATES: 55,
+
+  // Customers
+  VIEW_CUSTOMERS: 56,
+  ADD_CUSTOMER: 57,
+  EDIT_CUSTOMER: 58,
+  DELETE_CUSTOMER: 59,
+  TOGGLE_CUSTOMER: 60,
+  EXPORT_CUSTOMERS: 61,
+
+  // Sales
+  VIEW_SALES: 62,
+  ADD_SALE: 63,
+  EDIT_SALE: 64,
+  DELETE_SALE: 65,
+  TOGGLE_SALE: 66,
+  EXPORT_SALES: 67,
+
+  // Payments (Tasdidat)
+  VIEW_PAYMENTS: 74,
+  ADD_PAYMENT: 75,
+  EDIT_PAYMENT: 76,
+  DELETE_PAYMENT: 77,
+  TOGGLE_PAYMENT: 78,
+  EXPORT_PAYMENTS: 79,
+
+  // Exchange Items (Bonoud Sarf)
+  VIEW_EXCHANGE_ITEMS: 80,
+  ADD_EXCHANGE_ITEM: 81,
+  EDIT_EXCHANGE_ITEM: 82,
+  DELETE_EXCHANGE_ITEM: 83,
+  TOGGLE_EXCHANGE_ITEM: 84,
+  EXPORT_EXCHANGE_ITEMS: 85,
+
+  // Employees
+  VIEW_EMPLOYEES: 86,
+  ADD_EMPLOYEE: 87,
+  EDIT_EMPLOYEE: 88,
+  DELETE_EMPLOYEE: 89,
+  TOGGLE_EMPLOYEE: 90,
+  EXPORT_EMPLOYEES: 91,
+
+  // Documents (Sanadat)
+  VIEW_DOCUMENTS: 92,
+  ADD_DOCUMENT: 93,
+  EDIT_DOCUMENT: 94,
+  DELETE_DOCUMENT: 95,
+  TOGGLE_DOCUMENT: 96,
+  EXPORT_DOCUMENTS: 97,
+
+  // Cash Boxes
+  VIEW_BOXES: 98,
+  ADD_BOX: 99,
+  EDIT_BOX: 100,
+  DELETE_BOX: 101,
+  TOGGLE_BOX: 102,
+  EXPORT_BOXES: 103,
+
+  // Notifications
+  VIEW_NOTIFICATIONS: 104,
+
+  // Sales Orders
+  VIEW_SALES_ORDERS: 105,
+  EDIT_SALES_ORDER: 106,
+  DELETE_SALES_ORDER: 107,
+  TOGGLE_SALES_ORDER: 108,
+  EXPORT_SALES_ORDERS: 109,
+
+  // Payment Orders
+  VIEW_PAYMENT_ORDERS: 110,
+  EDIT_PAYMENT_ORDER: 111,
+  DELETE_PAYMENT_ORDER: 112,
+  TOGGLE_PAYMENT_ORDER: 113,
+  EXPORT_PAYMENT_ORDERS: 114,
+
+  // Advertisements
+  VIEW_ADVERTISEMENTS: 115,
+  ADD_ADVERTISEMENT: 116,
+  EDIT_ADVERTISEMENT: 117,
+  DELETE_ADVERTISEMENT: 118,
+  TOGGLE_ADVERTISEMENT: 119,
+  EXPORT_ADVERTISEMENTS: 120,
+}

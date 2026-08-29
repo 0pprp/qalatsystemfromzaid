@@ -1,0 +1,21 @@
+﻿CREATE TABLE [dbo].[CustomersPayments] (
+    [CustomerPaymentID] INT IDENTITY(1,1) NOT NULL,
+    [UserID] INT NULL,
+    [CustomerID] INT NULL,
+    [BoxID] INT NULL,
+    [PaymentDate] DATETIME NULL,
+    [BoundNumber] INT NULL,
+    [DelegateID] INT NULL,
+    [AccountZero] BIT NULL,
+    [DelegateState] BIT NULL,
+    [AsyncState] BIT NULL,
+    [AsyncID] NVARCHAR(255) NULL,
+    [SelectState] BIT NULL DEFAULT ('false'),
+    [Location] NVARCHAR(255) NULL,
+    [CreatedDate] DATETIME NOT NULL DEFAULT (getdate()),
+    [UpdatedDate] DATETIME NULL,
+    CONSTRAINT [FK_dbo.CustomersPayments_dbo.Boxes_BoxID] FOREIGN KEY ([BoxID]) REFERENCES [dbo].[Boxes] ([BoxID]),
+    CONSTRAINT [FK_dbo.CustomersPayments_dbo.Customers_CustomerID] FOREIGN KEY ([CustomerID]) REFERENCES [dbo].[Customers] ([CustomerID]),
+    CONSTRAINT [FK_dbo.CustomersPayments_dbo.Delegates_DelegateID] FOREIGN KEY ([DelegateID]) REFERENCES [dbo].[Delegates] ([DelegateID]),
+    CONSTRAINT [FK_dbo.CustomersPayments_dbo.Users_UserID] FOREIGN KEY ([UserID]) REFERENCES [dbo].[Users] ([UserID])
+);

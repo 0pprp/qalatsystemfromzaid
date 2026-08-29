@@ -1,0 +1,22 @@
+﻿CREATE TABLE [dbo].[Balance] (
+    [BalanceID] INT IDENTITY(1,1) NOT NULL,
+    [UserID] INT NULL,
+    [StoreBalanceID] INT NULL,
+    [BalanceTypeID] INT NULL,
+    [BalanceName] NVARCHAR(255) NULL,
+    [BalancePrice] FLOAT NULL,
+    [BalanceCost] FLOAT NULL,
+    [AmountDay] FLOAT NULL,
+    [AsyncState] BIT NULL,
+    [AsyncID] NVARCHAR(255) NULL,
+    [Notes] NVARCHAR(255) NULL,
+    [BalanceImage] IMAGE NULL,
+    [BalanceState] BIT NULL,
+    [StateDelete] BIT NULL,
+    [SelectState] BIT NULL,
+    [CreatedDate] DATETIME NOT NULL DEFAULT (getdate()),
+    [UpdatedDate] DATETIME NULL,
+    CONSTRAINT [FK_Balance_BalanceType] FOREIGN KEY ([BalanceTypeID]) REFERENCES [dbo].[BalanceType] ([BalanceTypeID]),
+    CONSTRAINT [FK_Balance_StoreBalance] FOREIGN KEY ([StoreBalanceID]) REFERENCES [dbo].[StoreBalance] ([StoreBalanceID]),
+    CONSTRAINT [FK_Balance_Users] FOREIGN KEY ([UserID]) REFERENCES [dbo].[Users] ([UserID])
+);

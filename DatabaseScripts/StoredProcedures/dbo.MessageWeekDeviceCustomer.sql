@@ -1,0 +1,17 @@
+﻿ 
+CREATE proc [dbo].[MessageWeekDeviceCustomer]
+@DateCreate datetime,
+@DatabaseCity nvarchar(255)
+as
+select CustomerName, PhoneNumber,(select DelegateName from Delegates where DelegateID=Customers.DelegateID)as DelegateName, (N'معكم شركة حيدر الساعدي السلام عليكم عزيزي الزبون ( '+CustomerName+N' ) هذا كشف حساب اسبوعي يتضمن تفاصيل تعاملكم معنا وكذلك مدفوعاتكم لاخر سبعة ايام يرجى تدقيق ذلك مع الوصولات اليومية لديكم وفي حال وجود أي اختلاف بين وصل القبض اليومي وهذا الكشف التواصل معنا عبر الوتساب مجموع الواصل منكم  ( '+cast(cast(cast((select round(ISNULL(sum(ReceiptsTotal),0),-3) from View_Customers where CustomerID=Customers.CustomerID) as float) as int) as nvarchar(50))+N' ) مجموع الباقي عليكم ( '+cast(cast(cast((select round(ISNULL(sum(AmountRemaining),0),-3) from View_Customers where CustomerID=Customers.CustomerID) as float) as int) as nvarchar(50))+N' ) تفاصيل اخر سبعة أيام   
+بتاريخ ('+(SELECT FORMAT (getdate()-1, 'MM/dd/yyyy') as date)+N' ) تم قبض ('+cast(cast(cast((select round(ISNULL(sum(AmountDenar),0),-3) from View_CustomersPayments where CustomerID=Customers.CustomerID and PaymentDate=(SELECT FORMAT (getdate()-1, 'MM/dd/yyyy') as date)) as float) as int) as nvarchar(100))+N' دع )    
+بتاريخ ('+(SELECT FORMAT (getdate()-2, 'MM/dd/yyyy') as date)+N' ) تم قبض ('+cast(cast(cast((select round(ISNULL(sum(AmountDenar),0),-3) from View_CustomersPayments where CustomerID=Customers.CustomerID and PaymentDate=(SELECT FORMAT (getdate()-2, 'MM/dd/yyyy') as date)) as float) as int) as nvarchar(100))+N' دع )  
+بتاريخ ('+(SELECT FORMAT (getdate()-3, 'MM/dd/yyyy') as date)+N' ) تم قبض ('+cast(cast(cast((select round(ISNULL(sum(AmountDenar),0),-3) from View_CustomersPayments where CustomerID=Customers.CustomerID and PaymentDate=(SELECT FORMAT (getdate()-3, 'MM/dd/yyyy') as date)) as float) as int) as nvarchar(100))+N' دع )  
+بتاريخ ('+(SELECT FORMAT (getdate()-4, 'MM/dd/yyyy') as date)+N' ) تم قبض ('+cast(cast(cast((select round(ISNULL(sum(AmountDenar),0),-3) from View_CustomersPayments where CustomerID=Customers.CustomerID and PaymentDate=(SELECT FORMAT (getdate()-4, 'MM/dd/yyyy') as date)) as float) as int) as nvarchar(100))+N' دع )  
+بتاريخ ('+(SELECT FORMAT (getdate()-5, 'MM/dd/yyyy') as date)+N' ) تم قبض ('+cast(cast(cast((select round(ISNULL(sum(AmountDenar),0),-3) from View_CustomersPayments where CustomerID=Customers.CustomerID and PaymentDate=(SELECT FORMAT (getdate()-5, 'MM/dd/yyyy') as date)) as float) as int) as nvarchar(100))+N' دع ) 
+بتاريخ ('+(SELECT FORMAT (getdate()-6, 'MM/dd/yyyy') as date)+N' ) تم قبض ('+cast(cast(cast((select round(ISNULL(sum(AmountDenar),0),-3) from View_CustomersPayments where CustomerID=Customers.CustomerID and PaymentDate=(SELECT FORMAT (getdate()-6, 'MM/dd/yyyy') as date)) as float) as int) as nvarchar(100))+N' دع )  
+بتاريخ ('+(SELECT FORMAT (getdate()-7, 'MM/dd/yyyy') as date)+N' ) تم قبض ('+cast(cast(cast((select round(ISNULL(sum(AmountDenar),0),-3) from View_CustomersPayments where CustomerID=Customers.CustomerID and PaymentDate=(SELECT FORMAT (getdate()-7, 'MM/dd/yyyy') as date)) as float) as int) as nvarchar(100))+N' دع ) 
+هذا الرابط خاص بك يا ( '+CustomerName+N'  ) يرجى نسخه والاحتفاظ به في جهازكم ومتابعة كل ما تدفعونه يوما بيوم الرابط ( '+(select Link+(Customers.AsyncID) from  [dbo].[LinkCustomer] where DatabaseLink=@DatabaseCity)+' ) ' +(select top 1 Description from Advertisement)+' ')as Message from Customers where (select AmountRemaining from View_Customers where CustomerID=Customers.CustomerID)>0
+
+ 
+

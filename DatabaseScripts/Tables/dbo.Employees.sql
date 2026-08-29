@@ -1,0 +1,23 @@
+﻿CREATE TABLE [dbo].[Employees] (
+    [EmployeeID] INT IDENTITY(1,1) NOT NULL,
+    [UserID] INT NULL,
+    [CityID] INT NULL,
+    [EmployeeName] NVARCHAR(255) NULL,
+    [DateOfBirth] DATETIME NULL,
+    [Address] NVARCHAR(255) NULL,
+    [PhoneNumber] NVARCHAR(255) NULL,
+    [AcademicAchievement] NVARCHAR(255) NULL,
+    [CV] NVARCHAR(MAX) NULL,
+    [Attachments] NVARCHAR(MAX) NULL,
+    [DateOfJoin] DATETIME NULL,
+    [EmployeeImage] NVARCHAR(MAX) NULL,
+    [Notes] NVARCHAR(MAX) NULL,
+    [EmployeeState] BIT NULL,
+    [Salary] FLOAT NULL,
+    [AsyncState] BIT NULL,
+    [AsyncID] NVARCHAR(255) NULL,
+    [CreatedDate] DATETIME NOT NULL DEFAULT (getdate()),
+    [UpdatedDate] DATETIME NULL,
+    CONSTRAINT [FK_dbo.Employees_dbo.Cities_CityID] FOREIGN KEY ([CityID]) REFERENCES [dbo].[Cities] ([CityID]),
+    CONSTRAINT [FK_dbo.Employees_dbo.Users_UserID] FOREIGN KEY ([UserID]) REFERENCES [dbo].[Users] ([UserID])
+);

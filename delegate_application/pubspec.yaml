@@ -1,0 +1,75 @@
+name: delegate_application
+description: "A new Flutter project."
+
+publish_to: "none"
+
+version: 1.0.0+19
+
+environment:
+  sdk: ">=3.3.3 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  url_launcher: ^6.1.7
+  date_picker_plus: ^3.0.1
+  shared_preferences: ^2.2.2
+  image_picker: ^1.0.7
+  http: ^1.2.1
+  multipart: ^0.1.2
+  http_parser: ^4.0.2
+  intl: ^0.19.0
+  motion_toast: ^2.9.0
+  provider: ^6.1.2
+  smooth_page_indicator: ^1.1.0
+  sqflite: ^2.3.3+1
+  dio: ^5.7.0
+  cupertino_icons: ^1.0.6
+  connectivity_plus: ^6.0.5
+  pdf: ^3.11.1
+  printing: ^5.12.0
+  geolocator: ^9.0.2
+  font_awesome_flutter: ^10.12.0
+  percent_indicator: ^4.2.5
+  path: ^1.9.1
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter_icons:
+  android: true
+  image_path: "assets/icons/logo_last.png"
+  adaptive_icon_background: "#FFFFFF"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logos/
+    - assets/images/welcomeImage.jpg
+    - assets/images/step1.png
+    - assets/images/step2.png
+    - assets/images/step3.png
+    - assets/images/step4.png
+    - assets/icons/logoMain.png
+    - assets/icons/LogoCompany.png
+    - assets/icons/user.png
+    - assets/images/sales.png
+    - assets/images/customer.png
+    - assets/images/data-transfer.png
+    - assets/images/billing.png
+    - assets/icons/logo_last.png
+
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-Black.ttf
+        - asset: assets/fonts/Cairo-Bold.ttf
+        - asset: assets/fonts/Cairo-ExtraBold.ttf
+        - asset: assets/fonts/Cairo-ExtraLight.ttf
+        - asset: assets/fonts/Cairo-Light.ttf
+        - asset: assets/fonts/Cairo-Medium.ttf
+        - asset: assets/fonts/Cairo-Regular.ttf
+        - asset: assets/fonts/Cairo-SemiBold.ttf

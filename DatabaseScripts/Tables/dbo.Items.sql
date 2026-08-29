@@ -1,0 +1,22 @@
+﻿CREATE TABLE [dbo].[Items] (
+    [ItemID] INT IDENTITY(1,1) NOT NULL,
+    [StoreID] INT NULL,
+    [UserID] INT NULL,
+    [ItemName] NVARCHAR(255) NULL,
+    [ItemPrice] FLOAT NULL,
+    [ItemCost] FLOAT NULL,
+    [Quantity] INT NULL,
+    [ItemImage] NVARCHAR(MAX) NULL,
+    [Notes] NVARCHAR(MAX) NULL,
+    [NotificationNumber] INT NULL,
+    [AmountDay] FLOAT NULL,
+    [NumberOfSales] INT NULL,
+    [AsyncState] BIT NULL,
+    [AsyncID] NVARCHAR(255) NULL,
+    [Link] NVARCHAR(MAX) NULL,
+    [ItemState] BIT NULL DEFAULT ('true'),
+    [CreatedDate] DATETIME NOT NULL DEFAULT (getdate()),
+    [UpdatedDate] DATETIME NULL,
+    CONSTRAINT [FK_dbo.Items_dbo.Stores_StoreID] FOREIGN KEY ([StoreID]) REFERENCES [dbo].[Stores] ([StoreID]),
+    CONSTRAINT [FK_dbo.Items_dbo.Users_UserID] FOREIGN KEY ([UserID]) REFERENCES [dbo].[Users] ([UserID])
+);

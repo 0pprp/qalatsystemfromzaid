@@ -1,0 +1,48 @@
+<script setup>
+import GlobalMessageDialog from '@/components/GlobalMessageDialog.vue'
+import { getToken, isTokenExpired, removeLocalStorage, removeToken } from "@/services/tokenService"
+import ScrollToTop from '@core/components/ScrollToTop.vue'
+import initCore from '@core/initCore'
+import {
+  initConfigStore,
+  useConfigStore,
+} from '@core/stores/config'
+import { hexToRgb } from '@layouts/utils'
+import { useTheme } from 'vuetify'
+
+const { global } = useTheme()
+
+// ℹ️ Sync current theme with initial loader theme
+initCore()
+initConfigStore()
+
+onMounted(async _ =>{
+  setInterval(() => {
+    const isExpired = isTokenExpired()
+    const token = getToken()
+
+    if(isExpired === true || !token){
+      removeToken()
+      removeLocalStorage()
+      if (window.location.hash !== "#/login") {
+        window.location.reload()
+      }
+    }
+  }, 2000)
+})
+
+const configStore = useConfigStore()
+</script>
+
+<template>
+  <VLocaleProvider :rtl="configStore.isAppRTL===false">
+    <!-- ℹ️ This is required to set the background color of active nav link based on currently active global theme's primary -->
+    <VApp :style="`--v-global-theme-primary: ${hexToRgb(global.current.value.colors.primary)}`">
+      <RouterView />
+
+      <ScrollToTop />
+      <GlobalSnackbar />
+      <GlobalMessageDialog />
+    </VApp>
+  </VLocaleProvider>
+</template>

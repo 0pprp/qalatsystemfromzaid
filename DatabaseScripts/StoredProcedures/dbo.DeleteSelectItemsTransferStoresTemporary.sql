@@ -1,0 +1,6 @@
+﻿CREATE proc [dbo].[DeleteSelectItemsTransferStoresTemporary]
+@SelectItemTransferStoreTemporaryID int = NULL
+as
+delete from SelectItemsTransferStoresTemporary
+where SelectItemTransferStoreTemporaryID=@SelectItemTransferStoreTemporaryID
+

@@ -1,0 +1,76 @@
+namespace BE_DelegateWebApplication.DTO
+{
+    public class TrustReceiptDTO
+    {
+        public int TrustReceiptID { get; set; }
+        public string? ContractNumber { get; set; }
+        public DateTime? ContractDate { get; set; }
+        public string? ContractType { get; set; }
+        public string? ContractNotes { get; set; }
+        public string? ContractStatus { get; set; }
+        public string? FirstPartyName { get; set; }
+        public string? CompanyType { get; set; }
+        public string? CompanyRepresentativeName { get; set; }
+        public string? CompanyRepresentativeRole { get; set; }
+        public int? BuyerID { get; set; }
+        public string? BuyerName { get; set; }
+        public string? BuyerNationalCardNumber { get; set; }
+        public string? BuyerGovernorate { get; set; }
+        public string? BuyerWorkOrResidenceAddress { get; set; }
+        public string? BuyerNearestLandmark { get; set; }
+        public string? BuyerPhoneNumber { get; set; }
+        public string? BuyerRationCenterNumber { get; set; }
+        public string? BuyerAffiliation { get; set; }
+        public string? BuyerMukhtarName { get; set; }
+        public int? ProductID { get; set; }
+        public string? ProductType { get; set; }
+        public string? ProductName { get; set; }
+        public string? ProductDescription { get; set; }
+        public string? ProductNumber { get; set; }
+        public string? ProductDeliveryCondition { get; set; }
+        public double? TotalAmountNumber { get; set; }
+        public string? TotalAmountText { get; set; }
+        public double? FirstInstallmentAmount { get; set; }
+        public DateTime? FirstInstallmentDate { get; set; }
+        public int? InstallmentsCount { get; set; }
+        public double? InstallmentAmount { get; set; }
+        public DateTime? InstallmentsStartDate { get; set; }
+        public DateTime? InstallmentsEndDate { get; set; }
+        public double? RemainingAmount { get; set; }
+        public string? PaymentMethod { get; set; }
+        public DateTime? ProductDeliveryDate { get; set; }
+        public string? DeliveryPlace { get; set; }
+        public bool? IsProductInspected { get; set; }
+        public string? InspectionNotes { get; set; }
+        public bool? IsReceivedByBuyer { get; set; }
+        public string? TrustReceiptNumber { get; set; }
+        public DateTime? TrustReceiptDate { get; set; }
+        public double? ReceiptAmountNumber { get; set; }
+        public string? ReceiptAmountText { get; set; }
+        public string? ReceiverName { get; set; }
+        public string? DelivererName { get; set; }
+        public string? DeliveryReason { get; set; }
+        public string? IdentityDocumentNumber { get; set; }
+        public string? Address { get; set; }
+        public string? PhoneNumber { get; set; }
+        public string? ReceiverSignature { get; set; }
+        public string? DelivererSignature { get; set; }
+        public string? FirstWitnessName { get; set; }
+        public string? FirstWitnessSignature { get; set; }
+        public string? SecondWitnessName { get; set; }
+        public string? SecondWitnessSignature { get; set; }
+        public string? FirstPartySignature { get; set; }
+        public string? SecondPartySignature { get; set; }
+        public string? CashierSignature { get; set; }
+        public string? SalesRepresentativeSignature { get; set; }
+        public string? SalesRepresentativeName { get; set; }
+        public string? CashierName { get; set; }
+        public int? DelegateID { get; set; }
+        public int? CreatedByUserID { get; set; }
+        public DateTime? CreatedDate { get; set; }
+        public int? UpdatedByUserID { get; set; }
+        public DateTime? UpdatedDate { get; set; }
+        public bool? IsDelete { get; set; }
+        public bool? IsActive { get; set; }
+    }
+}

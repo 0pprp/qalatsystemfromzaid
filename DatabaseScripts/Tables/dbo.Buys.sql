@@ -1,0 +1,21 @@
+﻿CREATE TABLE [dbo].[Buys] (
+    [BuyID] INT IDENTITY(1,1) NOT NULL,
+    [UserID] INT NULL,
+    [SupplierID] INT NULL,
+    [BoundNumber] INT NULL,
+    [Recipient] NVARCHAR(255) NULL,
+    [Notes] NVARCHAR(MAX) NULL,
+    [DateCreate] DATETIME NULL,
+    [DateModify] DATETIME NULL,
+    [StoreID] INT NULL,
+    [BuyState] BIT NULL,
+    [BoxID] INT NULL,
+    [AsyncState] BIT NULL,
+    [AsyncID] NVARCHAR(255) NULL,
+    [CreatedDate] DATETIME NOT NULL DEFAULT (getdate()),
+    [UpdatedDate] DATETIME NULL,
+    CONSTRAINT [FK_dbo.Buys_dbo.Boxes_BoxID] FOREIGN KEY ([BoxID]) REFERENCES [dbo].[Boxes] ([BoxID]),
+    CONSTRAINT [FK_dbo.Buys_dbo.Stores_StoreID] FOREIGN KEY ([StoreID]) REFERENCES [dbo].[Stores] ([StoreID]),
+    CONSTRAINT [FK_dbo.Buys_dbo.Suppliers_SupplierID] FOREIGN KEY ([SupplierID]) REFERENCES [dbo].[Suppliers] ([SupplierID]),
+    CONSTRAINT [FK_dbo.Buys_dbo.Users_UserID] FOREIGN KEY ([UserID]) REFERENCES [dbo].[Users] ([UserID])
+);
