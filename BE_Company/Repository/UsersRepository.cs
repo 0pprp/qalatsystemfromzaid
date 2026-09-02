@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using BE_Company.DTO;
 using BE_Company.IRepository;
 using Microsoft.Data.SqlClient;
@@ -53,7 +53,7 @@ namespace BE_Company.Repository
                 commandType: CommandType.StoredProcedure);
                 if (result != null)
                 {
-                    if (result.UserType == "محاسب فرعي" || result.UserType == "مدير فرع")
+                    if (result.UserType == "محاسب فرعي" || result.UserType == "مدير فرع" || result.UserType == "موظف مبيعات" || result.UserType == "مدير مبيعات")
                     {
                         return result;
                     }

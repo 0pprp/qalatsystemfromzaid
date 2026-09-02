@@ -1,6 +1,6 @@
 /// Local lab: the follower app must hit this PC, not production Nasiriyah.
 class LocalLabApi {
-  static const bool enabled = true;
+  static const bool enabled = false;
 
   static List<String> bases() {
     if (!enabled) {

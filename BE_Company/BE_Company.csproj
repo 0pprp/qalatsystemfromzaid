@@ -10,9 +10,14 @@
     <PackageReference Include="Dapper" Version="2.1.66" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.1" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.3" />
+    <PackageReference Include="QuestPDF" Version="2024.10.3" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\sales_employee_application\assets\fonts\Cairo-Regular.ttf" Link="Sales\Fonts\Cairo-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\sales_employee_application\assets\fonts\Cairo-Bold.ttf" Link="Sales\Fonts\Cairo-Bold.ttf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

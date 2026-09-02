@@ -7,6 +7,7 @@ export function useUserRole() {
   const canManageUsers = computed(() => isAdmin.value)
   const canBackup = computed(() => isAdmin.value)
   const canSwitchCity = computed(() => isAdmin.value)
+  const isSalesManager = computed(() => userType.value === 'مدير مبيعات')
   const canViewDecisions = computed(() => isAdmin.value || isBranchManager.value)
   const canWriteNotes = computed(() => isAdmin.value || isBranchManager.value)
   const canDecide = computed(() => isBranchManager.value)
@@ -21,5 +22,6 @@ export function useUserRole() {
     canViewDecisions,
     canWriteNotes,
     canDecide,
+    isSalesManager,
   }
 }

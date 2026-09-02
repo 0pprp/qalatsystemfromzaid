@@ -2,7 +2,7 @@
 import axios from "axios"
 import { jwtDecode } from "jwt-decode"
 import { computed, ref } from 'vue'
-import { useCities, isLocalLab, LOCAL_API } from '@/composables/useCities'
+import { useCities, isLocalLab, isDemo, LOCAL_API, DEMO_API } from '@/composables/useCities'
 import { useUserRole } from '@/composables/useUserRole'
 
 const userName = ref(localStorage.getItem("UserName")) || ''
@@ -33,7 +33,9 @@ const changeCity = async city => {
     return
   }
 
-  const selectedApi = isLocalLab() ? LOCAL_API : city.link
+  const selectedApi = isDemo()
+    ? DEMO_API
+    : (isLocalLab() ? LOCAL_API : city.link)
   const cityName = city.name
   const database = city.database
 

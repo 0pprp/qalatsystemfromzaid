@@ -522,7 +522,7 @@ onMounted(() => {
               >
                 <VAutocomplete
                   v-model="formData.userType"
-                  :items="['محاسب رئيسي', 'محاسب فرعي', 'مدير فرع']"
+                  :items="['محاسب رئيسي', 'محاسب فرعي', 'مدير فرع', 'موظف مبيعات']"
                   placeholder="نوع المستخدم"
                   prepend-inner-icon="tabler-category"
                   label="نوع المستخدم"
@@ -688,7 +688,7 @@ onMounted(() => {
               >
                 <VAutocomplete
                   v-model="formData.userType"
-                  :items="['محاسب رئيسي', 'محاسب فرعي', 'مدير فرع']"
+                  :items="['محاسب رئيسي', 'محاسب فرعي', 'مدير فرع', 'موظف مبيعات']"
                   placeholder="نوع المستخدم"
                   prepend-inner-icon="tabler-category"
                   label="نوع المستخدم"

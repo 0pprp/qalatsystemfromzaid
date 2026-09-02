@@ -3,7 +3,7 @@ import AppAutocomplete from "@core/components/app-form-elements/AppAutocomplete.
 import AppTextField from "@core/components/app-form-elements/AppTextField.vue"
 import { jwtDecode } from 'jwt-decode'
 import { useTheme } from 'vuetify'
-import { useCities, isLocalLab, LOCAL_API } from '@/composables/useCities'
+import { useCities, isLocalLab, isDemo, LOCAL_API, DEMO_API } from '@/composables/useCities'
 
 // Import assets
 import bgImage from '@images/background.png'
@@ -50,7 +50,9 @@ async function login() {
 
     // البحث عن المحافظة المختارة في البيانات
     const selectedProvince = provinces.value.find(p => p.value === selectCity.value)
-    const selectedApi = isLocalLab() ? LOCAL_API : selectedProvince?.link
+    const selectedApi = isDemo()
+      ? DEMO_API
+      : (isLocalLab() ? LOCAL_API : selectedProvince?.link)
     const cityName = selectedProvince?.name || ''
     const database = selectedProvince?.database || ''
 
@@ -74,7 +76,7 @@ async function login() {
       let resData = await postLogin('Users/Users_LoginAdmin')
 
       // على اللوكال: المحاسب الفرعي (ahmed2) يدخل من نفس الصفحة
-      if (resData.message && isLocalLab())
+      if (resData.message && (isLocalLab() || isDemo()))
         resData = await postLogin('Users/Users_LoginEmployee')
 
       if (resData.message) {

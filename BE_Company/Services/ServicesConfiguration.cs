@@ -1,4 +1,4 @@
-﻿
+
 using BE_Company.IRepository;
 using BE_Company.Repository;
 
@@ -24,5 +24,6 @@ public static class ServicesConfiguration
         services.AddScoped<ICustomersPaymentsRequestRepository, CustomersPaymentsRequestRepository>();
         services.AddScoped<IBackupDatabaseRepository, BackupDatabaseRepository>();
         services.AddScoped<ICustomerDecisionsRepository, CustomerDecisionsRepository>();
+        services.AddScoped<ISalesEmployeeRepository, SalesEmployeeRepository>();
     }
 }

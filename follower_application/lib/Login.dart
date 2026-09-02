@@ -33,13 +33,13 @@ class _LoginState extends State<Login> {
   }
 
   Future<void> _fetchCityData() async {
-    if (AppEnv.isDemo) {
+    if (AppEnv.isDemo || AppEnv.isLocal) {
       if (!mounted) return;
       setState(() {
         cityData = [
           {
-            'name': 'الناصرية',
-            'link': AppEnv.demoApiBaseUrl,
+            'name': AppEnv.isLocal ? 'الناصرية' : 'النجف - DEMO',
+            'link': AppEnv.apiBase(),
             'number': '',
           },
         ];
@@ -139,7 +139,10 @@ class _LoginState extends State<Login> {
         }
       }
 
-      if (productionUrl.isEmpty && !LocalLabApi.enabled && !AppEnv.isDemo) {
+      if (productionUrl.isEmpty &&
+          !LocalLabApi.enabled &&
+          !AppEnv.isDemo &&
+          !AppEnv.isLocal) {
         _showErrorDialog("لم يتم العثور على الرابط للمحافظة المختارة");
         return;
       }
@@ -147,7 +150,9 @@ class _LoginState extends State<Login> {
       final password = _password.trim();
       final bases = AppEnv.isDemo
           ? [AppEnv.demoApiBaseUrl]
-          : (LocalLabApi.enabled ? LocalLabApi.bases() : [productionUrl]);
+          : AppEnv.isLocal
+              ? [AppEnv.localApiBaseUrl]
+              : (LocalLabApi.enabled ? LocalLabApi.bases() : [productionUrl]);
 
       http.Response? response;
       String apiUrl = productionUrl;
@@ -170,8 +175,8 @@ class _LoginState extends State<Login> {
 
       if (!mounted) return;
 
-      if (AppEnv.isDemo) {
-        apiUrl = AppEnv.demoApiBaseUrl;
+      if (AppEnv.isDemo || AppEnv.isLocal) {
+        apiUrl = AppEnv.apiBase();
       }
 
       if (response == null) {

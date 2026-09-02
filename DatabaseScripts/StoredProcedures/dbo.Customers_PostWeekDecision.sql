@@ -18,13 +18,20 @@ BEGIN
     DECLARE @PaidPercent FLOAT = 0;
     DECLARE @CustomerName NVARCHAR(255) = N'';
     DECLARE @SnoozeUntil DATETIME = NULL;
-    DECLARE @WeekStartDate DATE = CAST(GETDATE() - 7 AS DATE);
-    DECLARE @WeekEndDate DATE = CAST(GETDATE() - 1 AS DATE);
+    DECLARE @WeekStartDate DATE = CAST(DATEADD(DAY, -7, GETDATE()) AS DATE);
+    DECLARE @WeekEndDate DATE = CAST(DATEADD(DAY, -1, GETDATE()) AS DATE);
     DECLARE @DecisionID INT;
 
     SELECT
-        @WeekPaid = ISNULL(Amount1, 0) + ISNULL(Amount2, 0) + ISNULL(Amount3, 0)
-            + ISNULL(Amount4, 0) + ISNULL(Amount5, 0) + ISNULL(Amount6, 0) + ISNULL(Amount7, 0),
+        @WeekPaid = ROUND(SUM(ISNULL(AmountDenar, 0)), -3)
+    FROM View_ReceiptCustomerDate
+    WHERE CustomerID = @CustomerID
+      AND CAST(PaymentDate AS DATE) >= @WeekStartDate
+      AND CAST(PaymentDate AS DATE) <= @WeekEndDate;
+
+    SET @WeekPaid = ISNULL(@WeekPaid, 0);
+
+    SELECT
         @AmountTotalSales = ISNULL(AmountTotalSales, 0),
         @CustomerName = ISNULL(CustomerName, N'')
     FROM View_CustomerWeekPaymentDevice

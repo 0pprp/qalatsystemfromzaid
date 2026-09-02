@@ -1,4 +1,4 @@
-﻿# Node / Frontend
+# Node / Frontend
 node_modules/
 dist/
 build/
@@ -23,9 +23,11 @@ build/
 .env
 .env.*
 !.env.example
+!.env.demo.example
 appsettings.json
 appsettings.*.json
 !appsettings.example.json
+!appsettings.demo.template.json
 secrets.json
 
 # Database / backups
@@ -45,3 +47,11 @@ logs/
 # OS
 Thumbs.db
 .DS_Store
+
+# Local publish output — keep docs/sql only
+deploy/sales-demo/backend/
+deploy/sales-demo/gateway/
+deploy/sales-demo/frontend/
+deploy/sales-demo/flutter/
+
+*.apk

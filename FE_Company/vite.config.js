@@ -110,10 +110,10 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       // Proxy لتفادي مشكلة CORS عند جلب بيانات المدن
-      '/api-defaultdata': {
-        target: 'http://defaultdata.alsaaeidy.com',
+      '/demo-api': {
+        target: 'http://169.58.236.52:8080',
         changeOrigin: true,
-        rewrite: path => path.replace(/^\/api-defaultdata/, ''),
+        rewrite: path => path.replace(/^\/demo-api/, '/api'),
       },
     },
     watch: {

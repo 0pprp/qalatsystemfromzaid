@@ -29,13 +29,14 @@ watch([
 // !SECTION
 
 const cityName = ref(localStorage.getItem('CityName'))
-const { canManageUsers, canBackup, canViewDecisions } = useUserRole()
+const { canManageUsers, canBackup, canViewDecisions, isSalesManager } = useUserRole()
 
 const navItems = computed(() => {
   return allNavItems.filter(item => {
     if (item.title === 'المستخدمين' && !canManageUsers.value) return false
     if (item.title === 'النسخ الاحتياطي' && !canBackup.value) return false
     if (item.title === 'القرارات' && !canViewDecisions.value) return false
+    if (item.title === 'إدارة المبيعات' && !isSalesManager.value) return false
 
     return true
   })

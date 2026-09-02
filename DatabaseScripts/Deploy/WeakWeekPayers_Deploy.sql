@@ -362,29 +362,34 @@ CREATE OR ALTER PROC [dbo].[Customers_GetWeakWeekPayers]
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    DECLARE @FromDate DATE = CAST(DATEADD(DAY, -7, GETDATE()) AS DATE);
+    DECLARE @ToDate DATE = CAST(DATEADD(DAY, -1, GETDATE()) AS DATE);
+
+    ;WITH Last7DaysPaid AS (
+        SELECT
+            CustomerID,
+            ROUND(SUM(ISNULL(AmountDenar, 0)), -3) AS WeekPaid
+        FROM View_ReceiptCustomerDate
+        WHERE CAST(PaymentDate AS DATE) >= @FromDate
+          AND CAST(PaymentDate AS DATE) <= @ToDate
+        GROUP BY CustomerID
+    )
     SELECT
         V.*,
-        (ISNULL(V.Amount1, 0) + ISNULL(V.Amount2, 0) + ISNULL(V.Amount3, 0)
-            + ISNULL(V.Amount4, 0) + ISNULL(V.Amount5, 0) + ISNULL(V.Amount6, 0)
-            + ISNULL(V.Amount7, 0)) AS WeekPaid,
+        ISNULL(L.WeekPaid, 0) AS WeekPaid,
         CASE
             WHEN ISNULL(V.AmountTotalSales, 0) = 0 THEN 0
-            ELSE ROUND(
-                ((ISNULL(V.Amount1, 0) + ISNULL(V.Amount2, 0) + ISNULL(V.Amount3, 0)
-                    + ISNULL(V.Amount4, 0) + ISNULL(V.Amount5, 0) + ISNULL(V.Amount6, 0)
-                    + ISNULL(V.Amount7, 0)) * 100.0) / V.AmountTotalSales
-            , 2)
+            ELSE ROUND((ISNULL(L.WeekPaid, 0) * 100.0) / V.AmountTotalSales, 2)
         END AS PaidPercent
     FROM View_CustomerWeekPaymentDevice V
+    LEFT JOIN Last7DaysPaid L
+        ON L.CustomerID = V.CustomerID
     WHERE ISNULL(V.AmountRemaining, 0) > 0
       AND ISNULL(V.AmountTotalSales, 0) > 0
       AND ISNULL(V.IsLegal, 0) = 0
       AND ISNULL(V.IsFakeSale, 0) = 0
-      AND (
-            (ISNULL(V.Amount1, 0) + ISNULL(V.Amount2, 0) + ISNULL(V.Amount3, 0)
-                + ISNULL(V.Amount4, 0) + ISNULL(V.Amount5, 0) + ISNULL(V.Amount6, 0)
-                + ISNULL(V.Amount7, 0)) * 100.0
-          ) / V.AmountTotalSales <= 2
+      AND (ISNULL(L.WeekPaid, 0) * 100.0) / V.AmountTotalSales <= 3.8
       AND NOT EXISTS (
             SELECT 1
             FROM dbo.Customers C
@@ -428,13 +433,20 @@ BEGIN
     DECLARE @PaidPercent FLOAT = 0;
     DECLARE @CustomerName NVARCHAR(255) = N'';
     DECLARE @SnoozeUntil DATETIME = NULL;
-    DECLARE @WeekStartDate DATE = CAST(GETDATE() - 7 AS DATE);
-    DECLARE @WeekEndDate DATE = CAST(GETDATE() - 1 AS DATE);
+    DECLARE @WeekStartDate DATE = CAST(DATEADD(DAY, -7, GETDATE()) AS DATE);
+    DECLARE @WeekEndDate DATE = CAST(DATEADD(DAY, -1, GETDATE()) AS DATE);
     DECLARE @DecisionID INT;
 
     SELECT
-        @WeekPaid = ISNULL(Amount1, 0) + ISNULL(Amount2, 0) + ISNULL(Amount3, 0)
-            + ISNULL(Amount4, 0) + ISNULL(Amount5, 0) + ISNULL(Amount6, 0) + ISNULL(Amount7, 0),
+        @WeekPaid = ROUND(SUM(ISNULL(AmountDenar, 0)), -3)
+    FROM View_ReceiptCustomerDate
+    WHERE CustomerID = @CustomerID
+      AND CAST(PaymentDate AS DATE) >= @WeekStartDate
+      AND CAST(PaymentDate AS DATE) <= @WeekEndDate;
+
+    SET @WeekPaid = ISNULL(@WeekPaid, 0);
+
+    SELECT
         @AmountTotalSales = ISNULL(AmountTotalSales, 0),
         @CustomerName = ISNULL(CustomerName, N'')
     FROM View_CustomerWeekPaymentDevice

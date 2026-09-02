@@ -1,17 +1,29 @@
 import { ref } from 'vue'
 
 const LOCAL_API = 'http://localhost:5180/api/'
+const DEMO_API = import.meta.env.DEV
+  ? '/demo-api/'
+  : 'http://169.58.236.52:8080/api/'
 const CACHE_KEY = 'cached_admin_city_data'
 
-/** Vite DEV أو أي بناء يفتح من localhost — الحسابات التجريبية على Docker فقط */
-export function isLocalLab() {
-  if (import.meta.env.DEV)
-    return true
-  if (typeof window === 'undefined')
-    return false
-  const host = window.location.hostname
+function appEnv() {
+  return String(import.meta.env.VITE_APP_ENV || '').toLowerCase()
+}
 
-  return host === 'localhost' || host === '127.0.0.1'
+/** Docker المحلي فقط عندما يُطلب صراحة */
+export function isLocalLab() {
+  return appEnv() === 'local'
+}
+
+/** فرع Demo النجف — DatabaseCompanyNajaf_DEMO */
+export function isDemo() {
+  const env = appEnv()
+  if (env === 'local')
+    return false
+  if (env === 'demo')
+    return true
+
+  return import.meta.env.DEV
 }
 
 function cityListUrl() {
@@ -21,7 +33,30 @@ function cityListUrl() {
 }
 
 function resolveCityLink(itemLink) {
-  return isLocalLab() ? LOCAL_API : itemLink
+  if (isDemo())
+    return DEMO_API
+  if (isLocalLab())
+    return LOCAL_API
+
+  return itemLink
+}
+
+function localProvinces() {
+  return [{
+    value: 'local',
+    name: 'محلي',
+    database: 'DatabaseCompany',
+    link: LOCAL_API,
+  }]
+}
+
+function demoProvinces() {
+  return [{
+    value: 'najaf-demo',
+    name: 'النجف - DEMO',
+    database: 'DatabaseCompanyNajaf_DEMO',
+    link: DEMO_API,
+  }]
 }
 
 // حالة مشتركة (singleton) على مستوى التطبيق
@@ -34,6 +69,22 @@ let fetchPromise = null
  * جلب قائمة المدن من الـ API مع تخزين مؤقت في localStorage
  */
 async function fetchCities() {
+  if (isDemo()) {
+    provinces.value = demoProvinces()
+    isLoading.value = false
+    error.value = null
+
+    return provinces.value
+  }
+
+  if (isLocalLab()) {
+    provinces.value = localProvinces()
+    isLoading.value = false
+    error.value = null
+
+    return provinces.value
+  }
+
   // تجنب تكرار الطلب
   if (fetchPromise) return fetchPromise
 
@@ -139,16 +190,18 @@ function getCityDatabase(cityValue) {
  * يضمن جلب البيانات مرة واحدة فقط عبر التطبيق
  */
 export function useCities() {
-  // تحميل من الكاش فوراً للعرض السريع
-  if (provinces.value.length === 0) {
+  if (isDemo()) {
+    provinces.value = demoProvinces()
+  } else if (isLocalLab()) {
+    provinces.value = localProvinces()
+  } else if (provinces.value.length === 0) {
     const cached = loadFromCache()
     if (cached.length > 0) {
       provinces.value = cached
     }
   }
 
-  // بدء الجلب من API عند أول استخدام
-  if (provinces.value.length === 0 || !fetchPromise) {
+  if (!isDemo() && !isLocalLab() && (provinces.value.length === 0 || !fetchPromise)) {
     fetchCities()
   }
 
@@ -163,4 +216,4 @@ export function useCities() {
   }
 }
 
-export { fetchCities, getCityLink, getCityName, getCityDatabase, loadFromCache, LOCAL_API }
+export { fetchCities, getCityLink, getCityName, getCityDatabase, loadFromCache, LOCAL_API, DEMO_API }

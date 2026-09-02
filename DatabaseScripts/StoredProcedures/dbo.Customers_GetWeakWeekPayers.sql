@@ -3,29 +3,34 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- نافذة متحركة: كل يوم تُحسب تسديدات آخر 7 أيام من الأمس رجوعاً (بدون اليوم)
+    DECLARE @FromDate DATE = CAST(DATEADD(DAY, -7, GETDATE()) AS DATE);
+    DECLARE @ToDate DATE = CAST(DATEADD(DAY, -1, GETDATE()) AS DATE);
+
+    ;WITH Last7DaysPaid AS (
+        SELECT
+            CustomerID,
+            ROUND(SUM(ISNULL(AmountDenar, 0)), -3) AS WeekPaid
+        FROM View_ReceiptCustomerDate
+        WHERE CAST(PaymentDate AS DATE) >= @FromDate
+          AND CAST(PaymentDate AS DATE) <= @ToDate
+        GROUP BY CustomerID
+    )
     SELECT
         V.*,
-        (ISNULL(V.Amount1, 0) + ISNULL(V.Amount2, 0) + ISNULL(V.Amount3, 0)
-            + ISNULL(V.Amount4, 0) + ISNULL(V.Amount5, 0) + ISNULL(V.Amount6, 0)
-            + ISNULL(V.Amount7, 0)) AS WeekPaid,
+        ISNULL(L.WeekPaid, 0) AS WeekPaid,
         CASE
             WHEN ISNULL(V.AmountTotalSales, 0) = 0 THEN 0
-            ELSE ROUND(
-                ((ISNULL(V.Amount1, 0) + ISNULL(V.Amount2, 0) + ISNULL(V.Amount3, 0)
-                    + ISNULL(V.Amount4, 0) + ISNULL(V.Amount5, 0) + ISNULL(V.Amount6, 0)
-                    + ISNULL(V.Amount7, 0)) * 100.0) / V.AmountTotalSales
-            , 2)
+            ELSE ROUND((ISNULL(L.WeekPaid, 0) * 100.0) / V.AmountTotalSales, 2)
         END AS PaidPercent
     FROM View_CustomerWeekPaymentDevice V
+    LEFT JOIN Last7DaysPaid L
+        ON L.CustomerID = V.CustomerID
     WHERE ISNULL(V.AmountRemaining, 0) > 0
       AND ISNULL(V.AmountTotalSales, 0) > 0
       AND ISNULL(V.IsLegal, 0) = 0
       AND ISNULL(V.IsFakeSale, 0) = 0
-      AND (
-            (ISNULL(V.Amount1, 0) + ISNULL(V.Amount2, 0) + ISNULL(V.Amount3, 0)
-                + ISNULL(V.Amount4, 0) + ISNULL(V.Amount5, 0) + ISNULL(V.Amount6, 0)
-                + ISNULL(V.Amount7, 0)) * 100.0
-          ) / V.AmountTotalSales <= 2
+      AND (ISNULL(L.WeekPaid, 0) * 100.0) / V.AmountTotalSales <= 3.8
       AND NOT EXISTS (
             SELECT 1
             FROM dbo.Customers C

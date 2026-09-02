@@ -27,11 +27,19 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> _lists = [];
   int? _selectedChildId;
   List<Map<String, dynamic>> _customers = [];
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     _boot();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _boot() async {
@@ -152,7 +160,7 @@ class _HomePageState extends State<HomePage> {
       }
 
       final data = json.decode(response.body) as List<dynamic>;
-      final customers = data.map((item) {
+      var customers = data.map((item) {
         return {
           'customerName': item['customerName'] ?? item['CustomerName'] ?? '',
           'phoneNumber': item['phoneNumber'] ?? item['PhoneNumber'] ?? '',
@@ -160,8 +168,16 @@ class _HomePageState extends State<HomePage> {
           'amountDaySales': _toDouble(item['amountDaySales'] ?? item['AmountDaySales']),
           'amountRemaining': _toDouble(item['amountRemaining'] ?? item['AmountRemaining']),
           'amountTotalSales': _toDouble(item['amountTotalSales'] ?? item['AmountTotalSales']),
+          'countReceiptDevice': _toInt(item['countReceiptDevice'] ?? item['CountReceiptDevice']),
+          'numberOfDayDevice': _toInt(item['numberOfDayDevice'] ?? item['NumberOfDayDevice']),
         };
       }).toList();
+
+      if (_showType == 'الغير مسددين') {
+        customers = customers
+            .where((item) => (item['amountRemaining'] as double) > 0)
+            .toList();
+      }
 
       if (mounted) {
         setState(() {
@@ -183,6 +199,13 @@ class _HomePageState extends State<HomePage> {
     if (value == null) return 0;
     if (value is num) return value.toDouble();
     return double.tryParse(value.toString()) ?? 0;
+  }
+
+  int _toInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString()) ?? 0;
   }
 
   Future<void> _pickDate() async {
@@ -220,6 +243,16 @@ class _HomePageState extends State<HomePage> {
 
   double get _totalDay =>
       _customers.fold(0.0, (sum, item) => sum + (item['amountDaySales'] as double));
+
+  List<Map<String, dynamic>> get _visibleCustomers {
+    final query = _searchQuery.trim();
+    if (query.isEmpty) return _customers;
+    return _customers.where((item) {
+      final name = item['customerName'].toString();
+      final phone = item['phoneNumber'].toString();
+      return name.contains(query) || phone.contains(query);
+    }).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -344,6 +377,36 @@ class _HomePageState extends State<HomePage> {
                       Expanded(child: _typeChip('الغير مسددين')),
                     ],
                   ),
+                  const SizedBox(height: 12),
+                  _card(
+                    child: TextField(
+                      controller: _searchController,
+                      textInputAction: TextInputAction.search,
+                      decoration: InputDecoration(
+                        hintText: 'بحث بالاسم أو رقم الهاتف',
+                        hintStyle: const TextStyle(fontFamily: 'Cairo'),
+                        border: InputBorder.none,
+                        prefixIcon: const Icon(Icons.search,
+                            color: AppTheme.primaryColor),
+                        suffixIcon: _searchQuery.isEmpty
+                            ? null
+                            : IconButton(
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() {
+                                    _searchQuery = '';
+                                  });
+                                },
+                                icon: const Icon(Icons.close),
+                              ),
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          _searchQuery = value;
+                        });
+                      },
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   Row(
                     children: [
@@ -384,8 +447,18 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                     )
+                  else if (_visibleCustomers.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(30),
+                      child: Center(
+                        child: Text(
+                          'لا يوجد اسم مطابق للبحث',
+                          style: TextStyle(fontFamily: 'Cairo', color: Colors.grey),
+                        ),
+                      ),
+                    )
                   else
-                    ..._customers.map(_customerCard),
+                    ..._visibleCustomers.map(_customerCard),
                   const SizedBox(height: 20),
                   TextButton.icon(
                     onPressed: _logout,
@@ -465,6 +538,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _customerCard(Map<String, dynamic> item) {
+    final remaining = Formatters.formatNumber(item['amountRemaining']);
+    final due = Formatters.formatNumber(item['amountDaySales']);
+    final paid = Formatters.formatNumber(item['amountReceipt']);
+    final paymentDays = item['numberOfDayDevice'] as int;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(16),
@@ -487,24 +565,33 @@ class _HomePageState extends State<HomePage> {
                 : item['phoneNumber'].toString(),
             style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey),
           ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                _showType == 'المسددين'
-                    ? 'الواصل: ${Formatters.formatNumber(item['amountReceipt'])} دع'
-                    : 'القسط: ${Formatters.formatNumber(item['amountDaySales'])} دع',
-                style: const TextStyle(fontFamily: 'Cairo'),
-              ),
-              Text(
-                'الباقي: ${Formatters.formatNumber(item['amountRemaining'])} دع',
-                style: const TextStyle(fontFamily: 'Cairo', color: Colors.orange),
-              ),
-            ],
-          ),
+          const SizedBox(height: 10),
+          _amountRow('القسط المستحق', '$due دع', AppTheme.primaryColor),
+          const SizedBox(height: 4),
+          _amountRow('القسط المدفوع', '$paid دع', Colors.green.shade700),
+          const SizedBox(height: 4),
+          _amountRow('عدد أيام التسديدات', '$paymentDays', AppTheme.textColor),
+          const SizedBox(height: 4),
+          _amountRow('الباقي', '$remaining دع', Colors.orange),
         ],
       ),
+    );
+  }
+
+  Widget _amountRow(String label, String value, Color valueColor) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey)),
+        Text(
+          value,
+          style: TextStyle(
+            fontFamily: 'Cairo',
+            fontWeight: FontWeight.bold,
+            color: valueColor,
+          ),
+        ),
+      ],
     );
   }
 }

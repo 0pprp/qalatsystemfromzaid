@@ -65,6 +65,11 @@ router.beforeEach((to, from, next) => {
     return next('/')
   }
 
+  const salesManagerPaths = ['/sales-manager-dashboard', '/sales-manager-employees', '/sales-manager-map', '/sales-manager-routes', '/sales-manager-sales', '/sales-manager-requests', '/sales-manager-request-create']
+  if (salesManagerPaths.includes(to.path) && userType !== 'مدير مبيعات') {
+    return next('/')
+  }
+
   next()
 })
 export { router }
