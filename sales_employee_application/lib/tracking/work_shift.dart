@@ -1,3 +1,5 @@
+import 'package:sales_employee_application/tracking/shift_start_debug.dart';
+
 class WorkShift {
   WorkShift({
     required this.shiftId,
@@ -17,7 +19,8 @@ class WorkShift {
   final bool hasActiveShift;
   final String? closeReason;
 
-  bool get isActive => status == 'Active' && hasActiveShift && !isPastCutoff();
+  bool get isActive =>
+      status.toLowerCase() == 'active' && hasActiveShift && shiftId > 0;
 
   bool isPastCutoff([DateTime? utcNow]) =>
       (utcNow ?? DateTime.now().toUtc()).isAfter(cutoffAtUtc) ||
@@ -34,20 +37,51 @@ class WorkShift {
       };
 
   factory WorkShift.fromJson(Map<String, dynamic> json) {
-    DateTime parse(dynamic v) {
-      final raw = '${v ?? ''}';
-      return DateTime.tryParse(raw)?.toUtc() ?? DateTime.now().toUtc();
+    DateTime parseUtc(String field, dynamic v) {
+      var raw = '${v ?? ''}'.trim();
+      ShiftStartDebug.log('parsing $field raw=$raw');
+      if (raw.isEmpty) {
+        ShiftStartDebug.log('parsing $field empty -> utcNow fallback');
+        return DateTime.now().toUtc();
+      }
+      raw = raw.replaceFirst(' ', 'T');
+      // Backend DateTime (SQL Unspecified) is often serialized without Z.
+      // Treat timezone-less values as UTC, not device local (Iraq UTC+3).
+      final hasZone = RegExp(r'(Z|[+-]\d{2}:?\d{2})$', caseSensitive: false).hasMatch(raw);
+      if (!hasZone) {
+        raw = '${raw}Z';
+        ShiftStartDebug.log('parsing $field appended Z -> $raw');
+      }
+      final parsed = DateTime.tryParse(raw)?.toUtc();
+      if (parsed == null) {
+        ShiftStartDebug.log('parsing $field failed tryParse -> utcNow fallback');
+        return DateTime.now().toUtc();
+      }
+      ShiftStartDebug.log('parsing $field result=${parsed.toIso8601String()}');
+      return parsed;
     }
 
     final has = json['hasActiveShift'] ?? json['HasActiveShift'];
     return WorkShift(
-      shiftId: int.tryParse('${json['shiftId'] ?? json['ShiftId'] ?? 0}') ?? 0,
+      shiftId: int.tryParse('${json['shiftId'] ?? json['ShiftId'] ?? json['id'] ?? json['Id'] ?? 0}') ?? 0,
       status: '${json['status'] ?? json['Status'] ?? 'Active'}',
-      startedAtUtc: parse(json['startedAtUtc'] ?? json['StartedAtUtc'] ?? json['startedAt'] ?? json['StartedAt']),
-      cutoffAtUtc: parse(json['cutoffAtUtc'] ?? json['CutoffAtUtc'] ?? json['cutoffAt'] ?? json['CutoffAt']),
+      startedAtUtc: parseUtc(
+        'startedAt',
+        json['startedAtUtc'] ??
+            json['StartedAtUtc'] ??
+            json['startedAt'] ??
+            json['StartedAt'],
+      ),
+      cutoffAtUtc: parseUtc(
+        'cutoffAt',
+        json['cutoffAtUtc'] ??
+            json['CutoffAtUtc'] ??
+            json['cutoffAt'] ??
+            json['CutoffAt'],
+      ),
       isNew: json['isNew'] == true || json['IsNew'] == true,
       hasActiveShift: has == null ? true : has == true,
-      closeReason: json['closeReason']?.toString(),
+      closeReason: json['closeReason']?.toString() ?? json['CloseReason']?.toString(),
     );
   }
 }

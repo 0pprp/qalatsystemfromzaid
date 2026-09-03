@@ -28,8 +28,12 @@ class Session {
   static String get userId => '${user['userId'] ?? user['UserID'] ?? ''}';
 
   static Future<void> saveLogin(Map<String, dynamic> data) async {
-    await LocalStore.instance.setString(_tokenKey, '${data['token'] ?? ''}');
-    await LocalStore.instance.setString(_userKey, jsonEncode(data));
+    final token = '${data['token'] ?? data['Token'] ?? ''}';
+    await LocalStore.instance.setString(_tokenKey, token);
+    await LocalStore.instance.setString(_userKey, jsonEncode({
+      ...data,
+      'token': token,
+    }));
   }
 
   static Future<void> logout() async {

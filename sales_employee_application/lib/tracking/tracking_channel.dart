@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:sales_employee_application/tracking/shift_start_debug.dart';
 import 'package:sales_employee_application/tracking/tracking_config.dart';
 
 class TrackingChannel {
@@ -6,18 +7,24 @@ class TrackingChannel {
 
   static Future<bool> start({required int shiftId, required DateTime cutoffAtUtc}) async {
     try {
+      ShiftStartDebug.log(
+        'MethodChannel.invokeMethod start shiftId=$shiftId cutoffAtUtcMs=${cutoffAtUtc.toUtc().millisecondsSinceEpoch}',
+      );
       await _channel.invokeMethod('start', {
         'shiftId': shiftId,
-        'cutoffAtUtcMs': cutoffAtUtc.millisecondsSinceEpoch,
+        'cutoffAtUtcMs': cutoffAtUtc.toUtc().millisecondsSinceEpoch,
         'intervalMs': TrackingConfig.movingInterval.inMilliseconds,
         'minDistance': TrackingConfig.minimumDistanceMeters,
         'stationaryIntervalMs': TrackingConfig.stationaryInterval.inMilliseconds,
       });
+      ShiftStartDebug.log('MethodChannel.invokeMethod start returned');
       return true;
-    } on MissingPluginException {
+    } on MissingPluginException catch (e, st) {
+      ShiftStartDebug.logError('MethodChannel MissingPluginException', e, st);
       return false;
-    } on PlatformException {
-      return false;
+    } catch (e, st) {
+      ShiftStartDebug.logError('MethodChannel.invokeMethod', e, st);
+      rethrow;
     }
   }
 

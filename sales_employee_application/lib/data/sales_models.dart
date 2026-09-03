@@ -71,21 +71,47 @@ class SalesInventoryItem {
     required this.productName,
     required this.availableQuantity,
     required this.salePrice,
+    this.dailyInstallment,
     this.notes,
+    this.storeId,
   });
 
   final int productId;
   final String productName;
   final int availableQuantity;
   final num salePrice;
+  /// Catalog daily installment from inventory JSON when present.
+  /// Current GET /api/sales/inventory does not include this field.
+  final num? dailyInstallment;
   final String? notes;
+  final int? storeId;
+
+  static num? _optionalNum(Map<String, dynamic> json, List<String> keys) {
+    for (final key in keys) {
+      if (!json.containsKey(key) || json[key] == null) continue;
+      final value = json[key];
+      if (value is num) return value;
+      final parsed = num.tryParse('$value');
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
 
   factory SalesInventoryItem.fromJson(Map<String, dynamic> json) => SalesInventoryItem(
-        productId: int.tryParse('${json['productId'] ?? json['ProductId'] ?? json['itemID'] ?? 0}') ?? 0,
-        productName: '${json['productName'] ?? json['ProductName'] ?? json['itemName'] ?? ''}',
-        availableQuantity: int.tryParse('${json['availableQuantity'] ?? json['AvailableQuantity'] ?? json['quantity'] ?? 0}') ?? 0,
-        salePrice: num.tryParse('${json['salePrice'] ?? json['SalePrice'] ?? json['itemPriceDenar'] ?? 0}') ?? 0,
-        notes: json['notes']?.toString(),
+        productId: int.tryParse('${json['productId'] ?? json['ProductId'] ?? json['itemID'] ?? json['ItemID'] ?? 0}') ?? 0,
+        productName: '${json['productName'] ?? json['ProductName'] ?? json['itemName'] ?? json['ItemName'] ?? ''}',
+        availableQuantity: int.tryParse('${json['availableQuantity'] ?? json['AvailableQuantity'] ?? json['quantity'] ?? json['Quantity'] ?? 0}') ?? 0,
+        salePrice: num.tryParse('${json['salePrice'] ?? json['SalePrice'] ?? json['itemPriceDenar'] ?? json['ItemPriceDenar'] ?? 0}') ?? 0,
+        dailyInstallment: _optionalNum(json, const [
+          'dailyInstallment',
+          'DailyInstallment',
+          'amountDayDenar',
+          'AmountDayDenar',
+          'amountDay',
+          'AmountDay',
+        ]),
+        notes: (json['notes'] ?? json['Notes'])?.toString(),
+        storeId: int.tryParse('${json['storeId'] ?? json['StoreId'] ?? json['storeID'] ?? json['StoreID'] ?? ''}'),
       );
 }
 

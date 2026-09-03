@@ -54,6 +54,9 @@ namespace BE_Company.Sales.Services
                 ProductName = item.ItemName ?? string.Empty,
                 AvailableQuantity = item.Quantity ?? 0,
                 SalePrice = Math.Round((decimal)(item.ItemPriceDenar ?? 0), 0, MidpointRounding.AwayFromZero),
+                DailyInstallment = item.AmountDayDenar is double amountDay
+                    ? Math.Round((decimal)amountDay, 0, MidpointRounding.AwayFromZero)
+                    : null,
                 StoreId = item.StoreID,
                 Notes = item.Notes
             };

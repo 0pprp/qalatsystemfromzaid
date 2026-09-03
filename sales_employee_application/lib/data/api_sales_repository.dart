@@ -113,8 +113,8 @@ class ApiSalesRepository implements SalesRepository {
     try {
       final raw = await ApiClient.post('sales/shifts/start');
       return WorkShift.fromJson(Map<String, dynamic>.from(raw as Map));
-    } on ApiException catch (e) {
-      _throw(e);
+    } on ApiException {
+      rethrow;
     }
   }
 

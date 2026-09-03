@@ -3,6 +3,7 @@ import 'package:sales_employee_application/config/app_env.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/screens/home_screen.dart';
 import 'package:sales_employee_application/services/session.dart';
+import 'package:sales_employee_application/tracking/shift_start_debug.dart';
 import 'package:sales_employee_application/tracking/shift_tracking_controller.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 
@@ -32,21 +33,23 @@ class _ShiftScreenState extends State<ShiftScreen> {
       if (shift == null) {
         setState(() {
           _loading = false;
-          _error = controller.lastError ?? 'تعذر بدء الدوام';
+          _error = controller.lastError ?? ShiftStartDebug.generic;
         });
         return;
       }
       if (!mounted) return;
       setState(() => _loading = false);
+      ShiftStartDebug.log('navigating home');
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const HomeScreen()),
       );
-    } catch (e) {
+    } catch (e, st) {
+      ShiftStartDebug.logError('ShiftScreen._start', e, st);
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'تعذر بدء الدوام';
+        _error = ShiftStartDebug.apiFailure(e);
       });
     }
   }

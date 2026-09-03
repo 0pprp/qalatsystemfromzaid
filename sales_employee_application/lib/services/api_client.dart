@@ -5,9 +5,10 @@ import 'package:sales_employee_application/config/app_env.dart';
 import 'package:sales_employee_application/services/session.dart';
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode});
+  ApiException(this.message, {this.statusCode, this.body});
   final String message;
   final int? statusCode;
+  final String? body;
 
   @override
   String toString() => message;
@@ -29,8 +30,13 @@ class ApiClient {
   }
 
   static Uri _uri(String path, [Map<String, String>? query]) {
-    final normalized = path.startsWith('/') ? path.substring(1) : path;
-    return Uri.parse('$_base$normalized').replace(queryParameters: query);
+    var normalized = path.startsWith('/') ? path.substring(1) : path;
+    final base = _base;
+    if (base.toLowerCase().endsWith('/api/') &&
+        normalized.toLowerCase().startsWith('api/')) {
+      normalized = normalized.substring(4);
+    }
+    return Uri.parse('$base$normalized').replace(queryParameters: query);
   }
 
   static dynamic _decode(http.Response response) {
@@ -56,7 +62,11 @@ class ApiClient {
         .get(_uri(path, query), headers: _headers)
         .timeout(const Duration(seconds: 25));
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(_errorMessage(response), statusCode: response.statusCode);
+      throw ApiException(
+        _errorMessage(response),
+        statusCode: response.statusCode,
+        body: response.body,
+      );
     }
     return _decode(response);
   }
@@ -70,7 +80,11 @@ class ApiClient {
         )
         .timeout(const Duration(seconds: 40));
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(_errorMessage(response), statusCode: response.statusCode);
+      throw ApiException(
+        _errorMessage(response),
+        statusCode: response.statusCode,
+        body: response.body,
+      );
     }
     return _decode(response);
   }
@@ -81,7 +95,11 @@ class ApiClient {
         .get(_uri(path), headers: headers)
         .timeout(const Duration(seconds: 60));
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(_errorMessage(response), statusCode: response.statusCode);
+      throw ApiException(
+        _errorMessage(response),
+        statusCode: response.statusCode,
+        body: response.body,
+      );
     }
     return response.bodyBytes;
   }

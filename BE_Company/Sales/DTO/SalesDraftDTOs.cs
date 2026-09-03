@@ -17,6 +17,7 @@ namespace BE_Company.Sales.DTO
         public string ProductName { get; set; } = string.Empty;
         public int AvailableQuantity { get; set; }
         public decimal SalePrice { get; set; }
+        public decimal? DailyInstallment { get; set; }
         public int? StoreId { get; set; }
         public string? Notes { get; set; }
     }

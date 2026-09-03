@@ -18,8 +18,15 @@ class MainActivity : FlutterActivity() {
                         intent.putExtra(LocationForegroundService.EXTRA_INTERVAL, (call.argument<Number>("intervalMs") ?: 12000).toLong())
                         intent.putExtra(LocationForegroundService.EXTRA_DISTANCE, (call.argument<Number>("minDistance") ?: 20).toFloat())
                         intent.putExtra(LocationForegroundService.EXTRA_STATIONARY, (call.argument<Number>("stationaryIntervalMs") ?: 60000).toLong())
-                        startForegroundService(intent)
-                        result.success(true)
+                        try {
+                            android.util.Log.d("SHIFT START", "startForegroundService called")
+                            startForegroundService(intent)
+                            android.util.Log.d("SHIFT START", "startForegroundService returned")
+                            result.success(true)
+                        } catch (e: Exception) {
+                            android.util.Log.e("SHIFT START", "startForegroundService ${e.javaClass.simpleName}: ${e.message}", e)
+                            result.error("FOREGROUND_START", e.message, e.javaClass.simpleName)
+                        }
                     }
                     "stop" -> {
                         val intent = Intent(this, LocationForegroundService::class.java)

@@ -3,13 +3,14 @@ import { onMounted, ref } from 'vue'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { smGet } from '@/composables/salesManagerApi'
+import { MAPBOX_TOKEN } from '@/composables/mapboxToken'
 
 const employees = ref([])
 const employeeId = ref(null)
 const date = ref(new Date().toISOString().slice(0, 10))
 const route = ref(null)
 const events = ref([])
-const token = import.meta.env.VITE_MAPBOX_TOKEN || ''
+const token = MAPBOX_TOKEN
 const mapEl = ref(null)
 let map
 

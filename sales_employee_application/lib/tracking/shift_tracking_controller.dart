@@ -4,11 +4,13 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:sales_employee_application/data/sales_repository.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
+import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:sales_employee_application/tracking/location_store.dart';
 import 'package:sales_employee_application/tracking/sqlite_location_store.dart';
 import 'package:sales_employee_application/tracking/location_sync_engine.dart';
+import 'package:sales_employee_application/tracking/shift_start_debug.dart';
 import 'package:sales_employee_application/tracking/tracking_channel.dart';
 import 'package:sales_employee_application/tracking/tracking_config.dart';
 import 'package:sales_employee_application/tracking/work_shift.dart';
@@ -62,6 +64,7 @@ class ShiftTrackingController {
   bool _internet = true;
   WorkShift? activeShift;
   String? lastError;
+  Object? lastNativeError;
 
   static Future<bool> _defaultPermission() async {
     var status = await Permission.locationWhenInUse.request();
@@ -73,33 +76,97 @@ class ShiftTrackingController {
 
   Future<WorkShift?> startShiftFlow() async {
     lastError = null;
+    lastNativeError = null;
     final allowed = await _requestPermission();
     if (!allowed) {
       await _repo.recordTrackingEvent(null, 'LOCATION_PERMISSION_DENIED');
       lastError = 'يلزم السماح بالموقع لتشغيل الدوام.';
       return null;
     }
+    ShiftStartDebug.log('Permission granted');
     await _repo.recordTrackingEvent(null, 'LOCATION_PERMISSION_GRANTED');
-    final shift = await _repo.startShift();
+    ShiftStartDebug.log('POST shifts/start started');
+    late final WorkShift shift;
+    try {
+      shift = await _repo.startShift();
+      ShiftStartDebug.log('POST shifts/start response');
+    } catch (e, st) {
+      if (e is ApiException) {
+        ShiftStartDebug.log(
+          'POST shifts/start response ${e.statusCode} ${e.message}',
+        );
+      } else {
+        ShiftStartDebug.log('POST shifts/start response ${e.runtimeType}');
+      }
+      ShiftStartDebug.logError('POST shifts/start', e, st);
+      lastError = ShiftStartDebug.apiFailure(e);
+      rethrow;
+    }
+    ShiftStartDebug.log('shiftId received ${shift.shiftId}');
+    ShiftStartDebug.log(
+      'parsed status=${shift.status} hasActiveShift=${shift.hasActiveShift} '
+      'startedAtUtc=${shift.startedAtUtc.toIso8601String()} '
+      'cutoffAtUtc=${shift.cutoffAtUtc.toIso8601String()} '
+      'isPastCutoff=${shift.isPastCutoff()} isActive=${shift.isActive}',
+    );
     if (!shift.isActive) {
-      lastError = 'تعذر بدء الدوام';
+      lastError = ShiftStartDebug.showDetail
+          ? '${ShiftStartDebug.generic}: shift not active status=${shift.status} hasActive=${shift.hasActiveShift}'
+          : ShiftStartDebug.generic;
+      ShiftStartDebug.log('abort before native: shift not active');
       return null;
     }
     try {
+      ShiftStartDebug.log('saving WorkShift locally');
       await Session.saveShift(shift.toJson(), shift.cutoffAtUtc.toIso8601String());
-    } catch (_) {}
-    await attach(shift);
+      ShiftStartDebug.log('local shift saved');
+    } catch (e, st) {
+      ShiftStartDebug.logError('Session.saveShift', e, st);
+    }
+    bool nativeOk;
+    try {
+      ShiftStartDebug.log('invoking native tracking');
+      nativeOk = await attach(shift);
+    } catch (e, st) {
+      ShiftStartDebug.logError('attach/native tracking', e, st);
+      lastError = ShiftStartDebug.trackingFailure(e);
+      rethrow;
+    }
+    if (!nativeOk && ShiftStartDebug.isAndroidDevice) {
+      lastError = ShiftStartDebug.trackingFailure(lastNativeError);
+      return null;
+    }
     return shift;
   }
 
-  Future<void> attach(WorkShift shift) async {
+  Future<bool> attach(WorkShift shift) async {
     activeShift = shift;
     _collecting = !shift.isPastCutoff();
-    await _store.init();
+    ShiftStartDebug.log('attach collecting=$_collecting');
+    try {
+      ShiftStartDebug.log('init location store');
+      await _store.init();
+      ShiftStartDebug.log('location store ready');
+    } catch (e, st) {
+      ShiftStartDebug.logError('location store init', e, st);
+      rethrow;
+    }
+    var nativeOk = true;
     if (_collecting) {
-      final started = await _startNative(shift);
-      if (started) {
-        await _repo.recordTrackingEvent(shift.shiftId, 'GPS_STARTED');
+      ShiftStartDebug.log('startForegroundService called');
+      try {
+        nativeOk = await _startNative(shift);
+        ShiftStartDebug.log('native service ${nativeOk ? 'success' : 'failure'}');
+        if (nativeOk) {
+          ShiftStartDebug.log('native tracking started');
+          await _repo.recordTrackingEvent(shift.shiftId, 'GPS_STARTED');
+        } else {
+          lastNativeError ??= Exception('startForegroundService returned false');
+        }
+      } catch (e, st) {
+        nativeOk = false;
+        lastNativeError = e;
+        ShiftStartDebug.logError('TrackingChannel.start / startForegroundService', e, st);
       }
     }
     _cutoffTimer?.cancel();
@@ -128,6 +195,7 @@ class ShiftTrackingController {
       });
     }
     await _trySync();
+    return nativeOk;
   }
 
   Future<void> restoreIfNeeded() async {

@@ -74,6 +74,7 @@ class MockSalesRepository implements SalesRepository {
         productName: 'ثلاجة سامسونج 18 قدم',
         availableQuantity: _stock[5] ?? 0,
         salePrice: 1500000,
+        dailyInstallment: 25000,
         notes: 'S18',
       ),
       SalesInventoryItem(
@@ -81,6 +82,7 @@ class MockSalesRepository implements SalesRepository {
         productName: 'غسالة إل جي 8 كغم',
         availableQuantity: _stock[8] ?? 0,
         salePrice: 850000,
+        dailyInstallment: 15000,
         notes: 'LG8',
       ),
       SalesInventoryItem(
@@ -88,6 +90,7 @@ class MockSalesRepository implements SalesRepository {
         productName: 'مكيف 1.5 طن',
         availableQuantity: _stock[11] ?? 0,
         salePrice: 500000,
+        dailyInstallment: 10000,
       ),
     ];
   }

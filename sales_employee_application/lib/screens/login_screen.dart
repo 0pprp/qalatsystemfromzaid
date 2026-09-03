@@ -42,16 +42,26 @@ class _LoginScreenState extends State<LoginScreen> {
         Navigator.pushReplacementNamed(context, '/shift');
         return;
       }
-      final data = await ApiClient.post('Auth/Login', body: {
+      final data = await ApiClient.post('Users/Users_LoginEmployee', body: {
         'userName': _userCtrl.text.trim(),
         'password': _passCtrl.text,
-        'city': AppEnv.loginCity(),
       });
       if (data is! Map) {
         _alert('استجابة غير متوقعة من السيرفر');
         return;
       }
-      await Session.saveLogin(Map<String, dynamic>.from(data));
+      final payload = Map<String, dynamic>.from(data);
+      final token = '${payload['token'] ?? payload['Token'] ?? ''}';
+      if (token.isEmpty) {
+        _alert(payload['message']?.toString() ?? 'فشل تسجيل الدخول');
+        return;
+      }
+      await Session.saveLogin({
+        ...payload,
+        'token': token,
+        'userName': _userCtrl.text.trim(),
+        'cityName': AppEnv.loginCityLabel(),
+      });
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/shift');
     } on ApiException catch (e) {

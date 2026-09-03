@@ -4,9 +4,10 @@ import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { locationStatusLabel, shouldMoveMarker, smGet } from '@/composables/salesManagerApi'
+import { MAPBOX_TOKEN } from '@/composables/mapboxToken'
 import { getToken } from '@/services/tokenService'
 
-const token = import.meta.env.VITE_MAPBOX_TOKEN || ''
+const token = MAPBOX_TOKEN
 const employees = ref([])
 const selected = ref(null)
 const mapEl = ref(null)

@@ -4,6 +4,7 @@ import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
+import 'package:sales_employee_application/widgets/inventory_item_info.dart';
 
 class SaleScreen extends StatefulWidget {
   const SaleScreen({super.key});
@@ -185,43 +186,62 @@ class _SaleScreenState extends State<SaleScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('إنشاء عملية بيع')),
       body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: Text('الخطوة ${_step + 1} من 5',
-                  style: const TextStyle(color: AppColors.muted)),
-            ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                children: [_stepBody()],
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
+                child: Text('الخطوة ${_step + 1} من 5',
+                    style: const TextStyle(color: AppColors.muted)),
               ),
-            ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                0,
-                AppSpacing.md,
-                MediaQuery.of(context).viewInsets.bottom + AppSpacing.md,
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, _) {
+                    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+                    return SingleChildScrollView(
+                      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: EdgeInsets.fromLTRB(
+                        AppSpacing.md,
+                        AppSpacing.md,
+                        AppSpacing.md,
+                        AppSpacing.lg + keyboardInset,
+                      ),
+                      child: _stepBody(),
+                    );
+                  },
+                ),
               ),
-              child: Row(
-                children: [
-                  if (_step > 0)
-                    TextButton(onPressed: () => setState(() => _step--), child: const Text('رجوع')),
-                  const Spacer(),
-                  ElevatedButton(
-                    onPressed: _saving ? null : (_step < 4 ? _next : _save),
-                    child: Text(_step < 4
-                        ? 'التالي'
-                        : (_eval == 1 ? 'حفظ الطلب المرفوض' : 'حفظ في المبيعات المعلقة')),
-                  ),
-                ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  AppSpacing.sm,
+                  AppSpacing.md,
+                  AppSpacing.md,
+                ),
+                child: Row(
+                  children: [
+                    if (_step > 0)
+                      TextButton(
+                        onPressed: () => setState(() => _step--),
+                        child: const Text('رجوع'),
+                      ),
+                    const Spacer(),
+                    ElevatedButton(
+                      onPressed: _saving ? null : (_step < 4 ? _next : _save),
+                      child: Text(_step < 4
+                          ? 'التالي'
+                          : (_eval == 1 ? 'حفظ الطلب المرفوض' : 'حفظ في المبيعات المعلقة')),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -268,11 +288,11 @@ class _SaleScreenState extends State<SaleScreen> {
           _field(_name, 'الاسم الكامل *', validator: _req),
           _field(_phone, 'رقم الهاتف *', keyboard: TextInputType.phone, validator: _req),
           _field(_province, 'المحافظة *', validator: _req),
-          _field(_card, 'رقم البطاقة الوطنية *', validator: _req),
+          _field(_card, 'رقم البطاقة الوطنية *', keyboard: TextInputType.number, validator: _req),
           _field(_address, 'العنوان *', validator: _req),
           _field(_landmark, 'أقرب نقطة دالة *', validator: _req),
           _field(_mukhtar, 'اسم المختار *', validator: _req),
-          _field(_ration, 'رقم مركز التموين *', validator: _req),
+          _field(_ration, 'رقم مركز التموين *', keyboard: TextInputType.number, validator: _req),
         ],
       ),
     );
@@ -300,14 +320,14 @@ class _SaleScreenState extends State<SaleScreen> {
           final q = _qty[item.productId] ?? 0;
           final empty = item.availableQuantity <= 0;
           return Card(
-            child: ListTile(
-              title: Text(item.productName, style: const TextStyle(fontWeight: FontWeight.w700)),
-              subtitle: Text(
-                '${MoneyFormat.iqd(item.salePrice)}\n${empty ? 'غير متوفر' : 'المتوفر: ${item.availableQuantity}'}',
-              ),
-              trailing: empty
-                  ? null
-                  : Row(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: InventoryItemInfo(item: item)),
+                  if (!empty)
+                    Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         IconButton(
@@ -325,6 +345,8 @@ class _SaleScreenState extends State<SaleScreen> {
                         ),
                       ],
                     ),
+                ],
+              ),
             ),
           );
         }),
@@ -385,7 +407,7 @@ class _SaleScreenState extends State<SaleScreen> {
   Widget _payStep() {
     return TextField(
       controller: _installment,
-      keyboardType: TextInputType.number,
+      keyboardType: const TextInputType.numberWithOptions(decimal: false),
       decoration: const InputDecoration(
         labelText: 'القسط اليومي *',
         suffixText: 'د.ع',
