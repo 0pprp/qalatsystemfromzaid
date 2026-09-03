@@ -346,9 +346,13 @@ class LocationForegroundService : Service() {
             conn.disconnect()
             if (code in 200..299) {
                 val placeholders = seqs.joinToString(",") { "?" }
+                val args = mutableListOf<Any?>()
+                args.add(sid)
+                args.addAll(seqs)
+
                 db?.execSQL(
                     "UPDATE local_location_points SET sync_status = 'Synced' WHERE shift_id = ? AND device_sequence IN ($placeholders)",
-                    arrayOf(sid, *seqs.toTypedArray())
+                    args.toTypedArray()
                 )
             }
         } catch (_: Exception) {
