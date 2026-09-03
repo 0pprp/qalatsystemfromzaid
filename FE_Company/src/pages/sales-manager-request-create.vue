@@ -1,7 +1,8 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { locationStatusLabel, smGet, smPost } from '@/composables/salesManagerApi'
+import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
+import { locationStatusLabel, smGet, smPost, withCityQuery } from '@/composables/salesManagerApi'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
@@ -12,6 +13,7 @@ const customers = ref([])
 const selectedCustomer = ref(null)
 const isNewCustomer = ref(false)
 const newCustomer = ref({ fullName: '', phone: '', province: '', address: '' })
+const cityValue = ref('')
 const employees = ref([])
 const employeeId = ref(null)
 const notes = ref('')
@@ -19,16 +21,30 @@ const confirm = ref(false)
 
 const selectedEmployee = computed(() => employees.value.find(e => e.employeeId === employeeId.value))
 
-onMounted(async () => {
-  employees.value = await smGet('employees')
-})
+async function loadEmployees() {
+  employeeId.value = null
+  if (!cityValue.value) {
+    employees.value = []
+
+    return
+  }
+  employees.value = await smGet(withCityQuery('employees', cityValue.value))
+}
+
+watch(cityValue, loadEmployees)
 
 async function search() {
   if (query.value.trim().length < 2) return
-  customers.value = await smGet(`customers/search?q=${encodeURIComponent(query.value.trim())}`)
+  customers.value = await smGet(withCityQuery(`customers/search?q=${encodeURIComponent(query.value.trim())}`, cityValue.value))
 }
 
 async function send() {
+  if (!cityValue.value || !employeeId.value) {
+    toast.error('يجب اختيار المحافظة والموظف')
+
+    return
+  }
+
   const customer = isNewCustomer.value
     ? newCustomer.value
     : {
@@ -38,9 +54,13 @@ async function send() {
       address: selectedCustomer.value.address,
     }
 
+  const sameBranch = !selectedCustomer.value?.cityValue
+    || String(selectedCustomer.value.cityValue) === String(cityValue.value)
+
   await smPost('sales-requests', {
+    cityValue: cityValue.value,
     targetEmployeeId: employeeId.value,
-    existingCustomerId: isNewCustomer.value ? null : selectedCustomer.value?.customerId,
+    existingCustomerId: isNewCustomer.value || !sameBranch ? null : selectedCustomer.value?.customerId,
     customer,
     notes: notes.value,
   })
@@ -91,9 +111,9 @@ async function send() {
           <VList>
             <VListItem
               v-for="c in customers"
-              :key="c.customerId"
+              :key="`${c.cityValue || ''}:${c.customerId}`"
               :title="c.fullName"
-              :subtitle="`${c.phone || ''} — ${c.province || ''}`"
+              :subtitle="`${c.phone || ''} — ${c.province || c.branchName || ''}`"
               @click="selectedCustomer = c; isNewCustomer = false"
             />
           </VList>
@@ -126,6 +146,10 @@ async function send() {
           </div>
         </VStepperWindowItem>
         <VStepperWindowItem :value="2">
+          <SalesBranchFilter
+            v-model="cityValue"
+            class="mt-4"
+          />
           <VSelect
             v-model="employeeId"
             :items="employees"
@@ -133,6 +157,7 @@ async function send() {
             item-value="employeeId"
             label="موظف المبيعات"
             class="mt-4"
+            :disabled="!cityValue"
           />
           <div
             v-if="selectedEmployee"
@@ -154,7 +179,7 @@ async function send() {
           <VCard class="mt-4">
             <VCardText>
               <div>الزبون: {{ isNewCustomer ? newCustomer.fullName : selectedCustomer?.fullName }}</div>
-              <div>الموظف: {{ selectedEmployee?.employeeName }}</div>
+              <div>الموظف: {{ selectedEmployee?.employeeName }} — {{ selectedEmployee?.branchName || selectedEmployee?.cityName }}</div>
               <div>الملاحظة: {{ notes }}</div>
             </VCardText>
           </VCard>

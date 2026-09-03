@@ -11,12 +11,18 @@ namespace BE_SalesEmployee.Controllers
         private readonly AdminCitiesService _cities;
         private readonly BranchProxyService _proxy;
         private readonly TokenService _tokens;
+        private readonly SalesManagerAccountService _managerAccount;
 
-        public AuthController(AdminCitiesService cities, BranchProxyService proxy, TokenService tokens)
+        public AuthController(
+            AdminCitiesService cities,
+            BranchProxyService proxy,
+            TokenService tokens,
+            SalesManagerAccountService managerAccount)
         {
             _cities = cities;
             _proxy = proxy;
             _tokens = tokens;
+            _managerAccount = managerAccount;
         }
 
         public class LoginRequest
@@ -24,6 +30,34 @@ namespace BE_SalesEmployee.Controllers
             public string? UserName { get; set; }
             public string? Password { get; set; }
             public string? City { get; set; }
+        }
+
+        [HttpPost("LoginSalesManager")]
+        public IActionResult LoginSalesManager([FromBody] LoginRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.UserName) || string.IsNullOrWhiteSpace(request.Password))
+            {
+                return BadRequest(new { message = "اسم المستخدم وكلمة المرور مطلوبان" });
+            }
+
+            if (!_managerAccount.TryAuthenticate(request.UserName, request.Password))
+            {
+                return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
+            }
+
+            var token = _tokens.CreateCentralManagerToken(_managerAccount.DisplayName, out var expiration);
+            return Ok(new
+            {
+                token,
+                expiration,
+                userId = 0,
+                userName = _managerAccount.DisplayName,
+                userType = "مدير مبيعات",
+                cityLink = "",
+                cityName = "كل المحافظات",
+                cityValue = "",
+                central = true
+            });
         }
 
         [HttpPost("Login")]
@@ -94,7 +128,8 @@ namespace BE_SalesEmployee.Controllers
                 user.UserName,
                 user.UserType,
                 user.CityName,
-                user.CityValue
+                user.CityValue,
+                central = user.IsCentral
             });
         }
     }

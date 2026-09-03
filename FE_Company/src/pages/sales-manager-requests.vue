@@ -1,12 +1,14 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { requestStatusLabel, smGet } from '@/composables/salesManagerApi'
+import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
+import { branchRowKey, requestStatusLabel, smGet, withCityQuery } from '@/composables/salesManagerApi'
 
 const rows = ref([])
 const status = ref('')
+const cityValue = ref('')
 
 async function load() {
-  rows.value = await smGet(`sales-requests${status.value ? `?status=${status.value}` : ''}`)
+  rows.value = await smGet(withCityQuery(`sales-requests${status.value ? `?status=${status.value}` : ''}`, cityValue.value))
 }
 
 onMounted(load)
@@ -23,6 +25,17 @@ onMounted(load)
         + طلب مبيع جديد
       </VBtn>
     </div>
+    <VRow class="mb-3">
+      <VCol
+        cols="12"
+        md="4"
+      >
+        <SalesBranchFilter
+          v-model="cityValue"
+          @change="load"
+        />
+      </VCol>
+    </VRow>
     <VChipGroup
       v-model="status"
       column
@@ -68,15 +81,15 @@ onMounted(load)
     <VRow class="mt-4">
       <VCol
         v-for="row in rows"
-        :key="row.id"
+        :key="branchRowKey(row, 'id')"
         cols="12"
         md="6"
       >
         <VCard>
           <VCardText>
-            <div>طلب #{{ row.id }}</div>
+            <div>طلب #{{ row.id }} — {{ row.branchName || row.cityName }}</div>
             <strong>{{ row.customerName }}</strong>
-            <div>{{ row.targetEmployeeName }} — {{ row.cityName }}</div>
+            <div>{{ row.targetEmployeeName }} — {{ row.branchName || row.cityName }}</div>
             <div>{{ requestStatusLabel[row.status] || row.status }}</div>
             <div class="text-medium-emphasis">
               {{ row.createdAtUtc }}

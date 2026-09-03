@@ -2,8 +2,9 @@
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import { smGet } from '@/composables/salesManagerApi'
+import { smGet, employeeApiPath, withCityQuery } from '@/composables/salesManagerApi'
 import { MAPBOX_TOKEN } from '@/composables/mapboxToken'
+import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import {
   dropBeforePermission,
   lineCollection,
@@ -18,6 +19,7 @@ import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
 const employees = ref([])
+const cityValue = ref('')
 const employeeId = ref(null)
 const date = ref(new Date().toISOString().slice(0, 10))
 const route = ref(null)
@@ -30,14 +32,23 @@ let map
 let resizeObserver
 
 onMounted(async () => {
+  await ensureMap()
+})
+
+async function loadEmployees() {
+  employeeId.value = null
+  if (!cityValue.value) {
+    employees.value = []
+
+    return
+  }
   try {
-    employees.value = await smGet('employees')
+    employees.value = await smGet(withCityQuery('employees', cityValue.value))
   }
   catch {
     toast.error('تعذر تحميل الموظفين')
   }
-  await ensureMap()
-})
+}
 
 onUnmounted(() => {
   resizeObserver?.disconnect()
@@ -215,6 +226,11 @@ async function ensureMap() {
 }
 
 async function loadRoute() {
+  if (!cityValue.value) {
+    toast.warning('اختر المحافظة أولاً')
+
+    return
+  }
   if (!employeeId.value) {
     toast.warning('اختر الموظف أولاً')
 
@@ -224,15 +240,19 @@ async function loadRoute() {
   selectedIndex.value = -1
   clearHighlight()
   try {
-    route.value = await smGet(`employees/${employeeId.value}/route?date=${date.value}`)
-    const events = await smGet(`employees/${employeeId.value}/tracking-events?date=${date.value}`)
+    route.value = await smGet(`${employeeApiPath(cityValue.value, employeeId.value, `/route?date=${date.value}`)}`)
+
+    const events = await smGet(`${employeeApiPath(cityValue.value, employeeId.value, `/tracking-events?date=${date.value}`)}`)
     const raw = route.value?.points || []
     let usable = normalizePoints(dropBeforePermission(raw, events))
     if (!usable.length)
       usable = normalizePoints(raw)
     usable = thinByMeters(usable, 5)
+
     const times = minuteIndex(usable)
+
     minutePoints.value = times
+
     const segments = segmentByTravel(usable)
     const lines = await matchTrackToRoads(segments, token)
 
@@ -268,6 +288,15 @@ async function loadRoute() {
           cols="12"
           md="4"
         >
+          <SalesBranchFilter
+            v-model="cityValue"
+            @change="loadEmployees"
+          />
+        </VCol>
+        <VCol
+          cols="12"
+          md="4"
+        >
           <VSelect
             v-model="employeeId"
             :items="employees"
@@ -275,6 +304,7 @@ async function loadRoute() {
             item-value="employeeId"
             label="الموظف"
             hide-details
+            :disabled="!cityValue"
           />
         </VCol>
         <VCol

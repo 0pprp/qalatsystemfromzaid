@@ -1,12 +1,31 @@
+using BE_Company.Sales.Authorization;
 using BE_Company.Utilities;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 
 public static class JwtConfiguration
 {
+    public const string SmartScheme = "Smart";
+
     public static void ConfigureJwt(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
+        services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = SmartScheme;
+                options.DefaultChallengeScheme = SmartScheme;
+            })
+            .AddPolicyScheme(SmartScheme, SmartScheme, options =>
+            {
+                options.ForwardDefaultSelector = context =>
+                    context.Request.Headers.ContainsKey(SalesGatewayKeyHandler.HeaderName)
+                        ? SalesGatewayKeyHandler.SchemeName
+                        : JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddScheme<AuthenticationSchemeOptions, SalesGatewayKeyHandler>(
+                SalesGatewayKeyHandler.SchemeName,
+                _ => { })
+            .AddJwtBearer(options =>
         {
             options.MapInboundClaims = false;
             options.Events = new JwtBearerEvents

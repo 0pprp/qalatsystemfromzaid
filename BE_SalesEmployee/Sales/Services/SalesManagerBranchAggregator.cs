@@ -1,120 +1,287 @@
-using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BE_SalesEmployee.Services;
 
 namespace BE_SalesEmployee.Sales.Services
 {
     public interface ISalesManagerBranchAggregator
     {
-        Task<(int Status, object? Body)> GetAsync(GatewayUser user, string relativePath, CancellationToken ct);
-        Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string relativePath, string jsonBody, CancellationToken ct);
+        Task<IReadOnlyList<AdminCity>> BranchesAsync(CancellationToken ct);
+        Task<(int Status, object? Body)> GetAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct);
+        Task<(int Status, object? Body)> GetOneAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
+        Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct);
+        Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct);
     }
 
     /// <summary>
-    /// Fans out SalesManager reads to each allowed demo branch CityLink.
-    /// New branches come from LabCities / GetAdmin without frontend changes.
+    /// Fans out Sales Manager reads to GetAdmin sales branches using the
+    /// internal gateway key. Never reuses a city employee JWT.
     /// </summary>
     public sealed class SalesManagerBranchAggregator : ISalesManagerBranchAggregator
     {
+        public static readonly TimeSpan BranchTimeout = TimeSpan.FromSeconds(8);
+
         private readonly AdminCitiesService _cities;
         private readonly BranchProxyService _proxy;
-        private readonly SalesDevelopmentGuard _guard;
 
-        public SalesManagerBranchAggregator(
-            AdminCitiesService cities,
-            BranchProxyService proxy,
-            SalesDevelopmentGuard guard)
+        public SalesManagerBranchAggregator(AdminCitiesService cities, BranchProxyService proxy)
         {
             _cities = cities;
             _proxy = proxy;
-            _guard = guard;
         }
 
-        public async Task<(int Status, object? Body)> GetAsync(GatewayUser user, string relativePath, CancellationToken ct)
+        public Task<IReadOnlyList<AdminCity>> BranchesAsync(CancellationToken ct) =>
+            GetTargetsAsync(null, ct);
+
+        public async Task<(int Status, object? Body)> GetAsync(
+            GatewayUser user,
+            string? cityValue,
+            string companyPath,
+            CancellationToken ct)
         {
-            var targets = await TargetsAsync(ct);
+            var targets = await GetTargetsAsync(cityValue, ct);
             if (targets.Count == 0)
             {
-                return (503, new { message = $"SalesManager is limited to {SalesDevelopmentGuard.AllowedDemoDatabase}." });
+                return (200, Array.Empty<object>());
             }
 
-            if (relativePath.Contains("/employees/", StringComparison.OrdinalIgnoreCase)
-                || relativePath.Contains("/sales/", StringComparison.OrdinalIgnoreCase)
-                || relativePath.Contains("/sales-requests/", StringComparison.OrdinalIgnoreCase))
+            var chunks = await Task.WhenAll(targets.Select(city => FetchArrayAsync(user, city, companyPath, ct)));
+            var merged = new List<JsonNode>();
+            foreach (var chunk in chunks)
             {
-                foreach (var city in targets)
-                {
-                    using var one = await _proxy.SendAuthorizedAsync(city.Link, relativePath, HttpMethod.Get, user.BranchToken, null, ct);
-                    if (one.IsSuccessStatusCode)
-                    {
-                        var raw = await one.Content.ReadAsStringAsync(ct);
-                        return ((int)one.StatusCode, BranchProxyService.TryParseJson(raw));
-                    }
-                }
-            }
-
-            var merged = new List<JsonElement>();
-            object? dashboard = null;
-            foreach (var city in targets)
-            {
-                using var response = await _proxy.SendAuthorizedAsync(city.Link, relativePath, HttpMethod.Get, user.BranchToken, null, ct);
-                var raw = await response.Content.ReadAsStringAsync(ct);
-                if (!response.IsSuccessStatusCode)
-                {
-                    continue;
-                }
-
-                var parsed = BranchProxyService.TryParseJson(raw);
-                if (parsed is JsonElement el && el.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var item in el.EnumerateArray())
-                    {
-                        merged.Add(item.Clone());
-                    }
-                }
-                else if (relativePath.Contains("dashboard", StringComparison.OrdinalIgnoreCase) && parsed != null)
-                {
-                    dashboard = parsed;
-                }
-            }
-
-            if (dashboard != null)
-            {
-                return (200, dashboard);
+                merged.AddRange(chunk);
             }
 
             return (200, merged);
         }
 
-        public async Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string relativePath, string jsonBody, CancellationToken ct)
+        public async Task<(int Status, object? Body)> GetOneAsync(
+            GatewayUser user,
+            string cityValue,
+            string companyPath,
+            CancellationToken ct)
         {
-            var targets = await TargetsAsync(ct);
-            var city = targets.FirstOrDefault(c =>
-                           string.Equals(c.Value, cityValue, StringComparison.OrdinalIgnoreCase)
-                           || string.Equals(c.Name, cityValue, StringComparison.OrdinalIgnoreCase))
-                       ?? targets.FirstOrDefault(c =>
-                           string.Equals(AdminCitiesService.NormalizeLink(c.Link), AdminCitiesService.NormalizeLink(user.CityLink), StringComparison.OrdinalIgnoreCase))
-                       ?? targets.FirstOrDefault();
-            if (city == null)
+            if (string.IsNullOrWhiteSpace(cityValue))
             {
-                return (503, new { message = "لا يوجد فرع Demo متاح." });
+                return (400, new { message = "يجب تحديد المحافظة." });
             }
 
-            using var response = await _proxy.SendAuthorizedAsync(
-                city.Link,
-                relativePath,
-                HttpMethod.Post,
-                user.BranchToken,
-                new StringContent(jsonBody, Encoding.UTF8, "application/json"),
-                ct);
+            var city = await FindAsync(cityValue, ct);
+            if (city == null)
+            {
+                return (404, new { message = "المحافظة غير موجودة." });
+            }
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(BranchTimeout);
+            using var response = await _proxy.SendManagerAsync(
+                city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
             var raw = await response.Content.ReadAsStringAsync(ct);
-            return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : BranchProxyService.TryParseJson(raw));
+            if (!response.IsSuccessStatusCode)
+            {
+                return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : BranchProxyService.TryParseJson(raw));
+            }
+
+            return ((int)response.StatusCode, Stamp(raw, city));
         }
 
-        private async Task<List<AdminCity>> TargetsAsync(CancellationToken ct)
+        public async Task<(int Status, object? Body)> PostAsync(
+            GatewayUser user,
+            string cityValue,
+            string companyPath,
+            string jsonBody,
+            CancellationToken ct)
         {
-            var cities = await _cities.GetCitiesAsync(ct);
-            return cities.Where(c => _guard.IsAllowedDemo(c.Database)).ToList();
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return (400, new { message = "يجب تحديد المحافظة المستهدفة للطلب." });
+            }
+
+            var city = await FindAsync(cityValue, ct);
+            if (city == null)
+            {
+                return (404, new { message = "المحافظة غير موجودة." });
+            }
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(BranchTimeout);
+            using var response = await _proxy.SendManagerAsync(
+                city.Link, companyPath, HttpMethod.Post, jsonBody, user.UserName, cts.Token);
+            var raw = await response.Content.ReadAsStringAsync(ct);
+            return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : Stamp(raw, city) ?? BranchProxyService.TryParseJson(raw));
+        }
+
+        public async Task<(int Status, object? Body)> DashboardAsync(
+            GatewayUser user,
+            string? cityValue,
+            CancellationToken ct)
+        {
+            var targets = await GetTargetsAsync(cityValue, ct);
+            var totals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["employeesOnShift"] = 0,
+                ["employeesOffShift"] = 0,
+                ["liveLocations"] = 0,
+                ["salesToday"] = 0,
+                ["pendingSales"] = 0,
+                ["newSalesRequests"] = 0
+            };
+
+            await Task.WhenAll(targets.Select(async city =>
+            {
+                try
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(BranchTimeout);
+                    using var response = await _proxy.SendManagerAsync(
+                        city.Link, "sales-manager/dashboard", HttpMethod.Get, null, user.UserName, cts.Token);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        return;
+                    }
+
+                    var raw = await response.Content.ReadAsStringAsync(ct);
+                    using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
+                    lock (totals)
+                    {
+                        foreach (var key in totals.Keys.ToList())
+                        {
+                            totals[key] += ReadInt(doc.RootElement, key);
+                        }
+                    }
+                }
+                catch
+                {
+                    // one branch must not fail the dashboard
+                }
+            }));
+
+            return (200, totals);
+        }
+
+        private async Task<List<JsonNode>> FetchArrayAsync(
+            GatewayUser user,
+            AdminCity city,
+            string companyPath,
+            CancellationToken ct)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(BranchTimeout);
+                using var response = await _proxy.SendManagerAsync(
+                    city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return [];
+                }
+
+                var raw = await response.Content.ReadAsStringAsync(ct);
+                var node = JsonNode.Parse(string.IsNullOrWhiteSpace(raw) ? "[]" : raw);
+                if (node is not JsonArray array)
+                {
+                    return [];
+                }
+
+                var rows = new List<JsonNode>();
+                foreach (var item in array)
+                {
+                    if (item is JsonObject obj)
+                    {
+                        StampObject(obj, city);
+                        rows.Add(obj);
+                    }
+                }
+
+                return rows;
+            }
+            catch
+            {
+                return [];
+            }
+        }
+
+        private async Task<IReadOnlyList<AdminCity>> GetTargetsAsync(string? cityValue, CancellationToken ct)
+        {
+            var cities = await _cities.GetSalesBranchesAsync(ct);
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return cities;
+            }
+
+            return cities.Where(c =>
+                string.Equals(c.Value, cityValue, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Name, cityValue, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
+        private async Task<AdminCity?> FindAsync(string cityValue, CancellationToken ct)
+        {
+            var matches = await GetTargetsAsync(cityValue, ct);
+            return matches.FirstOrDefault();
+        }
+
+        private static object? Stamp(string raw, AdminCity city)
+        {
+            try
+            {
+                var node = JsonNode.Parse(raw);
+                if (node is JsonObject obj)
+                {
+                    StampObject(obj, city);
+                    return obj;
+                }
+
+                return BranchProxyService.TryParseJson(raw);
+            }
+            catch (JsonException)
+            {
+                return raw;
+            }
+        }
+
+        private static void StampObject(JsonObject obj, AdminCity city)
+        {
+            obj["cityValue"] = city.Value;
+            obj["cityName"] = city.Name;
+            obj["branchName"] = city.Name;
+            obj["branchDatabase"] = city.Database;
+            obj["branchKey"] = $"{city.Value}:{ReadId(obj)}";
+        }
+
+        private static string ReadId(JsonObject obj)
+        {
+            foreach (var name in new[] { "employeeId", "EmployeeId", "saleId", "SaleId", "id", "Id" })
+            {
+                if (obj.TryGetPropertyValue(name, out var value) && value != null)
+                {
+                    return value.ToString();
+                }
+            }
+
+            return "";
+        }
+
+        private static int ReadInt(JsonElement element, string name)
+        {
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (!string.Equals(prop.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (prop.Value.ValueKind == JsonValueKind.Number && prop.Value.TryGetInt32(out var n))
+                {
+                    return n;
+                }
+
+                if (int.TryParse(prop.Value.ToString(), out var parsed))
+                {
+                    return parsed;
+                }
+            }
+
+            return 0;
         }
     }
 }

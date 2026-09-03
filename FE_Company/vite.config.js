@@ -120,6 +120,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: path => path.replace(/^\/api-defaultdata/, ''),
       },
+      '/sales-gw': {
+        target: 'http://127.0.0.1:5280',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/sales-gw/, ''),
+      },
     },
     watch: {
       ignored: ['**/typed-router.d.ts', '**/auto-imports.d.ts', '**/components.d.ts', '**/.eslintrc-auto-import.json'],

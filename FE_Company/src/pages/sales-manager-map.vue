@@ -3,12 +3,15 @@ import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import { locationStatusLabel, shouldMoveMarker, smGet } from '@/composables/salesManagerApi'
+import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
+import { branchRowKey, locationStatusLabel, shouldMoveMarker, smGet, withCityQuery } from '@/composables/salesManagerApi'
+import { isCentralSalesManager } from '@/composables/useSalesBranches'
 import { MAPBOX_TOKEN } from '@/composables/mapboxToken'
 import { getToken } from '@/services/tokenService'
 
 const token = MAPBOX_TOKEN
 const employees = ref([])
+const cityValue = ref('')
 const selected = ref(null)
 const mapEl = ref(null)
 let map
@@ -25,42 +28,57 @@ function hubUrl() {
 }
 
 function liveEmployees(list) {
-  return (list || []).filter(e => e.shiftStatus === 'Active' && e.lastLatitude != null && e.lastLongitude != null)
+  return (list || []).filter(e => e.lastLatitude != null && e.lastLongitude != null)
+}
+
+function markerKey(row) {
+  return branchRowKey(row)
+}
+
+function popupHtml(row) {
+  return `<div dir="rtl">
+    <b>${row.employeeName || ''}</b><br>
+    الفرع: ${row.branchName || row.cityName || ''}<br>
+    آخر تحديث: ${row.lastLocationAt || '—'}<br>
+    الدوام: ${row.shiftStatus || '—'}<br>
+    التتبع: ${locationStatusLabel[row.locationStatus] || row.locationStatus || '—'}
+  </div>`
 }
 
 function upsertMarker(row) {
   if (!map || row.lastLatitude == null)
     return
-  const prev = lastCaptured.get(row.employeeId)
+  const key = markerKey(row)
+  const prev = lastCaptured.get(key)
   if (!shouldMoveMarker(prev, row.lastLocationAt))
     return
-  lastCaptured.set(row.employeeId, row.lastLocationAt)
+  lastCaptured.set(key, row.lastLocationAt)
 
   const lngLat = [row.lastLongitude, row.lastLatitude]
-  if (markers.has(row.employeeId)) {
-    markers.get(row.employeeId).setLngLat(lngLat)
+  if (markers.has(key)) {
+    markers.get(key).setLngLat(lngLat).getPopup()?.setHTML(popupHtml(row))
 
     return
   }
 
   const marker = new mapboxgl.Marker().setLngLat(lngLat).setPopup(
-    new mapboxgl.Popup().setHTML(`<b>${row.employeeName}</b>`),
+    new mapboxgl.Popup().setHTML(popupHtml(row)),
   ).addTo(map)
 
   marker.getElement().addEventListener('click', () => { selected.value = row })
-  markers.set(row.employeeId, marker)
+  markers.set(key, marker)
 }
 
 function applyLiveUpdate(body) {
   if (!body?.employeeId)
-    return
-  if (!shouldMoveMarker(lastCaptured.get(body.employeeId), body.capturedAt))
     return
 
   const row = {
     employeeId: body.employeeId,
     employeeName: body.employeeName,
     cityName: body.cityName,
+    cityValue: body.cityValue,
+    branchName: body.cityName,
     shiftStatus: 'Active',
     lastLatitude: body.latitude,
     lastLongitude: body.longitude,
@@ -68,7 +86,11 @@ function applyLiveUpdate(body) {
     locationStatus: 'Live',
   }
 
-  const idx = employees.value.findIndex(e => e.employeeId === body.employeeId)
+  const key = markerKey(row)
+  if (!shouldMoveMarker(lastCaptured.get(key), body.capturedAt))
+    return
+
+  const idx = employees.value.findIndex(e => branchRowKey(e) === key)
   if (idx >= 0)
     employees.value.splice(idx, 1, { ...employees.value[idx], ...row })
   else
@@ -78,13 +100,16 @@ function applyLiveUpdate(body) {
 }
 
 async function load() {
-  const latest = liveEmployees(await smGet('employees'))
+  const latest = liveEmployees(await smGet(withCityQuery('employees', cityValue.value)))
 
   employees.value = latest
   latest.forEach(upsertMarker)
 }
 
 async function connectSignalR() {
+  if (isCentralSalesManager())
+    return
+
   connection = new HubConnectionBuilder()
     .withUrl(hubUrl(), {
       accessTokenFactory: () => getToken() || '',
@@ -139,6 +164,17 @@ onUnmounted(() => {
     <h4 class="mb-4">
       الخريطة الحية
     </h4>
+    <VRow class="mb-3">
+      <VCol
+        cols="12"
+        md="4"
+      >
+        <SalesBranchFilter
+          v-model="cityValue"
+          @change="load"
+        />
+      </VCol>
+    </VRow>
     <div
       v-if="!token"
       class="mb-3 text-medium-emphasis"
@@ -163,10 +199,10 @@ onUnmounted(() => {
       <tbody>
         <tr
           v-for="row in employees"
-          :key="row.employeeId"
+          :key="branchRowKey(row)"
         >
           <td>{{ row.employeeName }}</td>
-          <td>{{ row.cityName }}</td>
+          <td>{{ row.branchName || row.cityName }}</td>
           <td>{{ row.lastLocationAt }}</td>
           <td>{{ row.shiftStatus }} / {{ locationStatusLabel[row.locationStatus] }}</td>
           <td>
@@ -187,9 +223,9 @@ onUnmounted(() => {
     >
       <VCardText>
         <div><strong>{{ selected.employeeName }}</strong></div>
-        <div>{{ selected.cityName }}</div>
+        <div>{{ selected.branchName || selected.cityName }}</div>
         <div>{{ selected.lastLocationAt }}</div>
-        <div>{{ selected.shiftStatus }}</div>
+        <div>{{ selected.shiftStatus }} / {{ locationStatusLabel[selected.locationStatus] }}</div>
       </VCardText>
     </VCard>
   </div>

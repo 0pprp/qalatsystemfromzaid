@@ -1,9 +1,11 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { smGet } from '@/composables/salesManagerApi'
+import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
+import { smGet, withCityQuery } from '@/composables/salesManagerApi'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
+const cityValue = ref('')
 
 const cards = ref({
   employeesOnShift: 0,
@@ -14,14 +16,16 @@ const cards = ref({
   newSalesRequests: 0,
 })
 
-onMounted(async () => {
+async function load() {
   try {
-    cards.value = await smGet('dashboard')
+    cards.value = await smGet(withCityQuery('dashboard', cityValue.value))
   }
   catch {
     toast.error('تعذر تحميل نظرة عامة')
   }
-})
+}
+
+onMounted(load)
 </script>
 
 <template>
@@ -29,6 +33,17 @@ onMounted(async () => {
     <h4 class="mb-4">
       نظرة عامة — إدارة المبيعات
     </h4>
+    <VRow class="mb-4">
+      <VCol
+        cols="12"
+        md="4"
+      >
+        <SalesBranchFilter
+          v-model="cityValue"
+          @change="load"
+        />
+      </VCol>
+    </VRow>
     <VRow>
       <VCol
         cols="12"

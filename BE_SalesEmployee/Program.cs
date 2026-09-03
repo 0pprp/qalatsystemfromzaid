@@ -16,6 +16,7 @@ builder.Services.AddHttpClient<BranchProxyService>(client =>
     client.Timeout = TimeSpan.FromSeconds(20);
 });
 builder.Services.AddSingleton<TokenService>();
+builder.Services.AddSingleton<SalesManagerAccountService>();
 builder.Services.AddSingleton<SalesDevelopmentGuard>();
 builder.Services.AddScoped<IGlobalCustomerSearchService, GatewayGlobalCustomerSearchService>();
 builder.Services.AddScoped<ISalesManagerBranchAggregator, SalesManagerBranchAggregator>();

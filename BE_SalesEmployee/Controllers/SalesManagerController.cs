@@ -4,7 +4,6 @@ using BE_SalesEmployee.Sales.Services;
 using BE_SalesEmployee.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 
 namespace BE_SalesEmployee.Controllers
 {
@@ -20,84 +19,126 @@ namespace BE_SalesEmployee.Controllers
             _aggregator = aggregator;
         }
 
+        [HttpGet("branches")]
+        public async Task<IActionResult> Branches(CancellationToken ct)
+        {
+            var rows = await _aggregator.BranchesAsync(ct);
+            return Ok(rows.Select(c => new
+            {
+                value = c.Value,
+                name = c.Name,
+                database = c.Database
+            }));
+        }
+
         [HttpGet("dashboard")]
-        public Task<IActionResult> Dashboard(CancellationToken ct) =>
-            ForwardGet("sales-manager/dashboard", ct);
+        public async Task<IActionResult> Dashboard([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.DashboardAsync(user, cityValue, ct);
+            return StatusCode(status, payload);
+        }
 
         [HttpGet("employees")]
-        public Task<IActionResult> Employees([FromQuery] string? cityValue, [FromQuery] string? shiftStatus, [FromQuery] string? locationStatus, CancellationToken ct) =>
-            ForwardGet($"sales-manager/employees{Query(cityValue, shiftStatus, locationStatus)}", ct);
+        public Task<IActionResult> Employees(
+            [FromQuery] string? cityValue,
+            [FromQuery] string? shiftStatus,
+            [FromQuery] string? locationStatus,
+            CancellationToken ct)
+        {
+            var q = Query(("cityValue", null), ("shiftStatus", shiftStatus), ("locationStatus", locationStatus));
+            return ListAsync(cityValue, "sales-manager/employees" + q, ct);
+        }
 
-        [HttpGet("employees/{employeeId:int}")]
-        public Task<IActionResult> Employee(int employeeId, CancellationToken ct) =>
-            ForwardGet($"sales-manager/employees/{employeeId}", ct);
+        [HttpGet("employees/{cityValue}/{employeeId:int}")]
+        public Task<IActionResult> Employee(string cityValue, int employeeId, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/employees/{employeeId}", ct);
 
-        [HttpGet("employees/{employeeId:int}/route")]
-        public Task<IActionResult> Route(int employeeId, [FromQuery] DateTime? date, CancellationToken ct) =>
-            ForwardGet($"sales-manager/employees/{employeeId}/route{(date == null ? "" : $"?date={date:yyyy-MM-dd}")}", ct);
+        [HttpGet("employees/{cityValue}/{employeeId:int}/route")]
+        public Task<IActionResult> Route(string cityValue, int employeeId, [FromQuery] DateTime? date, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/employees/{employeeId}/route{(date == null ? "" : $"?date={date:yyyy-MM-dd}")}", ct);
 
-        [HttpGet("employees/{employeeId:int}/tracking-events")]
-        public Task<IActionResult> Events(int employeeId, [FromQuery] DateTime? date, CancellationToken ct) =>
-            ForwardGet($"sales-manager/employees/{employeeId}/tracking-events{(date == null ? "" : $"?date={date:yyyy-MM-dd}")}", ct);
+        [HttpGet("employees/{cityValue}/{employeeId:int}/tracking-events")]
+        public Task<IActionResult> Events(string cityValue, int employeeId, [FromQuery] DateTime? date, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/employees/{employeeId}/tracking-events{(date == null ? "" : $"?date={date:yyyy-MM-dd}")}", ct);
 
         [HttpGet("sales")]
-        public Task<IActionResult> Sales([FromQuery] string? cityValue, [FromQuery] int? employeeId, [FromQuery] string? status, [FromQuery] DateTime? date, CancellationToken ct)
+        public Task<IActionResult> Sales(
+            [FromQuery] string? cityValue,
+            [FromQuery] int? employeeId,
+            [FromQuery] string? status,
+            [FromQuery] DateTime? date,
+            CancellationToken ct)
         {
-            var q = new List<string>();
-            if (!string.IsNullOrWhiteSpace(cityValue)) q.Add($"cityValue={Uri.EscapeDataString(cityValue)}");
-            if (employeeId != null) q.Add($"employeeId={employeeId}");
-            if (!string.IsNullOrWhiteSpace(status)) q.Add($"status={Uri.EscapeDataString(status)}");
-            if (date != null) q.Add($"date={date:yyyy-MM-dd}");
-            var suffix = q.Count == 0 ? "" : "?" + string.Join("&", q);
-            return ForwardGet("sales-manager/sales" + suffix, ct);
+            var q = Query(
+                ("employeeId", employeeId?.ToString()),
+                ("status", status),
+                ("date", date?.ToString("yyyy-MM-dd")));
+            return ListAsync(cityValue, "sales-manager/sales" + q, ct);
         }
 
-        [HttpGet("sales/{saleId:int}")]
-        public Task<IActionResult> Sale(int saleId, CancellationToken ct) =>
-            ForwardGet($"sales-manager/sales/{saleId}", ct);
+        [HttpGet("sales/{cityValue}/{saleId:int}")]
+        public Task<IActionResult> Sale(string cityValue, int saleId, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/sales/{saleId}", ct);
 
         [HttpGet("customers/search")]
-        public Task<IActionResult> Search([FromQuery] string? q, CancellationToken ct) =>
-            ForwardGet($"sales-manager/customers/search?q={Uri.EscapeDataString(q ?? "")}", ct);
+        public Task<IActionResult> Search([FromQuery] string? q, [FromQuery] string? cityValue, CancellationToken ct) =>
+            ListAsync(cityValue, $"sales-manager/customers/search?q={Uri.EscapeDataString(q ?? "")}", ct);
 
         [HttpGet("sales-requests")]
-        public Task<IActionResult> Requests([FromQuery] string? cityValue, [FromQuery] int? employeeId, [FromQuery] string? status, [FromQuery] DateTime? date, CancellationToken ct)
+        public Task<IActionResult> Requests(
+            [FromQuery] string? cityValue,
+            [FromQuery] int? employeeId,
+            [FromQuery] string? status,
+            [FromQuery] DateTime? date,
+            CancellationToken ct)
         {
-            var q = new List<string>();
-            if (!string.IsNullOrWhiteSpace(cityValue)) q.Add($"cityValue={Uri.EscapeDataString(cityValue)}");
-            if (employeeId != null) q.Add($"employeeId={employeeId}");
-            if (!string.IsNullOrWhiteSpace(status)) q.Add($"status={Uri.EscapeDataString(status)}");
-            if (date != null) q.Add($"date={date:yyyy-MM-dd}");
-            var suffix = q.Count == 0 ? "" : "?" + string.Join("&", q);
-            return ForwardGet("sales-manager/sales-requests" + suffix, ct);
+            var q = Query(
+                ("employeeId", employeeId?.ToString()),
+                ("status", status),
+                ("date", date?.ToString("yyyy-MM-dd")));
+            return ListAsync(cityValue, "sales-manager/sales-requests" + q, ct);
         }
 
-        [HttpGet("sales-requests/{id:int}")]
-        public Task<IActionResult> RequestDetails(int id, CancellationToken ct) =>
-            ForwardGet($"sales-manager/sales-requests/{id}", ct);
+        [HttpGet("sales-requests/{cityValue}/{id:int}")]
+        public Task<IActionResult> RequestDetails(string cityValue, int id, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/sales-requests/{id}", ct);
 
         [HttpPost("sales-requests")]
         public async Task<IActionResult> Create([FromBody] JsonElement body, CancellationToken ct)
         {
             var user = TokenService.FromPrincipal(User);
-            var city = Read(body, "cityValue", "CityValue") ?? user.CityValue;
-            var (status, payload) = await _aggregator.PostAsync(user, city ?? "", "sales-manager/sales-requests", body.GetRawText(), ct);
+            var city = Read(body, "cityValue", "CityValue");
+            if (string.IsNullOrWhiteSpace(city))
+            {
+                return BadRequest(new { message = "يجب تحديد المحافظة المستهدفة للطلب." });
+            }
+
+            var (status, payload) = await _aggregator.PostAsync(
+                user, city, "sales-manager/sales-requests", body.GetRawText(), ct);
             return StatusCode(status, payload);
         }
 
-        private async Task<IActionResult> ForwardGet(string path, CancellationToken ct)
+        private async Task<IActionResult> ListAsync(string? cityValue, string companyPath, CancellationToken ct)
         {
             var user = TokenService.FromPrincipal(User);
-            var (status, payload) = await _aggregator.GetAsync(user, path, ct);
+            var (status, payload) = await _aggregator.GetAsync(user, cityValue, companyPath, ct);
             return StatusCode(status, payload);
         }
 
-        private static string Query(string? city, string? shift, string? location)
+        private async Task<IActionResult> OneAsync(string cityValue, string companyPath, CancellationToken ct)
         {
-            var q = new List<string>();
-            if (!string.IsNullOrWhiteSpace(city)) q.Add($"cityValue={Uri.EscapeDataString(city)}");
-            if (!string.IsNullOrWhiteSpace(shift)) q.Add($"shiftStatus={Uri.EscapeDataString(shift)}");
-            if (!string.IsNullOrWhiteSpace(location)) q.Add($"locationStatus={Uri.EscapeDataString(location)}");
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetOneAsync(user, cityValue, companyPath, ct);
+            return StatusCode(status, payload);
+        }
+
+        private static string Query(params (string Name, string? Value)[] parts)
+        {
+            var q = parts
+                .Where(p => !string.IsNullOrWhiteSpace(p.Value))
+                .Select(p => $"{p.Name}={Uri.EscapeDataString(p.Value!)}")
+                .ToList();
             return q.Count == 0 ? "" : "?" + string.Join("&", q);
         }
 

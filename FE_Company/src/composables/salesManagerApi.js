@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { getAuthHeaders } from '@/services/tokenService'
+import { isCentralSalesManager, salesGatewayBase } from '@/composables/useSalesBranches'
 
 export function parseUtcMillis(value) {
   if (value == null || value === '')
@@ -29,7 +30,26 @@ export function shouldMoveMarker(currentCapturedAt, incomingCapturedAt) {
 }
 
 export function salesManagerBase() {
+  if (isCentralSalesManager())
+    return `${salesGatewayBase()}sales-manager/`
+
   return `${localStorage.getItem('LinkCity') || ''}sales-manager/`
+}
+
+export function withCityQuery(path, cityValue) {
+  if (!cityValue)
+    return path
+  const join = path.includes('?') ? '&' : '?'
+
+  return `${path}${join}cityValue=${encodeURIComponent(cityValue)}`
+}
+
+export function employeeApiPath(cityValue, employeeId, suffix = '') {
+  return `employees/${encodeURIComponent(cityValue)}/${employeeId}${suffix}`
+}
+
+export function branchRowKey(row, idField = 'employeeId') {
+  return `${row.cityValue || row.branchName || ''}:${row[idField]}`
 }
 
 export async function smGet(path) {

@@ -107,6 +107,35 @@ namespace BE_SalesEmployee.Services
             return cities;
         }
 
+        public static bool IsExcludedSalesBranch(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return true;
+            }
+
+            return name.Contains("قانونية الشركة", StringComparison.Ordinal)
+                   || name.Contains("تجريبي", StringComparison.Ordinal)
+                   || name.Contains("الشهري", StringComparison.Ordinal);
+        }
+
+        public async Task<List<AdminCity>> GetSalesBranchesAsync(CancellationToken ct = default)
+        {
+            var cities = await GetCitiesAsync(ct);
+            var requireDemo = _configuration.GetValue("SalesManagement:RequireDemoDatabase", true);
+            if (requireDemo)
+            {
+                var allowed = _configuration["SalesManagement:AllowedDemoDatabase"] ?? "DatabaseCompanyNajaf_DEMO";
+                return cities.Where(c =>
+                    string.Equals(c.Database, allowed, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(c.Link)).ToList();
+            }
+
+            return cities.Where(c =>
+                !string.IsNullOrWhiteSpace(c.Link)
+                && !IsExcludedSalesBranch(c.Name)).ToList();
+        }
+
         public async Task<AdminCity?> FindByValueAsync(string? value)
         {
             var cities = await GetCitiesAsync();

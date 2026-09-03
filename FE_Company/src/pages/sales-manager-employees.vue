@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { locationStatusLabel, smGet } from '@/composables/salesManagerApi'
+import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
+import { branchRowKey, locationStatusLabel, smGet, withCityQuery } from '@/composables/salesManagerApi'
 
 const rows = ref([])
 const cityValue = ref('')
@@ -8,9 +9,11 @@ const shiftStatus = ref('')
 
 async function load() {
   const q = []
-  if (cityValue.value) q.push(`cityValue=${encodeURIComponent(cityValue.value)}`)
-  if (shiftStatus.value) q.push(`shiftStatus=${encodeURIComponent(shiftStatus.value)}`)
-  rows.value = await smGet(`employees${q.length ? `?${q.join('&')}` : ''}`)
+  if (shiftStatus.value)
+    q.push(`shiftStatus=${encodeURIComponent(shiftStatus.value)}`)
+  const path = `employees${q.length ? `?${q.join('&')}` : ''}`
+
+  rows.value = await smGet(withCityQuery(path, cityValue.value))
 }
 
 onMounted(load)
@@ -26,11 +29,9 @@ onMounted(load)
         cols="12"
         md="4"
       >
-        <VTextField
+        <SalesBranchFilter
           v-model="cityValue"
-          label="الفرع"
-          hide-details
-          @keyup.enter="load"
+          @change="load"
         />
       </VCol>
       <VCol
@@ -57,10 +58,10 @@ onMounted(load)
       <tbody>
         <tr
           v-for="row in rows"
-          :key="row.employeeId"
+          :key="branchRowKey(row)"
         >
           <td>{{ row.employeeName }}</td>
-          <td>{{ row.cityName }}</td>
+          <td>{{ row.branchName || row.cityName }}</td>
           <td>{{ row.shiftStatus }}</td>
           <td>{{ locationStatusLabel[row.locationStatus] || row.locationStatus }}</td>
           <td>{{ row.lastLocationAt || '—' }}</td>

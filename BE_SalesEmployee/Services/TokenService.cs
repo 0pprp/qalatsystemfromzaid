@@ -14,6 +14,31 @@ namespace BE_SalesEmployee.Services
             _key = configuration["Jwt:Key"] ?? "SalesEmployeeGwSigningKey-2026-ChangeMe!!";
         }
 
+        public const string CentralClaim = "Central";
+
+        public string CreateCentralManagerToken(string userName, out DateTime expiration)
+        {
+            var claims = new List<Claim>
+            {
+                new("UserID", "0"),
+                new("UserName", userName),
+                new("UserType", "مدير مبيعات"),
+                new("CityLink", ""),
+                new("CityName", "كل المحافظات"),
+                new("CityValue", ""),
+                new(CentralClaim, "true")
+            };
+            var credentials = new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_key)),
+                SecurityAlgorithms.HmacSha256);
+            expiration = DateTime.UtcNow.AddHours(24);
+            var token = new JwtSecurityToken(
+                claims: claims,
+                expires: expiration,
+                signingCredentials: credentials);
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
         public string CreateToken(
             string userId,
             string userName,
@@ -55,7 +80,8 @@ namespace BE_SalesEmployee.Services
                 CityLink = user.FindFirst("CityLink")?.Value ?? "",
                 CityName = user.FindFirst("CityName")?.Value ?? "",
                 CityValue = user.FindFirst("CityValue")?.Value ?? "",
-                BranchToken = user.FindFirst("BranchToken")?.Value ?? ""
+                BranchToken = user.FindFirst("BranchToken")?.Value ?? "",
+                IsCentral = string.Equals(user.FindFirst("Central")?.Value, "true", StringComparison.OrdinalIgnoreCase)
             };
         }
     }
@@ -69,5 +95,6 @@ namespace BE_SalesEmployee.Services
         public string CityName { get; set; } = "";
         public string CityValue { get; set; } = "";
         public string BranchToken { get; set; } = "";
+        public bool IsCentral { get; set; }
     }
 }

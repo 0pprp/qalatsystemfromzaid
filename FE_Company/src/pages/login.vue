@@ -4,6 +4,7 @@ import AppTextField from "@core/components/app-form-elements/AppTextField.vue"
 import { jwtDecode } from 'jwt-decode'
 import { useTheme } from 'vuetify'
 import { useCities, isLocalLab, isDemo, LOCAL_API, DEMO_API } from '@/composables/useCities'
+import { salesGatewayBase } from '@/composables/useSalesBranches'
 
 // Import assets
 import bgImage from '@images/background.png'
@@ -45,9 +46,36 @@ async function login() {
   if (validForm.valid === true) {
     loginLoadingBtn.value = true
 
+    try {
+      const gatewayRes = await fetch(`${salesGatewayBase()}Auth/LoginSalesManager`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form.value),
+      }).then(res => res.json()).catch(() => null)
+
+      if (gatewayRes?.token && (gatewayRes.userType === 'مدير مبيعات' || gatewayRes.central)) {
+        localStorage.setItem('Token', gatewayRes.token)
+        localStorage.setItem('Expiration', gatewayRes.expiration)
+        localStorage.setItem('UserID', String(gatewayRes.userId ?? 0))
+        localStorage.setItem('UserName', gatewayRes.userName || form.value.userName)
+        localStorage.setItem('UserType', 'مدير مبيعات')
+        localStorage.setItem('SalesManagerScope', 'central')
+        localStorage.setItem('LinkCity', salesGatewayBase())
+        localStorage.setItem('CityName', 'كل المحافظات')
+        localStorage.removeItem('Database')
+        loginLoadingBtn.value = false
+        router.push('/sales-manager-dashboard')
+
+        return
+      }
+    }
+    catch {
+      // fall through to city accountant login
+    }
+
     if (!selectCity.value) {
       showAlert.value = true
-      errorMessage.value = "يجب اختيار المحافظة"
+      errorMessage.value = 'يجب اختيار المحافظة'
       loginLoadingBtn.value = false
 
       return
@@ -106,6 +134,7 @@ async function login() {
         localStorage.setItem("CityName", cityName)
         localStorage.setItem("Password", form.value.password)
         localStorage.setItem("Database", database)
+        localStorage.removeItem('SalesManagerScope')
 
         router.push(userType === 'مدير مبيعات' ? '/sales-manager-dashboard' : '/')
       }
@@ -184,8 +213,8 @@ const isPasswordVisible = ref(false)
                 item-title="name"
                 item-value="value"
                 label="اختر المحافظة"
-                placeholder="المحافظة"
-                :rules="[v => !!v || 'هذا الحقل مطلوب']"
+                placeholder="مطلوبة للمحاسب — اختيارية لمدير المبيعات"
+                :rules="[]"
                 variant="outlined"
                 density="comfortable"
                 color="primary"

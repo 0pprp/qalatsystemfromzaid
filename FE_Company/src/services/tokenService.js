@@ -16,6 +16,10 @@ export function removeLocalStorage() {
   localStorage.removeItem('UserType')
   localStorage.removeItem('Image')
   localStorage.removeItem('FullName')
+  localStorage.removeItem('SalesManagerScope')
+  localStorage.removeItem('LinkCity')
+  localStorage.removeItem('CityName')
+  localStorage.removeItem('Database')
 }
 
 export function isTokenExpired() {
