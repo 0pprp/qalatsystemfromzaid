@@ -1,6 +1,7 @@
 using BE_Company.Sales.Authorization;
 using BE_Company.Sales.DTO;
 using BE_Company.Sales.Services;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -22,6 +23,8 @@ namespace BE_Company.Sales.Controllers
         private readonly ISalesLocationIngestService _locations;
         private readonly ISalesRequestService _requests;
         private readonly IIraqClock _clock;
+        private readonly CustomerDirectoryService _directory;
+        private readonly IConfiguration _configuration;
 
         public SalesController(
             SalesDevelopmentGuard guard,
@@ -34,7 +37,9 @@ namespace BE_Company.Sales.Controllers
             ISalesShiftService shifts,
             ISalesLocationIngestService locations,
             ISalesRequestService requests,
-            IIraqClock clock)
+            IIraqClock clock,
+            CustomerDirectoryService directory,
+            IConfiguration configuration)
         {
             _guard = guard;
             _identity = identity;
@@ -47,6 +52,8 @@ namespace BE_Company.Sales.Controllers
             _locations = locations;
             _requests = requests;
             _clock = clock;
+            _directory = directory;
+            _configuration = configuration;
         }
 
         [Authorize(Policy = SalesPolicies.AnySales)]
@@ -75,6 +82,34 @@ namespace BE_Company.Sales.Controllers
                 Role = identity.Role,
                 IsSalesShiftStarted = started
             });
+        }
+
+        [AllowAnonymous]
+        [HttpGet("customers/directory")]
+        public async Task<ActionResult<IEnumerable<SalesCustomerSearchDTO>>> DirectorySearch(
+            [FromQuery] string? q,
+            CancellationToken ct)
+        {
+            var query = (q ?? string.Empty).Trim();
+            if (query.Length < DemoGlobalCustomerSearchService.MinimumQueryLength)
+            {
+                return BadRequest(new { message = "اكتب حرفين على الأقل للبحث" });
+            }
+
+            if (!await CanReadCustomerDirectoryAsync())
+            {
+                return Unauthorized();
+            }
+
+            var rows = await _directory.SearchAsync(query, ct);
+            return Ok(rows.Select(r => new
+            {
+                r.CustomerId,
+                r.FullName,
+                r.Phone,
+                r.Province,
+                r.SalePrice
+            }));
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
@@ -511,6 +546,27 @@ namespace BE_Company.Sales.Controllers
                 ? value
                 : DateTime.SpecifyKind(value, DateTimeKind.Utc);
             return IraqTimeService.ToIraq(instant).Date == iraqDate.Date;
+        }
+
+        private async Task<bool> CanReadCustomerDirectoryAsync()
+        {
+            var expected = _configuration["SalesManagement:DirectorySearchKey"];
+            if (!string.IsNullOrWhiteSpace(expected)
+                && Request.Headers.TryGetValue("X-Sales-Directory-Key", out var key)
+                && string.Equals(key.ToString(), expected, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var result = await HttpContext.AuthenticateAsync();
+            if (!result.Succeeded)
+            {
+                return false;
+            }
+
+            var userType = HttpContext.Items["UserType"] as string
+                           ?? result.Principal?.FindFirst("UserType")?.Value;
+            return SalesRoles.IsAnySales(userType);
         }
 
         private async Task<ActionResult?> BlockIfNotDemo(CancellationToken ct)

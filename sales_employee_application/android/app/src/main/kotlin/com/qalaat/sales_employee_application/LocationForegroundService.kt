@@ -352,7 +352,10 @@ class LocationForegroundService : Service() {
 
                 db?.execSQL(
                     "UPDATE local_location_points SET sync_status = 'Synced' WHERE shift_id = ? AND device_sequence IN ($placeholders)",
-                    args.toTypedArray()
+buildList<Any?> {
+                        add(sid)
+                        seqs.forEach { add(it) }
+                    }.toTypedArray()
                 )
             }
         } catch (_: Exception) {
@@ -373,3 +376,6 @@ class LocationForegroundService : Service() {
         @Volatile var running: Boolean = false
     }
 }
+
+
+

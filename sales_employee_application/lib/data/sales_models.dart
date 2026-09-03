@@ -1,3 +1,6 @@
+import 'package:sales_employee_application/config/app_env.dart';
+import 'package:sales_employee_application/services/session.dart';
+
 class SalesMe {
   SalesMe({
     required this.employeeId,
@@ -38,6 +41,10 @@ class SalesCustomer {
     this.nearestLandmark,
     this.mukhtarName,
     this.rationCenterNumber,
+    this.sourceBranchValue,
+    this.sourceBranchName,
+    this.sourceDatabase,
+    this.sourceApiLink,
   });
 
   final int customerId;
@@ -50,6 +57,42 @@ class SalesCustomer {
   final String? nearestLandmark;
   final String? mukhtarName;
   final String? rationCenterNumber;
+  final int? sourceBranchValue;
+  final String? sourceBranchName;
+  final String? sourceDatabase;
+  final String? sourceApiLink;
+
+  bool get isForeignBranch {
+    final link = sourceApiLink;
+    if (link == null || link.isEmpty) return false;
+    final mine = Session.apiBase ?? AppEnv.apiBase();
+    if (mine.isEmpty) return true;
+    return AppEnv.normalizeBase(link) != AppEnv.normalizeBase(mine);
+  }
+
+  SalesCustomer copyWithBranch({
+    required int sourceBranchValue,
+    required String sourceBranchName,
+    required String sourceDatabase,
+    required String sourceApiLink,
+  }) {
+    return SalesCustomer(
+      customerId: customerId,
+      fullName: fullName,
+      phone: phone,
+      province: province,
+      salePrice: salePrice,
+      nationalCardNumber: nationalCardNumber,
+      address: address,
+      nearestLandmark: nearestLandmark,
+      mukhtarName: mukhtarName,
+      rationCenterNumber: rationCenterNumber,
+      sourceBranchValue: sourceBranchValue,
+      sourceBranchName: sourceBranchName,
+      sourceDatabase: sourceDatabase,
+      sourceApiLink: sourceApiLink,
+    );
+  }
 
   factory SalesCustomer.fromJson(Map<String, dynamic> json) => SalesCustomer(
         customerId: int.tryParse('${json['customerId'] ?? json['CustomerId'] ?? 0}') ?? 0,
@@ -62,6 +105,10 @@ class SalesCustomer {
         nearestLandmark: json['nearestLandmark']?.toString() ?? json['nearestFunctionPoint']?.toString(),
         mukhtarName: json['mukhtarName']?.toString(),
         rationCenterNumber: json['rationCenterNumber']?.toString(),
+        sourceBranchValue: int.tryParse('${json['sourceBranchValue'] ?? ''}'),
+        sourceBranchName: json['sourceBranchName']?.toString(),
+        sourceDatabase: json['sourceDatabase']?.toString(),
+        sourceApiLink: json['sourceApiLink']?.toString(),
       );
 }
 

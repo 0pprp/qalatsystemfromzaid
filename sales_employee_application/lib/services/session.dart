@@ -8,6 +8,7 @@ class Session {
   static const _shiftKey = 'se_shift_date';
   static const _shiftJsonKey = 'se_shift_json';
   static const _lastSaleKey = 'se_last_sale';
+  static const _branchKey = 'se_branch';
 
   static Future<void> init() async {
     await LocalStore.instance.init();
@@ -24,8 +25,38 @@ class Session {
   }
 
   static String get userName => '${user['userName'] ?? user['UserName'] ?? ''}';
-  static String get cityName => '${user['cityName'] ?? user['CityName'] ?? ''}';
+  static String get cityName => '${user['cityName'] ?? user['CityName'] ?? branchName ?? ''}';
   static String get userId => '${user['userId'] ?? user['UserID'] ?? ''}';
+
+  static Map<String, dynamic>? get branch {
+    final raw = LocalStore.instance.getString(_branchKey);
+    if (raw == null || raw.isEmpty) return null;
+    return jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  static String? get apiBase {
+    final link = '${branch?['link'] ?? ''}';
+    return link.isEmpty ? null : link;
+  }
+
+  static String? get branchName {
+    final name = '${branch?['name'] ?? ''}';
+    return name.isEmpty ? null : name;
+  }
+
+  static String? get branchValue {
+    final value = '${branch?['value'] ?? ''}';
+    return value.isEmpty ? null : value;
+  }
+
+  static String? get branchDatabase {
+    final database = '${branch?['database'] ?? ''}';
+    return database.isEmpty ? null : database;
+  }
+
+  static Future<void> saveBranch(Map<String, dynamic> data) async {
+    await LocalStore.instance.setString(_branchKey, jsonEncode(data));
+  }
 
   static Future<void> saveLogin(Map<String, dynamic> data) async {
     final token = '${data['token'] ?? data['Token'] ?? ''}';

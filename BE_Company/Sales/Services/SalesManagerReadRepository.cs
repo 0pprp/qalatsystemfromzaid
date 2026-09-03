@@ -169,6 +169,6 @@ WHERE Status = @Pending AND (@EmployeeId IS NULL OR EmployeeId = @EmployeeId)",
 
         private string RequireConnection() =>
             _guard.GetSalesConnectionString()
-            ?? throw new InvalidOperationException("Sales module refused a non-demo connection.");
+            ?? throw new InvalidOperationException("Sales module has no usable branch connection.");
     }
 }

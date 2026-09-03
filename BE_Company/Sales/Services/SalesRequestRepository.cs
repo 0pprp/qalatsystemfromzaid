@@ -88,7 +88,7 @@ WHERE Id = @Id", row, cancellationToken: ct));
 
         private string RequireConnection() =>
             _guard.GetSalesConnectionString()
-            ?? throw new InvalidOperationException("Sales module refused a non-demo connection.");
+            ?? throw new InvalidOperationException("Sales module has no usable branch connection.");
 
         private const string SelectSql = @"
 SELECT Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, TargetEmployeeName,
@@ -98,11 +98,6 @@ SELECT Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, 
 FROM dbo.SalesRequests";
 
         private const string SchemaSql = @"
-IF DB_NAME() <> N'DatabaseCompanyNajaf_DEMO'
-BEGIN
-    RAISERROR(N'SalesRequests schema is allowed only on DatabaseCompanyNajaf_DEMO.', 16, 1);
-    RETURN;
-END;
 IF OBJECT_ID(N'dbo.SalesRequests', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SalesRequests (

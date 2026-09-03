@@ -36,8 +36,20 @@ namespace BE_Company.Sales.Services
             }
 
             var employeeName = http.User.FindFirst("UserName")?.Value ?? string.Empty;
-            var branchId = _configuration["SalesManagement:BranchId"] ?? "najaf-demo";
-            var branchName = _configuration["SalesManagement:BranchName"] ?? "النجف - DEMO";
+            var requireDemo = _configuration.GetValue("SalesManagement:RequireDemoDatabase", true);
+            var branchId = _configuration["SalesManagement:BranchId"];
+            var branchName = _configuration["SalesManagement:BranchName"];
+            if (string.IsNullOrWhiteSpace(branchId))
+            {
+                var cs = _configuration.GetConnectionString("DataBaseConnection");
+                branchId = string.IsNullOrWhiteSpace(cs)
+                    ? (requireDemo ? "najaf-demo" : "branch")
+                    : new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(cs).InitialCatalog;
+            }
+            if (string.IsNullOrWhiteSpace(branchName))
+            {
+                branchName = requireDemo ? "النجف - DEMO" : branchId;
+            }
 
             return new SalesIdentity
             {

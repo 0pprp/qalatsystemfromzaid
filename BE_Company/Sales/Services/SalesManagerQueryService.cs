@@ -30,8 +30,7 @@ namespace BE_Company.Sales.Services
             string? locationStatus,
             CancellationToken ct)
         {
-            var cityValue = _configuration["SalesManagement:BranchId"] ?? "najaf-demo";
-            var cityName = _configuration["SalesManagement:BranchName"] ?? "النجف";
+            var (cityValue, cityName) = BranchLabel();
             var utc = _clock.UtcNow;
             var rows = new List<SalesManagerEmployeeDTO>();
             foreach (var emp in await _read.ListEmployeesAsync(ct))
@@ -63,8 +62,7 @@ namespace BE_Company.Sales.Services
                 return null;
             }
 
-            var cityValue = _configuration["SalesManagement:BranchId"] ?? "najaf-demo";
-            var cityName = _configuration["SalesManagement:BranchName"] ?? "النجف";
+            var (cityValue, cityName) = BranchLabel();
             return await MapEmployeeAsync(emp.EmployeeId, emp.EmployeeName, cityValue, cityName, _clock.UtcNow, ct);
         }
 
@@ -191,6 +189,21 @@ namespace BE_Company.Sales.Services
                 SalesTodayCount = await _read.CountSalesTodayAsync(employeeId, todayStart, utc, ct),
                 PendingSalesCount = await _read.CountPendingSalesAsync(employeeId, ct)
             };
+        }
+
+        private (string CityValue, string CityName) BranchLabel()
+        {
+            var cityValue = _configuration["SalesManagement:BranchId"];
+            var cityName = _configuration["SalesManagement:BranchName"] ?? "النجف";
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                var cs = _configuration.GetConnectionString("DataBaseConnection");
+                cityValue = string.IsNullOrWhiteSpace(cs)
+                    ? "branch"
+                    : new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(cs).InitialCatalog;
+            }
+
+            return (cityValue, cityName);
         }
     }
 }

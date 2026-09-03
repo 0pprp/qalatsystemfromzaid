@@ -1,10 +1,12 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { smGet } from '@/composables/salesManagerApi'
 
+const route = useRoute()
 const rows = ref([])
 const employeeId = ref('')
-const status = ref('')
+const status = ref(typeof route.query.status === 'string' ? route.query.status : '')
 const date = ref('')
 
 async function load() {
@@ -16,12 +18,16 @@ async function load() {
 }
 
 onMounted(load)
+watch(() => route.query.status, value => {
+  status.value = typeof value === 'string' ? value : ''
+  load()
+})
 </script>
 
 <template>
   <div>
     <h4 class="mb-4">
-      مبيعات الموظفين
+      {{ status === 'Pending' ? 'المبيعات المعلقة' : 'مبيعات الموظفين' }}
     </h4>
     <VRow class="mb-3">
       <VCol md="3">

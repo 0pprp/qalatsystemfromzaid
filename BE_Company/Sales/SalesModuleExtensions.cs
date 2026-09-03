@@ -12,6 +12,7 @@ namespace BE_Company.Sales
             services.AddScoped<SalesIdentityService>();
             services.AddSingleton<ISalesPricingService, SalesPricingService>();
             services.AddScoped<IGlobalCustomerSearchService, DemoGlobalCustomerSearchService>();
+            services.AddScoped<CustomerDirectoryService>();
             services.AddScoped<ISalesInventoryService, SalesInventoryService>();
             services.AddScoped<ISalesDraftRepository, SalesDraftRepository>();
             services.AddScoped<ISalesCompleteRepository, SalesCompleteRepository>();

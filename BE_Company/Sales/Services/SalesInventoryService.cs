@@ -24,7 +24,7 @@ namespace BE_Company.Sales.Services
         public async Task<IReadOnlyList<SalesInventoryItemDTO>> GetBranchInventoryAsync(CancellationToken ct)
         {
             var cs = _guard.GetSalesConnectionString()
-                     ?? throw new InvalidOperationException("Sales module refused a non-demo connection.");
+                     ?? throw new InvalidOperationException("Sales module has no usable branch connection.");
             await using var connection = new SqlConnection(cs);
             var rows = await connection.QueryAsync<ItemsGetDTO>(new CommandDefinition(
                 "Items_GetAll",

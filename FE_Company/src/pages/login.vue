@@ -55,9 +55,11 @@ async function login() {
 
     // البحث عن المحافظة المختارة في البيانات
     const selectedProvince = provinces.value.find(p => p.value === selectCity.value)
+
     const selectedApi = isDemo()
       ? DEMO_API
       : (isLocalLab() ? LOCAL_API : selectedProvince?.link)
+
     const cityName = selectedProvince?.name || ''
     const database = selectedProvince?.database || ''
 
@@ -80,8 +82,8 @@ async function login() {
     try {
       let resData = await postLogin('Users/Users_LoginAdmin')
 
-      // على اللوكال: المحاسب الفرعي (ahmed2) يدخل من نفس الصفحة
-      if (resData.message && (isLocalLab() || isDemo()))
+      // على اللوكال والإنتاج: المحاسب الفرعي ومدير المبيعات يدخلون من نفس الصفحة
+      if (resData.message)
         resData = await postLogin('Users/Users_LoginEmployee')
 
       if (resData.message) {

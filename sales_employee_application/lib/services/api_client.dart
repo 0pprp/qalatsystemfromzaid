@@ -15,7 +15,13 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  static String get _base => AppEnv.apiBase();
+  static String get _base {
+    final session = Session.apiBase;
+    if (session != null && session.isNotEmpty) {
+      return AppEnv.normalizeBase(session);
+    }
+    return AppEnv.apiBase();
+  }
 
   static Map<String, String> get _headers {
     final headers = <String, String>{
@@ -102,5 +108,44 @@ class ApiClient {
       );
     }
     return response.bodyBytes;
+  }
+
+  /// GET against an absolute branch URL. Used for global customer search.
+  /// Sends the employee's JWT only as proof of a logged-in sales user.
+  /// Callers must never POST writes through this helper to a foreign branch.
+  static Future<dynamic> getAbsolute(
+    String absoluteUrl, {
+    Map<String, String>? query,
+    Duration timeout = const Duration(seconds: 5),
+    bool withAuth = true,
+  }) async {
+    var uri = Uri.parse(absoluteUrl);
+    if (query != null && query.isNotEmpty) {
+      uri = uri.replace(queryParameters: {
+        ...uri.queryParameters,
+        ...query,
+      });
+    }
+    final headers = <String, String>{
+      'Accept': 'application/json',
+    };
+    if (withAuth) {
+      final token = Session.token;
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+    }
+    if (AppEnv.directorySearchKey.isNotEmpty) {
+      headers['X-Sales-Directory-Key'] = AppEnv.directorySearchKey;
+    }
+    final response = await http.get(uri, headers: headers).timeout(timeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(
+        _errorMessage(response),
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+    return _decode(response);
   }
 }

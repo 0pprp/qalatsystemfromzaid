@@ -151,7 +151,9 @@ class _SaleScreenState extends State<SaleScreen> {
           .toList();
       final created = await SalesRepositoryFactory.instance.createSale(
         SalesDraftCreateRequest(
-          customerId: _existing ? _picked?.customerId : null,
+          customerId: (_existing && _picked != null && !_picked!.isForeignBranch)
+              ? _picked!.customerId
+              : null,
           customer: {
             'fullName': _name.text.trim(),
             'phone': _phone.text.trim(),

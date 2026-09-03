@@ -25,6 +25,9 @@ namespace BE_Company.Sales.Services
             _logger = logger;
         }
 
+        public bool RequireDemoDatabase =>
+            _configuration.GetValue("SalesManagement:RequireDemoDatabase", true);
+
         public string ConfiguredDemoCatalog =>
             _configuration["SalesManagement:AllowedDemoDatabase"] ?? AllowedDemoDatabase;
 
@@ -61,9 +64,12 @@ namespace BE_Company.Sales.Services
             }
 
             var catalog = new SqlConnectionStringBuilder(cs).InitialCatalog;
-            if (IsProductionCatalog(catalog) || !IsAllowedDemo(catalog))
+            if (RequireDemoDatabase)
             {
-                return null;
+                if (IsProductionCatalog(catalog) || !IsAllowedDemo(catalog))
+                {
+                    return null;
+                }
             }
 
             return cs;
@@ -74,26 +80,28 @@ namespace BE_Company.Sales.Services
             var catalog = CurrentCatalog;
             if (string.IsNullOrWhiteSpace(catalog))
             {
-                reason = "Sales module blocked: no Sales Demo connection catalog.";
+                reason = "Sales module blocked: no database catalog on the sales connection.";
                 return false;
             }
 
-            if (IsProductionCatalog(catalog))
+            if (RequireDemoDatabase)
             {
-                reason = $"Sales module blocked: catalog '{catalog}' is production. Writes are forbidden.";
-                return false;
-            }
+                if (IsProductionCatalog(catalog))
+                {
+                    reason = $"Sales module blocked: catalog '{catalog}' is production. Writes are forbidden.";
+                    return false;
+                }
 
-            var requireDemo = _configuration.GetValue("SalesManagement:RequireDemoDatabase", true);
-            if ((_environment.IsDevelopment() || requireDemo) && !IsAllowedDemo(catalog))
-            {
-                reason = $"Sales module blocked in Development: catalog '{catalog}' is not {AllowedDemoDatabase}.";
-                return false;
+                if (!IsAllowedDemo(catalog))
+                {
+                    reason = $"Sales module blocked: catalog '{catalog}' is not {AllowedDemoDatabase}.";
+                    return false;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(GetSalesConnectionString()))
             {
-                reason = $"Sales module blocked: refusing non-demo catalog '{catalog}'.";
+                reason = $"Sales module blocked: refusing catalog '{catalog}'.";
                 return false;
             }
 
@@ -116,36 +124,43 @@ namespace BE_Company.Sales.Services
                 await using var command = connection.CreateCommand();
                 command.CommandText = "SELECT DB_NAME()";
                 var liveName = (await command.ExecuteScalarAsync(ct))?.ToString();
-                if (!IsAllowedDemo(liveName))
+                if (RequireDemoDatabase && !IsAllowedDemo(liveName))
                 {
                     return (false, $"Sales module blocked: live catalog '{liveName}' is not {AllowedDemoDatabase}.");
+                }
+
+                if (!RequireDemoDatabase && !string.Equals(liveName, CurrentCatalog, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (false, $"Sales module blocked: live catalog '{liveName}' does not match configured '{CurrentCatalog}'.");
                 }
 
                 return (true, string.Empty);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Sales Demo database {Catalog} is not reachable. No SQL will run on another database.", ConfiguredDemoCatalog);
-                return (false, $"Sales module blocked: cannot connect to {AllowedDemoDatabase}. No SQL was executed on another database.");
+                _logger.LogWarning(ex, "Sales database {Catalog} is not reachable.", CurrentCatalog);
+                return (false, $"Sales module blocked: cannot connect to '{CurrentCatalog}'.");
             }
         }
 
         public void LogDevelopmentCatalog()
         {
-            if (!_environment.IsDevelopment())
-            {
-                return;
-            }
-
-            _logger.LogInformation("Sales DB: {Catalog}", ConfiguredDemoCatalog);
+            _logger.LogInformation(
+                "Sales DB: {Catalog} RequireDemo={RequireDemo} Environment={Env}",
+                CurrentCatalog,
+                RequireDemoDatabase,
+                _environment.EnvironmentName);
         }
 
         private string? GetRawSalesConnectionString()
         {
-            var sales = _configuration.GetConnectionString("SalesDemoConnection");
-            if (!string.IsNullOrWhiteSpace(sales))
+            if (RequireDemoDatabase)
             {
-                return sales;
+                var sales = _configuration.GetConnectionString("SalesDemoConnection");
+                if (!string.IsNullOrWhiteSpace(sales))
+                {
+                    return sales;
+                }
             }
 
             return _configuration.GetConnectionString("DataBaseConnection");

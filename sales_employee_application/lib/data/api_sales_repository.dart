@@ -1,6 +1,8 @@
+import 'package:sales_employee_application/config/app_env.dart';
 import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository.dart';
 import 'package:sales_employee_application/services/api_client.dart';
+import 'package:sales_employee_application/services/global_customer_search.dart';
 import 'package:sales_employee_application/tracking/work_shift.dart';
 import 'package:sales_employee_application/utils/iraq_time.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
@@ -35,6 +37,9 @@ class ApiSalesRepository implements SalesRepository {
   @override
   Future<List<SalesCustomer>> searchCustomers(String query) async {
     try {
+      if (AppEnv.isProduction) {
+        return await GlobalCustomerSearch.search(query);
+      }
       final raw = await ApiClient.get('sales/customers/search', query: {'q': query});
       return _maps(raw).map(SalesCustomer.fromJson).toList();
     } on ApiException catch (e) {

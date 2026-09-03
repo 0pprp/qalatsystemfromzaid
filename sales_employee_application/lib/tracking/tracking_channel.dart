@@ -18,7 +18,7 @@ class TrackingChannel {
         'intervalMs': TrackingConfig.movingInterval.inMilliseconds,
         'minDistance': TrackingConfig.minimumDistanceMeters,
         'stationaryIntervalMs': TrackingConfig.stationaryInterval.inMilliseconds,
-        'apiBase': AppEnv.apiBase(),
+        'apiBase': Session.apiBase ?? AppEnv.apiBase(),
         'token': Session.token ?? '',
       });
       ShiftStartDebug.log('MethodChannel.invokeMethod start returned');

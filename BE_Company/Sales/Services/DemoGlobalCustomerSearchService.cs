@@ -33,8 +33,16 @@ namespace BE_Company.Sales.Services
         public async Task<IReadOnlyList<SalesCustomerSearchDTO>> SearchAsync(string query, CancellationToken ct)
         {
             var rows = await QueryCustomersAsync(query, ct);
-            var cityValue = _configuration["SalesManagement:BranchId"] ?? "najaf-demo";
-            var cityName = _configuration["SalesManagement:BranchName"] ?? "النجف - DEMO";
+            var cityValue = _configuration["SalesManagement:BranchId"];
+            var cityName = _configuration["SalesManagement:BranchName"];
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                cityValue = _guard.CurrentCatalog ?? "branch";
+            }
+            if (string.IsNullOrWhiteSpace(cityName))
+            {
+                cityName = cityValue;
+            }
             return rows
                 .Where(c => c.CustomerID.HasValue)
                 .Select(c => new SalesCustomerSearchDTO
@@ -60,7 +68,7 @@ namespace BE_Company.Sales.Services
         private async Task<IEnumerable<CustomersGetDTO>> QueryCustomersAsync(string? textSearch, CancellationToken ct)
         {
             var cs = _guard.GetSalesConnectionString()
-                     ?? throw new InvalidOperationException("Sales module refused a non-demo connection.");
+                     ?? throw new InvalidOperationException("Sales module has no usable branch connection.");
             await using var connection = new SqlConnection(cs);
             return await connection.QueryAsync<CustomersGetDTO>(new CommandDefinition(
                 "Customers_GetAll",

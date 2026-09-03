@@ -367,7 +367,7 @@ END;",
 
         private string RequireConnection() =>
             _guard.GetSalesConnectionString()
-            ?? throw new InvalidOperationException("Sales module refused a non-demo connection.");
+            ?? throw new InvalidOperationException("Sales module has no usable branch connection.");
 
         private static string? Trunc(string? value, int max) =>
             string.IsNullOrWhiteSpace(value) ? value : (value.Length <= max ? value : value[..max]);

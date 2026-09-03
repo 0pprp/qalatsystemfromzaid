@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:sales_employee_application/config/app_env.dart';
+import 'package:sales_employee_application/config/company_branches.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
@@ -15,6 +16,18 @@ class _LoginScreenState extends State<LoginScreen> {
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   bool _loading = false;
+  bool _loadingBranches = false;
+  String? _branchesError;
+  List<CompanyBranch> _branches = [];
+  CompanyBranch? _selectedBranch;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AppEnv.isProduction) {
+      _loadBranches();
+    }
+  }
 
   @override
   void dispose() {
@@ -23,10 +36,50 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  Future<void> _loadBranches() async {
+    setState(() {
+      _loadingBranches = true;
+      _branchesError = null;
+    });
+    try {
+      final rows = await CompanyBranches.fetchSalesBranches();
+      CompanyBranch? selected;
+      final saved = Session.branchValue;
+      if (saved != null) {
+        for (final branch in rows) {
+          if ('${branch.value}' == saved) {
+            selected = branch;
+            break;
+          }
+        }
+      }
+      selected ??= rows.isEmpty ? null : rows.first;
+      if (!mounted) return;
+      setState(() {
+        _branches = rows;
+        _selectedBranch = selected;
+        _loadingBranches = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingBranches = false;
+        _branchesError = 'تعذر جلب قائمة الفروع';
+      });
+    }
+  }
+
   Future<void> _login() async {
     if (_userCtrl.text.trim().isEmpty || _passCtrl.text.isEmpty) {
       _alert('لا يمكن ترك أي شيء فارغ');
       return;
+    }
+    if (AppEnv.isProduction) {
+      if (_selectedBranch == null) {
+        _alert('اختر الفرع أولاً');
+        return;
+      }
+      await Session.saveBranch(_selectedBranch!.toJson());
     }
     setState(() => _loading = true);
     try {
@@ -34,7 +87,7 @@ class _LoginScreenState extends State<LoginScreen> {
         await Session.saveLogin({
           'token': 'mock-token',
           'userName': _userCtrl.text.trim(),
-          'cityName': AppEnv.loginCityLabel(),
+          'cityName': _selectedBranch?.name ?? AppEnv.loginCityLabel(),
           'userId': '1',
           'userType': 'موظف مبيعات',
         });
@@ -60,7 +113,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ...payload,
         'token': token,
         'userName': _userCtrl.text.trim(),
-        'cityName': AppEnv.loginCityLabel(),
+        'cityName': _selectedBranch?.name ?? AppEnv.loginCityLabel(),
       });
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/shift');
@@ -82,6 +135,66 @@ class _LoginScreenState extends State<LoginScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('موافق')),
         ],
+      ),
+    );
+  }
+
+  Widget _branchSection() {
+    if (AppEnv.isDemo) {
+      return Column(
+        children: [
+          Text(
+            'فرع النجف التجريبي — المحافظة ثابتة من الحساب',
+            style: TextStyle(color: Colors.grey[600]),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'النجف - DEMO',
+              style: TextStyle(color: AppTheme.secondaryColor, fontSize: 12),
+            ),
+          ),
+        ],
+      );
+    }
+    if (AppEnv.isLocal) {
+      return Text(
+        'محلي — 127.0.0.1:5280',
+        style: TextStyle(color: Colors.grey[600]),
+      );
+    }
+    if (_loadingBranches) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: LinearProgressIndicator(minHeight: 2),
+      );
+    }
+    if (_branchesError != null) {
+      return Column(
+        children: [
+          Text(_branchesError!, style: const TextStyle(color: Colors.red)),
+          TextButton(onPressed: _loadBranches, child: const Text('إعادة المحاولة')),
+        ],
+      );
+    }
+    return InputDecorator(
+      decoration: const InputDecoration(
+        hintText: 'اختر الفرع',
+        prefixIcon: Icon(Icons.location_city_outlined, color: AppTheme.primaryColor),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<CompanyBranch>(
+          isExpanded: true,
+          value: _selectedBranch,
+          items: [
+            for (final branch in _branches)
+              DropdownMenuItem(
+                value: branch,
+                child: Text(branch.name),
+              ),
+          ],
+          onChanged: (value) => setState(() => _selectedBranch = value),
+        ),
       ),
     );
   }
@@ -127,18 +240,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Text(
-                          'فرع النجف التجريبي — المحافظة ثابتة من الحساب',
-                          style: TextStyle(color: Colors.grey[600]),
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.only(top: 6),
-                          child: Text(
-                            'النجف - DEMO',
-                            style: TextStyle(
-                                color: AppTheme.secondaryColor, fontSize: 12),
-                          ),
-                        ),
+                        _branchSection(),
                         SizedBox(height: height * 0.04),
                         TextField(
                           controller: _userCtrl,
