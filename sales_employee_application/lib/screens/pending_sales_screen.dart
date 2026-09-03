@@ -16,15 +16,28 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
   List<SalesDraft> _rows = [];
+  List<SalesDraft> _today = [];
   List<SalesWorkRequest> _requests = [];
   bool _loading = true;
   String? _error;
+  bool _tabsReady = false;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 2, vsync: this);
+    _tabs = TabController(length: 3, vsync: this);
     _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_tabsReady) return;
+    _tabsReady = true;
+    final arg = ModalRoute.of(context)?.settings.arguments;
+    if (arg == 'today' || arg == 1) {
+      _tabs.index = 1;
+    }
   }
 
   @override
@@ -40,10 +53,12 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
     });
     try {
       final rows = await SalesRepositoryFactory.instance.pending();
+      final today = await SalesRepositoryFactory.instance.todayCompleted();
       final requests = await SalesRepositoryFactory.instance.salesRequests();
       if (!mounted) return;
       setState(() {
         _rows = rows;
+        _today = today;
         _requests = requests;
         _loading = false;
       });
@@ -71,9 +86,11 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
         title: const Text('المبيعات'),
         bottom: TabBar(
           controller: _tabs,
+          isScrollable: true,
           labelColor: AppColors.darkGreen,
           tabs: [
             const Tab(text: 'المبيعات المعلقة'),
+            const Tab(text: 'مبيعات اليوم'),
             Tab(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -97,36 +114,46 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
       body: TabBarView(
         controller: _tabs,
         children: [
-          _pendingTab(),
+          _listTab(
+            rows: _rows,
+            empty: 'لا توجد عمليات معلقة',
+          ),
+          _listTab(
+            rows: _today,
+            empty: 'لا توجد مبيعات مكتملة اليوم',
+          ),
           _requestsTab(),
         ],
       ),
     );
   }
 
-  Widget _pendingTab() {
+  Widget _listTab({required List<SalesDraft> rows, required String empty}) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
       return Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)));
     }
-    if (_rows.isEmpty) {
-      return const Center(child: Text('لا توجد عمليات', style: TextStyle(color: AppColors.muted)));
+    if (rows.isEmpty) {
+      return Center(child: Text(empty, style: const TextStyle(color: AppColors.muted)));
     }
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.builder(
         padding: const EdgeInsets.all(AppSpacing.md),
-        itemCount: _rows.length,
+        itemCount: rows.length,
         itemBuilder: (context, i) {
-          final d = _rows[i];
+          final d = rows[i];
           return Card(
             child: ListTile(
               title: Text(d.fullName, style: const TextStyle(fontWeight: FontWeight.w700)),
               subtitle: Text(
                 'رقم ${d.saleId} · ${EvaluationLabels.of(d.evaluationLevel)}\n${MoneyFormat.iqd(d.finalSalePrice)}',
               ),
-              trailing: _StatusBadge(rejected: d.isRejected),
-              onTap: () => Navigator.pushNamed(context, '/sale-details', arguments: d.saleId),
+              trailing: _StatusBadge(status: d.status, rejected: d.isRejected),
+              onTap: () async {
+                await Navigator.pushNamed(context, '/sale-details', arguments: d.saleId);
+                if (mounted) await _load();
+              },
             ),
           );
         },
@@ -287,18 +314,20 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
 }
 
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.rejected});
+  const _StatusBadge({required this.status, required this.rejected});
+  final String status;
   final bool rejected;
 
   @override
   Widget build(BuildContext context) {
+    final label = SalesStatusLabels.of(status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: rejected ? AppColors.warningSoft : AppColors.lightGreen.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(AppRadius.sm),
       ),
-      child: Text(rejected ? 'مرفوض' : 'معلق',
+      child: Text(label,
           style: TextStyle(
             color: rejected ? AppColors.danger : AppColors.darkGreen,
             fontWeight: FontWeight.w700,

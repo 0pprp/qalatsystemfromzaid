@@ -9,7 +9,7 @@ import { useCities, isLocalLab, isDemo, LOCAL_API, DEMO_API } from '@/composable
 import bgImage from '@images/background.png'
 import logo from '@images/logo.png'
 
-definePage({ meta: { layout: 'blank' } })
+definePage({ meta: { layout: 'blank', public: true, unauthenticatedOnly: true } })
 
 const form = ref({
   userName: '',
@@ -26,6 +26,11 @@ const selectCity = ref(null)
 
 // جلب المدن من API ديناميكياً
 const { provinces, isLoading: isLoadingCities, error: citiesError, fetchCities } = useCities()
+
+watch(provinces, list => {
+  if (!selectCity.value && list.length === 1)
+    selectCity.value = list[0].value
+}, { immediate: true })
 
 const validateForm = async () => {
   return await refForm.value?.validate()
@@ -87,19 +92,20 @@ async function login() {
         loginLoadingBtn.value = false
 
         const user = jwtDecode(resData.token)
+        const userType = user.UserType || user.userType || ''
 
         localStorage.setItem("Token", resData.token)
         localStorage.setItem('Expiration', resData.expiration)
         localStorage.setItem('UserID', user.UserID)
         localStorage.setItem('UserName', user.UserName)
         localStorage.setItem('UserImage', user.UserImage)
-        localStorage.setItem('UserType', user.UserType || user.userType || '')
+        localStorage.setItem('UserType', userType)
         localStorage.setItem("LinkCity", selectedApi)
         localStorage.setItem("CityName", cityName)
         localStorage.setItem("Password", form.value.password)
         localStorage.setItem("Database", database)
 
-        router.push('/')
+        router.push(userType === 'مدير مبيعات' ? '/sales-manager-dashboard' : '/')
       }
     } catch (err) {
       loginLoadingBtn.value = false

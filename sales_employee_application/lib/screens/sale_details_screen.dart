@@ -5,6 +5,7 @@ import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/screens/sale_complete_success_screen.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/sale_document_storage.dart';
+import 'package:sales_employee_application/services/sale_documents.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
 
@@ -146,6 +147,26 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
     String? contract;
     String? receipt;
     var failed = false;
+    try {
+      final draft = _draft;
+      if (draft != null && docs.isNotEmpty) {
+        final contractFile = await SaleDocumentStorage.savePdf(
+          'Sale_${draft.saleId}_Contract.pdf',
+          await SaleDocuments.contractBytesFromDraft(draft),
+        );
+        final receiptFile = await SaleDocumentStorage.savePdf(
+          'Sale_${draft.saleId}_PromissoryNote.pdf',
+          await SaleDocuments.receiptBytesFromDraft(draft),
+        );
+        contract = contractFile.path;
+        receipt = receiptFile.path;
+      }
+    } catch (_) {
+      failed = true;
+    }
+    if (contract != null && receipt != null) {
+      return _DownloadBundle(contractPath: contract, receiptPath: receipt, failed: false);
+    }
     for (final doc in docs) {
       try {
         final bytes = await SalesRepositoryFactory.instance.downloadDocument(_draft?.saleId ?? doc.documentId ?? 0, doc);
@@ -167,6 +188,15 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
 
   Future<void> _openOrDownload(SalesDocument doc) async {
     try {
+      final draft = _draft;
+      if (draft != null) {
+        final bytes = doc.isContract
+            ? await SaleDocuments.contractBytesFromDraft(draft)
+            : await SaleDocuments.receiptBytesFromDraft(draft);
+        final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
+        await OpenFilex.open(file.path);
+        return;
+      }
       final bytes = await SalesRepositoryFactory.instance.downloadDocument(_draft!.saleId, doc);
       final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
       await OpenFilex.open(file.path);

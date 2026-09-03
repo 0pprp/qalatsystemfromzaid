@@ -1,4 +1,4 @@
-import { getToken, isTokenExpired, removeLocalStorage, removeToken } from "@/services/tokenService"
+import { isAuthenticated, removeLocalStorage, removeToken } from "@/services/tokenService"
 import { setupLayouts } from 'virtual:generated-layouts'
 import { createRouter, createWebHashHistory } from 'vue-router/auto'
 
@@ -29,6 +29,12 @@ const router = createRouter({
 })
 
 
+function homePath() {
+  return localStorage.getItem('UserType') === 'مدير مبيعات'
+    ? '/sales-manager-dashboard'
+    : '/'
+}
+
 router.beforeEach((to, from, next) => {
 
   if (to.path === "/logout") {
@@ -36,14 +42,13 @@ router.beforeEach((to, from, next) => {
     removeLocalStorage()
   }
 
-  const token = getToken()
-  const isNotAuthenticated = !token && isTokenExpired()
+  const isNotAuthenticated = !isAuthenticated()
 
 
 
   if (to.path === '/login') {
     if (!isNotAuthenticated)
-      return next("/")
+      return next(homePath())
     else
       return next()
   }
@@ -55,19 +60,22 @@ router.beforeEach((to, from, next) => {
   }
 
   const userType = localStorage.getItem('UserType') || ''
+  if (userType === 'مدير مبيعات' && to.path === '/')
+    return next('/sales-manager-dashboard')
+
   const adminOnlyPaths = ['/users-list', '/user-active', '/backup-database']
   if (adminOnlyPaths.includes(to.path) && userType !== 'محاسب رئيسي') {
-    return next('/')
+    return next(homePath())
   }
 
   const decisionPaths = ['/decision-board', '/decisions-list']
   if (decisionPaths.includes(to.path) && userType !== 'مدير فرع' && userType !== 'محاسب رئيسي') {
-    return next('/')
+    return next(homePath())
   }
 
   const salesManagerPaths = ['/sales-manager-dashboard', '/sales-manager-employees', '/sales-manager-map', '/sales-manager-routes', '/sales-manager-sales', '/sales-manager-requests', '/sales-manager-request-create']
   if (salesManagerPaths.includes(to.path) && userType !== 'مدير مبيعات') {
-    return next('/')
+    return next(homePath())
   }
 
   next()

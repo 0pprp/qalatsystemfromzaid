@@ -33,8 +33,7 @@ namespace BE_Company.Sales.Services
                 || string.IsNullOrWhiteSpace(sale.NationalCardNumber)
                 || string.IsNullOrWhiteSpace(sale.Address)
                 || string.IsNullOrWhiteSpace(sale.NearestLandmark)
-                || string.IsNullOrWhiteSpace(sale.MukhtarName)
-                || string.IsNullOrWhiteSpace(sale.RationCenterNumber))
+                || string.IsNullOrWhiteSpace(sale.MukhtarName))
             {
                 return "بيانات الزبون غير مكتملة.";
             }

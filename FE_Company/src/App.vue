@@ -1,6 +1,6 @@
 <script setup>
 import GlobalMessageDialog from '@/components/GlobalMessageDialog.vue'
-import { getToken, isTokenExpired, removeLocalStorage, removeToken } from "@/services/tokenService"
+import { isAuthenticated, removeLocalStorage, removeToken } from "@/services/tokenService"
 import ScrollToTop from '@core/components/ScrollToTop.vue'
 import initCore from '@core/initCore'
 import {
@@ -16,19 +16,22 @@ const { global } = useTheme()
 initCore()
 initConfigStore()
 
-onMounted(async _ =>{
-  setInterval(() => {
-    const isExpired = isTokenExpired()
-    const token = getToken()
+const router = useRouter()
 
-    if(isExpired === true || !token){
-      removeToken()
-      removeLocalStorage()
-      if (window.location.hash !== "#/login") {
-        window.location.reload()
-      }
-    }
-  }, 2000)
+onMounted(() => {
+  const sendToLoginIfSessionEnded = () => {
+    if (isAuthenticated())
+      return
+
+    removeToken()
+    removeLocalStorage()
+    if (router.currentRoute.value.path !== '/login')
+      router.replace('/login')
+  }
+
+  sendToLoginIfSessionEnded()
+  const timer = setInterval(sendToLoginIfSessionEnded, 2000)
+  onUnmounted(() => clearInterval(timer))
 })
 
 const configStore = useConfigStore()

@@ -26,7 +26,10 @@ class _MemRepo implements SalesRepository {
   @override
   Future<SalesDraft> createSale(SalesDraftCreateRequest request) async => draft;
   @override
-  Future<List<SalesDraft>> pending() async => [draft];
+  Future<List<SalesDraft>> pending() async => draft.isCompleted ? [] : [draft];
+  @override
+  Future<List<SalesDraft>> todayCompleted() async =>
+      draft.isCompleted ? [draft] : [];
   @override
   Future<SalesDraft> byId(int id) async => draft;
   @override

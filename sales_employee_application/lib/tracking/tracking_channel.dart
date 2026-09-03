@@ -1,4 +1,6 @@
 import 'package:flutter/services.dart';
+import 'package:sales_employee_application/config/app_env.dart';
+import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/tracking/shift_start_debug.dart';
 import 'package:sales_employee_application/tracking/tracking_config.dart';
 
@@ -16,6 +18,8 @@ class TrackingChannel {
         'intervalMs': TrackingConfig.movingInterval.inMilliseconds,
         'minDistance': TrackingConfig.minimumDistanceMeters,
         'stationaryIntervalMs': TrackingConfig.stationaryInterval.inMilliseconds,
+        'apiBase': AppEnv.apiBase(),
+        'token': Session.token ?? '',
       });
       ShiftStartDebug.log('MethodChannel.invokeMethod start returned');
       return true;

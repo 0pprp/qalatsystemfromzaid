@@ -157,6 +157,12 @@ class SalesDraft {
     required this.createdAt,
     this.phone,
     this.province,
+    this.nationalCardNumber,
+    this.address,
+    this.nearestLandmark,
+    this.mukhtarName,
+    this.rationCenterNumber,
+    this.employeeName,
     this.completedAt,
     this.documentsStatus,
     this.items = const [],
@@ -167,6 +173,12 @@ class SalesDraft {
   final String fullName;
   final String? phone;
   final String? province;
+  final String? nationalCardNumber;
+  final String? address;
+  final String? nearestLandmark;
+  final String? mukhtarName;
+  final String? rationCenterNumber;
+  final String? employeeName;
   final String status;
   final int evaluationLevel;
   final String evaluationNote;
@@ -180,7 +192,11 @@ class SalesDraft {
   final List<SalesDocument> documents;
 
   bool get isRejected => status == 'Rejected' || evaluationLevel == 1;
-  bool get isCompleted => status == 'Completed';
+  bool get isCompleted =>
+      status == 'Completed' ||
+      status == 'DocumentsReady' ||
+      status == 'DocumentsPending' ||
+      completedAt != null;
   bool get canComplete => status == 'Pending' && !isRejected;
 
   SalesDraft copyWith({
@@ -194,6 +210,12 @@ class SalesDraft {
         fullName: fullName,
         phone: phone,
         province: province,
+        nationalCardNumber: nationalCardNumber,
+        address: address,
+        nearestLandmark: nearestLandmark,
+        mukhtarName: mukhtarName,
+        rationCenterNumber: rationCenterNumber,
+        employeeName: employeeName,
         status: status ?? this.status,
         evaluationLevel: evaluationLevel,
         evaluationNote: evaluationNote,
@@ -212,6 +234,12 @@ class SalesDraft {
         fullName: '${json['fullName'] ?? json['FullName'] ?? ''}',
         phone: json['phone']?.toString(),
         province: json['province']?.toString(),
+        nationalCardNumber: json['nationalCardNumber']?.toString() ?? json['NationalCardNumber']?.toString(),
+        address: json['address']?.toString() ?? json['Address']?.toString(),
+        nearestLandmark: json['nearestLandmark']?.toString() ?? json['NearestLandmark']?.toString(),
+        mukhtarName: json['mukhtarName']?.toString() ?? json['MukhtarName']?.toString(),
+        rationCenterNumber: json['rationCenterNumber']?.toString() ?? json['RationCenterNumber']?.toString(),
+        employeeName: json['userName']?.toString() ?? json['UserName']?.toString() ?? json['employeeName']?.toString(),
         status: '${json['status'] ?? json['Status'] ?? 'Pending'}',
         evaluationLevel: int.tryParse('${json['evaluationLevel'] ?? json['EvaluationLevel'] ?? 0}') ?? 0,
         evaluationNote: '${json['evaluationNote'] ?? json['EvaluationNote'] ?? ''}',

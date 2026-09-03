@@ -182,14 +182,14 @@ class ShiftTrackingController {
     }
     _netSub?.cancel();
     if (scheduleTimers) {
-      _netSub = _connectivity.listen((results) {
+      _netSub = _connectivity.listen((results) async {
         final online = results.any((r) => r != ConnectivityResult.none);
         if (!online && _internet) {
           _internet = false;
-          _repo.recordTrackingEvent(shift.shiftId, 'INTERNET_LOST');
+          await _store.insertEvent(shift.shiftId, 'INTERNET_LOST');
         } else if (online && !_internet) {
           _internet = true;
-          _repo.recordTrackingEvent(shift.shiftId, 'INTERNET_RESTORED');
+          await _store.insertEvent(shift.shiftId, 'INTERNET_RESTORED');
           _trySync();
         }
       });

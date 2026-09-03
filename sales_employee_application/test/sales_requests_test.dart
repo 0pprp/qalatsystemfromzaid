@@ -35,6 +35,34 @@ void main() {
     expect(find.text('سعد كاظم'), findsOneWidget);
   });
 
+  testWidgets('Completed sale appears under today not pending', (tester) async {
+    final repo = MockSalesRepository();
+    await tester.runAsync(() async {
+      await repo.createSale(SalesDraftCreateRequest(
+        customer: const {'fullName': 'ahmed', 'phone': '0780', 'province': 'النجف'},
+        items: [SalesDraftItem(productId: 5, quantity: 1)],
+        evaluationLevel: 5,
+        evaluationNote: 'ممتاز',
+        dailyInstallment: 10000,
+      ));
+      final created = (await repo.pending()).first;
+      await repo.completeSale(created.saleId);
+    });
+    SalesRepositoryFactory.setInstance(repo);
+    await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.themeData,
+      home: const PendingSalesScreen(),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('ahmed'), findsNothing);
+    await tester.tap(find.text('مبيعات اليوم'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('ahmed'), findsOneWidget);
+    expect(find.text('مكتمل'), findsWidgets);
+  });
+
   test('New -> Viewed is idempotent', () async {
     final repo = MockSalesRepository()
       ..seedRequest(SalesWorkRequest(

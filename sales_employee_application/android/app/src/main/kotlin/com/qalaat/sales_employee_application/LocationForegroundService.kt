@@ -30,14 +30,24 @@ class LocationForegroundService : Service() {
     private var db: SQLiteDatabase? = null
     private var shiftId: Int = 0
     private var cutoffAtUtcMs: Long = 0
-    private var intervalMs: Long = 12_000
-    private var stationaryIntervalMs: Long = 60_000
-    private var minDistance: Float = 20f
+    private var intervalMs: Long = 3_000
+    private var stationaryIntervalMs: Long = 45_000
+    private var minDistance: Float = 5f
+    private var apiBase: String = ""
+    private var token: String = ""
     private var lastLocation: Location? = null
     private var lastMoveAt: Long = 0
     private var lastGpsAvailable: Boolean? = null
 
     private val cutoffStop = Runnable { stopCollecting() }
+    private val syncFlush = object : Runnable {
+        override fun run() {
+            Thread { flushPendingToServer() }.start()
+            if (running) {
+                handler.postDelayed(this, 20_000)
+            }
+        }
+    }
 
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -72,6 +82,7 @@ class LocationForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             handler.removeCallbacks(cutoffStop)
+            handler.removeCallbacks(syncFlush)
             stopUpdates()
             running = false
             stopSelf()
@@ -81,15 +92,22 @@ class LocationForegroundService : Service() {
         if (intent != null && intent.hasExtra(EXTRA_SHIFT_ID)) {
             shiftId = intent.getIntExtra(EXTRA_SHIFT_ID, 0)
             cutoffAtUtcMs = intent.getLongExtra(EXTRA_CUTOFF, 0L)
-            intervalMs = intent.getLongExtra(EXTRA_INTERVAL, 12_000)
-            stationaryIntervalMs = intent.getLongExtra(EXTRA_STATIONARY, 60_000)
-            minDistance = intent.getFloatExtra(EXTRA_DISTANCE, 20f)
+            intervalMs = intent.getLongExtra(EXTRA_INTERVAL, 3_000)
+            stationaryIntervalMs = intent.getLongExtra(EXTRA_STATIONARY, 45_000)
+            minDistance = intent.getFloatExtra(EXTRA_DISTANCE, 5f)
+            apiBase = intent.getStringExtra(EXTRA_API_BASE) ?: ""
+            token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
         } else {
             shiftId = readMetaInt("active_shift_id")
             cutoffAtUtcMs = readMetaLong("cutoff_at_utc_ms")
-            intervalMs = readMetaLong("interval_ms").takeIf { it > 0 } ?: 12_000
-            stationaryIntervalMs = readMetaLong("stationary_ms").takeIf { it > 0 } ?: 60_000
-            minDistance = readMetaFloat("min_distance").takeIf { it > 0f } ?: 20f
+            intervalMs = readMetaLong("interval_ms").takeIf { it > 0 } ?: 3_000
+            stationaryIntervalMs = readMetaLong("stationary_ms").takeIf { it > 0 } ?: 45_000
+            minDistance = readMetaFloat("min_distance").takeIf { it > 0f } ?: 5f
+            apiBase = readMeta("api_base") ?: ""
+            token = readMeta("api_token") ?: ""
+        }
+        if (cutoffAtUtcMs <= 0L) {
+            cutoffAtUtcMs = defaultCutoffUtcMs()
         }
         persistSession()
         startForegroundNotification()
@@ -100,6 +118,8 @@ class LocationForegroundService : Service() {
         running = true
         startUpdates()
         handler.removeCallbacks(cutoffStop)
+        handler.removeCallbacks(syncFlush)
+        handler.post(syncFlush)
         val delay = cutoffAtUtcMs - System.currentTimeMillis()
         if (delay > 0) {
             handler.postDelayed(cutoffStop, delay)
@@ -109,6 +129,8 @@ class LocationForegroundService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(cutoffStop)
+        handler.removeCallbacks(syncFlush)
+        flushPendingToServer()
         stopUpdates()
         db?.close()
         running = false
@@ -118,6 +140,8 @@ class LocationForegroundService : Service() {
     private fun stopCollecting() {
         running = false
         handler.removeCallbacks(cutoffStop)
+        handler.removeCallbacks(syncFlush)
+        flushPendingToServer()
         stopUpdates()
         stopSelf()
     }
@@ -145,7 +169,7 @@ class LocationForegroundService : Service() {
 
     private fun startUpdates() {
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-            .setMinUpdateIntervalMillis(intervalMs)
+            .setMinUpdateIntervalMillis(2_000)
             .setMinUpdateDistanceMeters(minDistance)
             .build()
         try {
@@ -230,12 +254,26 @@ class LocationForegroundService : Service() {
         )
     }
 
+    private fun defaultCutoffUtcMs(): Long {
+        val cal = java.util.Calendar.getInstance(TimeZone.getTimeZone("Asia/Baghdad"))
+        if (cal.get(java.util.Calendar.HOUR_OF_DAY) >= 3) {
+            cal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+        }
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 3)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
     private fun persistSession() {
         writeMeta("active_shift_id", shiftId.toString())
         writeMeta("cutoff_at_utc_ms", cutoffAtUtcMs.toString())
         writeMeta("interval_ms", intervalMs.toString())
         writeMeta("stationary_ms", stationaryIntervalMs.toString())
         writeMeta("min_distance", minDistance.toString())
+        if (apiBase.isNotEmpty()) writeMeta("api_base", apiBase)
+        if (token.isNotEmpty()) writeMeta("api_token", token)
     }
 
     private fun insertEvent(type: String) {
@@ -264,6 +302,59 @@ class LocationForegroundService : Service() {
         return value
     }
 
+    private fun flushPendingToServer() {
+        val base = (if (apiBase.isNotEmpty()) apiBase else readMeta("api_base") ?: "").trim()
+        val auth = (if (token.isNotEmpty()) token else readMeta("api_token") ?: "").trim()
+        val sid = if (shiftId > 0) shiftId else readMetaInt("active_shift_id")
+        if (base.isEmpty() || auth.isEmpty() || sid <= 0 || db == null) return
+        val cursor = db?.rawQuery(
+            "SELECT latitude, longitude, accuracy, speed, heading, captured_at_utc, device_sequence FROM local_location_points WHERE shift_id = ? AND sync_status IN ('Pending','Failed') ORDER BY device_sequence ASC LIMIT 150",
+            arrayOf(sid.toString())
+        ) ?: return
+        val points = org.json.JSONArray()
+        val seqs = mutableListOf<Long>()
+        while (cursor.moveToNext()) {
+            val seq = cursor.getLong(6)
+            seqs.add(seq)
+            val obj = org.json.JSONObject()
+            obj.put("latitude", cursor.getDouble(0))
+            obj.put("longitude", cursor.getDouble(1))
+            if (!cursor.isNull(2)) obj.put("accuracy", cursor.getDouble(2))
+            if (!cursor.isNull(3)) obj.put("speed", cursor.getDouble(3))
+            if (!cursor.isNull(4)) obj.put("heading", cursor.getDouble(4))
+            obj.put("capturedAtUtc", cursor.getString(5))
+            obj.put("deviceSequence", seq)
+            points.put(obj)
+        }
+        cursor.close()
+        if (points.length() == 0) return
+        val body = org.json.JSONObject()
+        body.put("shiftId", sid)
+        body.put("points", points)
+        try {
+            val url = java.net.URL(base.trimEnd('/') + "/sales/location/batch")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 15000
+            conn.readTimeout = 20000
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("Accept", "application/json")
+            conn.setRequestProperty("Authorization", "Bearer $auth")
+            conn.doOutput = true
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            conn.disconnect()
+            if (code in 200..299) {
+                val placeholders = seqs.joinToString(",") { "?" }
+                db?.execSQL(
+                    "UPDATE local_location_points SET sync_status = 'Synced' WHERE shift_id = ? AND device_sequence IN ($placeholders)",
+                    arrayOf(sid, *seqs.toTypedArray())
+                )
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     companion object {
         const val ACTION_STOP = "com.qalaat.sales_employee_application.STOP_TRACKING"
         const val EXTRA_SHIFT_ID = "shiftId"
@@ -271,6 +362,8 @@ class LocationForegroundService : Service() {
         const val EXTRA_INTERVAL = "intervalMs"
         const val EXTRA_STATIONARY = "stationaryIntervalMs"
         const val EXTRA_DISTANCE = "minDistance"
+        const val EXTRA_API_BASE = "apiBase"
+        const val EXTRA_TOKEN = "token"
         const val CHANNEL_ID = "sales_shift"
         const val NOTIFICATION_ID = 4101
         @Volatile var running: Boolean = false

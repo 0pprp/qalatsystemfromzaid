@@ -24,6 +24,10 @@ export function isTokenExpired() {
   return !expiry || new Date().getTime() > new Date(expiry).getTime()
 }
 
+export function isAuthenticated() {
+  return Boolean(getToken()) && !isTokenExpired()
+}
+
 export function getAuthHeaders() {
   const token = getToken()
   

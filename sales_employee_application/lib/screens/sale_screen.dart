@@ -28,6 +28,7 @@ class _SaleScreenState extends State<SaleScreen> {
   final _ration = TextEditingController();
   final _note = TextEditingController();
   final _installment = TextEditingController();
+  late final List<FocusNode> _fieldFocus = List.generate(8, (_) => FocusNode());
   int _eval = 3;
   final Map<int, int> _qty = {};
   List<SalesInventoryItem> _stock = [];
@@ -86,6 +87,9 @@ class _SaleScreenState extends State<SaleScreen> {
     _ration.dispose();
     _note.dispose();
     _installment.dispose();
+    for (final n in _fieldFocus) {
+      n.dispose();
+    }
     super.dispose();
   }
 
@@ -156,7 +160,7 @@ class _SaleScreenState extends State<SaleScreen> {
             'address': _address.text.trim(),
             'nearestLandmark': _landmark.text.trim(),
             'mukhtarName': _mukhtar.text.trim(),
-            'rationCenterNumber': _ration.text.trim(),
+            if (_ration.text.trim().isNotEmpty) 'rationCenterNumber': _ration.text.trim(),
           },
           items: items,
           evaluationLevel: _eval,
@@ -189,33 +193,14 @@ class _SaleScreenState extends State<SaleScreen> {
       resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('إنشاء عملية بيع')),
       body: SafeArea(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
-          child: Column(
-            children: [
+        child: Column(
+          children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
                 child: Text('الخطوة ${_step + 1} من 5',
                     style: const TextStyle(color: AppColors.muted)),
               ),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, _) {
-                    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
-                    return SingleChildScrollView(
-                      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                      padding: EdgeInsets.fromLTRB(
-                        AppSpacing.md,
-                        AppSpacing.md,
-                        AppSpacing.md,
-                        AppSpacing.lg + keyboardInset,
-                      ),
-                      child: _stepBody(),
-                    );
-                  },
-                ),
-              ),
+              Expanded(child: _stepBody()),
               Padding(
                 padding: const EdgeInsets.fromLTRB(
                   AppSpacing.md,
@@ -243,22 +228,38 @@ class _SaleScreenState extends State<SaleScreen> {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _stepBody() {
+    final padding = const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.lg);
     switch (_step) {
       case 0:
-        return _customerStep();
+        return SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: padding,
+          child: _customerStep(),
+        );
       case 1:
         return _itemsStep();
       case 2:
-        return _evalStep();
+        return SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: padding,
+          child: _evalStep(),
+        );
       case 3:
-        return _payStep();
+        return SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: padding,
+          child: _payStep(),
+        );
       default:
-        return _reviewStep();
+        return SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: padding,
+          child: _reviewStep(),
+        );
     }
   }
 
@@ -285,73 +286,101 @@ class _SaleScreenState extends State<SaleScreen> {
               child: const Text('اختيار من البحث'),
             ),
           const SizedBox(height: AppSpacing.sm),
-          _field(_name, 'الاسم الكامل *', validator: _req),
-          _field(_phone, 'رقم الهاتف *', keyboard: TextInputType.phone, validator: _req),
-          _field(_province, 'المحافظة *', validator: _req),
-          _field(_card, 'رقم البطاقة الوطنية *', keyboard: TextInputType.number, validator: _req),
-          _field(_address, 'العنوان *', validator: _req),
-          _field(_landmark, 'أقرب نقطة دالة *', validator: _req),
-          _field(_mukhtar, 'اسم المختار *', validator: _req),
-          _field(_ration, 'رقم مركز التموين *', keyboard: TextInputType.number, validator: _req),
+          _field(_name, 'الاسم الكامل *', 0, validator: _req),
+          _field(_phone, 'رقم الهاتف *', 1, keyboard: TextInputType.phone, validator: _req),
+          _field(_province, 'المحافظة *', 2, validator: _req),
+          _field(_card, 'رقم البطاقة الوطنية *', 3, keyboard: TextInputType.number, validator: _req),
+          _field(_address, 'العنوان *', 4, validator: _req),
+          _field(_landmark, 'أقرب نقطة دالة *', 5, validator: _req),
+          _field(_mukhtar, 'اسم المختار *', 6, validator: _req),
+          _field(_ration, 'رقم مركز التموين (اختياري)', 7, keyboard: TextInputType.number, last: true),
         ],
       ),
     );
   }
 
-  Widget _field(TextEditingController c, String label,
-      {TextInputType? keyboard, String? Function(String?)? validator}) {
+  Widget _field(TextEditingController c, String label, int index,
+      {TextInputType? keyboard, String? Function(String?)? validator, bool last = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: TextFormField(
         controller: c,
+        focusNode: _fieldFocus[index],
         keyboardType: keyboard,
         validator: validator,
+        textInputAction: last ? TextInputAction.done : TextInputAction.next,
+        enableSuggestions: false,
+        autocorrect: false,
+        smartDashesType: SmartDashesType.disabled,
+        smartQuotesType: SmartQuotesType.disabled,
+        onFieldSubmitted: (_) {
+          if (last) {
+            _fieldFocus[index].unfocus();
+          } else {
+            _fieldFocus[index + 1].requestFocus();
+          }
+        },
         decoration: InputDecoration(labelText: label),
       ),
     );
   }
 
   Widget _itemsStep() {
-    if (_loadingStock) return const Center(child: CircularProgressIndicator());
+    if (_loadingStock) {
+      return const Center(child: CircularProgressIndicator());
+    }
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ..._stock.map((item) {
-          final q = _qty[item.productId] ?? 0;
-          final empty = item.availableQuantity <= 0;
-          return Card(
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.sm),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: InventoryItemInfo(item: item)),
-                  if (!empty)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          onPressed: q <= 0
-                              ? null
-                              : () => setState(() => _qty[item.productId] = q - 1),
-                          icon: const Icon(Icons.remove),
+        Expanded(
+          child: ListView.builder(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+            itemCount: _stock.length,
+            itemBuilder: (context, index) {
+              final item = _stock[index];
+              final q = _qty[item.productId] ?? 0;
+              final empty = item.availableQuantity <= 0;
+              return Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: InventoryItemInfo(item: item)),
+                      if (!empty)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              onPressed: q <= 0
+                                  ? null
+                                  : () => setState(() => _qty[item.productId] = q - 1),
+                              icon: const Icon(Icons.remove),
+                            ),
+                            Text('$q'),
+                            IconButton(
+                              onPressed: q >= item.availableQuantity
+                                  ? null
+                                  : () => setState(() => _qty[item.productId] = q + 1),
+                              icon: const Icon(Icons.add),
+                            ),
+                          ],
                         ),
-                        Text('$q'),
-                        IconButton(
-                          onPressed: q >= item.availableQuantity
-                              ? null
-                              : () => setState(() => _qty[item.productId] = q + 1),
-                          icon: const Icon(Icons.add),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
-          );
-        }),
-        Text('المجموع الأساسي: ${MoneyFormat.iqd(_previewBase)}',
-            style: const TextStyle(fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Text('المجموع الأساسي: ${MoneyFormat.iqd(_previewBase)}',
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ),
       ],
     );
   }
@@ -408,6 +437,9 @@ class _SaleScreenState extends State<SaleScreen> {
     return TextField(
       controller: _installment,
       keyboardType: const TextInputType.numberWithOptions(decimal: false),
+      textInputAction: TextInputAction.done,
+      enableSuggestions: false,
+      autocorrect: false,
       decoration: const InputDecoration(
         labelText: 'القسط اليومي *',
         suffixText: 'د.ع',

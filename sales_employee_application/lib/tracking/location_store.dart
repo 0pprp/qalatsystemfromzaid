@@ -4,6 +4,7 @@ abstract class LocationPointStore {
   Future<void> init();
   Future<int> nextSequence(int shiftId);
   Future<void> insert(LocalLocationPoint point);
+  Future<void> insertEvent(int? shiftId, String eventType);
   Future<List<LocalLocationPoint>> pending({int limit = 200});
   Future<void> markStatus(List<int> sequences, int shiftId, String status);
   Future<void> markFailed(List<int> sequences, int shiftId);
@@ -33,6 +34,9 @@ class MemoryLocationStore implements LocationPointStore {
     }
     points.add(point);
   }
+
+  @override
+  Future<void> insertEvent(int? shiftId, String eventType) async {}
 
   @override
   Future<List<LocalLocationPoint>> pending({int limit = 200}) async {

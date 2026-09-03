@@ -82,6 +82,14 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
+        public void CompleteRules_AllowMissingRationCenter()
+        {
+            var sale = Draft(SalesEvaluationLevels.Good);
+            sale.RationCenterNumber = null;
+            Assert.Null(SalesCompleteRules.ValidateForComplete(sale));
+        }
+
+        [Fact]
         public async Task QuantityUnavailable_FailsWithoutDeduction()
         {
             var repo = Seed(SalesEvaluationLevels.Good, qty: 5);

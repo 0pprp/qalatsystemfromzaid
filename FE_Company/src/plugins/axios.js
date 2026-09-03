@@ -69,7 +69,8 @@ axios.interceptors.response.use(
 
         // Logout user on failure
         removeLocalStorage()
-        window.location.href = '/login' 
+        if (window.location.hash !== '#/login')
+          window.location.hash = '#/login' 
         
         return Promise.reject(err)
       } finally {

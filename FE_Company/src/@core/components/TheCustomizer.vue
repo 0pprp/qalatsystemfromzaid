@@ -56,11 +56,9 @@ const clearSession = () => {
   removeLocalStorage()
 }
 
-const goLogin = async fromRoute => {
-  const toParam = fromRoute?.fullPath && fromRoute.fullPath !== '/' ? fromRoute.fullPath : undefined
-  if (fromRoute?.name !== 'login') {
-    await router.replace({ name: 'login', query: { to: toParam } })
-  }
+const goLogin = async () => {
+  if (router.currentRoute.value.path !== '/login')
+    await router.replace('/login')
 }
 
 const goHomeIfLogged = async toRoute => {
@@ -317,25 +315,22 @@ let removeBeforeEach
 onMounted(() => {
   // 1) حارس الملاحة
   removeBeforeEach = router.beforeEach(async (to) => {
-    // الصفحات العامة مسموحة دائمًا
-    if (isPublicRoute(to)) return true
+    if (to.path === '/login' || to.path === '/logout' || to.path === '/login-new' || isPublicRoute(to))
+      return true
 
     const { loggedIn } = checkAuth()
 
-    // صفحات لغير الموثّقين فقط
     if (isUnauthOnly(to)) {
-      if (loggedIn) {
-        await goHomeIfLogged(to)
-        return false
-      }
+      if (loggedIn)
+        return { path: '/' }
+
       return true
     }
 
-    // باقي الصفحات تحتاج توثيق
     if (!loggedIn) {
       clearSession()
-      await goLogin(to)
-      return false
+
+      return { path: '/login' }
     }
 
     return true

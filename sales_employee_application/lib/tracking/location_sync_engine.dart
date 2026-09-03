@@ -20,23 +20,27 @@ class LocationSyncEngine {
         }
         await _store.markEventsSynced([for (final event in events) event.id]);
       }
-      final batch = await _store.pending(limit: TrackingConfig.syncBatchSize);
-      if (batch.isEmpty) {
-        return true;
+      var rounds = 0;
+      while (rounds < 25) {
+        rounds++;
+        final batch = await _store.pending(limit: TrackingConfig.syncBatchSize);
+        if (batch.isEmpty) {
+          return true;
+        }
+        await _repo.recordTrackingEvent(shiftId, 'SYNC_STARTED');
+        final seqs = [for (final p in batch) p.deviceSequence];
+        await _store.markStatus(seqs, shiftId, 'Syncing');
+        try {
+          await _repo.uploadLocationBatch(shiftId, batch);
+          await _store.markStatus(seqs, shiftId, 'Synced');
+          await _repo.recordTrackingEvent(shiftId, 'SYNC_COMPLETED');
+        } catch (_) {
+          await _store.markFailed(seqs, shiftId);
+          await _repo.recordTrackingEvent(shiftId, 'SYNC_FAILED');
+          return false;
+        }
       }
-      await _repo.recordTrackingEvent(shiftId, 'SYNC_STARTED');
-      final seqs = [for (final p in batch) p.deviceSequence];
-      await _store.markStatus(seqs, shiftId, 'Syncing');
-      try {
-        await _repo.uploadLocationBatch(shiftId, batch);
-        await _store.markStatus(seqs, shiftId, 'Synced');
-        await _repo.recordTrackingEvent(shiftId, 'SYNC_COMPLETED');
-        return true;
-      } catch (_) {
-        await _store.markFailed(seqs, shiftId);
-        await _repo.recordTrackingEvent(shiftId, 'SYNC_FAILED');
-        return false;
-      }
+      return true;
     } finally {
       _busy = false;
     }

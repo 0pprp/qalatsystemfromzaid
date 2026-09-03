@@ -2,6 +2,7 @@ import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/tracking/work_shift.dart';
+import 'package:sales_employee_application/utils/iraq_time.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
 
 class ApiSalesRepository implements SalesRepository {
@@ -14,6 +15,11 @@ class ApiSalesRepository implements SalesRepository {
 
   Never _throw(ApiException e) {
     throw ApiException(salesApiMessage(e.statusCode, e.message), statusCode: e.statusCode);
+  }
+
+  static bool _onIraqDay(DateTime value, DateTime iraqDate) {
+    final iraq = value.isUtc ? value.add(const Duration(hours: 3)) : value;
+    return iraq.year == iraqDate.year && iraq.month == iraqDate.month && iraq.day == iraqDate.day;
   }
 
   @override
@@ -60,8 +66,27 @@ class ApiSalesRepository implements SalesRepository {
   Future<List<SalesDraft>> pending() async {
     try {
       final raw = await ApiClient.get('sales/pending');
+      return _maps(raw).map(SalesDraft.fromJson).where((d) => !d.isCompleted).toList();
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
+  Future<List<SalesDraft>> todayCompleted() async {
+    try {
+      final raw = await ApiClient.get('sales/today');
       return _maps(raw).map(SalesDraft.fromJson).toList();
     } on ApiException catch (e) {
+      if (e.statusCode == 404) {
+        final raw = await ApiClient.get('sales/pending');
+        final iraq = IraqTime.now();
+        final day = DateTime(iraq.year, iraq.month, iraq.day);
+        return _maps(raw)
+            .map(SalesDraft.fromJson)
+            .where((d) => d.isCompleted && _onIraqDay(d.completedAt ?? d.createdAt, day))
+            .toList();
+      }
       _throw(e);
     }
   }

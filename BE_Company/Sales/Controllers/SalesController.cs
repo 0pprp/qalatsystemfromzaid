@@ -21,6 +21,7 @@ namespace BE_Company.Sales.Controllers
         private readonly ISalesShiftService _shifts;
         private readonly ISalesLocationIngestService _locations;
         private readonly ISalesRequestService _requests;
+        private readonly IIraqClock _clock;
 
         public SalesController(
             SalesDevelopmentGuard guard,
@@ -32,7 +33,8 @@ namespace BE_Company.Sales.Controllers
             ISalesCompleteService complete,
             ISalesShiftService shifts,
             ISalesLocationIngestService locations,
-            ISalesRequestService requests)
+            ISalesRequestService requests,
+            IIraqClock clock)
         {
             _guard = guard;
             _identity = identity;
@@ -44,6 +46,7 @@ namespace BE_Company.Sales.Controllers
             _shifts = shifts;
             _locations = locations;
             _requests = requests;
+            _clock = clock;
         }
 
         [Authorize(Policy = SalesPolicies.AnySales)]
@@ -171,7 +174,29 @@ namespace BE_Company.Sales.Controllers
 
             await _drafts.EnsureSchemaAsync(ct);
             var rows = await _drafts.GetByEmployeeAsync(identity.EmployeeId, ct);
-            return Ok(rows);
+            return Ok(rows.Where(IsOpenSale));
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("today")]
+        public async Task<ActionResult<IEnumerable<SalesDraftDTO>>> Today(CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            await _drafts.EnsureSchemaAsync(ct);
+            var iraqDate = IraqTimeService.ToIraq(_clock.UtcNow).Date;
+            var rows = await _drafts.GetByEmployeeAsync(identity.EmployeeId, ct);
+            return Ok(rows.Where(r => IsSoldSale(r) && IsIraqCalendarDay(r.CompletedAt ?? r.CreatedAt, iraqDate)));
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
@@ -465,6 +490,27 @@ namespace BE_Company.Sales.Controllers
             {
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
+        }
+
+        private static bool IsOpenSale(SalesDraftDTO row) =>
+            row.Status == SalesStatuses.Pending || row.Status == SalesStatuses.Rejected;
+
+        private static bool IsSoldSale(SalesDraftDTO row) =>
+            row.Status == SalesStatuses.Completed
+            || row.Status == SalesStatuses.DocumentsReady
+            || row.Status == SalesStatuses.DocumentsPending;
+
+        private static bool IsIraqCalendarDay(DateTime value, DateTime iraqDate)
+        {
+            if (value.Date == iraqDate.Date)
+            {
+                return true;
+            }
+
+            var instant = value.Kind == DateTimeKind.Utc
+                ? value
+                : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+            return IraqTimeService.ToIraq(instant).Date == iraqDate.Date;
         }
 
         private async Task<ActionResult?> BlockIfNotDemo(CancellationToken ct)

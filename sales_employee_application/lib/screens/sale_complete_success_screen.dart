@@ -69,7 +69,12 @@ class SaleCompleteSuccessScreen extends StatelessWidget {
             ],
             const SizedBox(height: AppSpacing.sm),
             TextButton(
-              onPressed: () => Navigator.pushNamedAndRemoveUntil(context, '/sales', (route) => route.settings.name == '/home' || route.isFirst),
+              onPressed: () => Navigator.pushNamedAndRemoveUntil(
+                context,
+                '/sales',
+                (route) => route.settings.name == '/home' || route.isFirst,
+                arguments: 'today',
+              ),
               child: const Text('العودة للمبيعات'),
             ),
           ],

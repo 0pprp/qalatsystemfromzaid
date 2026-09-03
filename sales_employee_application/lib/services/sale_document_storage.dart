@@ -9,9 +9,12 @@ class SaleDocumentStorage {
     }
     Directory? dir;
     try {
-      dir = await getDownloadsDirectory();
+      dir = await getDownloadsDirectory().timeout(const Duration(seconds: 2));
     } catch (_) {}
-    dir ??= await getApplicationDocumentsDirectory();
+    try {
+      dir ??= await getApplicationDocumentsDirectory().timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    dir ??= Directory.systemTemp;
     final folder = Directory('${dir.path}/SalesHaider');
     if (!await folder.exists()) {
       await folder.create(recursive: true);

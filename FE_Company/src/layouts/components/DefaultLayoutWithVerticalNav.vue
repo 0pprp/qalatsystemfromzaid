@@ -46,6 +46,9 @@ const { canManageUsers, canBackup, canViewDecisions, isSalesManager } = useUserR
 
 const navItems = computed(() => {
   return allNavItems.filter(item => {
+    if (isSalesManager.value)
+      return item.title === 'إدارة المبيعات' || item.title === 'الدعم الفني'
+
     if (item.title === 'المستخدمين' && !canManageUsers.value) return false
     if (item.title === 'النسخ الاحتياطي' && !canBackup.value) return false
     if (item.title === 'القرارات' && !canViewDecisions.value) return false

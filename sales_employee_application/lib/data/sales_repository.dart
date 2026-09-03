@@ -7,6 +7,7 @@ abstract class SalesRepository {
   Future<List<SalesInventoryItem>> inventory();
   Future<SalesDraft> createSale(SalesDraftCreateRequest request);
   Future<List<SalesDraft>> pending();
+  Future<List<SalesDraft>> todayCompleted();
   Future<SalesDraft> byId(int id);
   Future<SalesCompleteResult> completeSale(int id);
   Future<List<SalesDocument>> documents(int saleId);

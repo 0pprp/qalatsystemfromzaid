@@ -1,6 +1,7 @@
 import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository.dart';
 import 'package:sales_employee_application/tracking/work_shift.dart';
+import 'package:sales_employee_application/utils/iraq_time.dart';
 
 class MockSalesRepository implements SalesRepository {
   MockSalesRepository() {
@@ -145,7 +146,20 @@ class MockSalesRepository implements SalesRepository {
   }
 
   @override
-  Future<List<SalesDraft>> pending() async => List.of(_drafts);
+  Future<List<SalesDraft>> pending() async =>
+      _drafts.where((d) => !d.isCompleted).toList();
+
+  @override
+  Future<List<SalesDraft>> todayCompleted() async {
+    final iraq = DateTime.now().toUtc().add(const Duration(hours: 3));
+    final day = DateTime(iraq.year, iraq.month, iraq.day);
+    return _drafts.where((d) {
+      if (!d.isCompleted) return false;
+      final at = d.completedAt ?? d.createdAt;
+      final local = at.isUtc ? at.add(const Duration(hours: 3)) : at;
+      return local.year == day.year && local.month == day.month && local.day == day.day;
+    }).toList();
+  }
 
   @override
   Future<SalesDraft> byId(int id) async =>
@@ -246,7 +260,7 @@ class MockSalesRepository implements SalesRepository {
       shiftId: _shiftId++,
       status: 'Active',
       startedAtUtc: now,
-      cutoffAtUtc: now.add(const Duration(hours: 18)),
+      cutoffAtUtc: IraqTime.shiftEndUtc(now),
       isNew: true,
     );
     return _shift!;

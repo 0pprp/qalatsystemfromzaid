@@ -83,10 +83,18 @@ namespace BE_Company.Sales.Services
 
         internal static SalesShiftDTO Map(SalesShiftDTO row, bool isNew, bool hasActive)
         {
-            row.StartedAt = row.StartedAtUtc;
-            row.CutoffAt = row.CutoffAtUtc;
             row.IsNew = isNew;
             row.HasActiveShift = hasActive;
+            if (row.CutoffAtUtc.Kind != DateTimeKind.Utc)
+            {
+                row.CutoffAtUtc = DateTime.SpecifyKind(row.CutoffAtUtc, DateTimeKind.Utc);
+            }
+            if (row.StartedAtUtc.Kind != DateTimeKind.Utc)
+            {
+                row.StartedAtUtc = DateTime.SpecifyKind(row.StartedAtUtc, DateTimeKind.Utc);
+            }
+            row.StartedAt = row.StartedAtUtc;
+            row.CutoffAt = row.CutoffAtUtc;
             return row;
         }
     }

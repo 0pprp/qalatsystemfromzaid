@@ -141,7 +141,7 @@ namespace BE_Company.Sales.Services
                 Address = address,
                 NearestLandmark = landmark,
                 MukhtarName = mukhtar,
-                RationCenterNumber = ration,
+                RationCenterNumber = string.IsNullOrWhiteSpace(ration) ? null : ration.Trim(),
                 EvaluationLevel = request.EvaluationLevel,
                 EvaluationNote = request.EvaluationNote.Trim(),
                 BaseSalePrice = baseSalePrice,

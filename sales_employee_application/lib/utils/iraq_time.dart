@@ -16,6 +16,12 @@ class IraqTime {
     return businessDate(iraqNow).add(const Duration(days: 1, hours: 3));
   }
 
+  static DateTime shiftEndUtc([DateTime? utcNow]) {
+    final iraq = utcNow == null ? now() : utcNow.toUtc().add(const Duration(hours: 3));
+    final endIraq = shiftEnd(iraq);
+    return DateTime.utc(endIraq.year, endIraq.month, endIraq.day);
+  }
+
   static String dateKey([DateTime? iraqNow]) {
     final d = businessDate(iraqNow);
     return '${d.year.toString().padLeft(4, '0')}-'

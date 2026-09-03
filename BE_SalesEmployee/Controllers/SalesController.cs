@@ -89,6 +89,13 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("today")]
+        public async Task<IActionResult> Today(CancellationToken ct)
+        {
+            return await ProxyAssigned("sales/today", HttpMethod.Get, null, ct);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpGet("{id:int}")]
         public async Task<IActionResult> GetById(int id, CancellationToken ct)
         {

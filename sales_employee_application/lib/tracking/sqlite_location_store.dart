@@ -89,6 +89,17 @@ CREATE TABLE IF NOT EXISTS local_tracking_events (
   }
 
   @override
+  Future<void> insertEvent(int? shiftId, String eventType) async {
+    await init();
+    await db.insert('local_tracking_events', {
+      'shift_id': shiftId,
+      'event_type': eventType,
+      'occurred_at_utc': DateTime.now().toUtc().toIso8601String(),
+      'sync_status': 'Pending',
+    });
+  }
+
+  @override
   Future<List<LocalLocationPoint>> pending({int limit = 200}) async {
     await init();
     final rows = await db.query(
