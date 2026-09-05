@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import * as XLSX from 'xlsx'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { formatIraqTime } from '@/composables/gpsTrack'
 import {
@@ -15,9 +16,11 @@ import {
   withCityQuery,
 } from '@/composables/salesManagerApi'
 import { isDemo } from '@/composables/useCities'
+import { useSalesBranches } from '@/composables/useSalesBranches'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
+const { branches } = useSalesBranches()
 const rows = ref([])
 const tab = ref('all')
 const cityValue = ref('')
@@ -35,41 +38,58 @@ const assignCityValue = ref('')
 const returnOpen = ref(false)
 const returnNote = ref('')
 const busy = ref(false)
+const excelInput = ref(null)
+const importOpen = ref(false)
+const importBusy = ref(false)
+const importPreview = ref(null)
+const intakeQuery = ref('')
+const intakeCustomers = ref([])
+const intakeKeepNew = ref(true)
+const intakeSelected = ref(null)
+const intakeForm = ref({
+  fullName: '',
+  phone: '',
+  province: '',
+  address: '',
+  notes: '',
+})
 
 const tabs = [
   { value: 'all', title: 'الكل' },
-  { value: 'sold', title: 'تم البيع' },
+  { value: 'unassigned', title: 'غير مسند' },
+  { value: 'incoming', title: 'طلبات البيع' },
+  { value: 'prepared', title: 'جاهز للبيع' },
   { value: 'pending', title: 'معلقة' },
-  { value: 'prepared', title: 'مجهز للبيع' },
   { value: 'rejected', title: 'مرفوض' },
+  { value: 'sold', title: 'تم البيع' },
 ]
 
-const allStatuses = [
-  'New',
-  'Assigned',
-  'Viewed',
-  'Returned',
-  'Pending',
-  'PreparedForSale',
-  'InProgress',
-  'ConvertedToSale',
-  'Rejected',
-  'Completed',
-]
+function employeeIdOf(row) {
+  return Number(row?.targetEmployeeId || row?.TargetEmployeeId || row?.employeeId || row?.EmployeeId || 0)
+}
 
-function matchesTab(status) {
-  const s = String(status || '')
+function isUnassigned(row) {
+  const s = String(row?.status || '')
+  return s === 'New' || employeeIdOf(row) <= 0
+}
+
+function matchesTab(row) {
+  const s = String(row?.status || '')
   switch (tab.value) {
-    case 'sold':
-      return s === 'Completed'
-    case 'pending':
-      return s === 'Pending'
+    case 'unassigned':
+      return isUnassigned(row)
+    case 'incoming':
+      return s === 'Assigned' || s === 'Viewed' || s === 'Returned'
     case 'prepared':
       return s === 'PreparedForSale' || s === 'InProgress' || s === 'ConvertedToSale'
+    case 'pending':
+      return s === 'Pending'
     case 'rejected':
       return s === 'Rejected'
+    case 'sold':
+      return s === 'Completed'
     default:
-      return allStatuses.includes(s)
+      return true
   }
 }
 
@@ -96,14 +116,42 @@ function isPrepared(status) {
   return status === 'PreparedForSale' || status === 'InProgress' || status === 'ConvertedToSale'
 }
 
-const visibleRows = computed(() => rows.value.filter(row => matchesTab(row.status)))
-
 function statusText(status) {
-  if (status === 'Completed')
-    return 'تم البيع'
-
   return requestStatusLabel[status] || status
 }
+
+function lastNote(row) {
+  const ret = (row?.returnNote || row?.ReturnNote || '').trim()
+  const pending = (row?.pendingNote || row?.PendingNote || '').trim()
+  const rejected = (row?.rejectionReason || row?.RejectionReason || '').trim()
+  const notes = (row?.notes || row?.Notes || '').trim()
+  if (ret)
+    return ret
+  if (pending)
+    return pending
+  if (rejected)
+    return rejected
+
+  return notes
+}
+
+function lastUpdated(row) {
+  const times = [
+    row?.completedAtUtc || row?.CompletedAtUtc,
+    row?.rejectedAtUtc || row?.RejectedAtUtc,
+    row?.processingAtUtc || row?.ProcessingAtUtc,
+    row?.viewedAtUtc || row?.ViewedAtUtc,
+    row?.assignedAtUtc || row?.AssignedAtUtc,
+    row?.createdAtUtc || row?.CreatedAtUtc,
+  ].filter(Boolean)
+  if (!times.length)
+    return ''
+  times.sort((a, b) => new Date(b) - new Date(a))
+
+  return formatIraqTime(times[0])
+}
+
+const visibleRows = computed(() => rows.value.filter(row => matchesTab(row)))
 
 async function load() {
   rows.value = await smGet(withCityQuery('sales-requests', cityValue.value)) || []
@@ -126,8 +174,70 @@ async function openDetails(row, resetAssign = true) {
     returnNote.value = ''
     returnOpen.value = false
     managerNote.value = ''
+    resetIntake(detail.value)
   }
   await loadEmployees()
+}
+
+function resetIntake(d) {
+  intakeQuery.value = pick(d, 'customerName', 'CustomerName') || ''
+  intakeCustomers.value = []
+  intakeKeepNew.value = true
+  intakeSelected.value = null
+  intakeForm.value = {
+    fullName: pick(d, 'customerName', 'CustomerName') || '',
+    phone: pick(d, 'customerPhone', 'CustomerPhone') || '',
+    province: pick(d, 'customerProvince', 'CustomerProvince') || pick(d, 'cityName', 'CityName') || '',
+    address: pick(d, 'customerAddress', 'CustomerAddress') || '',
+    notes: pick(d, 'notes', 'Notes') || '',
+  }
+}
+
+function searchCity() {
+  return cityValue.value || detail.value?.cityValue || selected.value?.cityValue || ''
+}
+
+async function searchIntakeCustomers() {
+  const q = intakeQuery.value.trim()
+  if (q.length < 2) {
+    toast.error('اكتب حرفين على الأقل للبحث')
+
+    return
+  }
+  const city = searchCity()
+  if (!city) {
+    toast.error('حدد المحافظة في الفلتر للبحث')
+
+    return
+  }
+  try {
+    intakeCustomers.value = await smGet(`customers/search?q=${encodeURIComponent(q)}&cityValue=${encodeURIComponent(city)}`) || []
+  }
+  catch (err) {
+    intakeCustomers.value = []
+    toast.error(err?.response?.data?.message || 'تعذر البحث عن الزبون')
+  }
+}
+
+function selectIntakeCustomer(c) {
+  intakeSelected.value = c
+  intakeKeepNew.value = false
+  intakeForm.value = {
+    fullName: c.fullName || c.customerName || intakeForm.value.fullName,
+    phone: c.phone || c.Phone || intakeForm.value.phone,
+    province: c.province || c.cityName || c.Province || intakeForm.value.province,
+    address: c.address || c.Address || intakeForm.value.address,
+    notes: intakeForm.value.notes,
+  }
+}
+
+function keepIntakeNew() {
+  intakeKeepNew.value = true
+  intakeSelected.value = null
+}
+
+function customerKey(c) {
+  return c.branchKey || `${c.cityValue || c.CityValue || ''}:${c.customerId || c.CustomerId}`
 }
 
 function pick(obj, ...keys) {
@@ -386,7 +496,17 @@ async function assign() {
 
     return
   }
+  const name = (intakeForm.value.fullName || '').trim()
+  if (!name) {
+    toast.error('اسم الزبون مطلوب')
+
+    return
+  }
   const employee = employees.value.find(e => e.employeeId === assignEmployeeId.value)
+  const sourceCity = intakeSelected.value?.cityValue || intakeSelected.value?.CityValue
+  const sameBranch = !intakeKeepNew.value
+    && sourceCity
+    && String(sourceCity) === String(d.cityValue)
   busy.value = true
   try {
     detail.value = await smPost(
@@ -396,9 +516,17 @@ async function assign() {
         employeeName: employee?.employeeName,
         cityValue: assignCityValue.value,
         cityName: employee?.cityName || employee?.branchName,
+        keepNewCustomer: intakeKeepNew.value,
+        existingCustomerId: sameBranch ? (intakeSelected.value?.customerId || intakeSelected.value?.CustomerId) : null,
+        customerSourceCityValue: sourceCity || null,
+        customerName: name,
+        customerPhone: intakeForm.value.phone,
+        customerProvince: intakeForm.value.province,
+        customerAddress: intakeForm.value.address,
+        notes: intakeForm.value.notes,
       },
     )
-    toast.success('تم إسناد الطلب')
+    toast.success('تم إرسال الطلب للموظف')
     await load()
   }
   catch (err) {
@@ -446,6 +574,201 @@ async function sendReturn() {
   }
 }
 
+function foldAr(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/\s+/g, ' ')
+}
+
+function headerKey(value) {
+  const t = foldAr(value).replace(/[_\-]/g, ' ').toLowerCase()
+  if (['اسم الزبون', 'اسم العميل', 'customername', 'fullname', 'name', 'الاسم'].includes(t))
+    return 'name'
+  if (['الهاتف', 'هاتف', 'phone', 'phonenumber', 'mobile'].includes(t))
+    return 'phone'
+  if (t === 'المحافظة' || t === 'المحافظه' || t === 'المدينة' || t === 'المدينه' || ['province', 'city', 'governorate'].includes(t))
+    return 'province'
+  if (['العنوان', 'address'].includes(t))
+    return 'address'
+  if (['نوع المبيع', 'نوع البيع', 'saletype', 'sale type'].includes(t))
+    return 'saleType'
+
+  return ''
+}
+
+function cellText(value) {
+  if (value == null)
+    return ''
+
+  return String(value).trim()
+}
+
+function resolveCity(provinceText) {
+  const text = foldAr(provinceText)
+  if (text) {
+    const match = branches.value.find(p => foldAr(p.name) === text || foldAr(p.value) === text)
+    if (match)
+      return { cityValue: String(match.value), cityName: match.name }
+  }
+  if (cityValue.value) {
+    const selected = branches.value.find(p => String(p.value) === String(cityValue.value))
+
+    return {
+      cityValue: String(cityValue.value),
+      cityName: selected?.name || '',
+    }
+  }
+
+  return null
+}
+
+function downloadTemplate() {
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['اسم الزبون', 'الهاتف', 'المحافظة', 'العنوان', 'نوع المبيع'],
+    ['أحمد علي', '07700000000', 'النجف', 'الكوفة', 'ثلاجة'],
+  ])
+  const book = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(book, sheet, 'طلبات البيع')
+  XLSX.writeFile(book, 'نموذج_طلبات_البيع.xlsx')
+}
+
+function openExcelPicker() {
+  excelInput.value?.click()
+}
+
+function onExcelPicked(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file)
+    return
+  const reader = new FileReader()
+  reader.onload = e => {
+    try {
+      importPreview.value = parseExcel(e.target.result)
+      importOpen.value = true
+    }
+    catch (err) {
+      toast.error(err?.message || 'تعذر قراءة ملف Excel')
+    }
+  }
+  reader.readAsArrayBuffer(file)
+}
+
+function parseExcel(buffer) {
+  const workbook = XLSX.read(buffer, { type: 'array' })
+  const sheet = workbook.Sheets[workbook.SheetNames[0]]
+  if (!sheet)
+    throw new Error('الملف لا يحتوي على ورقة')
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false })
+  if (!rows.length)
+    throw new Error('الملف فارغ')
+  const map = {}
+  ;(rows[0] || []).forEach((header, index) => {
+    const key = headerKey(header)
+    if (key && map[key] == null)
+      map[key] = index
+  })
+  if (map.name == null)
+    throw new Error('عمود اسم الزبون مطلوب في الصف الأول')
+  const valid = []
+  const errors = []
+  let total = 0
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || []
+    const name = cellText(row[map.name])
+    const phone = cellText(map.phone != null ? row[map.phone] : '')
+    const province = cellText(map.province != null ? row[map.province] : '')
+    const address = cellText(map.address != null ? row[map.address] : '')
+    const saleType = cellText(map.saleType != null ? row[map.saleType] : '')
+    if (![name, phone, province, address, saleType].some(Boolean))
+      continue
+    total++
+    const excelRow = i + 1
+    if (!name) {
+      errors.push({ rowNumber: excelRow, message: 'اسم الزبون مطلوب' })
+      continue
+    }
+    const city = resolveCity(province)
+    if (!city) {
+      errors.push({
+        rowNumber: excelRow,
+        message: province ? `المحافظة غير معروفة: ${province}` : 'المحافظة مطلوبة أو حددها من الفلتر',
+      })
+      continue
+    }
+    valid.push({
+      rowNumber: excelRow,
+      customerName: name,
+      phone,
+      province: province || city.cityName,
+      address,
+      saleType,
+      cityValue: city.cityValue,
+      cityName: city.cityName,
+    })
+  }
+
+  return { total, valid, errors }
+}
+
+async function confirmImport() {
+  const preview = importPreview.value
+  if (!preview?.valid?.length) {
+    toast.error('لا توجد صفوف صحيحة للحفظ')
+
+    return
+  }
+  importBusy.value = true
+  try {
+    const groups = new Map()
+    for (const row of preview.valid) {
+      const key = row.cityValue
+      if (!groups.has(key))
+        groups.set(key, [])
+      groups.get(key).push(row)
+    }
+    let saved = 0
+    const failed = []
+    for (const [city, rows] of groups.entries()) {
+      const result = await smPost('sales-requests/import', {
+        cityValue: city,
+        rows: rows.map(r => ({
+          rowNumber: r.rowNumber,
+          customerName: r.customerName,
+          phone: r.phone,
+          province: r.province,
+          address: r.address,
+          saleType: r.saleType,
+        })),
+      })
+      saved += Number(result?.saved || result?.Saved || 0)
+      const errs = result?.errors || result?.Errors || []
+      for (const err of errs) {
+        failed.push({
+          rowNumber: err.rowNumber || err.RowNumber,
+          message: err.message || err.Message,
+        })
+      }
+    }
+    toast.success(`تم حفظ ${saved} طلب غير مسند`)
+    if (failed.length)
+      toast.error(`فشل ${failed.length} صف أثناء الحفظ`)
+    importOpen.value = false
+    importPreview.value = null
+    tab.value = 'unassigned'
+    await load()
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || 'تعذر استيراد الطلبات')
+  }
+  finally {
+    importBusy.value = false
+  }
+}
+
 onMounted(load)
 onUnmounted(() => {
   if (shopImageUrl.value)
@@ -455,15 +778,36 @@ onUnmounted(() => {
 
 <template>
   <div>
-    <div class="d-flex justify-space-between mb-4">
-      <h4>طلبات المبيعات</h4>
-      <VBtn
-        color="primary"
-        :to="{ name: 'sales-manager-request-create' }"
-      >
-        + طلب مبيع جديد
-      </VBtn>
+    <div class="d-flex justify-space-between mb-4 flex-wrap gap-2">
+      <h4>طلبات البيع</h4>
+      <div class="d-flex gap-2 flex-wrap">
+        <VBtn
+          variant="outlined"
+          @click="downloadTemplate"
+        >
+          تحميل نموذج Excel
+        </VBtn>
+        <VBtn
+          color="secondary"
+          @click="openExcelPicker"
+        >
+          استيراد Excel
+        </VBtn>
+        <VBtn
+          color="primary"
+          :to="{ name: 'sales-manager-request-create' }"
+        >
+          + طلب مبيع جديد
+        </VBtn>
+      </div>
     </div>
+    <input
+      ref="excelInput"
+      type="file"
+      accept=".xlsx,.xls"
+      hidden
+      @change="onExcelPicked"
+    >
     <VRow class="mb-3">
       <VCol
         cols="12"
@@ -510,7 +854,18 @@ onUnmounted(() => {
               </VChip>
             </div>
             <strong>{{ row.customerName }}</strong>
-            <div>{{ row.targetEmployeeName || 'غير مسند' }} — {{ row.branchName || row.cityName }}</div>
+            <div>المحافظة: {{ row.customerProvince || row.CustomerProvince || row.branchName || row.cityName }}</div>
+            <div>الموظف: {{ row.targetEmployeeName || 'غير مسند' }}</div>
+            <div>الحالة: {{ statusText(row.status) }}</div>
+            <div v-if="lastNote(row)">
+              آخر ملاحظة/سبب: {{ lastNote(row) }}
+            </div>
+            <div
+              v-if="row.rejectionReason || row.RejectionReason"
+              class="text-error"
+            >
+              سبب الرفض: {{ row.rejectionReason || row.RejectionReason }}
+            </div>
             <VChip
               v-if="row.status === 'Returned'"
               size="small"
@@ -519,20 +874,8 @@ onUnmounted(() => {
             >
               معاد للموظف
             </VChip>
-            <div
-              v-if="row.status === 'Returned' && (row.returnNote || row.ReturnNote)"
-              class="text-error mt-1"
-            >
-              ملاحظة الإعادة: {{ row.returnNote || row.ReturnNote }}
-            </div>
-            <div
-              v-if="row.status === 'Pending' && (row.pendingNote || row.PendingNote)"
-              class="mt-1"
-            >
-              ملاحظة التعليق: {{ row.pendingNote || row.PendingNote }}
-            </div>
             <div class="text-medium-emphasis">
-              {{ formatIraqTime(row.createdAtUtc) }}
+              آخر تحديث: {{ lastUpdated(row) }}
             </div>
             <VBtn
               v-if="row.status === 'Completed'"
@@ -557,6 +900,8 @@ onUnmounted(() => {
         <VCardTitle>طلب #{{ detail.id }}</VCardTitle>
         <VCardText>
           <div>الزبون: {{ detail.customerName }}</div>
+          <div>الهاتف: {{ detail.customerPhone || '—' }}</div>
+          <div>العنوان: {{ detail.customerAddress || '—' }}</div>
           <div>الموظف: {{ detail.targetEmployeeName || 'غير مسند' }}</div>
           <div>المحافظة: {{ detail.cityName || detail.branchName || detail.cityValue }}</div>
           <div class="d-flex align-center gap-2 mt-1">
@@ -618,13 +963,77 @@ onUnmounted(() => {
             الاكتمال: {{ formatIraqTime(detail.completedAtUtc) }}
           </div>
 
-          <template v-if="detail.status === 'New'">
+          <template v-if="detail.status === 'New' || employeeIdOf(detail) <= 0">
             <VDivider class="my-4" />
             <div class="font-weight-bold mb-2">
-              إسناد الطلب
+              بحث زبون
             </div>
+            <VTextField
+              v-model="intakeQuery"
+              label="بحث عن زبون"
+              @keyup.enter="searchIntakeCustomers"
+            />
+            <VBtn
+              class="mb-3"
+              @click="searchIntakeCustomers"
+            >
+              بحث
+            </VBtn>
+            <div
+              v-if="!intakeCustomers.length"
+              class="text-medium-emphasis mb-2"
+            >
+              ابحث داخل المحافظة المختارة في الفلتر، ثم اختر زبون موجود أو اتركه كزبون جديد.
+            </div>
+            <VList v-else>
+              <VListItem
+                v-for="c in intakeCustomers"
+                :key="customerKey(c)"
+                :active="intakeSelected && customerKey(intakeSelected) === customerKey(c)"
+                @click="selectIntakeCustomer(c)"
+              >
+                <VListItemTitle>{{ c.fullName || c.customerName }}</VListItemTitle>
+                <VListItemSubtitle>
+                  الهاتف: {{ c.phone || '—' }} — العنوان: {{ c.address || '—' }} — المحافظة: {{ c.province || c.cityName || '—' }}
+                </VListItemSubtitle>
+              </VListItem>
+            </VList>
+            <VBtn
+              class="mt-2"
+              variant="text"
+              @click="keepIntakeNew"
+            >
+              تركه كزبون جديد
+            </VBtn>
+            <div class="text-medium-emphasis mt-1 mb-3">
+              {{ intakeKeepNew ? 'سيُرسل كزبون جديد' : 'تم اختيار زبون موجود — يمكن تعديل البيانات قبل الإرسال' }}
+            </div>
+            <div class="font-weight-bold mb-2">
+              بيانات الطلب قبل الإرسال
+            </div>
+            <VTextField
+              v-model="intakeForm.fullName"
+              label="الاسم *"
+            />
+            <VTextField
+              v-model="intakeForm.phone"
+              label="الهاتف"
+            />
+            <VTextField
+              v-model="intakeForm.province"
+              label="المحافظة"
+            />
+            <VTextField
+              v-model="intakeForm.address"
+              label="العنوان"
+            />
+            <VTextarea
+              v-model="intakeForm.notes"
+              label="الملاحظات"
+              auto-grow
+            />
             <div class="mb-2">
-              المحافظة: {{ detail.cityName || detail.branchName || assignCityValue }}
+              المحافظة للإسناد: {{ detail.cityName || detail.branchName || assignCityValue }}
             </div>
             <VSelect
               v-model="assignEmployeeId"
@@ -641,7 +1050,7 @@ onUnmounted(() => {
               :disabled="!assignEmployeeId"
               @click="assign"
             >
-              إسناد لموظف
+              إرسال للموظف
             </VBtn>
           </template>
 
@@ -658,7 +1067,7 @@ onUnmounted(() => {
               :disabled="!(detail.targetEmployeeId || detail.employeeId)"
               @click="returnOpen = true"
             >
-              إعادة للموظف
+              إرجاع للموظف
             </VBtn>
             <div class="text-medium-emphasis mt-2">
               تُعاد لنفس الموظف: {{ detail.targetEmployeeName }}
@@ -928,7 +1337,7 @@ onUnmounted(() => {
       max-width="420"
     >
       <VCard>
-        <VCardTitle>إعادة للموظف</VCardTitle>
+        <VCardTitle>إرجاع للموظف</VCardTitle>
         <VCardText>
           <VTextarea
             v-model="returnNote"
@@ -949,7 +1358,58 @@ onUnmounted(() => {
             :disabled="!returnNote.trim()"
             @click="sendReturn"
           >
-            إعادة
+            إرجاع
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+
+    <VDialog
+      v-model="importOpen"
+      max-width="720"
+    >
+      <VCard>
+        <VCardTitle>معاينة استيراد Excel</VCardTitle>
+        <VCardText v-if="importPreview">
+          <div>عدد الصفوف: {{ importPreview.total }}</div>
+          <div>الصحيح: {{ importPreview.valid.length }}</div>
+          <div>الخطأ: {{ importPreview.errors.length }}</div>
+          <div
+            v-if="importPreview.errors.length"
+            class="mt-3"
+          >
+            <div class="font-weight-bold mb-1">
+              أسباب الخطأ
+            </div>
+            <div
+              v-for="err in importPreview.errors"
+              :key="err.rowNumber"
+              class="text-error"
+            >
+              صف {{ err.rowNumber }}: {{ err.message }}
+            </div>
+          </div>
+          <div
+            v-else
+            class="text-medium-emphasis mt-2"
+          >
+            الصفوف الصحيحة تُحفظ كطلبات غير مسندة ولا تُرسل لأي موظف.
+          </div>
+        </VCardText>
+        <VCardActions>
+          <VBtn
+            variant="text"
+            @click="importOpen = false"
+          >
+            إلغاء
+          </VBtn>
+          <VBtn
+            color="primary"
+            :loading="importBusy"
+            :disabled="!importPreview?.valid?.length"
+            @click="confirmImport"
+          >
+            حفظ الطلبات غير المسندة
           </VBtn>
         </VCardActions>
       </VCard>

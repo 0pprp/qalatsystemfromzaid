@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/services/api_client.dart';
+import 'package:sales_employee_application/services/session.dart';
+import 'package:sales_employee_application/tracking/shift_start_debug.dart';
+import 'package:sales_employee_application/tracking/shift_tracking_controller.dart';
+import 'package:sales_employee_application/tracking/work_shift.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
 
@@ -15,17 +19,18 @@ class PendingSalesScreen extends StatefulWidget {
 class _PendingSalesScreenState extends State<PendingSalesScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
-  List<SalesDraft> _rows = [];
-  List<SalesDraft> _today = [];
   List<SalesWorkRequest> _requests = [];
+  WorkShift? _shift;
   bool _loading = true;
+  bool _shiftBusy = false;
   String? _error;
+  String? _shiftError;
   bool _tabsReady = false;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(length: 5, vsync: this);
     _load();
   }
 
@@ -35,8 +40,8 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
     if (_tabsReady) return;
     _tabsReady = true;
     final arg = ModalRoute.of(context)?.settings.arguments;
-    if (arg == 'today' || arg == 1) {
-      _tabs.index = 1;
+    if (arg == 'today' || arg == 2) {
+      _tabs.index = 2;
     }
   }
 
@@ -53,14 +58,12 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
       _error = null;
     });
     try {
-      final rows = await SalesRepositoryFactory.instance.pending();
-      final today = await SalesRepositoryFactory.instance.todayCompleted();
       final requests = await SalesRepositoryFactory.instance.salesRequests();
+      final shift = _readLocalShift();
       if (!mounted) return;
       setState(() {
-        _rows = rows;
-        _today = today;
         _requests = requests;
+        _shift = shift;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -80,23 +83,115 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
 
   int get _newCount => _requests.where((r) => r.isNew).length;
 
+  WorkShift? _readLocalShift() {
+    if (Session.gpsStoppedByUser) return null;
+    return TrackingRuntime.instance?.activeShift;
+  }
+
+  String _iraqClock(DateTime utc) {
+    final iraq = utc.toUtc().add(const Duration(hours: 3));
+    final h = iraq.hour.toString().padLeft(2, '0');
+    final m = iraq.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  Future<void> _startShift() async {
+    if (_shiftBusy) return;
+    setState(() {
+      _shiftBusy = true;
+      _shiftError = null;
+    });
+    final controller = TrackingRuntime.instance ??=
+        ShiftTrackingController(repository: SalesRepositoryFactory.instance);
+    try {
+      final shift = await controller.startShiftFlow();
+      if (!mounted) return;
+      setState(() {
+        _shiftBusy = false;
+        _shift = shift;
+        if (shift == null) {
+          _shiftError = controller.lastError ?? ShiftStartDebug.generic;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _shiftBusy = false;
+        _shiftError = ShiftStartDebug.apiFailure(e);
+      });
+    }
+  }
+
+  Future<void> _endShift() async {
+    if (_shiftBusy) return;
+    setState(() {
+      _shiftBusy = true;
+      _shiftError = null;
+    });
+    final controller = TrackingRuntime.instance ??=
+        ShiftTrackingController(repository: SalesRepositoryFactory.instance);
+    try {
+      await controller.endShiftFlow();
+      if (!mounted) return;
+      setState(() {
+        _shiftBusy = false;
+        _shift = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _shiftBusy = false;
+        _shiftError = 'تعذر إنهاء الدوام';
+      });
+    }
+  }
+
+  List<SalesWorkRequest> _forTab(int index) {
+    switch (index) {
+      case 0:
+        return _requests.where((r) => r.isIncoming).toList();
+      case 1:
+        return _requests.where((r) => r.isPreparedForSale).toList();
+      case 2:
+        return _requests.where((r) => r.isSold).toList();
+      case 3:
+        return _requests.where((r) => r.isPendingHold).toList();
+      default:
+        return _requests.where((r) => r.status == 'Rejected').toList();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('المبيعات'),
+        title: Text(Session.userName.isEmpty ? 'موظف المبيعات' : Session.userName),
+        actions: [
+          IconButton(
+            tooltip: 'مخزن الفرع',
+            onPressed: () => Navigator.pushNamed(context, '/warehouse'),
+            icon: const Icon(Icons.inventory_2_outlined),
+          ),
+          TextButton(
+            onPressed: () async {
+              await Session.logout();
+              if (context.mounted) {
+                Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
+              }
+            },
+            child: const Text('خروج'),
+          ),
+        ],
         bottom: TabBar(
           controller: _tabs,
           isScrollable: true,
           labelColor: AppColors.darkGreen,
           tabs: [
-            const Tab(text: 'المبيعات المعلقة'),
-            const Tab(text: 'مبيعات اليوم'),
             Tab(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('طلبات المبيعات'),
+                  const Text('طلبات البيع'),
                   if (_newCount > 0) ...[
                     const SizedBox(width: 6),
                     CircleAvatar(
@@ -109,31 +204,78 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
                 ],
               ),
             ),
+            const Tab(text: 'جاهز للبيع'),
+            const Tab(text: 'تم البيع'),
+            const Tab(text: 'معلقة'),
+            const Tab(text: 'مرفوض'),
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabs,
+      body: Column(
         children: [
-          _listTab(
-            rows: _rows,
-            empty: 'لا توجد عمليات معلقة',
+          _shiftCard(),
+          Expanded(
+            child: TabBarView(
+              controller: _tabs,
+              children: [
+                _requestsTab(0, 'لا توجد طلبات بيع'),
+                _requestsTab(1, 'لا توجد طلبات جاهزة للبيع'),
+                _requestsTab(2, 'لا توجد مبيعات مكتملة'),
+                _requestsTab(3, 'لا توجد طلبات معلقة'),
+                _requestsTab(4, 'لا توجد طلبات مرفوضة'),
+              ],
+            ),
           ),
-          _listTab(
-            rows: _today,
-            empty: 'لا توجد مبيعات مكتملة اليوم',
-          ),
-          _requestsTab(),
         ],
       ),
     );
   }
 
-  Widget _listTab({required List<SalesDraft> rows, required String empty}) {
+  Widget _shiftCard() {
+    final shift = _shift;
+    final active = shift != null && shift.isActive && !Session.gpsStoppedByUser;
+    return Card(
+      margin: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              active ? 'حالة الدوام: أثناء الدوام' : 'حالة الدوام',
+              style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.darkGreen),
+            ),
+            if (active) ...[
+              const SizedBox(height: 4),
+              Text('وقت البدء: ${_iraqClock(shift.startedAtUtc)}'),
+              const SizedBox(height: AppSpacing.sm),
+              ElevatedButton(
+                onPressed: _shiftBusy ? null : _endShift,
+                child: Text(_shiftBusy ? '...' : 'إنهاء الدوام'),
+              ),
+            ] else ...[
+              const SizedBox(height: AppSpacing.sm),
+              ElevatedButton(
+                onPressed: _shiftBusy ? null : _startShift,
+                child: Text(_shiftBusy ? '...' : 'بدء الدوام'),
+              ),
+            ],
+            if (_shiftError != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(_shiftError!, style: const TextStyle(color: AppColors.danger)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _requestsTab(int index, String empty) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
       return Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)));
     }
+    final rows = _forTab(index);
     if (rows.isEmpty) {
       return Center(child: Text(empty, style: const TextStyle(color: AppColors.muted)));
     }
@@ -142,40 +284,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
       child: ListView.builder(
         padding: const EdgeInsets.all(AppSpacing.md),
         itemCount: rows.length,
-        itemBuilder: (context, i) {
-          final d = rows[i];
-          return Card(
-            child: ListTile(
-              title: Text(d.fullName, style: const TextStyle(fontWeight: FontWeight.w700)),
-              subtitle: Text(
-                'رقم ${d.saleId} · ${EvaluationLabels.of(d.evaluationLevel)}\n${MoneyFormat.iqd(d.finalSalePrice)}',
-              ),
-              trailing: _StatusBadge(status: d.status, rejected: d.isRejected),
-              onTap: () async {
-                await Navigator.pushNamed(context, '/sale-details', arguments: d.saleId);
-                if (mounted) await _load();
-              },
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _requestsTab() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)));
-    }
-    if (_requests.isEmpty) {
-      return const Center(child: Text('لا توجد طلبات مبيعات', style: TextStyle(color: AppColors.muted)));
-    }
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.builder(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        itemCount: _requests.length,
-        itemBuilder: (context, i) => _requestCard(_requests[i]),
+        itemBuilder: (context, i) => _requestCard(rows[i]),
       ),
     );
   }
@@ -233,22 +342,40 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
                 padding: const EdgeInsets.only(top: AppSpacing.sm),
                 child: Text('ملاحظة التعليق: ${r.pendingNote}'),
               ),
+            if (r.status == 'Rejected' && (r.rejectionReason ?? '').trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.sm),
+                child: Text('سبب الرفض: ${r.rejectionReason}',
+                    style: const TextStyle(color: AppColors.danger)),
+              ),
             if (r.canAct) ...[
               const SizedBox(height: AppSpacing.md),
-              ElevatedButton(
-                onPressed: () => _prepareAndOpenSale(r),
-                child: const Text('تجهيز المبيع'),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              OutlinedButton(
-                onPressed: () => _pendRequest(r),
-                child: const Text('معلقة'),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              TextButton(
-                onPressed: () => _rejectRequest(r),
-                child: const Text('رفض'),
-              ),
+              if (r.canPrepare)
+                ElevatedButton(
+                  onPressed: () => _prepareRequest(r),
+                  child: const Text('جاهز للبيع'),
+                ),
+              if (r.canConvert || r.canContinueSale) ...[
+                if (r.canPrepare) const SizedBox(height: AppSpacing.sm),
+                ElevatedButton(
+                  onPressed: () => _openCheckout(r),
+                  child: const Text('تم البيع'),
+                ),
+              ],
+              if (r.canPend) ...[
+                const SizedBox(height: AppSpacing.sm),
+                OutlinedButton(
+                  onPressed: () => _pendRequest(r),
+                  child: const Text('معلقة'),
+                ),
+              ],
+              if (r.canReject) ...[
+                const SizedBox(height: AppSpacing.sm),
+                TextButton(
+                  onPressed: () => _rejectRequest(r),
+                  child: const Text('مرفوض'),
+                ),
+              ],
             ],
           ],
         ),
@@ -256,11 +383,22 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
     );
   }
 
-  Future<void> _prepareAndOpenSale(SalesWorkRequest request) async {
+  Future<void> _openCheckout(SalesWorkRequest request) async {
     try {
-      final prepared = await SalesRepositoryFactory.instance.prepareSalesRequest(request.id);
-      if (!mounted) return;
-      await Navigator.pushNamed(context, '/sale', arguments: prepared);
+      if (request.convertedToSaleId != null) {
+        await Navigator.pushNamed(context, '/sale-details', arguments: request.convertedToSaleId);
+      } else {
+        await Navigator.pushNamed(context, '/sale', arguments: request);
+      }
+      if (mounted) await _load();
+    } catch (_) {
+      if (mounted) _toast('تعذر فتح عملية البيع');
+    }
+  }
+
+  Future<void> _prepareRequest(SalesWorkRequest request) async {
+    try {
+      await SalesRepositoryFactory.instance.prepareSalesRequest(request.id);
       if (mounted) await _load();
     } on ApiException catch (e) {
       if (mounted) _toast(e.message);
@@ -335,6 +473,21 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
     }
   }
 
+  Future<void> _openCheckout() async {
+    final row = _row;
+    if (row == null) return;
+    setState(() => _busy = true);
+    try {
+      if (row.convertedToSaleId != null) {
+        await Navigator.pushNamed(context, '/sale-details', arguments: row.convertedToSaleId);
+      } else {
+        await Navigator.pushNamed(context, '/sale', arguments: row);
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _prepare() async {
     setState(() => _busy = true);
     try {
@@ -344,7 +497,6 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
         _row = row;
         _busy = false;
       });
-      await Navigator.pushNamed(context, '/sale', arguments: row);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -418,40 +570,28 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
                 ],
                 if (row.isPendingHold && (row.pendingNote ?? '').trim().isNotEmpty)
                   Text('ملاحظة التعليق: ${row.pendingNote}'),
+                if (row.status == 'Rejected' && (row.rejectionReason ?? '').trim().isNotEmpty)
+                  Text('سبب الرفض: ${row.rejectionReason}',
+                      style: const TextStyle(color: AppColors.danger)),
                 const SizedBox(height: AppSpacing.lg),
                 if (row.canAct) ...[
-                  ElevatedButton(onPressed: _busy ? null : _prepare, child: const Text('تجهيز المبيع')),
-                  const SizedBox(height: AppSpacing.sm),
-                  OutlinedButton(onPressed: _busy ? null : _pend, child: const Text('معلقة')),
-                  const SizedBox(height: AppSpacing.sm),
-                  TextButton(onPressed: _busy ? null : _reject, child: const Text('رفض')),
+                  if (row.canPrepare) ...[
+                    ElevatedButton(onPressed: _busy ? null : _prepare, child: const Text('جاهز للبيع')),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
+                  if (row.canConvert || row.canContinueSale) ...[
+                    ElevatedButton(onPressed: _busy ? null : _openCheckout, child: const Text('تم البيع')),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
+                  if (row.canPend) ...[
+                    OutlinedButton(onPressed: _busy ? null : _pend, child: const Text('معلقة')),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
+                  if (row.canReject)
+                    TextButton(onPressed: _busy ? null : _reject, child: const Text('مرفوض')),
                 ],
               ],
             ),
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status, required this.rejected});
-  final String status;
-  final bool rejected;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = SalesStatusLabels.of(status);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: rejected ? AppColors.warningSoft : AppColors.lightGreen.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-      ),
-      child: Text(label,
-          style: TextStyle(
-            color: rejected ? AppColors.danger : AppColors.darkGreen,
-            fontWeight: FontWeight.w700,
-            fontSize: 12,
-          )),
     );
   }
 }

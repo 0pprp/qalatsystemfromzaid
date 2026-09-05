@@ -81,6 +81,9 @@ class ShiftTrackingController {
   Future<WorkShift?> startShiftFlow() async {
     lastError = null;
     lastNativeError = null;
+    try {
+      await Session.setGpsStoppedByUser(false);
+    } catch (_) {}
     final allowed = await _requestPermission();
     if (!allowed) {
       await _repo.recordTrackingEvent(null, 'LOCATION_PERMISSION_DENIED');
@@ -203,8 +206,19 @@ class ShiftTrackingController {
   }
 
   Future<void> restoreIfNeeded() async {
+    if (Session.gpsStoppedByUser) {
+      _collecting = false;
+      activeShift = null;
+      await _stopNative();
+      try {
+        await Session.clearShift();
+      } catch (_) {}
+      return;
+    }
     final current = await _repo.currentShift();
     if (current == null || !current.isActive) {
+      _collecting = false;
+      activeShift = null;
       try {
         await Session.clearShift();
       } catch (_) {}
@@ -232,6 +246,25 @@ class ShiftTrackingController {
   }
 
   bool get isCollecting => _collecting;
+
+  Future<void> endShiftFlow() async {
+    await _repo.endShift();
+    _collecting = false;
+    _syncTimer?.cancel();
+    _cutoffTimer?.cancel();
+    await _netSub?.cancel();
+    _netSub = null;
+    try {
+      await _stopNative();
+    } catch (_) {}
+    activeShift = null;
+    try {
+      await Session.setGpsStoppedByUser(true);
+    } catch (_) {}
+    try {
+      await Session.clearShift();
+    } catch (_) {}
+  }
 
   Future<void> dispose() async {
     _syncTimer?.cancel();

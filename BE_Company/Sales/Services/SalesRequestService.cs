@@ -132,7 +132,7 @@ namespace BE_Company.Sales.Services
         {
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(id, employeeId, ct);
-            EnsureNotConverted(row);
+            EnsureNotSold(row);
             if (!SalesRequestStatuses.CanPrepare(row.Status))
             {
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تجهيز هذا الطلب.");
@@ -140,11 +140,12 @@ namespace BE_Company.Sales.Services
 
             if (row.Status != SalesRequestStatuses.PreparedForSale)
             {
+                var previous = row.Status;
                 row.Status = SalesRequestStatuses.PreparedForSale;
                 row.ProcessingAtUtc = _clock.UtcNow;
                 row.ViewedAtUtc ??= row.ProcessingAtUtc;
                 await _repo.UpdateAsync(row, ct);
-                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSale, EmployeeActor(employeeId, row), null, ct);
+                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSale, EmployeeActor(employeeId, row), null, ct, previous);
             }
 
             return await HydrateAsync(row, ct);
@@ -159,20 +160,21 @@ namespace BE_Company.Sales.Services
 
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(id, employeeId, ct);
-            EnsureNotConverted(row);
+            EnsureNotSold(row);
             if (!SalesRequestStatuses.CanPend(row.Status))
             {
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تعليق هذا الطلب.");
             }
 
             var trimmed = note.Trim();
+            var previous = row.Status;
             row.Status = SalesRequestStatuses.Pending;
             row.PendingNote = trimmed;
             row.ViewedAtUtc ??= _clock.UtcNow;
             await _repo.UpdateAsync(row, ct);
             var actor = EmployeeActor(employeeId, row);
-            await AppendHistoryAsync(row, SalesRequestEvents.Pending, actor, trimmed, ct);
-            await AppendHistoryAsync(row, SalesRequestEvents.PendingNote, actor, trimmed, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.Pending, actor, trimmed, ct, previous);
+            await AppendHistoryAsync(row, SalesRequestEvents.PendingNote, actor, trimmed, ct, previous);
             return await HydrateAsync(row, ct);
         }
 
@@ -185,7 +187,7 @@ namespace BE_Company.Sales.Services
 
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(id, employeeId, ct);
-            EnsureNotConverted(row);
+            EnsureNotSold(row);
             if (row.Status == SalesRequestStatuses.Rejected)
             {
                 return await HydrateAsync(row, ct);
@@ -197,13 +199,14 @@ namespace BE_Company.Sales.Services
             }
 
             var trimmed = reason.Trim();
+            var previous = row.Status;
             row.Status = SalesRequestStatuses.Rejected;
             row.RejectedAtUtc = _clock.UtcNow;
             row.RejectionReason = trimmed;
             await _repo.UpdateAsync(row, ct);
             var actor = EmployeeActor(employeeId, row);
-            await AppendHistoryAsync(row, SalesRequestEvents.Rejected, actor, trimmed, ct);
-            await AppendHistoryAsync(row, SalesRequestEvents.RejectionReason, actor, trimmed, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.Rejected, actor, trimmed, ct, previous);
+            await AppendHistoryAsync(row, SalesRequestEvents.RejectionReason, actor, trimmed, ct, previous);
             return await HydrateAsync(row, ct);
         }
 
@@ -243,6 +246,47 @@ namespace BE_Company.Sales.Services
                 row.CityName = request.CityName.Trim();
             }
 
+            if (request.KeepNewCustomer)
+            {
+                row.ExistingCustomerId = null;
+                row.CustomerSourceType = "NewCustomer";
+            }
+            else if (request.ExistingCustomerId is > 0)
+            {
+                row.ExistingCustomerId = request.ExistingCustomerId;
+                row.CustomerSourceType = "ExistingCustomer";
+                row.CustomerSourceCityValue = request.CustomerSourceCityValue;
+            }
+
+            if (request.CustomerName != null)
+            {
+                var name = request.CustomerName.Trim();
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    row.CustomerName = name;
+                }
+            }
+
+            if (request.CustomerPhone != null)
+            {
+                row.CustomerPhone = request.CustomerPhone.Trim();
+            }
+
+            if (request.CustomerProvince != null)
+            {
+                row.CustomerProvince = request.CustomerProvince.Trim();
+            }
+
+            if (request.CustomerAddress != null)
+            {
+                row.CustomerAddress = request.CustomerAddress.Trim();
+            }
+
+            if (request.Notes != null)
+            {
+                row.Notes = request.Notes.Trim();
+            }
+
             row.Status = SalesRequestStatuses.Assigned;
             row.AssignedAtUtc = _clock.UtcNow;
             row.AssignedByUserId = manager.EmployeeId;
@@ -275,6 +319,7 @@ namespace BE_Company.Sales.Services
 
             var trimmed = note.Trim();
             var previousReason = row.RejectionReason;
+            var previous = row.Status;
             row.Status = SalesRequestStatuses.Returned;
             row.ReturnNote = trimmed;
             await _repo.UpdateAsync(row, ct);
@@ -284,8 +329,8 @@ namespace BE_Company.Sales.Services
                 await _repo.UpdateAsync(row, ct);
             }
 
-            await AppendHistoryAsync(row, SalesRequestEvents.Returned, manager, trimmed, ct);
-            await AppendHistoryAsync(row, SalesRequestEvents.ReturnNote, manager, trimmed, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.Returned, manager, trimmed, ct, previous);
+            await AppendHistoryAsync(row, SalesRequestEvents.ReturnNote, manager, trimmed, ct, previous);
             return await HydrateAsync(row, ct);
         }
 
@@ -293,31 +338,37 @@ namespace BE_Company.Sales.Services
         {
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(requestId, employeeId, ct);
-            if (row.Status == SalesRequestStatuses.Rejected)
-            {
-                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تحويل طلب مرفوض إلى عملية بيع.");
-            }
-
-            if (row.Status == SalesRequestStatuses.ConvertedToSale || row.Status == SalesRequestStatuses.Completed)
+            if (row.Status == SalesRequestStatuses.Completed)
             {
                 if (row.ConvertedToSaleId == saleId)
                 {
                     return;
                 }
 
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مكتمل ولا يمكن ربطه ببيع آخر.");
+            }
+
+            if (row.ConvertedToSaleId is > 0 && row.ConvertedToSaleId != saleId)
+            {
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مرتبط بعملية بيع أخرى.");
+            }
+
+            if (row.Status == SalesRequestStatuses.ConvertedToSale && row.ConvertedToSaleId == saleId)
+            {
+                return;
             }
 
             if (!SalesRequestStatuses.CanConvertToSale(row.Status))
             {
-                throw new SalesCompleteException(StatusCodes.Status409Conflict, "يجب تجهيز الطلب للبيع قبل إتمام العملية.");
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن بدء عملية بيع من حالة الطلب الحالية.");
             }
 
+            var previous = row.Status;
             row.Status = SalesRequestStatuses.ConvertedToSale;
             row.ConvertedToSaleId = saleId;
             row.ProcessingAtUtc ??= utcNow;
             await _repo.UpdateAsync(row, ct);
-            await AppendHistoryAsync(row, SalesRequestEvents.ConvertedToSale, EmployeeActor(employeeId, row), saleId.ToString(), ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.ConvertedToSale, EmployeeActor(employeeId, row), saleId.ToString(), ct, previous);
         }
 
         public async Task MarkCompletedBySaleIdAsync(int saleId, DateTime utcNow, CancellationToken ct)
@@ -335,10 +386,11 @@ namespace BE_Company.Sales.Services
                 return;
             }
 
+            var previous = row.Status;
             row.Status = SalesRequestStatuses.Completed;
             row.CompletedAtUtc = utcNow;
             await _repo.UpdateAsync(row, ct);
-            await AppendHistoryAsync(row, SalesRequestEvents.Completed, EmployeeActor(row.TargetEmployeeId, row), null, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.Completed, EmployeeActor(row.TargetEmployeeId, row), null, ct, previous);
         }
 
         private async Task<SalesRequestDTO> RequireOwned(int id, int employeeId, CancellationToken ct)
@@ -362,11 +414,11 @@ namespace BE_Company.Sales.Services
             }
         }
 
-        private static void EnsureNotConverted(SalesRequestDTO row)
+        private static void EnsureNotSold(SalesRequestDTO row)
         {
-            if (row.Status is SalesRequestStatuses.ConvertedToSale or SalesRequestStatuses.Completed)
+            if (SalesRequestStatuses.IsSold(row.Status))
             {
-                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تعديل طلب تحول إلى عملية بيع.");
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تعديل طلب مكتمل.");
             }
         }
 
@@ -375,12 +427,14 @@ namespace BE_Company.Sales.Services
             string eventType,
             SalesIdentity actor,
             string? note,
-            CancellationToken ct)
+            CancellationToken ct,
+            string? previousStatus = null)
         {
             await _repo.InsertHistoryAsync(new SalesRequestHistoryDTO
             {
                 RequestId = row.Id,
                 Event = eventType,
+                PreviousStatus = previousStatus,
                 Status = row.Status,
                 ActorUserId = actor.EmployeeId,
                 ActorName = actor.EmployeeName,

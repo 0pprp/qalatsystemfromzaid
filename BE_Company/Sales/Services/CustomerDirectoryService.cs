@@ -60,6 +60,7 @@ namespace BE_Company.Sales.Services
                     FullName = c.CustomerName ?? string.Empty,
                     Phone = c.PhoneNumber,
                     Province = string.IsNullOrWhiteSpace(c.CityName) ? cityName : c.CityName,
+                    Address = c.Address,
                     SalePrice = ToMoney(c.AmountTotalSales),
                     SourceCityValue = cityValue,
                     SourceCityName = cityName

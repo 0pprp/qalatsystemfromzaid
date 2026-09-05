@@ -30,13 +30,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('ستتوفر طلبات المبيعات لاحقاً'), findsNothing);
-    await tester.tap(find.text('طلبات المبيعات'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('سعد كاظم'), findsOneWidget);
-    expect(find.text('تجهيز المبيع'), findsOneWidget);
-    expect(find.text('معلقة'), findsOneWidget);
-    expect(find.text('رفض'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'تم البيع'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'معلقة'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'مرفوض'), findsOneWidget);
     expect(find.text('طلبات معلقة'), findsNothing);
   });
 
@@ -61,9 +59,6 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('طلبات المبيعات'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 800));
     final pendBtn = find.widgetWithText(OutlinedButton, 'معلقة');
     expect(pendBtn, findsOneWidget);
     await tester.tap(pendBtn);
@@ -76,24 +71,21 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.takeException(), isNull);
+    await tester.tap(find.widgetWithText(Tab, 'معلقة'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('سعد كاظم'), findsOneWidget);
     expect(find.text('ملاحظة التعليق: الزبون مشغول'), findsOneWidget);
   });
 
-  testWidgets('Completed sale appears under today not pending', (tester) async {
-    final repo = MockSalesRepository();
-    await tester.runAsync(() async {
-      await repo.createSale(SalesDraftCreateRequest(
-        customer: const {'fullName': 'ahmed', 'phone': '0780', 'province': 'النجف'},
-        items: [SalesDraftItem(productId: 5, quantity: 1)],
-        evaluationLevel: 5,
-        evaluationNote: 'ممتاز',
-        dailyInstallment: 10000,
-        customerListId: 1,
+  testWidgets('Completed sale appears under sold not incoming', (tester) async {
+    final repo = MockSalesRepository()
+      ..seedRequest(SalesWorkRequest(
+        id: 9,
+        customerName: 'ahmed',
+        status: 'Completed',
+        createdAtUtc: DateTime.utc(2026, 9, 2),
       ));
-      final created = (await repo.pending()).first;
-      await repo.completeSale(created.saleId);
-    });
     SalesRepositoryFactory.setInstance(repo);
     await tester.pumpWidget(MaterialApp(
       theme: AppTheme.themeData,
@@ -102,11 +94,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('ahmed'), findsNothing);
-    await tester.tap(find.text('مبيعات اليوم'));
+    await tester.tap(find.widgetWithText(Tab, 'تم البيع'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('ahmed'), findsOneWidget);
-    expect(find.text('مكتمل'), findsWidgets);
+    expect(find.text('تم البيع'), findsWidgets);
   });
 
   test('New -> Viewed is idempotent', () async {
@@ -167,7 +159,7 @@ void main() {
     expect(prepared.status, 'PreparedForSale');
   });
 
-  test('Accepted evaluation does not double price', () async {
+  test('Evaluation no longer changes price or blocks sale', () async {
     final repo = MockSalesRepository();
     final draft = await repo.createSale(SalesDraftCreateRequest(
       customer: const {'fullName': 'أ', 'phone': '1', 'province': 'النجف'},
@@ -177,10 +169,11 @@ void main() {
       dailyInstallment: 10000,
       customerListId: 1,
     ));
-    expect(draft.status, 'Rejected');
-    expect(draft.finalSalePrice, 0);
-    expect(draft.isRejected, isTrue);
-    expect(draft.canComplete, isFalse);
+    expect(draft.status, 'Pending');
+    expect(draft.finalSalePrice, 1500000);
+    expect(draft.downPayment, 75000);
+    expect(draft.isRejected, isFalse);
+    expect(draft.canComplete, isTrue);
   });
 
   test('Inventory filter hides fit-out and external mobiles', () {

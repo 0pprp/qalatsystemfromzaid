@@ -9,6 +9,8 @@ namespace BE_Company.Sales.Services
     {
         public const string Contract = "Contract";
         public const string PromissoryNote = "PromissoryNote";
+        public const string PreviewContract = "PreviewContract";
+        public const string PreviewPromissoryNote = "PreviewPromissoryNote";
 
         private readonly IWebHostEnvironment _env;
         private readonly ISalesCompleteRepository _complete;
@@ -28,6 +30,38 @@ namespace BE_Company.Sales.Services
             results.Add(await EnsureOneAsync(sale, Contract, existing, ct));
             results.Add(await EnsureOneAsync(sale, PromissoryNote, existing, ct));
             return results.Select(SalesDocumentMapper.ToDto).ToList();
+        }
+
+        public async Task<IReadOnlyList<SalesDocumentDTO>> EnsurePreviewGeneratedAsync(SalesDraftDTO sale, CancellationToken ct)
+        {
+            var folder = Path.Combine(_env.ContentRootPath, "App_Data", "sales", sale.SaleId.ToString(), "preview");
+            Directory.CreateDirectory(folder);
+            var results = new List<SalesDocumentRecord>
+            {
+                await WritePreviewAsync(sale, PreviewContract, $"Sale_{sale.SaleId}_Preview_Contract.pdf", folder, ct),
+                await WritePreviewAsync(sale, PreviewPromissoryNote, $"Sale_{sale.SaleId}_Preview_PromissoryNote.pdf", folder, ct)
+            };
+            return results.Select(SalesDocumentMapper.ToDto).ToList();
+        }
+
+        private async Task<SalesDocumentRecord> WritePreviewAsync(
+            SalesDraftDTO sale,
+            string type,
+            string fileName,
+            string folder,
+            CancellationToken ct)
+        {
+            var path = Path.Combine(folder, fileName);
+            var bytes = type == PreviewContract ? BuildContract(sale) : BuildPromissoryNote(sale);
+            await File.WriteAllBytesAsync(path, bytes, ct);
+            return await _complete.UpsertDocumentAsync(new SalesDocumentRecord
+            {
+                SaleId = sale.SaleId,
+                DocumentType = type,
+                FileName = fileName,
+                StoragePath = path,
+                CreatedAt = DateTime.Now
+            }, ct);
         }
 
         public async Task<(SalesDocumentRecord Record, byte[] Bytes)> ReadOwnedFileAsync(

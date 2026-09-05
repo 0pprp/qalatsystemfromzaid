@@ -1,8 +1,9 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
-import { smGet, smPost } from '@/composables/salesManagerApi'
+import { isDemo } from '@/composables/useCities'
+import { smGet, smGetEmployees, smPost } from '@/composables/salesManagerApi'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
@@ -14,11 +15,15 @@ const selectedCustomer = ref(null)
 const isNewCustomer = ref(false)
 const newCustomer = ref({ fullName: '', phone: '', province: '', address: '' })
 const cityValue = ref('')
+const employees = ref([])
+const employeeId = ref(null)
 const notes = ref('')
 const confirm = ref(false)
+const busy = ref(false)
 
-async function search() {
-  if (query.value.trim().length < 2) return
+async function searchCustomers() {
+  if (query.value.trim().length < 2)
+    return
   customers.value = await smGet(`customers/search?q=${encodeURIComponent(query.value.trim())}`)
 }
 
@@ -40,9 +45,33 @@ function selectCustomer(c) {
     cityValue.value = String(c.cityValue)
 }
 
+const selectedEmployee = computed(() => employees.value.find(e => e.employeeId === employeeId.value))
+
+async function loadEmployees() {
+  employeeId.value = null
+  if (!cityValue.value) {
+    employees.value = []
+
+    return
+  }
+  try {
+    employees.value = await smGetEmployees(cityValue.value)
+  }
+  catch {
+    employees.value = []
+  }
+}
+
+watch(cityValue, loadEmployees)
+
 async function send() {
   if (!cityValue.value) {
     toast.error('يجب اختيار المحافظة')
+
+    return
+  }
+  if (!employeeId.value) {
+    toast.error('يجب اختيار موظف المبيعات')
 
     return
   }
@@ -60,17 +89,39 @@ async function send() {
   const sameBranch = !isNewCustomer.value
     && sourceCity
     && String(sourceCity) === String(cityValue.value)
+  const employee = selectedEmployee.value
 
-  await smPost('sales-requests', {
-    cityValue: cityValue.value,
-    existingCustomerId: sameBranch ? selectedCustomer.value?.customerId : null,
-    customerSourceCityValue: sourceCity || null,
-    customer,
-    notes: notes.value,
-  })
-  toast.success('تم إنشاء الطلب غير مسند. يمكن إسناده من قائمة الطلبات.')
-  confirm.value = false
-  router.push({ name: 'sales-manager-requests' })
+  busy.value = true
+  try {
+    const created = await smPost('sales-requests', {
+      cityValue: cityValue.value,
+      existingCustomerId: sameBranch ? selectedCustomer.value?.customerId : null,
+      customerSourceCityValue: sourceCity || null,
+      customer,
+      notes: notes.value,
+      targetEmployeeId: employeeId.value,
+      targetEmployeeName: employee?.employeeName,
+    })
+    const requestId = created?.id || created?.Id
+    const assignPath = isDemo()
+      ? `sales-requests/${requestId}/assign`
+      : `sales-requests/${encodeURIComponent(cityValue.value)}/${requestId}/assign`
+    await smPost(assignPath, {
+      employeeId: employeeId.value,
+      employeeName: employee?.employeeName,
+      cityValue: cityValue.value,
+      cityName: employee?.cityName || employee?.branchName,
+    })
+    toast.success('تم إنشاء الطلب وإسناده للموظف')
+    confirm.value = false
+    router.push({ name: 'sales-manager-requests' })
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || 'تعذر إنشاء الطلب')
+  }
+  finally {
+    busy.value = false
+  }
 }
 </script>
 
@@ -87,7 +138,7 @@ async function send() {
         />
         <VStepperItem
           :value="2"
-          title="المحافظة"
+          title="المحافظة والموظف"
         />
         <VStepperItem
           :value="3"
@@ -104,11 +155,11 @@ async function send() {
             v-model="query"
             label="بحث عن زبون"
             class="mt-4"
-            @keyup.enter="search"
+            @keyup.enter="searchCustomers"
           />
           <VBtn
             class="mb-4"
-            @click="search"
+            @click="searchCustomers"
           >
             بحث
           </VBtn>
@@ -152,11 +203,20 @@ async function send() {
         </VStepperWindowItem>
         <VStepperWindowItem :value="2">
           <p class="mt-4 text-medium-emphasis">
-            الطلب يُنشأ غير مسند. إسناد الموظف يتم لاحقاً من تفاصيل الطلب.
+            اختر المحافظة وموظف المبيعات قبل الإرسال. الطلبات المستوردة من Excel تبقى غير مسندة.
           </p>
           <SalesBranchFilter
             v-model="cityValue"
             class="mt-2"
+          />
+          <VSelect
+            v-model="employeeId"
+            class="mt-3"
+            :items="employees"
+            item-title="employeeName"
+            item-value="employeeId"
+            label="موظف المبيعات *"
+            :disabled="!cityValue"
           />
         </VStepperWindowItem>
         <VStepperWindowItem :value="3">
@@ -171,13 +231,14 @@ async function send() {
             <VCardText>
               <div>الزبون: {{ isNewCustomer ? newCustomer.fullName : customerTitle(selectedCustomer || {}) }}</div>
               <div>المحافظة المستهدفة: {{ cityValue || 'غير محددة' }}</div>
-              <div>الإسناد: غير مسند — يتم لاحقاً من قائمة الطلبات</div>
+              <div>الموظف: {{ selectedEmployee?.employeeName || 'غير محدد' }}</div>
               <div>الملاحظة: {{ notes }}</div>
             </VCardText>
           </VCard>
           <VBtn
             color="primary"
             class="mt-4"
+            :disabled="!cityValue || !employeeId"
             @click="confirm = true"
           >
             إرسال طلب المبيع
@@ -207,7 +268,9 @@ async function send() {
     >
       <VCard>
         <VCardTitle>تأكيد الإرسال</VCardTitle>
-        <VCardText>سيتم إنشاء الطلب غير مسند في المحافظة المختارة. الإسناد يتم لاحقاً بزر الإسناد.</VCardText>
+        <VCardText>
+          سيتم إنشاء الطلب وإسناده إلى {{ selectedEmployee?.employeeName }}.
+        </VCardText>
         <VCardActions>
           <VBtn
             variant="text"
@@ -217,6 +280,7 @@ async function send() {
           </VBtn>
           <VBtn
             color="primary"
+            :loading="busy"
             @click="send"
           >
             إرسال

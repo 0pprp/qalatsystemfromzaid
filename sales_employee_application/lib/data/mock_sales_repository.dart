@@ -119,6 +119,7 @@ class MockSalesRepository implements SalesRepository {
     }
     final stock = await inventory();
     num base = 0;
+    num defaultDaily = 0;
     final lines = <SalesDraftItem>[];
     for (final item in request.items) {
       final product = stock.firstWhere((p) => p.productId == item.productId);
@@ -127,6 +128,7 @@ class MockSalesRepository implements SalesRepository {
       }
       final line = product.salePrice * item.quantity;
       base += line;
+      defaultDaily += (product.dailyInstallment ?? 0) * item.quantity;
       lines.add(SalesDraftItem(
         productId: product.productId,
         quantity: item.quantity,
@@ -135,8 +137,10 @@ class MockSalesRepository implements SalesRepository {
         lineSalePrice: line,
       ));
     }
-    final blocked = request.evaluationLevel == 1 || request.evaluationLevel == 2;
-    final finalPrice = blocked ? 0 : base;
+    final finalPrice = request.overrideTotalSalePrice ?? base;
+    final daily = request.overrideDailyInstallment ??
+        (request.dailyInstallment > 0 ? request.dailyInstallment : defaultDaily);
+    final down = request.overrideDownPayment ?? ((finalPrice * 0.05).round());
     final draft = SalesDraft(
       saleId: _nextId++,
       fullName: request.customer['fullName'] ?? '',
@@ -148,12 +152,16 @@ class MockSalesRepository implements SalesRepository {
       mukhtarName: request.customer['mukhtarName'],
       rationCenterNumber: request.customer['rationCenterNumber'],
       employeeName: 'موظف تجريبي',
-      status: blocked ? 'Rejected' : 'Pending',
+      status: 'Pending',
       evaluationLevel: request.evaluationLevel,
       evaluationNote: request.evaluationNote,
       baseSalePrice: base,
       finalSalePrice: finalPrice,
-      dailyInstallment: request.dailyInstallment,
+      dailyInstallment: daily,
+      downPayment: down,
+      defaultTotalSalePrice: base,
+      defaultDailyInstallment: defaultDaily,
+      defaultDownPayment: ((base * 0.05).round()),
       createdAt: DateTime.now(),
       items: lines,
     );
@@ -193,6 +201,21 @@ class MockSalesRepository implements SalesRepository {
           type: 'PromissoryNote',
           fileName: 'Sale_${saleId}_PromissoryNote.pdf',
           downloadUrl: 'sales/$saleId/documents/${saleId * 10 + 1}/download',
+        ),
+      ];
+
+  List<SalesDocument> _previewDocsFor(int saleId) => [
+        SalesDocument(
+          documentId: saleId * 10 + 8,
+          type: 'PreviewContract',
+          fileName: 'Sale_${saleId}_Preview_Contract.pdf',
+          downloadUrl: 'sales/$saleId/documents/${saleId * 10 + 8}/download',
+        ),
+        SalesDocument(
+          documentId: saleId * 10 + 9,
+          type: 'PreviewPromissoryNote',
+          fileName: 'Sale_${saleId}_Preview_PromissoryNote.pdf',
+          downloadUrl: 'sales/$saleId/documents/${saleId * 10 + 9}/download',
         ),
       ];
 
@@ -252,6 +275,24 @@ class MockSalesRepository implements SalesRepository {
   }
 
   @override
+  Future<SalesPreviewDocuments> previewDocuments(int id, [SalesShopComplete? shop]) async {
+    final current = await byId(id);
+    if (current.isRejected) {
+      throw Exception('لا يمكن إنشاء معاينة لعملية مرفوضة.');
+    }
+    return SalesPreviewDocuments(
+      saleId: current.saleId,
+      finalSalePrice: current.finalSalePrice,
+      dailyInstallment: current.dailyInstallment,
+      downPayment: current.downPayment,
+      defaultTotalSalePrice: current.defaultTotalSalePrice ?? current.baseSalePrice,
+      defaultDailyInstallment: current.defaultDailyInstallment ?? current.dailyInstallment,
+      defaultDownPayment: current.defaultDownPayment ?? current.downPayment,
+      documents: _previewDocsFor(current.saleId),
+    );
+  }
+
+  @override
   Future<List<SalesDocument>> documents(int saleId) async {
     final draft = await byId(saleId);
     if (draft.documents.isNotEmpty) return draft.documents;
@@ -286,6 +327,22 @@ class MockSalesRepository implements SalesRepository {
       isNew: true,
     );
     return _shift!;
+  }
+
+  @override
+  Future<void> endShift() async {
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    final current = _shift;
+    if (current == null || !current.isActive) return;
+    _shift = WorkShift(
+      shiftId: current.shiftId,
+      status: 'Closed',
+      startedAtUtc: current.startedAtUtc,
+      cutoffAtUtc: current.cutoffAtUtc,
+      isNew: false,
+      hasActiveShift: false,
+      closeReason: 'ManualEnd',
+    );
   }
 
   @override
@@ -338,6 +395,12 @@ class MockSalesRepository implements SalesRepository {
   @override
   Future<SalesWorkRequest> prepareSalesRequest(int id) async {
     final current = await salesRequest(id);
+    if (current.status == 'Completed') {
+      throw Exception('لا يمكن تعديل طلب مكتمل.');
+    }
+    if (current.status == 'Rejected') {
+      throw Exception('لا يمكن تجهيز هذا الطلب.');
+    }
     final row = current.copyWith(status: 'PreparedForSale');
     _replace(row);
     return row;
@@ -347,6 +410,9 @@ class MockSalesRepository implements SalesRepository {
   Future<SalesWorkRequest> pendSalesRequest(int id, String note) async {
     if (note.trim().isEmpty) throw Exception('الملاحظة مطلوبة');
     final current = await salesRequest(id);
+    if (current.status == 'Completed') {
+      throw Exception('لا يمكن تعديل طلب مكتمل.');
+    }
     final row = current.copyWith(status: 'Pending', pendingNote: note.trim());
     _replace(row);
     return row;
@@ -356,6 +422,10 @@ class MockSalesRepository implements SalesRepository {
   Future<SalesWorkRequest> rejectSalesRequest(int id, String reason) async {
     if (reason.trim().isEmpty) throw Exception('سبب الرفض مطلوب');
     final current = await salesRequest(id);
+    if (current.status == 'Completed') {
+      throw Exception('لا يمكن تعديل طلب مكتمل.');
+    }
+    if (current.status == 'Rejected') return current;
     final row = current.copyWith(status: 'Rejected', rejectionReason: reason.trim());
     _replace(row);
     return row;

@@ -6,6 +6,7 @@ namespace BE_Company.Sales.DTO
         public string FullName { get; set; } = string.Empty;
         public string? Phone { get; set; }
         public string? Province { get; set; }
+        public string? Address { get; set; }
         public decimal SalePrice { get; set; }
         public string? SourceCityValue { get; set; }
         public string? SourceCityName { get; set; }
@@ -55,6 +56,9 @@ namespace BE_Company.Sales.DTO
         public int EvaluationLevel { get; set; }
         public string? EvaluationNote { get; set; }
         public decimal DailyInstallment { get; set; }
+        public decimal? OverrideTotalSalePrice { get; set; }
+        public decimal? OverrideDailyInstallment { get; set; }
+        public decimal? OverrideDownPayment { get; set; }
         public int? SalesRequestId { get; set; }
         public int? CustomerListId { get; set; }
     }
@@ -93,6 +97,13 @@ namespace BE_Company.Sales.DTO
         public decimal BaseSalePrice { get; set; }
         public decimal FinalSalePrice { get; set; }
         public decimal DailyInstallment { get; set; }
+        public decimal DefaultTotalSalePrice { get; set; }
+        public decimal DefaultDailyInstallment { get; set; }
+        public decimal DefaultDownPayment { get; set; }
+        public decimal? OverrideTotalSalePrice { get; set; }
+        public decimal? OverrideDailyInstallment { get; set; }
+        public decimal? OverrideDownPayment { get; set; }
+        public decimal DownPayment { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? CompletedAt { get; set; }
         public int? CompletedBy { get; set; }

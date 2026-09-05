@@ -160,8 +160,7 @@ class SalesInventoryItem {
   final String productName;
   final int availableQuantity;
   final num salePrice;
-  /// Catalog daily installment from inventory JSON when present.
-  /// Current GET /api/sales/inventory does not include this field.
+  /// Catalog daily installment from `Items.AmountDayDenar` via GET /api/sales/inventory.
   final num? dailyInstallment;
   final String? notes;
   final int? storeId;
@@ -187,8 +186,6 @@ class SalesInventoryItem {
           'DailyInstallment',
           'amountDayDenar',
           'AmountDayDenar',
-          'amountDay',
-          'AmountDay',
         ]),
         notes: (json['notes'] ?? json['Notes'])?.toString(),
         storeId: int.tryParse('${json['storeId'] ?? json['StoreId'] ?? json['storeID'] ?? json['StoreID'] ?? ''}'),
@@ -259,6 +256,10 @@ class SalesDraft {
     this.documentsStatus,
     this.items = const [],
     this.documents = const [],
+    this.downPayment = 0,
+    this.defaultTotalSalePrice,
+    this.defaultDailyInstallment,
+    this.defaultDownPayment,
   });
 
   final int saleId;
@@ -282,14 +283,18 @@ class SalesDraft {
   final String? documentsStatus;
   final List<SalesDraftItem> items;
   final List<SalesDocument> documents;
+  final num downPayment;
+  final num? defaultTotalSalePrice;
+  final num? defaultDailyInstallment;
+  final num? defaultDownPayment;
 
-  bool get isRejected => status == 'Rejected' || evaluationLevel == 1 || evaluationLevel == 2;
+  bool get isRejected => status == 'Rejected';
   bool get isCompleted =>
       status == 'Completed' ||
       status == 'DocumentsReady' ||
       status == 'DocumentsPending' ||
       completedAt != null;
-  bool get canComplete => status == 'Pending' && !isRejected;
+  bool get canComplete => status == 'Pending' && !isCompleted;
 
   SalesDraft copyWith({
     String? status,
@@ -319,6 +324,10 @@ class SalesDraft {
         documentsStatus: documentsStatus ?? this.documentsStatus,
         items: items,
         documents: documents ?? this.documents,
+        downPayment: downPayment,
+        defaultTotalSalePrice: defaultTotalSalePrice,
+        defaultDailyInstallment: defaultDailyInstallment,
+        defaultDownPayment: defaultDownPayment,
       );
 
   factory SalesDraft.fromJson(Map<String, dynamic> json) => SalesDraft(
@@ -349,6 +358,10 @@ class SalesDraft {
           for (final e in (json['documents'] ?? json['Documents'] ?? const []))
             if (e is Map) SalesDocument.fromJson(Map<String, dynamic>.from(e)),
         ],
+        downPayment: num.tryParse('${json['downPayment'] ?? json['DownPayment'] ?? 0}') ?? 0,
+        defaultTotalSalePrice: num.tryParse('${json['defaultTotalSalePrice'] ?? json['DefaultTotalSalePrice'] ?? ''}'),
+        defaultDailyInstallment: num.tryParse('${json['defaultDailyInstallment'] ?? json['DefaultDailyInstallment'] ?? ''}'),
+        defaultDownPayment: num.tryParse('${json['defaultDownPayment'] ?? json['DefaultDownPayment'] ?? ''}'),
       );
 }
 
@@ -365,8 +378,8 @@ class SalesDocument {
   final String downloadUrl;
   final int? documentId;
 
-  bool get isContract => type == 'Contract';
-  bool get isPromissoryNote => type == 'PromissoryNote';
+  bool get isContract => type == 'Contract' || type == 'PreviewContract';
+  bool get isPromissoryNote => type == 'PromissoryNote' || type == 'PreviewPromissoryNote';
 
   factory SalesDocument.fromJson(Map<String, dynamic> json) => SalesDocument(
         type: '${json['type'] ?? json['Type'] ?? ''}',
@@ -411,9 +424,12 @@ class SalesDraftCreateRequest {
     this.customerId,
     required this.customer,
     required this.items,
-    required this.evaluationLevel,
-    required this.evaluationNote,
-    required this.dailyInstallment,
+    this.evaluationLevel = 0,
+    this.evaluationNote = '',
+    this.dailyInstallment = 0,
+    this.overrideTotalSalePrice,
+    this.overrideDailyInstallment,
+    this.overrideDownPayment,
     this.salesRequestId,
     this.customerListId,
   });
@@ -424,6 +440,9 @@ class SalesDraftCreateRequest {
   final int evaluationLevel;
   final String evaluationNote;
   final num dailyInstallment;
+  final num? overrideTotalSalePrice;
+  final num? overrideDailyInstallment;
+  final num? overrideDownPayment;
   final int? salesRequestId;
   final int? customerListId;
 
@@ -431,9 +450,12 @@ class SalesDraftCreateRequest {
         if (customerId != null) 'customerId': customerId,
         'customer': customer,
         'items': items.map((e) => e.toRequest()).toList(),
-        'evaluationLevel': evaluationLevel,
-        'evaluationNote': evaluationNote,
-        'dailyInstallment': dailyInstallment,
+        if (evaluationLevel > 0) 'evaluationLevel': evaluationLevel,
+        if (evaluationNote.trim().isNotEmpty) 'evaluationNote': evaluationNote,
+        if (dailyInstallment > 0) 'dailyInstallment': dailyInstallment,
+        if (overrideTotalSalePrice != null) 'overrideTotalSalePrice': overrideTotalSalePrice,
+        if (overrideDailyInstallment != null) 'overrideDailyInstallment': overrideDailyInstallment,
+        if (overrideDownPayment != null) 'overrideDownPayment': overrideDownPayment,
         if (salesRequestId != null) 'salesRequestId': salesRequestId,
         if (customerListId != null) 'customerListId': customerListId,
       };
@@ -474,14 +496,20 @@ class SalesWorkRequest {
   final int? delegateId;
   final String? delegateName;
 
-  bool get isNew => status == 'New' || status == 'Assigned';
-  bool get canConvert => status != 'Rejected' && status != 'Completed' && convertedToSaleId == null;
-  bool get canAct =>
-      status != 'Rejected' && status != 'Completed' && status != 'ConvertedToSale';
+  bool get isNew => status == 'New' || status == 'Assigned' || status == 'Viewed';
+  bool get isIncoming =>
+      status == 'New' || status == 'Assigned' || status == 'Viewed' || status == 'Returned';
+  bool get isSold => status == 'Completed';
+  bool get canConvert => !isSold && convertedToSaleId == null;
+  bool get canContinueSale => !isSold && convertedToSaleId != null;
+  bool get canAct => !isSold;
+  bool get canPrepare => !isSold && (isIncoming || isPendingHold);
+  bool get canPend => !isSold && status != 'Pending';
+  bool get canReject => !isSold && status != 'Rejected';
   bool get isReturned => status == 'Returned';
   bool get isPendingHold => status == 'Pending';
   bool get isPreparedForSale =>
-      status == 'PreparedForSale' || status == 'InProgress';
+      status == 'PreparedForSale' || status == 'InProgress' || status == 'ConvertedToSale';
 
   SalesWorkRequest copyWith({
     String? status,
@@ -546,6 +574,9 @@ class SalesShopComplete {
     required this.shopWidth,
     required this.shopImageKey,
     this.employeeNote,
+    this.overrideTotalSalePrice,
+    this.overrideDailyInstallment,
+    this.overrideDownPayment,
   });
 
   final String shopName;
@@ -556,6 +587,9 @@ class SalesShopComplete {
   final num shopWidth;
   final String shopImageKey;
   final String? employeeNote;
+  final num? overrideTotalSalePrice;
+  final num? overrideDailyInstallment;
+  final num? overrideDownPayment;
 
   num get shopArea => shopLength * shopWidth;
 
@@ -569,5 +603,44 @@ class SalesShopComplete {
         'shopArea': shopArea,
         'shopImageKey': shopImageKey,
         if (employeeNote != null && employeeNote!.trim().isNotEmpty) 'employeeNote': employeeNote!.trim(),
+        if (overrideTotalSalePrice != null) 'overrideTotalSalePrice': overrideTotalSalePrice,
+        if (overrideDailyInstallment != null) 'overrideDailyInstallment': overrideDailyInstallment,
+        if (overrideDownPayment != null) 'overrideDownPayment': overrideDownPayment,
       };
+}
+
+class SalesPreviewDocuments {
+  SalesPreviewDocuments({
+    required this.saleId,
+    required this.finalSalePrice,
+    required this.dailyInstallment,
+    required this.downPayment,
+    this.defaultTotalSalePrice = 0,
+    this.defaultDailyInstallment = 0,
+    this.defaultDownPayment = 0,
+    this.documents = const [],
+  });
+
+  final int saleId;
+  final num finalSalePrice;
+  final num dailyInstallment;
+  final num downPayment;
+  final num defaultTotalSalePrice;
+  final num defaultDailyInstallment;
+  final num defaultDownPayment;
+  final List<SalesDocument> documents;
+
+  factory SalesPreviewDocuments.fromJson(Map<String, dynamic> json) => SalesPreviewDocuments(
+        saleId: int.tryParse('${json['saleId'] ?? json['SaleId'] ?? 0}') ?? 0,
+        finalSalePrice: num.tryParse('${json['finalSalePrice'] ?? json['FinalSalePrice'] ?? 0}') ?? 0,
+        dailyInstallment: num.tryParse('${json['dailyInstallment'] ?? json['DailyInstallment'] ?? 0}') ?? 0,
+        downPayment: num.tryParse('${json['downPayment'] ?? json['DownPayment'] ?? 0}') ?? 0,
+        defaultTotalSalePrice: num.tryParse('${json['defaultTotalSalePrice'] ?? json['DefaultTotalSalePrice'] ?? 0}') ?? 0,
+        defaultDailyInstallment: num.tryParse('${json['defaultDailyInstallment'] ?? json['DefaultDailyInstallment'] ?? 0}') ?? 0,
+        defaultDownPayment: num.tryParse('${json['defaultDownPayment'] ?? json['DefaultDownPayment'] ?? 0}') ?? 0,
+        documents: [
+          for (final e in (json['documents'] ?? json['Documents'] ?? const []))
+            if (e is Map) SalesDocument.fromJson(Map<String, dynamic>.from(e)),
+        ],
+      );
 }

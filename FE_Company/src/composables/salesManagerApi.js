@@ -170,15 +170,15 @@ export const locationStatusLabel = {
 }
 
 export const requestStatusLabel = {
-  New: 'جديدة / غير مسندة',
-  Assigned: 'قيد المعالجة',
-  Viewed: 'قيد المعالجة',
+  New: 'غير مسند',
+  Assigned: 'طلبات البيع',
+  Viewed: 'طلبات البيع',
   Pending: 'معلقة',
-  PreparedForSale: 'مجهز للبيع',
-  InProgress: 'مجهز للبيع',
-  Returned: 'معاد للموظف',
-  ConvertedToSale: 'مجهز للبيع',
-  Completed: 'مكتمل',
+  PreparedForSale: 'جاهز للبيع',
+  InProgress: 'جاهز للبيع',
+  Returned: 'طلبات البيع',
+  ConvertedToSale: 'جاهز للبيع',
+  Completed: 'تم البيع',
   Rejected: 'مرفوض',
 }
 

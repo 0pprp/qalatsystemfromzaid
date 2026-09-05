@@ -14,6 +14,8 @@ namespace BE_Company.Sales.Tests
             Task.FromResult<IReadOnlyList<SalesDraftDTO>>([]);
         public Task<SalesDraftDTO?> GetByIdAsync(int saleId, int employeeId, CancellationToken ct) =>
             Task.FromResult<SalesDraftDTO?>(null);
+
+        public Task UpdateCheckoutAsync(SalesDraftDTO draft, CancellationToken ct) => Task.CompletedTask;
     }
 
     public sealed class FakeCompleteRepository : ISalesCompleteRepository
@@ -37,7 +39,7 @@ namespace BE_Company.Sales.Tests
                 throw new SalesCompleteException(403, "لا يمكنك إتمام عملية تخص موظفاً أو فرعاً آخر.");
             }
 
-            if (sale.Status == SalesStatuses.Rejected || SalesEvaluationLevels.BlocksSale(sale.EvaluationLevel))
+            if (sale.Status == SalesStatuses.Rejected)
             {
                 throw new SalesCompleteException(409, "لا يمكن إتمام عملية بيع مرفوضة.");
             }
@@ -153,6 +155,7 @@ namespace BE_Company.Sales.Tests
     public sealed class FakeDocumentService : ISalesDocumentService
     {
         public int GenerateCalls { get; private set; }
+        public int PreviewCalls { get; private set; }
 
         public Task<IReadOnlyList<SalesDocumentDTO>> EnsureGeneratedAsync(SalesDraftDTO sale, CancellationToken ct)
         {
@@ -161,6 +164,17 @@ namespace BE_Company.Sales.Tests
             [
                 new() { DocumentId = 1, Type = "Contract", FileName = $"Sale_{sale.SaleId}_Contract.pdf", DownloadUrl = $"/api/sales/{sale.SaleId}/documents/1/download" },
                 new() { DocumentId = 2, Type = "PromissoryNote", FileName = $"Sale_{sale.SaleId}_PromissoryNote.pdf", DownloadUrl = $"/api/sales/{sale.SaleId}/documents/2/download" }
+            ];
+            return Task.FromResult(docs);
+        }
+
+        public Task<IReadOnlyList<SalesDocumentDTO>> EnsurePreviewGeneratedAsync(SalesDraftDTO sale, CancellationToken ct)
+        {
+            PreviewCalls++;
+            IReadOnlyList<SalesDocumentDTO> docs =
+            [
+                new() { DocumentId = 101, Type = "PreviewContract", FileName = $"Sale_{sale.SaleId}_Preview_Contract.pdf", DownloadUrl = $"/api/sales/{sale.SaleId}/documents/101/download" },
+                new() { DocumentId = 102, Type = "PreviewPromissoryNote", FileName = $"Sale_{sale.SaleId}_Preview_PromissoryNote.pdf", DownloadUrl = $"/api/sales/{sale.SaleId}/documents/102/download" }
             ];
             return Task.FromResult(docs);
         }

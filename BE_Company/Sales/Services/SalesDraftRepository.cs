@@ -35,12 +35,18 @@ namespace BE_Company.Sales.Services
 INSERT INTO dbo.SalesDrafts
 (EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
  FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
- EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, SalesRequestId, CustomerListId)
+ EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment,
+ DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
+ OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
+ SalesRequestId, CustomerListId)
 OUTPUT INSERTED.SaleId
 VALUES
 (@EmployeeId, @UserName, @UserType, @CityValue, @CityName, @Status, @CustomerId, @SourceCityValue,
  @FullName, @Phone, @Province, @NationalCardNumber, @Address, @NearestLandmark, @MukhtarName, @RationCenterNumber,
- @EvaluationLevel, @EvaluationNote, @BaseSalePrice, @FinalSalePrice, @DailyInstallment, @SalesRequestId, @CustomerListId);",
+ @EvaluationLevel, @EvaluationNote, @BaseSalePrice, @FinalSalePrice, @DailyInstallment,
+ @DefaultTotalSalePrice, @DefaultDailyInstallment, @DefaultDownPayment,
+ @OverrideTotalSalePrice, @OverrideDailyInstallment, @OverrideDownPayment, @DownPayment,
+ @SalesRequestId, @CustomerListId);",
                     draft, tx, cancellationToken: ct));
 
                 foreach (var item in draft.Items)
@@ -79,7 +85,10 @@ VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSaleP
             var headers = (await connection.QueryAsync<SalesDraftDTO>(new CommandDefinition(
                 @"SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
                          FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
-                         EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, CreatedAt,
+                         EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment,
+                         DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
+                         OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
+                         CreatedAt,
                          CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
                   FROM dbo.SalesDrafts
                   WHERE EmployeeId = @EmployeeId
@@ -106,6 +115,26 @@ VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSaleP
             return headers;
         }
 
+        public async Task UpdateCheckoutAsync(SalesDraftDTO draft, CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.SalesDrafts SET
+ BaseSalePrice = @BaseSalePrice,
+ FinalSalePrice = @FinalSalePrice,
+ DailyInstallment = @DailyInstallment,
+ DefaultTotalSalePrice = @DefaultTotalSalePrice,
+ DefaultDailyInstallment = @DefaultDailyInstallment,
+ DefaultDownPayment = @DefaultDownPayment,
+ OverrideTotalSalePrice = @OverrideTotalSalePrice,
+ OverrideDailyInstallment = @OverrideDailyInstallment,
+ OverrideDownPayment = @OverrideDownPayment,
+ DownPayment = @DownPayment
+WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId",
+                draft, cancellationToken: ct));
+        }
+
         public async Task<SalesDraftDTO?> GetByIdAsync(int saleId, int employeeId, CancellationToken ct)
         {
             var cs = RequireConnection();
@@ -113,7 +142,10 @@ VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSaleP
             var header = await connection.QueryFirstOrDefaultAsync<SalesDraftDTO>(new CommandDefinition(
                 @"SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
                          FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
-                         EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, CreatedAt,
+                         EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment,
+                         DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
+                         OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
+                         CreatedAt,
                          CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
                   FROM dbo.SalesDrafts
                   WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId",
@@ -200,6 +232,20 @@ IF COL_LENGTH(N'dbo.SalesDrafts', N'SalesRequestId') IS NULL
     ALTER TABLE dbo.SalesDrafts ADD SalesRequestId INT NULL;
 IF COL_LENGTH(N'dbo.SalesDrafts', N'CustomerListId') IS NULL
     ALTER TABLE dbo.SalesDrafts ADD CustomerListId INT NULL;
+IF COL_LENGTH(N'dbo.SalesDrafts', N'DefaultTotalSalePrice') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD DefaultTotalSalePrice DECIMAL(18, 0) NOT NULL CONSTRAINT DF_SalesDrafts_DefaultTotal DEFAULT (0);
+IF COL_LENGTH(N'dbo.SalesDrafts', N'DefaultDailyInstallment') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD DefaultDailyInstallment DECIMAL(18, 0) NOT NULL CONSTRAINT DF_SalesDrafts_DefaultDaily DEFAULT (0);
+IF COL_LENGTH(N'dbo.SalesDrafts', N'DefaultDownPayment') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD DefaultDownPayment DECIMAL(18, 0) NOT NULL CONSTRAINT DF_SalesDrafts_DefaultDown DEFAULT (0);
+IF COL_LENGTH(N'dbo.SalesDrafts', N'OverrideTotalSalePrice') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD OverrideTotalSalePrice DECIMAL(18, 0) NULL;
+IF COL_LENGTH(N'dbo.SalesDrafts', N'OverrideDailyInstallment') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD OverrideDailyInstallment DECIMAL(18, 0) NULL;
+IF COL_LENGTH(N'dbo.SalesDrafts', N'OverrideDownPayment') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD OverrideDownPayment DECIMAL(18, 0) NULL;
+IF COL_LENGTH(N'dbo.SalesDrafts', N'DownPayment') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD DownPayment DECIMAL(18, 0) NOT NULL CONSTRAINT DF_SalesDrafts_DownPayment DEFAULT (0);
 IF OBJECT_ID(N'dbo.SalesDraftItems', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SalesDraftItems (

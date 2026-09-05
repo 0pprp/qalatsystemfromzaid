@@ -48,7 +48,7 @@ namespace BE_Company.Sales.Services
                       FROM dbo.SalesDraftItems WHERE SaleId = @SaleId",
                     new { SaleId = saleId }, tx, cancellationToken: ct))).ToList();
 
-                if (header.Status == SalesStatuses.Rejected || SalesEvaluationLevels.BlocksSale(header.EvaluationLevel))
+                if (header.Status == SalesStatuses.Rejected)
                 {
                     throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن إتمام عملية بيع مرفوضة.");
                 }
@@ -375,7 +375,9 @@ END;",
         private const string HeaderLockSql = @"
 SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
        FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
-       EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, CreatedAt,
+       EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment,
+       DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
+       OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment, CreatedAt,
        CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
 FROM dbo.SalesDrafts WITH (UPDLOCK, ROWLOCK)
 WHERE SaleId = @SaleId";

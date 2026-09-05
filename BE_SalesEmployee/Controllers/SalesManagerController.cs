@@ -77,6 +77,32 @@ namespace BE_SalesEmployee.Controllers
             return ListAsync(cityValue, "sales-manager/sales" + q, ct);
         }
 
+        [HttpGet("sales/{cityValue}/{saleId:int}")]
+        public Task<IActionResult> Sale(string cityValue, int saleId, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/sales/{saleId}", ct);
+
+        [HttpGet("sales/{cityValue}/{saleId:int}/documents")]
+        public Task<IActionResult> SaleDocuments(string cityValue, int saleId, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/sales/{saleId}/documents", ct);
+
+        [HttpGet("sales/{cityValue}/{saleId:int}/documents/{documentId:int}/download")]
+        public async Task<IActionResult> SaleDocumentDownload(
+            string cityValue, int saleId, int documentId, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetFileAsync(
+                user, cityValue, $"sales-manager/sales/{saleId}/documents/{documentId}/download", ct);
+            if (payload is ValueTuple<byte[], string> file)
+            {
+                var type = string.IsNullOrWhiteSpace(file.Item2) || file.Item2 == "image/jpeg"
+                    ? "application/pdf"
+                    : file.Item2;
+                return File(file.Item1, type);
+            }
+
+            return StatusCode(status, payload);
+        }
+
         [HttpGet("customers/{cityValue}/profile")]
         public Task<IActionResult> CustomerProfile(
             string cityValue,
@@ -116,10 +142,25 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [HttpGet("customers/search")]
-        public async Task<IActionResult> Search([FromQuery] string? q, CancellationToken ct)
+        public async Task<IActionResult> Search([FromQuery] string? q, [FromQuery] string? cityValue, CancellationToken ct)
         {
             var user = TokenService.FromPrincipal(User);
-            var (status, payload) = await _aggregator.SearchCustomersAsync(user, q, ct);
+            var (status, payload) = await _aggregator.SearchCustomersAsync(user, q, cityValue, ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/import")]
+        public async Task<IActionResult> Import([FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var city = Read(body, "cityValue", "CityValue");
+            if (string.IsNullOrWhiteSpace(city))
+            {
+                return BadRequest(new { message = "يجب تحديد المحافظة المستهدفة للطلب." });
+            }
+
+            var (status, payload) = await _aggregator.PostAsync(
+                user, city, "sales-manager/sales-requests/import", body.GetRawText(), ct);
             return StatusCode(status, payload);
         }
 

@@ -72,6 +72,8 @@ namespace BE_Company.Sales.Services
                 TotalPriceWords: IraqiDinarWords.ToArabic(total),
                 DailyInstallmentNumeric: decimal.Truncate(installment).ToString("0"),
                 DailyInstallmentWords: IraqiDinarWords.ToArabic(installment),
+                DownPaymentNumeric: decimal.Truncate(sale.DownPayment).ToString("0"),
+                DownPaymentWords: IraqiDinarWords.ToArabic(sale.DownPayment),
                 SalesRepName: sale.UserName ?? string.Empty,
                 CashierName: string.Empty
             );
@@ -111,6 +113,8 @@ namespace BE_Company.Sales.Services
             [
                 Labeled("المبلغ رقما: ", totalNum),
                 Labeled("كتابــــــــــة: ", contract.TotalPriceWords),
+                Labeled("الدفعة المقدمة رقما: ", FormatWithCommas(contract.DownPaymentNumeric)),
+                Labeled("الدفعة المقدمة كتابة: ", contract.DownPaymentWords),
                 Debt(date),
                 Labeled("أسم المستلم: ", contract.CustomerName),
                 Labeled("رقم البطاقة الوطنية: ", contract.NationalId),
@@ -266,6 +270,8 @@ namespace BE_Company.Sales.Services
         string TotalPriceWords,
         string DailyInstallmentNumeric,
         string DailyInstallmentWords,
+        string DownPaymentNumeric,
+        string DownPaymentWords,
         string SalesRepName,
         string CashierName);
 }

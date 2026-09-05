@@ -260,15 +260,33 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task Rejected_CannotConvert()
+        public async Task Rejected_CanConvertToSale()
         {
             var repo = new FakeRequestRepository();
             var svc = Svc(repo);
             var created = await AssignedAsync(svc, 1);
             await svc.RejectAsync(created.Id, 1, "زبون غير موجود", CancellationToken.None);
-            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
-                svc.MarkConvertedAsync(created.Id, 1, 99, DateTime.UtcNow, CancellationToken.None));
-            Assert.Equal(409, ex.StatusCode);
+            await svc.MarkConvertedAsync(created.Id, 1, 99, DateTime.UtcNow, CancellationToken.None);
+            var row = await svc.GetForEmployeeAsync(created.Id, 1, CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.ConvertedToSale, row.Status);
+            Assert.Equal(99, row.ConvertedToSaleId);
+            Assert.Contains(row.History, h => h.Event == SalesRequestEvents.ConvertedToSale && h.PreviousStatus == SalesRequestStatuses.Rejected);
+        }
+
+        [Fact]
+        public async Task Completed_CannotPendOrReject()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await AssignedAsync(svc, 1);
+            await svc.MarkConvertedAsync(created.Id, 1, 77, DateTime.UtcNow, CancellationToken.None);
+            await svc.MarkCompletedBySaleIdAsync(77, DateTime.UtcNow, CancellationToken.None);
+            var pend = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+                svc.PendAsync(created.Id, 1, "ملاحظة", CancellationToken.None));
+            Assert.Equal(409, pend.StatusCode);
+            var reject = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+                svc.RejectAsync(created.Id, 1, "سبب", CancellationToken.None));
+            Assert.Equal(409, reject.StatusCode);
         }
 
         [Fact]

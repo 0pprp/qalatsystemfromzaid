@@ -19,23 +19,33 @@ namespace BE_Company.Sales.Services
         public static bool IsUnassigned(string? status) =>
             string.Equals(status, New, StringComparison.OrdinalIgnoreCase);
 
+        /// طلبات البيع الظاهرة للموظف قبل جاهز/معلق/مرفوض/مباع.
+        public static bool IsIncomingQueue(string? status) =>
+            status is New or Assigned or Viewed or Returned;
+
+        public static bool IsReadyForSale(string? status) =>
+            status is PreparedForSale or InProgress or ConvertedToSale;
+
+        public static bool IsSold(string? status) =>
+            status is Completed;
+
         public static bool IsOpenForEmployee(string? status) =>
-            status is Assigned or Viewed or Pending or PreparedForSale or InProgress or Returned;
+            !IsSold(status);
 
         public static bool CanPrepare(string? status) =>
-            status is Assigned or Viewed or Pending or PreparedForSale or InProgress or Returned;
+            status is New or Assigned or Viewed or Returned or Pending or PreparedForSale or InProgress;
 
         public static bool CanPend(string? status) =>
-            status is Assigned or Viewed or Pending or PreparedForSale or InProgress or Returned;
+            status is New or Assigned or Viewed or Returned or PreparedForSale or InProgress or ConvertedToSale or Rejected;
 
         public static bool CanReject(string? status) =>
-            status is Assigned or Viewed or Pending or PreparedForSale or InProgress or Returned;
+            status is New or Assigned or Viewed or Returned or Pending or PreparedForSale or InProgress or ConvertedToSale;
 
         public static bool CanConvertToSale(string? status) =>
-            status is PreparedForSale or InProgress;
+            status is New or Assigned or Viewed or Returned or Pending or PreparedForSale or InProgress or ConvertedToSale or Rejected;
 
         public static bool IsTerminal(string? status) =>
-            status is Completed or ConvertedToSale;
+            IsSold(status);
     }
 
     public static class SalesRequestEvents

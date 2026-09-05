@@ -11,6 +11,7 @@ import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/screens/warehouse_screen.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/tracking/shift_tracking_controller.dart';
+import 'package:sales_employee_application/tracking/tracking_channel.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 
 Future<void> main() async {
@@ -73,6 +74,14 @@ class _SplashScreenState extends State<_SplashScreen> {
       Navigator.pushReplacementNamed(context, '/login');
       return;
     }
+    if (Session.gpsStoppedByUser) {
+      try {
+        await TrackingChannel.stop();
+      } catch (_) {}
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/home');
+      return;
+    }
     try {
       final current = await SalesRepositoryFactory.instance.currentShift();
       if (!mounted) return;
@@ -85,7 +94,14 @@ class _SplashScreenState extends State<_SplashScreen> {
         Navigator.pushReplacementNamed(context, '/home');
         return;
       }
-    } catch (_) {}
+      try {
+        await TrackingChannel.stop();
+      } catch (_) {}
+    } catch (_) {
+      try {
+        await TrackingChannel.stop();
+      } catch (_) {}
+    }
     if (!mounted) return;
     Navigator.pushReplacementNamed(context, '/shift');
   }

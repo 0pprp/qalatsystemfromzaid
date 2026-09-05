@@ -217,6 +217,13 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("shifts/end")]
+        public async Task<IActionResult> EndShift(CancellationToken ct)
+        {
+            return await ProxyAssigned("sales/shifts/end", HttpMethod.Post, null, ct);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpGet("shifts/current")]
         public async Task<IActionResult> CurrentShift(CancellationToken ct)
         {

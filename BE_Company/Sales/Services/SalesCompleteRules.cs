@@ -7,8 +7,7 @@ namespace BE_Company.Sales.Services
     {
         public static string? ValidateForComplete(SalesDraftDTO sale)
         {
-            if (sale.Status == SalesStatuses.Rejected
-                || SalesEvaluationLevels.BlocksSale(sale.EvaluationLevel))
+            if (sale.Status == SalesStatuses.Rejected)
             {
                 return "لا يمكن إتمام عملية بيع مرفوضة.";
             }
@@ -23,9 +22,19 @@ namespace BE_Company.Sales.Services
                 return "لا يمكن إتمام هذه العملية في حالتها الحالية.";
             }
 
+            if (sale.FinalSalePrice <= 0)
+            {
+                return "سعر البيع الكلي يجب أن يكون أكبر من صفر.";
+            }
+
             if (sale.DailyInstallment <= 0)
             {
                 return "القسط اليومي يجب أن يكون أكبر من صفر.";
+            }
+
+            if (sale.DownPayment < 0)
+            {
+                return "الدفعة المقدمة غير صالحة.";
             }
 
             if (string.IsNullOrWhiteSpace(sale.FullName)
@@ -37,11 +46,6 @@ namespace BE_Company.Sales.Services
                 || string.IsNullOrWhiteSpace(sale.MukhtarName))
             {
                 return "بيانات الزبون غير مكتملة.";
-            }
-
-            if (sale.Items == null || sale.Items.Count == 0)
-            {
-                return "لا توجد مواد في العملية.";
             }
 
             return null;

@@ -51,6 +51,31 @@ namespace BE_Company.Sales.Services
             }
         }
 
+        public async Task<SalesShiftDTO> EndAsync(SalesIdentity identity, CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            var utc = _clock.UtcNow;
+            var active = await _repo.GetActiveByEmployeeAsync(identity.EmployeeId, ct);
+            if (active == null)
+            {
+                return Map(new SalesShiftDTO
+                {
+                    Status = SalesShiftStatuses.Closed,
+                    CloseReason = SalesShiftCloseReasons.ManualEnd,
+                    StartedAtUtc = utc,
+                    CutoffAtUtc = utc,
+                    HasActiveShift = false
+                }, isNew: false, hasActive: false);
+            }
+
+            await _repo.CloseAsync(active.ShiftId, utc, SalesShiftCloseReasons.ManualEnd, ct);
+            var closed = await _repo.GetByIdAsync(active.ShiftId, ct) ?? active;
+            closed.Status = SalesShiftStatuses.Closed;
+            closed.ClosedAtUtc = utc;
+            closed.CloseReason = SalesShiftCloseReasons.ManualEnd;
+            return Map(closed, isNew: false, hasActive: false);
+        }
+
         public async Task<SalesShiftDTO?> GetCurrentAsync(int employeeId, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);

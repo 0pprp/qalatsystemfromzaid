@@ -11,7 +11,7 @@ namespace BE_SalesEmployee.Sales.Services
         Task<(int Status, object? Body)> GetOneAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> GetFileAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct);
-        Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, CancellationToken ct);
+        Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, string? cityValue, CancellationToken ct);
         Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct);
     }
 
@@ -148,6 +148,7 @@ namespace BE_SalesEmployee.Sales.Services
         public async Task<(int Status, object? Body)> SearchCustomersAsync(
             GatewayUser user,
             string? query,
+            string? cityValue,
             CancellationToken ct)
         {
             var q = NormalizeArabic(query);
@@ -156,7 +157,16 @@ namespace BE_SalesEmployee.Sales.Services
                 return (400, new { message = "اكتب حرفين على الأقل للبحث" });
             }
 
-            var targets = await GetTargetsAsync(null, ct);
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return (400, new { message = "حدد المحافظة للبحث." });
+            }
+
+            var targets = await GetTargetsAsync(cityValue, ct);
+            if (targets.Count == 0)
+            {
+                return (400, new { message = "المحافظة غير موجودة." });
+            }
             var chunks = await Task.WhenAll(targets.Select(city =>
                 FetchArrayAsync(user, city, $"sales-manager/customers/search?q={Uri.EscapeDataString(q)}", ct)));
             var merged = new List<JsonNode>();
@@ -380,6 +390,19 @@ namespace BE_SalesEmployee.Sales.Services
             if (!string.IsNullOrWhiteSpace(cityValue))
             {
                 obj["cityValue"] = cityValue;
+            }
+
+            var cityName = ReadAny(obj, "cityName", "CityName", "province", "Province", "sourceCityName", "SourceCityName");
+            if (!string.IsNullOrWhiteSpace(cityName))
+            {
+                obj["cityName"] = cityName;
+                obj["province"] = cityName;
+            }
+
+            var address = ReadAny(obj, "address", "Address");
+            if (!string.IsNullOrWhiteSpace(address))
+            {
+                obj["address"] = address;
             }
 
             obj["branchKey"] = $"{ReadAny(obj, "cityValue")}:{ReadAny(obj, "customerId")}";

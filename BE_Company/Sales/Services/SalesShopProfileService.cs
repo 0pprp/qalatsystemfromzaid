@@ -71,6 +71,8 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status400BadRequest, "طول وعرض المحل يجب أن يكونا أكبر من صفر.");
             }
 
+            shop.ShopArea = Math.Round(shop.ShopLength * shop.ShopWidth, 2, MidpointRounding.AwayFromZero);
+
             var path = ResolveImagePath(shop.ShopImageKey);
             if (!File.Exists(path))
             {

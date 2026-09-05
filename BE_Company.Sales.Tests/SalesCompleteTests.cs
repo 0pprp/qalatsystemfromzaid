@@ -41,6 +41,7 @@ namespace BE_Company.Sales.Tests
             BaseSalePrice = 2000000,
             FinalSalePrice = SalesEvaluationLevels.BlocksSale(eval) ? 0 : 2000000,
             DailyInstallment = 25000,
+            DownPayment = 100000,
             Items =
             [
                 new SalesDraftItemDTO { ProductId = 5, ProductName = "ثلاجة سامسونج", Quantity = qty, UnitSalePrice = 2000000, LineSalePrice = 2000000 }
@@ -58,12 +59,31 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public void Pricing_Accepted_DoesNotDouble()
+        public void Pricing_IgnoresEvaluation_AndComputesCheckoutDefaults()
         {
             var pricing = new SalesPricingService();
-            Assert.Equal(0, pricing.ComputeFinalSalePrice(2000000, SalesEvaluationLevels.Accepted));
-            Assert.Equal(SalesStatuses.Rejected, pricing.ResolveStatus(SalesEvaluationLevels.Accepted));
+            Assert.Equal(2000000, pricing.ComputeFinalSalePrice(2000000, SalesEvaluationLevels.Accepted));
+            Assert.Equal(SalesStatuses.Pending, pricing.ResolveStatus(SalesEvaluationLevels.Accepted));
             Assert.Equal(2000000, pricing.ComputeFinalSalePrice(2000000, SalesEvaluationLevels.Good));
+            var snapshot = pricing.ComputeCheckout(1000000, 25000, null, null, null);
+            Assert.Equal(1000000, snapshot.DefaultTotalSalePrice);
+            Assert.Equal(25000, snapshot.DefaultDailyInstallment);
+            Assert.Equal(50000, snapshot.DefaultDownPayment);
+            Assert.Equal(1000000, snapshot.FinalTotalSalePrice);
+            var overridden = pricing.ComputeCheckout(1000000, 25000, 900000, 20000, 40000);
+            Assert.Equal(900000, overridden.FinalTotalSalePrice);
+            Assert.Equal(20000, overridden.FinalDailyInstallment);
+            Assert.Equal(40000, overridden.FinalDownPayment);
+        }
+
+        [Fact]
+        public async Task Evaluation_Accepted_DoesNotBlockPendingSale()
+        {
+            var repo = Seed(SalesEvaluationLevels.Accepted);
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+            var result = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
+            Assert.Equal(SalesStatuses.Completed, result.Status);
+            Assert.Equal(1, repo.DeductionCount);
         }
 
         [Fact]
@@ -130,6 +150,22 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(409, ex.StatusCode);
             Assert.Equal("لا يمكن إتمام عملية بيع مرفوضة.", ex.Message);
             Assert.Equal(0, repo.DeductionCount);
+        }
+
+        [Fact]
+        public async Task PreviewDocuments_DoesNotCompleteOrDeduct()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            var docs = new FakeDocumentService();
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), docs);
+            var preview = await svc.PreviewDocumentsAsync(10, Identity(), null, CancellationToken.None);
+            Assert.Equal(2, preview.Documents.Count);
+            Assert.Equal(1, docs.PreviewCalls);
+            Assert.Equal(0, docs.GenerateCalls);
+            Assert.Equal(0, repo.DeductionCount);
+            Assert.Equal(SalesStatuses.Pending, repo.Sales[10].Status);
+            Assert.Equal(100000, preview.DefaultDownPayment);
+            Assert.Equal(100000, preview.DownPayment);
         }
 
         [Fact]

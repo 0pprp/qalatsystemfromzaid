@@ -37,18 +37,6 @@ namespace BE_Company.Sales.Services
             string cityName,
             CancellationToken ct)
         {
-            if (!SalesEvaluationLevels.IsKnown(request.EvaluationLevel))
-            {
-                throw new ArgumentException("مستوى التقييم غير صالح");
-            }
-            if (string.IsNullOrWhiteSpace(request.EvaluationNote))
-            {
-                throw new ArgumentException("الملاحظة إلزامية لكل التقييمات");
-            }
-            if (request.DailyInstallment <= 0)
-            {
-                throw new ArgumentException("القسط اليومي يجب أن يكون أكبر من صفر");
-            }
             if (request.Items == null || request.Items.Count == 0)
             {
                 throw new ArgumentException("يجب اختيار مادة واحدة على الأقل");
@@ -62,6 +50,7 @@ namespace BE_Company.Sales.Services
 
             var draftItems = new List<SalesDraftItemDTO>();
             decimal baseSalePrice = 0;
+            decimal defaultDaily = 0;
             foreach (var line in request.Items)
             {
                 if (line.Quantity <= 0)
@@ -78,6 +67,7 @@ namespace BE_Company.Sales.Services
 
                 var linePrice = product.SalePrice * line.Quantity;
                 baseSalePrice += linePrice;
+                defaultDaily += (product.DailyInstallment ?? 0) * line.Quantity;
                 draftItems.Add(new SalesDraftItemDTO
                 {
                     ProductId = product.ProductId,
@@ -86,6 +76,27 @@ namespace BE_Company.Sales.Services
                     UnitSalePrice = product.SalePrice,
                     LineSalePrice = linePrice
                 });
+            }
+
+            var overrideDaily = request.OverrideDailyInstallment
+                                ?? (request.DailyInstallment > 0 ? request.DailyInstallment : null);
+            var snapshot = _pricing.ComputeCheckout(
+                baseSalePrice,
+                defaultDaily,
+                request.OverrideTotalSalePrice,
+                overrideDaily,
+                request.OverrideDownPayment);
+            if (snapshot.FinalTotalSalePrice <= 0)
+            {
+                throw new ArgumentException("سعر البيع الكلي يجب أن يكون أكبر من صفر");
+            }
+            if (snapshot.FinalDailyInstallment <= 0)
+            {
+                throw new ArgumentException("القسط اليومي يجب أن يكون أكبر من صفر");
+            }
+            if (snapshot.FinalDownPayment < 0)
+            {
+                throw new ArgumentException("الدفعة المقدمة غير صالحة");
             }
 
             string fullName;
@@ -135,7 +146,7 @@ namespace BE_Company.Sales.Services
                 UserType = userType,
                 CityValue = cityValue,
                 CityName = cityName,
-                Status = _pricing.ResolveStatus(request.EvaluationLevel),
+                Status = SalesStatuses.Pending,
                 CustomerId = customerId,
                 SourceCityValue = sourceCity,
                 FullName = fullName,
@@ -147,10 +158,17 @@ namespace BE_Company.Sales.Services
                 MukhtarName = mukhtar,
                 RationCenterNumber = string.IsNullOrWhiteSpace(ration) ? null : ration.Trim(),
                 EvaluationLevel = request.EvaluationLevel,
-                EvaluationNote = request.EvaluationNote.Trim(),
-                BaseSalePrice = baseSalePrice,
-                FinalSalePrice = _pricing.ComputeFinalSalePrice(baseSalePrice, request.EvaluationLevel),
-                DailyInstallment = Math.Round(request.DailyInstallment, 0, MidpointRounding.AwayFromZero),
+                EvaluationNote = string.IsNullOrWhiteSpace(request.EvaluationNote) ? string.Empty : request.EvaluationNote.Trim(),
+                BaseSalePrice = snapshot.DefaultTotalSalePrice,
+                FinalSalePrice = snapshot.FinalTotalSalePrice,
+                DailyInstallment = snapshot.FinalDailyInstallment,
+                DefaultTotalSalePrice = snapshot.DefaultTotalSalePrice,
+                DefaultDailyInstallment = snapshot.DefaultDailyInstallment,
+                DefaultDownPayment = snapshot.DefaultDownPayment,
+                OverrideTotalSalePrice = snapshot.OverrideTotalSalePrice,
+                OverrideDailyInstallment = snapshot.OverrideDailyInstallment,
+                OverrideDownPayment = snapshot.OverrideDownPayment,
+                DownPayment = snapshot.FinalDownPayment,
                 Items = draftItems,
                 SalesRequestId = request.SalesRequestId,
                 CustomerListId = request.CustomerListId
@@ -159,11 +177,6 @@ namespace BE_Company.Sales.Services
             if (request.SalesRequestId is > 0)
             {
                 var existing = await _requests.GetForEmployeeAsync(request.SalesRequestId.Value, employeeId, ct);
-                if (existing.Status == SalesRequestStatuses.Rejected)
-                {
-                    throw new ArgumentException("لا يمكن تحويل طلب مرفوض إلى عملية بيع.");
-                }
-
                 if (existing.ConvertedToSaleId is > 0)
                 {
                     throw new ArgumentException("الطلب مرتبط بعملية بيع أخرى.");

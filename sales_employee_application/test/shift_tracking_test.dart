@@ -77,7 +77,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.byType(HomeScreen), findsOneWidget);
-    expect(find.text('حالة الدوام: بدأ الدوام'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('إنهاء الدوام'), findsOneWidget);
     await controller.dispose();
     live.remove(controller);
   });
@@ -202,7 +203,30 @@ void main() {
     live.remove(controller);
   });
 
+  test('end shift stops GPS and clears local shift', () async {
+    var stopped = 0;
+    final controller = ShiftTrackingController(
+      repository: _ShiftRepo(),
+      store: MemoryLocationStore(),
+      requestPermission: () async => true,
+      startNative: (_) async => true,
+      stopNative: () async { stopped++; },
+      connectivity: Stream<List<ConnectivityResult>>.empty(),
+      scheduleTimers: false,
+    );
+    live.add(controller);
+    await controller.attach(_shift(cutoff: DateTime.now().toUtc().add(const Duration(hours: 8))));
+    expect(controller.isCollecting, isTrue);
+    await controller.endShiftFlow();
+    expect(controller.isCollecting, isFalse);
+    expect(controller.activeShift, isNull);
+    expect(stopped, greaterThanOrEqualTo(1));
+    await controller.dispose();
+    live.remove(controller);
+  });
+
   testWidgets('no GPS Map/Route UI', (tester) async {
+    SalesRepositoryFactory.setInstance(MockSalesRepository());
     await tester.pumpWidget(_app(const HomeScreen()));
     expect(find.textContaining('Map'), findsNothing);
     expect(find.textContaining('المسار'), findsNothing);

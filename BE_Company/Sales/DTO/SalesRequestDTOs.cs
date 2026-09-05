@@ -24,6 +24,43 @@ namespace BE_Company.Sales.DTO
         public string? EmployeeName { get; set; }
         public string? CityValue { get; set; }
         public string? CityName { get; set; }
+        public int? ExistingCustomerId { get; set; }
+        public string? CustomerSourceCityValue { get; set; }
+        public string? CustomerName { get; set; }
+        public string? CustomerPhone { get; set; }
+        public string? CustomerProvince { get; set; }
+        public string? CustomerAddress { get; set; }
+        public string? Notes { get; set; }
+        public bool KeepNewCustomer { get; set; }
+    }
+
+    public sealed class SalesRequestImportRowDTO
+    {
+        public int RowNumber { get; set; }
+        public string? CustomerName { get; set; }
+        public string? Phone { get; set; }
+        public string? Province { get; set; }
+        public string? Address { get; set; }
+        public string? SaleType { get; set; }
+    }
+
+    public sealed class SalesRequestImportDTO
+    {
+        public List<SalesRequestImportRowDTO> Rows { get; set; } = [];
+    }
+
+    public sealed class SalesRequestImportErrorDTO
+    {
+        public int RowNumber { get; set; }
+        public string Message { get; set; } = string.Empty;
+    }
+
+    public sealed class SalesRequestImportResultDTO
+    {
+        public int Total { get; set; }
+        public int Saved { get; set; }
+        public int Failed { get; set; }
+        public List<SalesRequestImportErrorDTO> Errors { get; set; } = [];
     }
 
     public sealed class SalesRequestRejectDTO
@@ -42,6 +79,7 @@ namespace BE_Company.Sales.DTO
         public int Id { get; set; }
         public int RequestId { get; set; }
         public string Event { get; set; } = string.Empty;
+        public string? PreviousStatus { get; set; }
         public string? Status { get; set; }
         public int? ActorUserId { get; set; }
         public string? ActorName { get; set; }

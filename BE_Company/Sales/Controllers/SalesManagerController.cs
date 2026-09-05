@@ -17,8 +17,8 @@ namespace BE_Company.Sales.Controllers
         private readonly ISalesRequestService _requests;
         private readonly IGlobalCustomerSearchService _search;
         private readonly IIraqClock _clock;
-
         private readonly ISalesShopProfileService _shops;
+        private readonly ISalesCompleteService _complete;
 
         public SalesManagerController(
             SalesDevelopmentGuard guard,
@@ -27,7 +27,8 @@ namespace BE_Company.Sales.Controllers
             ISalesRequestService requests,
             IGlobalCustomerSearchService search,
             IIraqClock clock,
-            ISalesShopProfileService shops)
+            ISalesShopProfileService shops,
+            ISalesCompleteService complete)
         {
             _guard = guard;
             _identity = identity;
@@ -36,6 +37,7 @@ namespace BE_Company.Sales.Controllers
             _search = search;
             _clock = clock;
             _shops = shops;
+            _complete = complete;
         }
 
         [HttpGet("dashboard")]
@@ -110,8 +112,12 @@ namespace BE_Company.Sales.Controllers
                 EmployeeId = s.EmployeeId,
                 EmployeeName = s.UserName,
                 CityName = s.CityName,
+                Province = s.Province,
+                CustomerId = s.CustomerId,
                 BaseSalePrice = s.BaseSalePrice,
                 FinalSalePrice = s.FinalSalePrice,
+                DailyInstallment = s.DailyInstallment,
+                DownPayment = s.DownPayment,
                 EvaluationLevel = s.EvaluationLevel,
                 EvaluationName = SalesEvaluationLevels.DisplayName(s.EvaluationLevel),
                 Status = s.Status,
@@ -127,6 +133,47 @@ namespace BE_Company.Sales.Controllers
             if (gate != null) return gate;
             var sale = await _query.GetSaleAsync(saleId, ct);
             return sale == null ? NotFound() : Ok(sale);
+        }
+
+        [HttpGet("sales/{saleId:int}/documents")]
+        public async Task<IActionResult> SaleDocuments(int saleId, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var sale = await _query.GetSaleAsync(saleId, ct);
+            if (sale == null) return NotFound();
+            try
+            {
+                var docs = await _complete.GetDocumentsAsync(saleId, sale.EmployeeId, ct);
+                foreach (var doc in docs)
+                {
+                    doc.DownloadUrl = $"/api/sales-manager/sales/{saleId}/documents/{doc.DocumentId}/download";
+                }
+
+                return Ok(docs);
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("sales/{saleId:int}/documents/{documentId:int}/download")]
+        public async Task<IActionResult> SaleDocumentDownload(int saleId, int documentId, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var sale = await _query.GetSaleAsync(saleId, ct);
+            if (sale == null) return NotFound();
+            try
+            {
+                var file = await _complete.DownloadAsync(saleId, documentId, sale.EmployeeId, ct);
+                return File(file.Bytes, "application/pdf", file.FileName);
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
         }
 
         [HttpGet("customers/profile")]
@@ -239,6 +286,55 @@ namespace BE_Company.Sales.Controllers
             {
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
+        }
+
+        [HttpPost("sales-requests/import")]
+        public async Task<IActionResult> ImportRequests([FromBody] SalesRequestImportDTO body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            var rows = body?.Rows ?? [];
+            var result = new SalesRequestImportResultDTO { Total = rows.Count };
+            foreach (var row in rows)
+            {
+                var rowNumber = row.RowNumber > 0 ? row.RowNumber : result.Saved + result.Failed + 1;
+                try
+                {
+                    var name = row.CustomerName?.Trim();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اسم الزبون مطلوب.");
+                    }
+
+                    var notes = string.IsNullOrWhiteSpace(row.SaleType)
+                        ? null
+                        : $"نوع المبيع: {row.SaleType.Trim()}";
+                    await _requests.CreateAsync(identity!, new SalesRequestCreateDTO
+                    {
+                        Customer = new SalesRequestCustomerDTO
+                        {
+                            FullName = name,
+                            Phone = row.Phone,
+                            Province = row.Province,
+                            Address = row.Address
+                        },
+                        Notes = notes
+                    }, ct);
+                    result.Saved++;
+                }
+                catch (SalesCompleteException ex)
+                {
+                    result.Failed++;
+                    result.Errors.Add(new SalesRequestImportErrorDTO
+                    {
+                        RowNumber = rowNumber,
+                        Message = ex.Message
+                    });
+                }
+            }
+
+            return Ok(result);
         }
 
         [HttpPost("sales-requests/{id:int}/assign")]

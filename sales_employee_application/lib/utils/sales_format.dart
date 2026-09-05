@@ -24,11 +24,11 @@ class SalesStatusLabels {
       case 'Rejected':
         return 'مرفوض';
       case 'Completed':
-        return 'مكتمل';
+        return 'تم البيع';
       case 'DocumentsReady':
-        return 'مكتمل';
+        return 'تم البيع';
       case 'DocumentsPending':
-        return 'مكتمل — المستندات قيد التوليد';
+        return 'تم البيع — المستندات قيد التوليد';
       default:
         return 'معلق';
     }
@@ -37,15 +37,15 @@ class SalesStatusLabels {
 
 class SalesRequestStatusLabels {
   static String of(String? status) => switch (status) {
-        'New' => 'جديد',
-        'Assigned' => 'مسند',
-        'Viewed' => 'مسند',
+        'New' => 'طلبات البيع',
+        'Assigned' => 'طلبات البيع',
+        'Viewed' => 'طلبات البيع',
         'Pending' => 'معلقة',
-        'PreparedForSale' => 'مجهز للبيع',
-        'InProgress' => 'مجهز للبيع',
-        'Returned' => 'معاد',
-        'ConvertedToSale' => 'تحول إلى بيع',
-        'Completed' => 'مكتمل',
+        'PreparedForSale' => 'جاهز للبيع',
+        'InProgress' => 'جاهز للبيع',
+        'Returned' => 'طلبات البيع',
+        'ConvertedToSale' => 'جاهز للبيع',
+        'Completed' => 'تم البيع',
         'Rejected' => 'مرفوض',
         _ => status ?? '',
       };

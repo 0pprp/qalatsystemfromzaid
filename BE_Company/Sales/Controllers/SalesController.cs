@@ -373,6 +373,36 @@ namespace BE_Company.Sales.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("{id:int}/preview-documents")]
+        public async Task<ActionResult<SalesPreviewDocumentsResponseDTO>> PreviewDocuments(int id, [FromBody] SalesShopCompleteDTO? shop, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                return Ok(await _complete.PreviewDocumentsAsync(id, identity, shop, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpGet("{id:int}/documents")]
         public async Task<IActionResult> Documents(int id, CancellationToken ct)
         {
@@ -443,6 +473,26 @@ namespace BE_Company.Sales.Controllers
             }
 
             var shift = await _shifts.StartAsync(identity, ct);
+            return Ok(shift);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("shifts/end")]
+        public async Task<IActionResult> EndShift(CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            var shift = await _shifts.EndAsync(identity, ct);
             return Ok(shift);
         }
 

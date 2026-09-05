@@ -73,6 +73,10 @@ ORDER BY CreatedAtUtc DESC";
 UPDATE dbo.SalesRequests SET
  Status = @Status, TargetEmployeeId = @TargetEmployeeId, TargetEmployeeName = @TargetEmployeeName,
  CityValue = @CityValue, CityName = @CityName,
+ CustomerSourceType = @CustomerSourceType, ExistingCustomerId = @ExistingCustomerId,
+ CustomerSourceCityValue = @CustomerSourceCityValue,
+ CustomerName = @CustomerName, CustomerPhone = @CustomerPhone,
+ CustomerProvince = @CustomerProvince, CustomerAddress = @CustomerAddress, Notes = @Notes,
  ViewedAtUtc = @ViewedAtUtc, ProcessingAtUtc = @ProcessingAtUtc,
  ConvertedToSaleId = @ConvertedToSaleId, CompletedAtUtc = @CompletedAtUtc,
  RejectedAtUtc = @RejectedAtUtc, RejectionReason = @RejectionReason,
@@ -96,10 +100,10 @@ WHERE Id = @Id", row, cancellationToken: ct));
             await using var connection = new SqlConnection(cs);
             var id = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
 INSERT INTO dbo.SalesRequestHistory
-(RequestId, EventType, Status, ActorUserId, ActorName, ActorType, EmployeeId, Note, CreatedAtUtc)
+(RequestId, EventType, PreviousStatus, Status, ActorUserId, ActorName, ActorType, EmployeeId, Note, CreatedAtUtc)
 OUTPUT INSERTED.Id
 VALUES
-(@RequestId, @Event, @Status, @ActorUserId, @ActorName, @ActorType, @EmployeeId, @Note, @CreatedAtUtc);",
+(@RequestId, @Event, @PreviousStatus, @Status, @ActorUserId, @ActorName, @ActorType, @EmployeeId, @Note, @CreatedAtUtc);",
                 row, cancellationToken: ct));
             row.Id = id;
         }
@@ -109,7 +113,7 @@ VALUES
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
             var rows = await connection.QueryAsync<SalesRequestHistoryDTO>(new CommandDefinition(@"
-SELECT Id, RequestId, EventType AS Event, Status, ActorUserId, ActorName, ActorType, EmployeeId, Note, CreatedAtUtc
+SELECT Id, RequestId, EventType AS Event, PreviousStatus, Status, ActorUserId, ActorName, ActorType, EmployeeId, Note, CreatedAtUtc
 FROM dbo.SalesRequestHistory
 WHERE RequestId = @RequestId
 ORDER BY CreatedAtUtc ASC, Id ASC",
@@ -188,6 +192,8 @@ BEGIN
         CreatedAtUtc DATETIME NOT NULL CONSTRAINT DF_SalesRequestHistory_CreatedAt DEFAULT (GETUTCDATE())
     );
     CREATE INDEX IX_SalesRequestHistory_RequestId ON dbo.SalesRequestHistory (RequestId, CreatedAtUtc, Id);
-END;";
+END;
+IF COL_LENGTH(N'dbo.SalesRequestHistory', N'PreviousStatus') IS NULL
+    ALTER TABLE dbo.SalesRequestHistory ADD PreviousStatus NVARCHAR(30) NULL;";
     }
 }

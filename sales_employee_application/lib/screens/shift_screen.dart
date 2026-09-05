@@ -26,7 +26,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
       _error = null;
     });
     final controller = widget.controller ??
-        (TrackingRuntime.instance ??= ShiftTrackingController(repository: SalesRepositoryFactory.instance));
+        ShiftTrackingController(repository: SalesRepositoryFactory.instance);
+    TrackingRuntime.instance = controller;
     try {
       final shift = await controller.startShiftFlow();
       if (!mounted) return;

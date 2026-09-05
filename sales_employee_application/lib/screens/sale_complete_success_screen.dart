@@ -71,8 +71,8 @@ class SaleCompleteSuccessScreen extends StatelessWidget {
             TextButton(
               onPressed: () => Navigator.pushNamedAndRemoveUntil(
                 context,
-                '/sales',
-                (route) => route.settings.name == '/home' || route.isFirst,
+                '/home',
+                (_) => false,
                 arguments: 'today',
               ),
               child: const Text('العودة للمبيعات'),

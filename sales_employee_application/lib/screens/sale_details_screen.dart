@@ -29,6 +29,9 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
   bool _loading = true;
   bool _started = false;
   bool _completing = false;
+  bool _previewing = false;
+  bool _previewed = false;
+  List<SalesDocument> _previewDocs = const [];
   _ShopFormResult? _shopDraft;
 
   int? get _id => widget.saleId ?? ModalRoute.of(context)?.settings.arguments as int?;
@@ -72,7 +75,23 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
     }
   }
 
-  Future<void> _confirmComplete() async {
+  Future<void> _startReview() async {
+    final debugBytes = SaleDetailsScreen.debugShopImageBytes;
+    if (debugBytes != null && debugBytes.isNotEmpty) {
+      _shopDraft = _ShopFormResult(
+        shopName: 'محل اختبار',
+        shopBusinessType: 'مواد غذائية',
+        stockValue: 1500000,
+        dailyRevenue: 80000,
+        length: 8,
+        width: 5,
+        imageBytes: List<int>.from(debugBytes),
+        imageName: 'shop.jpg',
+      );
+      await _runPreview(_shopDraft!);
+      return;
+    }
+
     final result = await showDialog<_ShopFormResult>(
       context: context,
       barrierDismissible: false,
@@ -80,7 +99,68 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
     );
     if (result == null) return;
     _shopDraft = result;
-    await _complete(result);
+    await _runPreview(result);
+  }
+
+  Future<void> _runPreview(_ShopFormResult shopForm) async {
+    final draft = _draft;
+    if (draft == null || _previewing || _completing) return;
+    setState(() {
+      _previewing = true;
+      _error = null;
+    });
+    try {
+      var imageKey = shopForm.imageKey;
+      if (imageKey == null || imageKey.isEmpty) {
+        imageKey = await SalesRepositoryFactory.instance.uploadShopImage(
+          draft.saleId,
+          shopForm.imageBytes,
+          shopForm.imageName,
+        );
+        _shopDraft = shopForm.copyWith(imageKey: imageKey);
+      }
+      final shop = _shopPayload(_shopDraft!);
+      final preview = await SalesRepositoryFactory.instance.previewDocuments(draft.saleId, shop);
+      if (!mounted) return;
+      setState(() {
+        _previewing = false;
+        _previewed = true;
+        _previewDocs = preview.documents;
+        _draft = draft.copyWith(documents: preview.documents);
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _previewing = false;
+        _error = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _previewing = false;
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  SalesShopComplete _shopPayload(_ShopFormResult shopForm) => SalesShopComplete(
+        shopName: shopForm.shopName,
+        shopBusinessType: shopForm.shopBusinessType,
+        shopStockEstimatedValue: shopForm.stockValue,
+        estimatedDailyRevenue: shopForm.dailyRevenue,
+        shopLength: shopForm.length,
+        shopWidth: shopForm.width,
+        shopImageKey: shopForm.imageKey ?? '',
+        employeeNote: shopForm.employeeNote,
+      );
+
+  Future<void> _confirmComplete() async {
+    final shop = _shopDraft;
+    if (shop == null) {
+      await _startReview();
+      return;
+    }
+    await _complete(shop);
   }
 
   Future<void> _complete(_ShopFormResult shopForm) async {
@@ -97,16 +177,7 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
         );
         _shopDraft = shopForm.copyWith(imageKey: imageKey);
       }
-      final shop = SalesShopComplete(
-        shopName: shopForm.shopName,
-        shopBusinessType: shopForm.shopBusinessType,
-        shopStockEstimatedValue: shopForm.stockValue,
-        estimatedDailyRevenue: shopForm.dailyRevenue,
-        shopLength: shopForm.length,
-        shopWidth: shopForm.width,
-        shopImageKey: imageKey,
-        employeeNote: shopForm.employeeNote,
-      );
+      final shop = _shopPayload(_shopDraft!);
       final result = await SalesRepositoryFactory.instance.completeSale(draft.saleId, shop);
       final download = await _downloadAll(result.documents);
       if (!mounted) return;
@@ -201,6 +272,12 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
   Future<void> _openOrDownload(SalesDocument doc) async {
     try {
       final draft = _draft;
+      if (doc.documentId != null && (doc.downloadUrl.isNotEmpty || draft != null)) {
+        final bytes = await SalesRepositoryFactory.instance.downloadDocument(draft?.saleId ?? 0, doc);
+        final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
+        await OpenFilex.open(file.path);
+        return;
+      }
       if (draft != null) {
         final bytes = doc.isContract
             ? await SaleDocuments.contractBytesFromDraft(draft)
@@ -237,14 +314,13 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
                         Text(d.province ?? ''),
                         const SizedBox(height: AppSpacing.md),
                         Text('الحالة: ${SalesStatusLabels.of(d.status)}'),
-                        Text('التقييم: ${EvaluationLabels.of(d.evaluationLevel)}'),
-                        Text(d.isRejected ? 'سبب الرفض: ${d.evaluationNote}' : 'الملاحظة: ${d.evaluationNote}'),
                         const SizedBox(height: AppSpacing.md),
                         ...d.items.map((i) => Text('${i.productName ?? i.productId} × ${i.quantity}')),
                         const SizedBox(height: AppSpacing.md),
-                        Text('السعر الأساسي: ${MoneyFormat.iqd(d.baseSalePrice)}'),
+                        Text('السعر الافتراضي: ${MoneyFormat.iqd(d.defaultTotalSalePrice ?? d.baseSalePrice)}'),
                         Text('السعر النهائي: ${MoneyFormat.iqd(d.finalSalePrice)}'),
                         Text('القسط اليومي: ${MoneyFormat.iqd(d.dailyInstallment)}'),
+                        Text('الدفعة المقدمة: ${MoneyFormat.iqd(d.downPayment)}'),
                         Text('التاريخ: ${d.createdAt}'),
                         if (_error != null)
                           Padding(
@@ -254,13 +330,27 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
                         const SizedBox(height: AppSpacing.lg),
                         if (d.isRejected)
                           const Text('طلب مرفوض', style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700))
-                        else if (d.canComplete)
-                          ElevatedButton(
-                            onPressed: _completing ? null : _confirmComplete,
-                            child: _completing
-                                ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                                : const Text('تم البيع'),
-                          )
+                        else if (d.canComplete) ...[
+                          if (_previewed) ...[
+                            const Text('معاينة المستندات', style: TextStyle(fontWeight: FontWeight.w700)),
+                            ..._documentTiles(d, docs: _previewDocs),
+                            const SizedBox(height: AppSpacing.md),
+                          ],
+                          if (!_previewed)
+                            ElevatedButton(
+                              onPressed: _previewing || _completing ? null : _startReview,
+                              child: _previewing
+                                  ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                  : const Text('مراجعة البيع'),
+                            )
+                          else
+                            ElevatedButton(
+                              onPressed: _completing ? null : _confirmComplete,
+                              child: _completing
+                                  ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                  : const Text('تم البيع'),
+                            ),
+                        ]
                         else if (d.isCompleted) ...[
                           const Text('تم البيع', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.darkGreen)),
                           if (d.completedAt != null) Text('التاريخ: ${d.completedAt}'),
@@ -274,15 +364,17 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
     );
   }
 
-  List<Widget> _documentTiles(SalesDraft d) {
-    final docs = d.documents.isNotEmpty
-        ? d.documents
-        : [
-            SalesDocument(type: 'Contract', fileName: 'عقد البيع', downloadUrl: ''),
-            SalesDocument(type: 'PromissoryNote', fileName: 'وصل الأمانة', downloadUrl: ''),
-          ];
+  List<Widget> _documentTiles(SalesDraft d, {List<SalesDocument>? docs}) {
+    final list = (docs != null && docs.isNotEmpty)
+        ? docs
+        : (d.documents.isNotEmpty
+            ? d.documents
+            : [
+                SalesDocument(type: 'Contract', fileName: 'عقد البيع', downloadUrl: ''),
+                SalesDocument(type: 'PromissoryNote', fileName: 'وصل الأمانة', downloadUrl: ''),
+              ]);
     return [
-      for (final doc in docs)
+      for (final doc in list)
         Card(
           child: ListTile(
             title: Text(doc.isContract ? 'عقد البيع' : 'وصل الأمانة'),
@@ -444,7 +536,10 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
     final daily = _num(_daily);
     final length = _num(_length);
     final width = _num(_width);
-    final image = _imageBytes;
+    var image = _imageBytes;
+    if ((image == null || image.isEmpty) && SaleDetailsScreen.debugShopImageBytes != null) {
+      image = List<int>.from(SaleDetailsScreen.debugShopImageBytes!);
+    }
     if (name.isEmpty || type.isEmpty || stock == null || stock <= 0 || daily == null || daily <= 0 || length == null || length <= 0 || width == null || width <= 0) {
       setState(() => _error = 'أكمل كل حقول المحل المطلوبة.');
       return;
@@ -473,7 +568,7 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('بيانات المحل قبل إتمام البيع'),
+      title: const Text('بيانات المحل قبل المراجعة'),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -557,7 +652,7 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('رجوع')),
-        ElevatedButton(onPressed: _submit, child: const Text('نعم، تم البيع')),
+        ElevatedButton(onPressed: _submit, child: const Text('متابعة للمراجعة')),
       ],
     );
   }

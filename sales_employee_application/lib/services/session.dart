@@ -7,6 +7,7 @@ class Session {
   static const _userKey = 'se_user';
   static const _shiftKey = 'se_shift_date';
   static const _shiftJsonKey = 'se_shift_json';
+  static const _gpsStoppedKey = 'se_gps_stopped';
   static const _lastSaleKey = 'se_last_sale';
   static const _branchKey = 'se_branch';
 
@@ -72,6 +73,7 @@ class Session {
     await LocalStore.instance.remove(_userKey);
     await LocalStore.instance.remove(_shiftKey);
     await LocalStore.instance.remove(_shiftJsonKey);
+    await LocalStore.instance.remove(_gpsStoppedKey);
   }
 
   static String? get shiftDateKey => LocalStore.instance.getString(_shiftKey);
@@ -90,6 +92,16 @@ class Session {
   static Future<void> clearShift() async {
     await LocalStore.instance.remove(_shiftKey);
     await LocalStore.instance.remove(_shiftJsonKey);
+  }
+
+  static bool get gpsStoppedByUser => LocalStore.instance.getString(_gpsStoppedKey) == '1';
+
+  static Future<void> setGpsStoppedByUser(bool value) async {
+    if (value) {
+      await LocalStore.instance.setString(_gpsStoppedKey, '1');
+    } else {
+      await LocalStore.instance.remove(_gpsStoppedKey);
+    }
   }
 
   static Map<String, dynamic>? get lastSale {

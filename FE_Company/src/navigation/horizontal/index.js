@@ -85,8 +85,7 @@ export default [
       { title: 'الخريطة الحية', to: { name: 'sales-manager-map' }, icon: { icon: 'tabler-map', size: '22' } },
       { title: 'المسارات', to: { name: 'sales-manager-routes' }, icon: { icon: 'tabler-route', size: '22' } },
       { title: 'المبيعات', to: { name: 'sales-manager-sales' }, icon: { icon: 'tabler-receipt', size: '22' } },
-      { title: 'المبيعات المعلقة', to: { name: 'sales-manager-sales', query: { status: 'Pending' } }, icon: { icon: 'tabler-clock-hour-4', size: '22' } },
-      { title: 'طلبات المبيعات', to: { name: 'sales-manager-requests' }, icon: { icon: 'tabler-send', size: '22' } },
+      { title: 'طلبات البيع', to: { name: 'sales-manager-requests' }, icon: { icon: 'tabler-send', size: '22' } },
     ],
   },
   {

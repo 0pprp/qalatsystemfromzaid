@@ -79,8 +79,12 @@ namespace BE_Company.Sales.DTO
         public int EmployeeId { get; set; }
         public string? EmployeeName { get; set; }
         public string? CityName { get; set; }
+        public string? Province { get; set; }
+        public int? CustomerId { get; set; }
         public decimal BaseSalePrice { get; set; }
         public decimal FinalSalePrice { get; set; }
+        public decimal DailyInstallment { get; set; }
+        public decimal DownPayment { get; set; }
         public int EvaluationLevel { get; set; }
         public string EvaluationName { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;

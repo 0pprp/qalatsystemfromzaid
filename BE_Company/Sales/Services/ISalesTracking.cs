@@ -13,6 +13,7 @@ namespace BE_Company.Sales.Services
     {
         public const string AutomaticCutoff = "AutomaticCutoff";
         public const string SystemRecovery = "SystemRecovery";
+        public const string ManualEnd = "ManualEnd";
     }
 
     public static class SalesTrackingEventTypes
@@ -61,6 +62,7 @@ namespace BE_Company.Sales.Services
     public interface ISalesShiftService
     {
         Task<SalesShiftDTO> StartAsync(SalesIdentity identity, CancellationToken ct);
+        Task<SalesShiftDTO> EndAsync(SalesIdentity identity, CancellationToken ct);
         Task<SalesShiftDTO?> GetCurrentAsync(int employeeId, CancellationToken ct);
         Task<bool> IsShiftStartedAsync(int employeeId, CancellationToken ct);
         Task CloseExpiredAsync(CancellationToken ct);

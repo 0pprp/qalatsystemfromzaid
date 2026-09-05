@@ -150,6 +150,16 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   @override
+  Future<SalesPreviewDocuments> previewDocuments(int id, [SalesShopComplete? shop]) async {
+    try {
+      final raw = await ApiClient.post('sales/$id/preview-documents', body: shop?.toJson() ?? {});
+      return SalesPreviewDocuments.fromJson(Map<String, dynamic>.from(raw as Map));
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
   Future<List<SalesDocument>> documents(int saleId) async {
     try {
       final raw = await ApiClient.get('sales/$saleId/documents');
@@ -176,6 +186,15 @@ class ApiSalesRepository implements SalesRepository {
     try {
       final raw = await ApiClient.post('sales/shifts/start');
       return WorkShift.fromJson(Map<String, dynamic>.from(raw as Map));
+    } on ApiException {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> endShift() async {
+    try {
+      await ApiClient.post('sales/shifts/end');
     } on ApiException {
       rethrow;
     }

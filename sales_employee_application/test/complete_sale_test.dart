@@ -55,6 +55,20 @@ class _MemRepo implements SalesRepository {
   }
 
   @override
+  Future<SalesPreviewDocuments> previewDocuments(int id, [SalesShopComplete? shop]) async {
+    return SalesPreviewDocuments(
+      saleId: draft.saleId,
+      finalSalePrice: draft.finalSalePrice,
+      dailyInstallment: draft.dailyInstallment,
+      downPayment: draft.downPayment,
+      documents: [
+        SalesDocument(type: 'PreviewContract', fileName: 'Sale_1_Preview_Contract.pdf', downloadUrl: 'c', documentId: 101),
+        SalesDocument(type: 'PreviewPromissoryNote', fileName: 'Sale_1_Preview_PromissoryNote.pdf', downloadUrl: 'p', documentId: 102),
+      ],
+    );
+  }
+
+  @override
   Future<String> uploadShopImage(int saleId, List<int> bytes, String fileName) async {
     if (bytes.isEmpty) throw Exception('صورة المحل مطلوبة');
     return 'sales/$saleId/shop.jpg';
@@ -71,6 +85,8 @@ class _MemRepo implements SalesRepository {
 
   @override
   Future<WorkShift> startShift() async => throw UnimplementedError();
+  @override
+  Future<void> endShift() async {}
   @override
   Future<WorkShift?> currentShift() async => null;
   @override
@@ -117,11 +133,12 @@ Widget _app(Widget home) => MaterialApp(
 void main() {
   tearDown(() => SalesRepositoryFactory.reset());
 
-  testWidgets('Complete button only for Pending', (tester) async {
+  testWidgets('Review button only for Pending', (tester) async {
     SalesRepositoryFactory.setInstance(_MemRepo(_draft()));
     await tester.pumpWidget(_app(const SaleDetailsScreen(saleId: 1)));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(ElevatedButton, 'تم البيع'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'مراجعة البيع'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'تم البيع'), findsNothing);
   });
 
   testWidgets('No Complete for Rejected', (tester) async {
@@ -132,15 +149,19 @@ void main() {
     expect(find.widgetWithText(ElevatedButton, 'تم البيع'), findsNothing);
   });
 
-  testWidgets('No Complete for Accepted evaluation', (tester) async {
-    SalesRepositoryFactory.setInstance(_MemRepo(_draft(status: 'Rejected', eval: 2)));
+  testWidgets('Evaluation does not hide complete flow', (tester) async {
+    SalesRepositoryFactory.setInstance(_MemRepo(_draft(status: 'Pending', eval: 2)));
     await tester.pumpWidget(_app(const SaleDetailsScreen(saleId: 1)));
     await tester.pumpAndSettle();
-    expect(find.text('طلب مرفوض'), findsOneWidget);
-    expect(find.widgetWithText(ElevatedButton, 'تم البيع'), findsNothing);
+    expect(find.text('طلب مرفوض'), findsNothing);
+    expect(find.widgetWithText(ElevatedButton, 'مراجعة البيع'), findsOneWidget);
   });
 
   testWidgets('Loading prevents double tap', (tester) async {
+    tester.view.physicalSize = const Size(800, 2000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final repo = _MemRepo(_draft())
       ..hold = Completer<SalesCompleteResult>()
       ..failDownload = true;
@@ -149,18 +170,16 @@ void main() {
     addTearDown(() => SaleDetailsScreen.debugShopImageBytes = null);
     await tester.pumpWidget(_app(const SaleDetailsScreen(saleId: 1)));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('تم البيع'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('shopName')), 'محل أحمد');
-    await tester.enterText(find.byKey(const Key('shopBusinessType')), 'مواد غذائية');
-    await tester.enterText(find.byKey(const Key('shopStockEstimatedValue')), '1500000');
-    await tester.enterText(find.byKey(const Key('estimatedDailyRevenue')), '80000');
-    await tester.enterText(find.byKey(const Key('shopLength')), '8');
-    await tester.enterText(find.byKey(const Key('shopWidth')), '5');
-    await tester.ensureVisible(find.text('نعم، تم البيع'));
-    await tester.tap(find.text('نعم، تم البيع'));
+    await tester.tap(find.text('مراجعة البيع'));
     await tester.pump();
-    await tester.tap(find.text('نعم، تم البيع'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(repo.completeCalls, 0);
+    expect(find.text('تم البيع'), findsOneWidget);
+    await tester.tap(find.text('تم البيع'));
+    await tester.pump();
+    expect(repo.completeCalls, 1);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    await tester.tap(find.byType(ElevatedButton).last, warnIfMissed: false);
     await tester.pump();
     expect(repo.completeCalls, 1);
     expect(find.byType(CircularProgressIndicator), findsWidgets);

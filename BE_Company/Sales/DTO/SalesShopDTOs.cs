@@ -12,6 +12,9 @@ namespace BE_Company.Sales.DTO
         public string? ShopImageKey { get; set; }
         public string? ShopImageUrl { get; set; }
         public string? EmployeeNote { get; set; }
+        public decimal? OverrideTotalSalePrice { get; set; }
+        public decimal? OverrideDailyInstallment { get; set; }
+        public decimal? OverrideDownPayment { get; set; }
     }
 
     public sealed class SalesShopProfileDTO
