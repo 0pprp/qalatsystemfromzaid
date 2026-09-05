@@ -97,8 +97,20 @@ class MockSalesRepository implements SalesRepository {
   }
 
   @override
+  Future<List<SalesCustomerList>> activeCustomerLists() async {
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    return [
+      SalesCustomerList(listId: 1, listName: 'قائمة الأنصار'),
+      SalesCustomerList(listId: 2, listName: 'قائمة الكوفة'),
+    ];
+  }
+
+  @override
   Future<SalesDraft> createSale(SalesDraftCreateRequest request) async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (request.customerListId == null || request.customerListId! <= 0) {
+      throw Exception('قائمة الزبون مطلوبة.');
+    }
     if (request.salesRequestId != null) {
       if (_converted.contains(request.salesRequestId)) {
         throw Exception('الطلب مرتبط بعملية بيع أخرى.');
@@ -123,16 +135,20 @@ class MockSalesRepository implements SalesRepository {
         lineSalePrice: line,
       ));
     }
-    final rejected = request.evaluationLevel == 1;
-    final finalPrice = rejected
-        ? 0
-        : (request.evaluationLevel == 2 ? base * 2 : base);
+    final blocked = request.evaluationLevel == 1 || request.evaluationLevel == 2;
+    final finalPrice = blocked ? 0 : base;
     final draft = SalesDraft(
       saleId: _nextId++,
       fullName: request.customer['fullName'] ?? '',
       phone: request.customer['phone'],
       province: request.customer['province'],
-      status: rejected ? 'Rejected' : 'Pending',
+      nationalCardNumber: request.customer['nationalCardNumber'],
+      address: request.customer['address'],
+      nearestLandmark: request.customer['nearestLandmark'],
+      mukhtarName: request.customer['mukhtarName'],
+      rationCenterNumber: request.customer['rationCenterNumber'],
+      employeeName: 'موظف تجريبي',
+      status: blocked ? 'Rejected' : 'Pending',
       evaluationLevel: request.evaluationLevel,
       evaluationNote: request.evaluationNote,
       baseSalePrice: base,
@@ -181,7 +197,13 @@ class MockSalesRepository implements SalesRepository {
       ];
 
   @override
-  Future<SalesCompleteResult> completeSale(int id) async {
+  Future<String> uploadShopImage(int saleId, List<int> bytes, String fileName) async {
+    if (bytes.isEmpty) throw Exception('صورة المحل مطلوبة');
+    return 'sales/$saleId/shop.jpg';
+  }
+
+  @override
+  Future<SalesCompleteResult> completeSale(int id, [SalesShopComplete? shop]) async {
     completeCalls++;
     await Future<void>.delayed(const Duration(milliseconds: 200));
     final index = _drafts.indexWhere((d) => d.saleId == id);
@@ -305,36 +327,27 @@ class MockSalesRepository implements SalesRepository {
   Future<SalesWorkRequest> viewSalesRequest(int id) async {
     final current = await salesRequest(id);
     if (current.status != 'New') return current;
-    final viewed = SalesWorkRequest(
-      id: current.id,
-      customerName: current.customerName,
-      customerPhone: current.customerPhone,
-      customerProvince: current.customerProvince,
-      customerAddress: current.customerAddress,
-      existingCustomerId: current.existingCustomerId,
-      notes: current.notes,
-      status: 'Viewed',
-      createdAtUtc: current.createdAtUtc,
-      convertedToSaleId: current.convertedToSaleId,
-    );
+    final viewed = current.copyWith(status: 'Viewed');
     _replace(viewed);
     return viewed;
   }
 
   @override
-  Future<SalesWorkRequest> startSalesRequest(int id) async {
+  Future<SalesWorkRequest> startSalesRequest(int id) => prepareSalesRequest(id);
+
+  @override
+  Future<SalesWorkRequest> prepareSalesRequest(int id) async {
     final current = await salesRequest(id);
-    final row = SalesWorkRequest(
-      id: current.id,
-      customerName: current.customerName,
-      customerPhone: current.customerPhone,
-      customerProvince: current.customerProvince,
-      notes: current.notes,
-      status: 'InProgress',
-      createdAtUtc: current.createdAtUtc,
-      existingCustomerId: current.existingCustomerId,
-      customerAddress: current.customerAddress,
-    );
+    final row = current.copyWith(status: 'PreparedForSale');
+    _replace(row);
+    return row;
+  }
+
+  @override
+  Future<SalesWorkRequest> pendSalesRequest(int id, String note) async {
+    if (note.trim().isEmpty) throw Exception('الملاحظة مطلوبة');
+    final current = await salesRequest(id);
+    final row = current.copyWith(status: 'Pending', pendingNote: note.trim());
     _replace(row);
     return row;
   }
@@ -343,18 +356,7 @@ class MockSalesRepository implements SalesRepository {
   Future<SalesWorkRequest> rejectSalesRequest(int id, String reason) async {
     if (reason.trim().isEmpty) throw Exception('سبب الرفض مطلوب');
     final current = await salesRequest(id);
-    final row = SalesWorkRequest(
-      id: current.id,
-      customerName: current.customerName,
-      customerPhone: current.customerPhone,
-      customerProvince: current.customerProvince,
-      notes: current.notes,
-      status: 'Rejected',
-      createdAtUtc: current.createdAtUtc,
-      rejectionReason: reason.trim(),
-      existingCustomerId: current.existingCustomerId,
-      customerAddress: current.customerAddress,
-    );
+    final row = current.copyWith(status: 'Rejected', rejectionReason: reason.trim());
     _replace(row);
     return row;
   }

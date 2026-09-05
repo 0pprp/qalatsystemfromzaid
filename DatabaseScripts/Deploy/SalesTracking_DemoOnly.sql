@@ -57,6 +57,20 @@ BEGIN
         ON dbo.SalesLocationPoints (ShiftId, DeviceSequence);
 END;
 
+IF COL_LENGTH(N'dbo.SalesLocationPoints', N'IsOfficial') IS NULL
+    ALTER TABLE dbo.SalesLocationPoints ADD IsOfficial BIT NOT NULL CONSTRAINT DF_SalesLocationPoints_IsOfficial DEFAULT (0);
+IF COL_LENGTH(N'dbo.SalesLocationPoints', N'OfficialSlotUtc') IS NULL
+    ALTER TABLE dbo.SalesLocationPoints ADD OfficialSlotUtc DATETIME NULL;
+IF COL_LENGTH(N'dbo.SalesLocationPoints', N'ActualCapturedAtUtc') IS NULL
+    ALTER TABLE dbo.SalesLocationPoints ADD ActualCapturedAtUtc DATETIME NULL;
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'UX_SalesLocationPoints_ShiftOfficialSlot' AND object_id = OBJECT_ID(N'dbo.SalesLocationPoints')
+)
+    CREATE UNIQUE INDEX UX_SalesLocationPoints_ShiftOfficialSlot
+        ON dbo.SalesLocationPoints (ShiftId, OfficialSlotUtc)
+        WHERE OfficialSlotUtc IS NOT NULL;
+
 IF OBJECT_ID(N'dbo.SalesTrackingEvents', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SalesTrackingEvents (

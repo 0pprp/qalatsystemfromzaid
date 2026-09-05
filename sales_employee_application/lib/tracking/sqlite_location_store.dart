@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS local_location_points (
   retry_count INTEGER NOT NULL DEFAULT 0,
   UNIQUE(shift_id, device_sequence)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS ux_local_points_slot ON local_location_points (shift_id, captured_at_utc);
 CREATE TABLE IF NOT EXISTS tracking_meta (
   key TEXT PRIMARY KEY,
   value TEXT

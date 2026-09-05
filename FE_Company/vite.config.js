@@ -1,5 +1,6 @@
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
+import http from 'node:http'
 import { fileURLToPath } from 'node:url'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
@@ -10,11 +11,129 @@ import Layouts from 'vite-plugin-vue-layouts'
 import vuetify from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 
+/** Same key the working Demo BE_Company curl uses. Dev-server only — not shipped in the browser bundle. */
+const DEMO_COMPANY_GATEWAY_KEY = 'SalesEmployee-Gateway-2026'
+const DEMO_COMPANY_TARGETS = [
+  { host: '127.0.0.1', port: 5401 },
+  { host: '169.58.236.52', port: 8080 },
+]
+
+function demoCompanyProxy() {
+  return {
+    name: 'demo-company-proxy',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (!req.url?.startsWith('/demo-api'))
+          return next()
+
+        let destPath = req.url.replace(/^\/demo-api(?=\/|$)/, '') || '/'
+        if (!destPath.startsWith('/api'))
+          destPath = `/api${destPath.startsWith('/') ? destPath : `/${destPath}`}`
+        while (destPath.includes('/api/api'))
+          destPath = destPath.replace('/api/api', '/api')
+
+        const chunks = []
+        req.on('data', chunk => chunks.push(chunk))
+        req.on('error', () => {
+          if (res.headersSent || res.writableEnded)
+            return
+          res.statusCode = 502
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          res.end(JSON.stringify({ message: 'تعذر قراءة الطلب.' }))
+        })
+        req.on('end', () => {
+          const body = Buffer.concat(chunks)
+          let settled = false
+
+          const fail = () => {
+            if (settled || res.headersSent || res.writableEnded)
+              return
+            settled = true
+            res.statusCode = 502
+            res.setHeader('Content-Type', 'application/json; charset=utf-8')
+            res.end(JSON.stringify({
+              message: 'تعذر الاتصال بـ Demo BE_Company على المنفذ 5401.',
+            }))
+          }
+
+          const tryTarget = index => {
+            if (settled || res.headersSent || res.writableEnded)
+              return
+            if (index >= DEMO_COMPANY_TARGETS.length) {
+              fail()
+
+              return
+            }
+
+            const target = DEMO_COMPANY_TARGETS[index]
+            const headers = { ...req.headers }
+            delete headers.host
+            delete headers.connection
+            headers.host = `${target.host}:${target.port}`
+            if (target.port === 5401)
+              headers['x-sales-gateway-key'] = DEMO_COMPANY_GATEWAY_KEY
+            else
+              delete headers['x-sales-gateway-key']
+            headers['content-length'] = String(body.length)
+
+            const proxyReq = http.request({
+              host: target.host,
+              port: target.port,
+              path: destPath,
+              method: req.method,
+              headers,
+              timeout: 8000,
+            }, proxyRes => {
+              const canRetry = index + 1 < DEMO_COMPANY_TARGETS.length
+                && proxyRes.statusCode === 404
+              if (canRetry) {
+                proxyRes.resume()
+                tryTarget(index + 1)
+
+                return
+              }
+              if (settled || res.headersSent || res.writableEnded) {
+                proxyRes.resume()
+
+                return
+              }
+              settled = true
+              res.statusCode = proxyRes.statusCode || 502
+              for (const [name, value] of Object.entries(proxyRes.headers)) {
+                if (value == null || name.toLowerCase() === 'transfer-encoding')
+                  continue
+                res.setHeader(name, value)
+              }
+              proxyRes.pipe(res)
+            })
+
+            proxyReq.on('error', () => {
+              if (settled || res.headersSent || res.writableEnded)
+                return
+              tryTarget(index + 1)
+            })
+            proxyReq.on('timeout', () => {
+              if (settled || res.headersSent || res.writableEnded)
+                return
+              proxyReq.destroy()
+              tryTarget(index + 1)
+            })
+            proxyReq.end(body)
+          }
+
+          tryTarget(0)
+        })
+      })
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
     // Docs: https://github.com/posva/unplugin-vue-router
     // ℹ️ This plugin should be placed before vue plugin
+    demoCompanyProxy(),
     VueRouter({
       getRouteName: routeNode => {
         // Convert pascal case to kebab case
@@ -109,12 +228,6 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      // Proxy لتفادي مشكلة CORS عند جلب بيانات المدن
-      '/demo-api': {
-        target: 'http://169.58.236.52:8080',
-        changeOrigin: true,
-        rewrite: path => path.replace(/^\/demo-api/, '/api'),
-      },
       '/api-defaultdata': {
         target: 'http://defaultdata.alsaaeidy.com',
         changeOrigin: true,

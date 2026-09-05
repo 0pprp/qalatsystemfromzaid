@@ -10,6 +10,8 @@ import 'package:sales_employee_application/screens/shift_screen.dart';
 import 'package:sales_employee_application/tracking/location_store.dart';
 import 'package:sales_employee_application/tracking/location_sync_engine.dart';
 import 'package:sales_employee_application/tracking/shift_tracking_controller.dart';
+import 'package:sales_employee_application/tracking/official_slot.dart';
+import 'package:sales_employee_application/tracking/tracking_config.dart';
 import 'package:sales_employee_application/tracking/work_shift.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 
@@ -205,6 +207,57 @@ void main() {
     expect(find.textContaining('Map'), findsNothing);
     expect(find.textContaining('المسار'), findsNothing);
     expect(find.textContaining('الإحداثيات'), findsNothing);
+  });
+
+  test('official tracking interval is 10 minutes', () {
+    expect(TrackingConfig.officialInterval, const Duration(minutes: 10));
+    expect(TrackingConfig.maxAcceptedAccuracyMeters, greaterThanOrEqualTo(50));
+  });
+
+  test('official slots are 10 minutes and catch-up fills gaps', () {
+    final start = DateTime.utc(2026, 9, 2, 22, 0);
+    final due = OfficialSlot.dueSlots(
+      shiftStartUtc: start,
+      lastOfficialSlotUtc: start,
+      nowUtc: DateTime.utc(2026, 9, 2, 22, 34),
+      cutoffUtc: DateTime.utc(2026, 9, 3, 0, 0),
+    );
+    expect(due, [
+      DateTime.utc(2026, 9, 2, 22, 10),
+      DateTime.utc(2026, 9, 2, 22, 20),
+      DateTime.utc(2026, 9, 2, 22, 30),
+    ]);
+    expect(OfficialSlot.sequence(DateTime.utc(2026, 9, 2, 22, 10)), OfficialSlot.sequence(DateTime.utc(2026, 9, 2, 22, 10)));
+    expect(
+      OfficialSlot.sequence(DateTime.utc(2026, 9, 2, 22, 10)),
+      isNot(OfficialSlot.sequence(DateTime.utc(2026, 9, 2, 22, 20))),
+    );
+  });
+
+  test('offline sync does not duplicate the same official slot', () async {
+    final store = MemoryLocationStore();
+    final repo = _ShiftRepo();
+    await repo.startShift();
+    final slot = OfficialSlot.floorUtc(DateTime.utc(2026, 9, 2, 8, 7));
+    final seq = OfficialSlot.sequence(slot);
+    await store.insert(LocalLocationPoint(
+      shiftId: 1,
+      latitude: 32,
+      longitude: 44,
+      capturedAtUtc: slot,
+      deviceSequence: seq,
+    ));
+    await store.insert(LocalLocationPoint(
+      shiftId: 1,
+      latitude: 32.1,
+      longitude: 44.1,
+      capturedAtUtc: slot,
+      deviceSequence: seq,
+    ));
+    expect(store.points, hasLength(1));
+    final ok = await LocationSyncEngine(store, repo).sync(1);
+    expect(ok, isTrue);
+    expect(store.points.where((p) => p.deviceSequence == seq), hasLength(1));
   });
 }
 

@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
@@ -14,6 +16,9 @@ class SaleDetailsScreen extends StatefulWidget {
 
   final int? saleId;
 
+  @visibleForTesting
+  static List<int>? debugShopImageBytes;
+
   @override
   State<SaleDetailsScreen> createState() => _SaleDetailsScreenState();
 }
@@ -24,6 +29,7 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
   bool _loading = true;
   bool _started = false;
   bool _completing = false;
+  _ShopFormResult? _shopDraft;
 
   int? get _id => widget.saleId ?? ModalRoute.of(context)?.settings.arguments as int?;
 
@@ -67,35 +73,41 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
   }
 
   Future<void> _confirmComplete() async {
-    final ok = await showDialog<bool>(
+    final result = await showDialog<_ShopFormResult>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('هل أنت متأكد من إتمام عملية البيع؟'),
-        content: const Text(
-          'سيتم:\n'
-          '• تسجيل البيع\n'
-          '• خصم المواد من مخزن الفرع\n'
-          '• اعتماد العقد ووصل الأمانة\n'
-          '• إنشاء ملفات PDF للعقد ووصل الأمانة\n'
-          '• تنزيل الملفات إلى جهازك',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('رجوع')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('نعم، تم البيع')),
-        ],
-      ),
+      barrierDismissible: false,
+      builder: (ctx) => _ShopCompleteDialog(initial: _shopDraft),
     );
-    if (ok == true) {
-      await _complete();
-    }
+    if (result == null) return;
+    _shopDraft = result;
+    await _complete(result);
   }
 
-  Future<void> _complete() async {
+  Future<void> _complete(_ShopFormResult shopForm) async {
     final draft = _draft;
     if (draft == null || _completing) return;
     setState(() => _completing = true);
     try {
-      final result = await SalesRepositoryFactory.instance.completeSale(draft.saleId);
+      var imageKey = shopForm.imageKey;
+      if (imageKey == null || imageKey.isEmpty) {
+        imageKey = await SalesRepositoryFactory.instance.uploadShopImage(
+          draft.saleId,
+          shopForm.imageBytes,
+          shopForm.imageName,
+        );
+        _shopDraft = shopForm.copyWith(imageKey: imageKey);
+      }
+      final shop = SalesShopComplete(
+        shopName: shopForm.shopName,
+        shopBusinessType: shopForm.shopBusinessType,
+        shopStockEstimatedValue: shopForm.stockValue,
+        estimatedDailyRevenue: shopForm.dailyRevenue,
+        shopLength: shopForm.length,
+        shopWidth: shopForm.width,
+        shopImageKey: imageKey,
+        employeeNote: shopForm.employeeNote,
+      );
+      final result = await SalesRepositoryFactory.instance.completeSale(draft.saleId, shop);
       final download = await _downloadAll(result.documents);
       if (!mounted) return;
       await Navigator.pushReplacement(
@@ -285,6 +297,269 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
           ),
         ),
     ];
+  }
+}
+
+class _ShopFormResult {
+  const _ShopFormResult({
+    required this.shopName,
+    required this.shopBusinessType,
+    required this.stockValue,
+    required this.dailyRevenue,
+    required this.length,
+    required this.width,
+    required this.imageBytes,
+    required this.imageName,
+    this.imageKey,
+    this.employeeNote,
+  });
+
+  final String shopName;
+  final String shopBusinessType;
+  final num stockValue;
+  final num dailyRevenue;
+  final num length;
+  final num width;
+  final List<int> imageBytes;
+  final String imageName;
+  final String? imageKey;
+  final String? employeeNote;
+
+  _ShopFormResult copyWith({String? imageKey}) => _ShopFormResult(
+        shopName: shopName,
+        shopBusinessType: shopBusinessType,
+        stockValue: stockValue,
+        dailyRevenue: dailyRevenue,
+        length: length,
+        width: width,
+        imageBytes: imageBytes,
+        imageName: imageName,
+        imageKey: imageKey ?? this.imageKey,
+        employeeNote: employeeNote,
+      );
+}
+
+class _ShopCompleteDialog extends StatefulWidget {
+  const _ShopCompleteDialog({this.initial});
+
+  final _ShopFormResult? initial;
+
+  @override
+  State<_ShopCompleteDialog> createState() => _ShopCompleteDialogState();
+}
+
+class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
+  late final TextEditingController _name;
+  late final TextEditingController _type;
+  late final TextEditingController _stock;
+  late final TextEditingController _daily;
+  late final TextEditingController _length;
+  late final TextEditingController _width;
+  late final TextEditingController _note;
+  List<int>? _imageBytes;
+  String _imageName = '';
+  String? _imageKey;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    _name = TextEditingController(text: initial?.shopName ?? '');
+    _type = TextEditingController(text: initial?.shopBusinessType ?? '');
+    _stock = TextEditingController(text: initial == null ? '' : '${initial.stockValue}');
+    _daily = TextEditingController(text: initial == null ? '' : '${initial.dailyRevenue}');
+    _length = TextEditingController(text: initial == null ? '' : '${initial.length}');
+    _width = TextEditingController(text: initial == null ? '' : '${initial.width}');
+    _note = TextEditingController(text: initial?.employeeNote ?? '');
+    _imageBytes = initial?.imageBytes;
+    _imageName = initial?.imageName ?? '';
+    _imageKey = initial?.imageKey;
+    final debugBytes = SaleDetailsScreen.debugShopImageBytes;
+    if ((_imageBytes == null || _imageBytes!.isEmpty) && debugBytes != null && debugBytes.isNotEmpty) {
+      _imageBytes = List<int>.from(debugBytes);
+      _imageName = _imageName.isEmpty ? 'shop.jpg' : _imageName;
+    }
+    _length.addListener(() => setState(() {}));
+    _width.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _type.dispose();
+    _stock.dispose();
+    _daily.dispose();
+    _length.dispose();
+    _width.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  num? _num(TextEditingController c) => num.tryParse(c.text.trim().replaceAll(',', ''));
+
+  num get _area {
+    final length = _num(_length) ?? 0;
+    final width = _num(_width) ?? 0;
+    return length * width;
+  }
+
+  Future<void> _pickImage() async {
+    final debugBytes = SaleDetailsScreen.debugShopImageBytes;
+    if (debugBytes != null && debugBytes.isNotEmpty) {
+      setState(() {
+        _imageBytes = List<int>.from(debugBytes);
+        _imageName = 'shop.jpg';
+        _imageKey = null;
+        _error = null;
+      });
+      return;
+    }
+
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1600,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _imageBytes = bytes;
+        _imageName = picked.name.isEmpty ? 'shop.jpg' : picked.name;
+        _imageKey = null;
+        _error = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'تعذر اختيار صورة المحل');
+    }
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    final type = _type.text.trim();
+    final stock = _num(_stock);
+    final daily = _num(_daily);
+    final length = _num(_length);
+    final width = _num(_width);
+    final image = _imageBytes;
+    if (name.isEmpty || type.isEmpty || stock == null || stock <= 0 || daily == null || daily <= 0 || length == null || length <= 0 || width == null || width <= 0) {
+      setState(() => _error = 'أكمل كل حقول المحل المطلوبة.');
+      return;
+    }
+    if ((image == null || image.isEmpty) && (_imageKey == null || _imageKey!.isEmpty)) {
+      setState(() => _error = 'صورة المحل مطلوبة.');
+      return;
+    }
+    Navigator.pop(
+      context,
+      _ShopFormResult(
+        shopName: name,
+        shopBusinessType: type,
+        stockValue: stock,
+        dailyRevenue: daily,
+        length: length,
+        width: width,
+        imageBytes: image ?? const <int>[],
+        imageName: _imageName.isEmpty ? 'shop.jpg' : _imageName,
+        imageKey: _imageKey,
+        employeeNote: _note.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('بيانات المحل قبل إتمام البيع'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                key: const Key('shopName'),
+                controller: _name,
+                decoration: const InputDecoration(labelText: 'اسم المحل *'),
+              ),
+              TextField(
+                key: const Key('shopBusinessType'),
+                controller: _type,
+                decoration: const InputDecoration(labelText: 'طبيعة عمل المحل *'),
+              ),
+              TextField(
+                key: const Key('shopStockEstimatedValue'),
+                controller: _stock,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'تقدير قيمة بضاعة المحل *'),
+              ),
+              TextField(
+                key: const Key('estimatedDailyRevenue'),
+                controller: _daily,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'تقدير الوارد اليومي *'),
+              ),
+              TextField(
+                key: const Key('shopLength'),
+                controller: _length,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'طول المحل بالمتر *'),
+              ),
+              TextField(
+                key: const Key('shopWidth'),
+                controller: _width,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'عرض المحل بالمتر *'),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 8),
+                  child: Text(
+                    'المساحة: ${_area.toStringAsFixed(_area % 1 == 0 ? 0 : 2)} م²',
+                    key: const Key('shopArea'),
+                  ),
+                ),
+              ),
+              TextField(
+                controller: _note,
+                decoration: const InputDecoration(labelText: 'ملاحظة الموظف (اختياري)'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: _pickImage,
+                child: const Text('اختيار صورة المحل'),
+              ),
+              if (_imageBytes != null && _imageBytes!.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(_imageName.isEmpty ? 'تم اختيار الصورة' : _imageName),
+                if (SaleDetailsScreen.debugShopImageBytes == null) ...[
+                  const SizedBox(height: 8),
+                  Image.memory(
+                    Uint8List.fromList(_imageBytes!),
+                    height: 80,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const Text('تم اختيار الصورة'),
+                  ),
+                ],
+              ],
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(_error!, style: const TextStyle(color: AppColors.danger)),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('رجوع')),
+        ElevatedButton(onPressed: _submit, child: const Text('نعم، تم البيع')),
+      ],
+    );
   }
 }
 

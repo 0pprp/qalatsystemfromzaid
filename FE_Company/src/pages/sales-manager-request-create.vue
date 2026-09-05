@@ -1,8 +1,8 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
-import { locationStatusLabel, smGet, smPost, withCityQuery } from '@/composables/salesManagerApi'
+import { smGet, smPost } from '@/composables/salesManagerApi'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
@@ -14,33 +14,35 @@ const selectedCustomer = ref(null)
 const isNewCustomer = ref(false)
 const newCustomer = ref({ fullName: '', phone: '', province: '', address: '' })
 const cityValue = ref('')
-const employees = ref([])
-const employeeId = ref(null)
 const notes = ref('')
 const confirm = ref(false)
 
-const selectedEmployee = computed(() => employees.value.find(e => e.employeeId === employeeId.value))
-
-async function loadEmployees() {
-  employeeId.value = null
-  if (!cityValue.value) {
-    employees.value = []
-
-    return
-  }
-  employees.value = await smGet(withCityQuery('employees', cityValue.value))
-}
-
-watch(cityValue, loadEmployees)
-
 async function search() {
   if (query.value.trim().length < 2) return
-  customers.value = await smGet(withCityQuery(`customers/search?q=${encodeURIComponent(query.value.trim())}`, cityValue.value))
+  customers.value = await smGet(`customers/search?q=${encodeURIComponent(query.value.trim())}`)
+}
+
+function customerTitle(c) {
+  const name = c.customerName || c.fullName || ''
+  const city = c.cityName || c.branchName || c.province || ''
+
+  return city ? `${name} — ${city}` : name
+}
+
+function customerKey(c) {
+  return c.branchKey || `${c.cityValue || ''}:${c.customerId}`
+}
+
+function selectCustomer(c) {
+  selectedCustomer.value = c
+  isNewCustomer.value = false
+  if (c.cityValue)
+    cityValue.value = String(c.cityValue)
 }
 
 async function send() {
-  if (!cityValue.value || !employeeId.value) {
-    toast.error('يجب اختيار المحافظة والموظف')
+  if (!cityValue.value) {
+    toast.error('يجب اختيار المحافظة')
 
     return
   }
@@ -50,21 +52,23 @@ async function send() {
     : {
       fullName: selectedCustomer.value.fullName || selectedCustomer.value.customerName,
       phone: selectedCustomer.value.phone,
-      province: selectedCustomer.value.province,
+      province: selectedCustomer.value.province || selectedCustomer.value.cityName,
       address: selectedCustomer.value.address,
     }
 
-  const sameBranch = !selectedCustomer.value?.cityValue
-    || String(selectedCustomer.value.cityValue) === String(cityValue.value)
+  const sourceCity = selectedCustomer.value?.cityValue
+  const sameBranch = !isNewCustomer.value
+    && sourceCity
+    && String(sourceCity) === String(cityValue.value)
 
   await smPost('sales-requests', {
     cityValue: cityValue.value,
-    targetEmployeeId: employeeId.value,
-    existingCustomerId: isNewCustomer.value || !sameBranch ? null : selectedCustomer.value?.customerId,
+    existingCustomerId: sameBranch ? selectedCustomer.value?.customerId : null,
+    customerSourceCityValue: sourceCity || null,
     customer,
     notes: notes.value,
   })
-  toast.success('تم إرسال طلب المبيع بنجاح.')
+  toast.success('تم إنشاء الطلب غير مسند. يمكن إسناده من قائمة الطلبات.')
   confirm.value = false
   router.push({ name: 'sales-manager-requests' })
 }
@@ -83,7 +87,7 @@ async function send() {
         />
         <VStepperItem
           :value="2"
-          title="الفرع والموظف"
+          title="المحافظة"
         />
         <VStepperItem
           :value="3"
@@ -111,10 +115,11 @@ async function send() {
           <VList>
             <VListItem
               v-for="c in customers"
-              :key="`${c.cityValue || ''}:${c.customerId}`"
-              :title="c.fullName"
-              :subtitle="`${c.phone || ''} — ${c.province || c.branchName || ''}`"
-              @click="selectedCustomer = c; isNewCustomer = false"
+              :key="customerKey(c)"
+              :title="customerTitle(c)"
+              :subtitle="c.phone || ''"
+              :active="selectedCustomer && customerKey(selectedCustomer) === customerKey(c)"
+              @click="selectCustomer(c)"
             />
           </VList>
           <VBtn
@@ -146,27 +151,13 @@ async function send() {
           </div>
         </VStepperWindowItem>
         <VStepperWindowItem :value="2">
+          <p class="mt-4 text-medium-emphasis">
+            الطلب يُنشأ غير مسند. إسناد الموظف يتم لاحقاً من تفاصيل الطلب.
+          </p>
           <SalesBranchFilter
             v-model="cityValue"
-            class="mt-4"
-          />
-          <VSelect
-            v-model="employeeId"
-            :items="employees"
-            item-title="employeeName"
-            item-value="employeeId"
-            label="موظف المبيعات"
-            class="mt-4"
-            :disabled="!cityValue"
-          />
-          <div
-            v-if="selectedEmployee"
             class="mt-2"
-          >
-            {{ selectedEmployee.cityName }} —
-            {{ selectedEmployee.shiftStatus === 'Active' ? 'الدوام فعال' : 'بدون دوام' }} —
-            {{ locationStatusLabel[selectedEmployee.locationStatus] }}
-          </div>
+          />
         </VStepperWindowItem>
         <VStepperWindowItem :value="3">
           <VTextarea
@@ -178,8 +169,9 @@ async function send() {
         <VStepperWindowItem :value="4">
           <VCard class="mt-4">
             <VCardText>
-              <div>الزبون: {{ isNewCustomer ? newCustomer.fullName : selectedCustomer?.fullName }}</div>
-              <div>الموظف: {{ selectedEmployee?.employeeName }} — {{ selectedEmployee?.branchName || selectedEmployee?.cityName }}</div>
+              <div>الزبون: {{ isNewCustomer ? newCustomer.fullName : customerTitle(selectedCustomer || {}) }}</div>
+              <div>المحافظة المستهدفة: {{ cityValue || 'غير محددة' }}</div>
+              <div>الإسناد: غير مسند — يتم لاحقاً من قائمة الطلبات</div>
               <div>الملاحظة: {{ notes }}</div>
             </VCardText>
           </VCard>
@@ -215,7 +207,7 @@ async function send() {
     >
       <VCard>
         <VCardTitle>تأكيد الإرسال</VCardTitle>
-        <VCardText>هل تريد إرسال طلب المبيع إلى {{ selectedEmployee?.employeeName }}؟</VCardText>
+        <VCardText>سيتم إنشاء الطلب غير مسند في المحافظة المختارة. الإسناد يتم لاحقاً بزر الإسناد.</VCardText>
         <VCardActions>
           <VBtn
             variant="text"

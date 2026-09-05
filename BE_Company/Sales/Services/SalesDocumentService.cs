@@ -97,21 +97,25 @@ namespace BE_Company.Sales.Services
                     page.Content().Column(col =>
                     {
                         col.Item().AlignCenter().Element(c => ContractTitle(c, bold));
-                        col.Item().PaddingTop(4);
-                        foreach (var paragraph in paragraphs)
+                        col.Item().Height(14);
+                        col.Item().Extend().Column(body =>
                         {
-                            col.Item().PaddingBottom(1.4f).Element(c => RichParagraph(c, paragraph, bold, 9.2f));
-                        }
-
-                        col.Item().PaddingTop(6).Row(row =>
-                        {
-                            SignatureSpace(row, "الطرف الأول", 200, 46);
-                            SignatureSpace(row, "أمين الصندوق", 240, 46);
+                            foreach (var paragraph in paragraphs)
+                            {
+                                body.Item().Extend().AlignTop().Element(c => RichParagraph(c, paragraph, bold, 12));
+                            }
                         });
-                        col.Item().PaddingTop(6).Row(row =>
+                        col.Item().Height(18);
+                        col.Item().Row(row =>
                         {
-                            SignatureSpace(row, "الطرف الثاني", 200, 38);
-                            SignatureSpace(row, "مندوب المبيعات", 240, 38);
+                            SignatureSpace(row, "الطرف الأول");
+                            SignatureSpace(row, "أمين الصندوق", 240);
+                        });
+                        col.Item().Height(48);
+                        col.Item().Row(row =>
+                        {
+                            SignatureSpace(row, "الطرف الثاني");
+                            SignatureSpace(row, "مندوب المبيعات", 240);
                         });
                     });
                 });
@@ -130,22 +134,28 @@ namespace BE_Company.Sales.Services
                     ConfigurePage(page);
                     page.Content().Column(col =>
                     {
-                        col.Item().AlignCenter().Text("وصل أمانة").Bold().FontFamily(bold).FontSize(18);
-                        col.Item().PaddingTop(10);
-                        foreach (var paragraph in paragraphs)
+                        col.Item().AlignCenter().Text("وصل أمانة").Bold().FontFamily(bold).FontSize(24);
+                        col.Item().Height(22);
+                        col.Item().Extend().Column(body =>
                         {
-                            col.Item().PaddingBottom(5).Element(c => RichParagraph(c, paragraph, bold, 11));
-                        }
+                            foreach (var paragraph in paragraphs)
+                            {
+                                body.Item().Extend().AlignTop().Element(c => RichParagraph(c, paragraph, bold, 13));
+                            }
 
-                        col.Item().PaddingTop(6).Row(row =>
-                        {
-                            row.RelativeItem(2).AlignRight().Text("بصمة المدين:").FontSize(11);
-                            row.RelativeItem(3).AlignCenter().Text("توقيع المدين:").FontSize(11);
+                            body.Item().Row(row =>
+                            {
+                                row.RelativeItem(2).AlignRight().Text("بصمة المدين:").FontSize(13);
+                                row.RelativeItem(3).AlignCenter().Text("توقيع المدين:").FontSize(13);
+                            });
                         });
-                        col.Item().PaddingTop(18);
-                        WitnessBlock(col, "الشاهد الأول", bold);
-                        col.Item().PaddingTop(8);
-                        WitnessBlock(col, "الشاهد الثاني", bold);
+                        col.Item().Height(28);
+                        col.Item().Extend().Column(witness =>
+                        {
+                            WitnessBlock(witness, "الشاهد الأول", bold);
+                            witness.Item().Height(16);
+                            WitnessBlock(witness, "الشاهد الثاني", bold);
+                        });
                     });
                 });
             }).GeneratePdf();
@@ -154,21 +164,21 @@ namespace BE_Company.Sales.Services
         private void ConfigurePage(PageDescriptor page)
         {
             page.Size(PageSizes.A4);
-            page.MarginLeft(22);
-            page.MarginRight(22);
-            page.MarginTop(18);
-            page.MarginBottom(16);
+            page.MarginLeft(64);
+            page.MarginRight(64);
+            page.MarginTop(68);
+            page.MarginBottom(64);
             page.ContentFromRightToLeft();
-            page.DefaultTextStyle(t => t.FontFamily(ResolveFontFamily()).FontSize(9.2f).LineHeight(1.02f));
+            page.DefaultTextStyle(t => t.FontFamily(ResolveFontFamily()).FontSize(12).LineHeight(1.25f));
         }
 
         private static void ContractTitle(IContainer container, string boldFamily)
         {
             container.AlignCenter().BorderBottom(1.5f).PaddingBottom(3).Row(row =>
             {
-                row.AutoItem().Height(22).AlignMiddle().Text("عقد").Bold().FontFamily(boldFamily).FontSize(16);
-                row.ConstantItem(6);
-                row.AutoItem().Height(22).AlignMiddle().Text("بيع").Bold().FontFamily(boldFamily).FontSize(16);
+                row.AutoItem().Height(28).AlignMiddle().Text("عقد").Bold().FontFamily(boldFamily).FontSize(22);
+                row.ConstantItem(8);
+                row.AutoItem().Height(28).AlignMiddle().Text("بيع").Bold().FontFamily(boldFamily).FontSize(22);
             });
         }
 
@@ -191,18 +201,23 @@ namespace BE_Company.Sales.Services
             });
         }
 
-        private static void SignatureSpace(RowDescriptor row, string label, float width, float height)
+        private static void SignatureSpace(RowDescriptor row, string label, float width = 200)
         {
-            row.ConstantItem(width).Height(height).AlignTop().AlignRight().Text(label).Bold().FontSize(10);
+            row.RelativeItem().AlignTop().AlignRight().Text(label).Bold().FontSize(12);
         }
 
         private static void WitnessBlock(ColumnDescriptor col, string title, string boldFamily)
         {
-            col.Item().Width(92).BorderBottom(0.8f).PaddingBottom(2).AlignCenter()
-                .Text(title).Bold().FontFamily(boldFamily).FontSize(13);
-            col.Item().PaddingTop(6).Text("الأسم:").FontSize(11);
-            col.Item().PaddingTop(18).Text("التوقيع:").FontSize(11);
-            col.Item().Height(18);
+            col.Item().Extend().Column(block =>
+            {
+                block.Item().Width(110).BorderBottom(0.8f).PaddingBottom(3).AlignCenter()
+                    .Text(title).Bold().FontFamily(boldFamily).FontSize(15);
+                block.Item().Height(10);
+                block.Item().Text("الأسم:").FontSize(13);
+                block.Item().Extend();
+                block.Item().Text("التوقيع:").FontSize(13);
+                block.Item().Extend();
+            });
         }
 
         private static string PdfSafe(string text)

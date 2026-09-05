@@ -35,6 +35,44 @@ class SalesStatusLabels {
   }
 }
 
+class SalesRequestStatusLabels {
+  static String of(String? status) => switch (status) {
+        'New' => 'جديد',
+        'Assigned' => 'مسند',
+        'Viewed' => 'مسند',
+        'Pending' => 'معلقة',
+        'PreparedForSale' => 'مجهز للبيع',
+        'InProgress' => 'مجهز للبيع',
+        'Returned' => 'معاد',
+        'ConvertedToSale' => 'تحول إلى بيع',
+        'Completed' => 'مكتمل',
+        'Rejected' => 'مرفوض',
+        _ => status ?? '',
+      };
+}
+
+class SalesStaffInventoryFilter {
+  static bool isHidden(String? productName) {
+    final n = normalizeArabic(productName);
+    if (n.isEmpty) return false;
+    if (n.contains('تجهيز')) return true;
+    final mobile = n.contains('موبايل') || n.contains('موبايلات');
+    return mobile && n.contains('خارج');
+  }
+
+  static String normalizeArabic(String? value) {
+    if (value == null || value.trim().isEmpty) return '';
+    return value
+        .replaceAll('أ', 'ا')
+        .replaceAll('إ', 'ا')
+        .replaceAll('آ', 'ا')
+        .replaceAll('ة', 'ه')
+        .replaceAll('ى', 'ي')
+        .replaceAll('ـ', '')
+        .trim();
+  }
+}
+
 String salesApiMessage(int? statusCode, String fallback) {
   switch (statusCode) {
     case 401:

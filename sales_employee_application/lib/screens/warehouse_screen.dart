@@ -3,6 +3,7 @@ import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
+import 'package:sales_employee_application/utils/sales_format.dart';
 import 'package:sales_employee_application/widgets/inventory_item_info.dart';
 
 class WarehouseScreen extends StatefulWidget {
@@ -39,7 +40,7 @@ class _WarehouseScreenState extends State<WarehouseScreen> {
       final rows = await SalesRepositoryFactory.instance.inventory();
       if (!mounted) return;
       setState(() {
-        _all = rows;
+        _all = rows.where((i) => !SalesStaffInventoryFilter.isHidden(i.productName)).toList();
         _loading = false;
       });
     } on ApiException catch (e) {

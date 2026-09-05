@@ -15,22 +15,22 @@ class AppState extends ChangeNotifier {
   List<dynamic> warehouseItems = [];
   List<dynamic> delegates = [];
 
-  bool get isRejected => ratingLevel == 1;
-  bool get isDoublePrice => ratingLevel == 2;
-  double get priceMultiplier => isDoublePrice ? 2 : 1;
+  bool get isRejected => ratingLevel == 1 || ratingLevel == 2;
+  bool get isDoublePrice => false;
+  double get priceMultiplier => 1;
 
   String get ratingLabel {
     switch (ratingLevel) {
       case 1:
         return 'مرفوض';
       case 2:
-        return 'مقبول ×2';
+        return 'مقبول';
       case 3:
-        return 'مستوى 3';
+        return 'جيد';
       case 4:
-        return 'مستوى 4';
+        return 'جيد جداً';
       case 5:
-        return 'مستوى 5';
+        return 'ممتاز';
       default:
         return 'بدون تقييم';
     }

@@ -45,6 +45,8 @@ class SalesCustomer {
     this.sourceBranchName,
     this.sourceDatabase,
     this.sourceApiLink,
+    this.delegateId,
+    this.delegateName,
   });
 
   final int customerId;
@@ -61,6 +63,8 @@ class SalesCustomer {
   final String? sourceBranchName;
   final String? sourceDatabase;
   final String? sourceApiLink;
+  final int? delegateId;
+  final String? delegateName;
 
   bool get isForeignBranch {
     final link = sourceApiLink;
@@ -91,6 +95,8 @@ class SalesCustomer {
       sourceBranchName: sourceBranchName,
       sourceDatabase: sourceDatabase,
       sourceApiLink: sourceApiLink,
+      delegateId: delegateId,
+      delegateName: delegateName,
     );
   }
 
@@ -109,7 +115,34 @@ class SalesCustomer {
         sourceBranchName: json['sourceBranchName']?.toString(),
         sourceDatabase: json['sourceDatabase']?.toString(),
         sourceApiLink: json['sourceApiLink']?.toString(),
+        delegateId: _optionalPositiveInt(json, const [
+          'delegateId',
+          'DelegateID',
+          'delegateID',
+          'DelegateId',
+        ]),
+        delegateName: _optionalText(json, const [
+          'delegateName',
+          'DelegateName',
+        ]),
       );
+}
+
+int? _optionalPositiveInt(Map<String, dynamic> json, List<String> keys) {
+  for (final key in keys) {
+    if (!json.containsKey(key) || json[key] == null) continue;
+    final parsed = int.tryParse('${json[key]}');
+    if (parsed != null && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+String? _optionalText(Map<String, dynamic> json, List<String> keys) {
+  for (final key in keys) {
+    final value = json[key]?.toString().trim();
+    if (value != null && value.isNotEmpty && value != 'null') return value;
+  }
+  return null;
 }
 
 class SalesInventoryItem {
@@ -159,6 +192,18 @@ class SalesInventoryItem {
         ]),
         notes: (json['notes'] ?? json['Notes'])?.toString(),
         storeId: int.tryParse('${json['storeId'] ?? json['StoreId'] ?? json['storeID'] ?? json['StoreID'] ?? ''}'),
+      );
+}
+
+class SalesCustomerList {
+  SalesCustomerList({required this.listId, required this.listName});
+
+  final int listId;
+  final String listName;
+
+  factory SalesCustomerList.fromJson(Map<String, dynamic> json) => SalesCustomerList(
+        listId: int.tryParse('${json['listId'] ?? json['ListId'] ?? json['delegateID'] ?? json['DelegateID'] ?? 0}') ?? 0,
+        listName: '${json['listName'] ?? json['ListName'] ?? json['delegateName'] ?? json['DelegateName'] ?? ''}',
       );
 }
 
@@ -238,7 +283,7 @@ class SalesDraft {
   final List<SalesDraftItem> items;
   final List<SalesDocument> documents;
 
-  bool get isRejected => status == 'Rejected' || evaluationLevel == 1;
+  bool get isRejected => status == 'Rejected' || evaluationLevel == 1 || evaluationLevel == 2;
   bool get isCompleted =>
       status == 'Completed' ||
       status == 'DocumentsReady' ||
@@ -370,6 +415,7 @@ class SalesDraftCreateRequest {
     required this.evaluationNote,
     required this.dailyInstallment,
     this.salesRequestId,
+    this.customerListId,
   });
 
   final int? customerId;
@@ -379,6 +425,7 @@ class SalesDraftCreateRequest {
   final String evaluationNote;
   final num dailyInstallment;
   final int? salesRequestId;
+  final int? customerListId;
 
   Map<String, dynamic> toJson() => {
         if (customerId != null) 'customerId': customerId,
@@ -388,6 +435,7 @@ class SalesDraftCreateRequest {
         'evaluationNote': evaluationNote,
         'dailyInstallment': dailyInstallment,
         if (salesRequestId != null) 'salesRequestId': salesRequestId,
+        if (customerListId != null) 'customerListId': customerListId,
       };
 }
 
@@ -404,6 +452,10 @@ class SalesWorkRequest {
     required this.createdAtUtc,
     this.convertedToSaleId,
     this.rejectionReason,
+    this.pendingNote,
+    this.returnNote,
+    this.delegateId,
+    this.delegateName,
   });
 
   final int id;
@@ -417,9 +469,44 @@ class SalesWorkRequest {
   final DateTime createdAtUtc;
   final int? convertedToSaleId;
   final String? rejectionReason;
+  final String? pendingNote;
+  final String? returnNote;
+  final int? delegateId;
+  final String? delegateName;
 
-  bool get isNew => status == 'New';
+  bool get isNew => status == 'New' || status == 'Assigned';
   bool get canConvert => status != 'Rejected' && status != 'Completed' && convertedToSaleId == null;
+  bool get canAct =>
+      status != 'Rejected' && status != 'Completed' && status != 'ConvertedToSale';
+  bool get isReturned => status == 'Returned';
+  bool get isPendingHold => status == 'Pending';
+  bool get isPreparedForSale =>
+      status == 'PreparedForSale' || status == 'InProgress';
+
+  SalesWorkRequest copyWith({
+    String? status,
+    String? rejectionReason,
+    String? pendingNote,
+    String? returnNote,
+    int? convertedToSaleId,
+  }) =>
+      SalesWorkRequest(
+        id: id,
+        customerName: customerName,
+        customerPhone: customerPhone,
+        customerProvince: customerProvince,
+        customerAddress: customerAddress,
+        existingCustomerId: existingCustomerId,
+        notes: notes,
+        status: status ?? this.status,
+        createdAtUtc: createdAtUtc,
+        convertedToSaleId: convertedToSaleId ?? this.convertedToSaleId,
+        rejectionReason: rejectionReason ?? this.rejectionReason,
+        pendingNote: pendingNote ?? this.pendingNote,
+        returnNote: returnNote ?? this.returnNote,
+        delegateId: delegateId,
+        delegateName: delegateName,
+      );
 
   factory SalesWorkRequest.fromJson(Map<String, dynamic> json) => SalesWorkRequest(
         id: int.tryParse('${json['id'] ?? json['Id'] ?? 0}') ?? 0,
@@ -433,6 +520,54 @@ class SalesWorkRequest {
         createdAtUtc: DateTime.tryParse('${json['createdAtUtc'] ?? json['CreatedAtUtc'] ?? ''}')?.toUtc() ??
             DateTime.now().toUtc(),
         convertedToSaleId: int.tryParse('${json['convertedToSaleId'] ?? json['ConvertedToSaleId'] ?? ''}'),
-        rejectionReason: json['rejectionReason']?.toString(),
+        rejectionReason: json['rejectionReason']?.toString() ?? json['RejectionReason']?.toString(),
+        pendingNote: json['pendingNote']?.toString() ?? json['PendingNote']?.toString(),
+        returnNote: json['returnNote']?.toString() ?? json['ReturnNote']?.toString(),
+        delegateId: _optionalPositiveInt(json, const [
+          'delegateId',
+          'DelegateID',
+          'delegateID',
+          'DelegateId',
+        ]),
+        delegateName: _optionalText(json, const [
+          'delegateName',
+          'DelegateName',
+        ]),
       );
+}
+
+class SalesShopComplete {
+  SalesShopComplete({
+    required this.shopName,
+    required this.shopBusinessType,
+    required this.shopStockEstimatedValue,
+    required this.estimatedDailyRevenue,
+    required this.shopLength,
+    required this.shopWidth,
+    required this.shopImageKey,
+    this.employeeNote,
+  });
+
+  final String shopName;
+  final String shopBusinessType;
+  final num shopStockEstimatedValue;
+  final num estimatedDailyRevenue;
+  final num shopLength;
+  final num shopWidth;
+  final String shopImageKey;
+  final String? employeeNote;
+
+  num get shopArea => shopLength * shopWidth;
+
+  Map<String, dynamic> toJson() => {
+        'shopName': shopName,
+        'shopBusinessType': shopBusinessType,
+        'shopStockEstimatedValue': shopStockEstimatedValue,
+        'estimatedDailyRevenue': estimatedDailyRevenue,
+        'shopLength': shopLength,
+        'shopWidth': shopWidth,
+        'shopArea': shopArea,
+        'shopImageKey': shopImageKey,
+        if (employeeNote != null && employeeNote!.trim().isNotEmpty) 'employeeNote': employeeNote!.trim(),
+      };
 }

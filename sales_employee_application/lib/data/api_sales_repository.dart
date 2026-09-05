@@ -51,7 +51,23 @@ class ApiSalesRepository implements SalesRepository {
   Future<List<SalesInventoryItem>> inventory() async {
     try {
       final raw = await ApiClient.get('sales/inventory');
-      return _maps(raw).map(SalesInventoryItem.fromJson).toList();
+      return _maps(raw)
+          .map(SalesInventoryItem.fromJson)
+          .where((i) => !SalesStaffInventoryFilter.isHidden(i.productName))
+          .toList();
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
+  Future<List<SalesCustomerList>> activeCustomerLists() async {
+    try {
+      final raw = await ApiClient.get('sales/active-customer-lists');
+      return _maps(raw)
+          .map(SalesCustomerList.fromJson)
+          .where((e) => e.listId > 0 && e.listName.trim().isNotEmpty)
+          .toList();
     } on ApiException catch (e) {
       _throw(e);
     }
@@ -107,9 +123,26 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   @override
-  Future<SalesCompleteResult> completeSale(int id) async {
+  Future<String> uploadShopImage(int saleId, List<int> bytes, String fileName) async {
     try {
-      final raw = await ApiClient.post('sales/$id/complete');
+      final raw = await ApiClient.postMultipart(
+        'sales/$saleId/shop-image',
+        bytes: bytes,
+        fileName: fileName,
+      );
+      if (raw is Map) {
+        return '${raw['shopImageKey'] ?? raw['ShopImageKey'] ?? ''}';
+      }
+      throw ApiException('تعذر رفع صورة المحل');
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
+  Future<SalesCompleteResult> completeSale(int id, [SalesShopComplete? shop]) async {
+    try {
+      final raw = await ApiClient.post('sales/$id/complete', body: shop?.toJson() ?? {});
       return SalesCompleteResult.fromJson(Map<String, dynamic>.from(raw as Map));
     } on ApiException catch (e) {
       _throw(e);
@@ -222,9 +255,22 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   @override
-  Future<SalesWorkRequest> startSalesRequest(int id) async {
+  Future<SalesWorkRequest> startSalesRequest(int id) => prepareSalesRequest(id);
+
+  @override
+  Future<SalesWorkRequest> prepareSalesRequest(int id) async {
     try {
-      final raw = await ApiClient.post('sales/requests/$id/start-processing');
+      final raw = await ApiClient.post('sales/requests/$id/prepare');
+      return SalesWorkRequest.fromJson(Map<String, dynamic>.from(raw as Map));
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
+  Future<SalesWorkRequest> pendSalesRequest(int id, String note) async {
+    try {
+      final raw = await ApiClient.post('sales/requests/$id/pending', body: {'note': note});
       return SalesWorkRequest.fromJson(Map<String, dynamic>.from(raw as Map));
     } on ApiException catch (e) {
       _throw(e);

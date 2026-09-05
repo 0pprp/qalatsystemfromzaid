@@ -138,9 +138,4 @@ export default [
       },
     ],
   },
-  {
-    title: 'الدعم الفني',
-    to: { name: 'support' },
-    icon: { icon: 'tabler-phone', size: '25' },
-  },
 ]

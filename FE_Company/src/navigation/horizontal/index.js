@@ -172,9 +172,4 @@ export default [
     to: { name: 'backup-database' },
     icon: { icon: 'tabler-database', size: '25' },
   },
-  {
-    title: 'الدعم الفني',
-    to: { name: 'support' },
-    icon: { icon: 'tabler-phone', size: '25' },
-  },
 ]

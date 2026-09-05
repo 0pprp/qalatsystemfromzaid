@@ -4,6 +4,8 @@ const LOCAL_API = 'http://localhost:5180/api/'
 const DEMO_API = import.meta.env.DEV
   ? '/demo-api/'
   : 'http://169.58.236.52:8080/api/'
+/** Demo BE_Company branch key — matches employee.cityValue and Gateway Database mapping. Not GetAdmin "1". */
+export const DEMO_BRANCH_VALUE = 'DatabaseCompanyNajaf_DEMO'
 const CACHE_KEY = 'cached_admin_city_data'
 
 function appEnv() {
@@ -52,9 +54,9 @@ function localProvinces() {
 
 function demoProvinces() {
   return [{
-    value: 'najaf-demo',
+    value: DEMO_BRANCH_VALUE,
     name: 'النجف - DEMO',
-    database: 'DatabaseCompanyNajaf_DEMO',
+    database: DEMO_BRANCH_VALUE,
     link: DEMO_API,
   }]
 }

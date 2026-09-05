@@ -47,6 +47,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -163,6 +164,9 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
 
   Widget _requestsTab() {
     if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)));
+    }
     if (_requests.isEmpty) {
       return const Center(child: Text('لا توجد طلبات مبيعات', style: TextStyle(color: AppColors.muted)));
     }
@@ -171,36 +175,135 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
       child: ListView.builder(
         padding: const EdgeInsets.all(AppSpacing.md),
         itemCount: _requests.length,
-        itemBuilder: (context, i) {
-          final r = _requests[i];
-          return Card(
-            child: ListTile(
-              title: Text(r.customerName, style: const TextStyle(fontWeight: FontWeight.w700)),
-              subtitle: Text(
-                '${r.customerPhone ?? ''} · ${r.customerProvince ?? ''}\n${r.notes ?? ''}',
-              ),
-              trailing: Text(_requestStatusAr(r.status), style: const TextStyle(fontSize: 12, color: AppColors.darkGreen)),
-              onTap: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => SalesRequestDetailsScreen(requestId: r.id)));
-                await _load();
-              },
-            ),
-          );
-        },
+        itemBuilder: (context, i) => _requestCard(_requests[i]),
       ),
     );
   }
-}
 
-String _requestStatusAr(String status) => switch (status) {
-      'New' => 'جديد',
-      'Viewed' => 'تمت المشاهدة',
-      'InProgress' => 'قيد المعالجة',
-      'ConvertedToSale' => 'تحول إلى بيع',
-      'Completed' => 'مكتمل',
-      'Rejected' => 'مرفوض',
-      _ => status,
-    };
+  Widget _requestCard(SalesWorkRequest r) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => SalesRequestDetailsScreen(requestId: r.id)),
+                );
+                if (mounted) await _load();
+              },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(r.customerName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                  Text(
+                    '${r.customerPhone ?? ''} · ${r.customerProvince ?? ''}',
+                    style: const TextStyle(color: AppColors.muted),
+                  ),
+                  if ((r.notes ?? '').trim().isNotEmpty)
+                    Text(r.notes!, style: const TextStyle(color: AppColors.muted)),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      SalesRequestStatusLabels.of(r.status),
+                      style: const TextStyle(fontSize: 12, color: AppColors.darkGreen, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (r.isReturned && (r.returnNote ?? '').trim().isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: AppColors.warningSoft,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                child: Text('ملاحظة الإعادة: ${r.returnNote}',
+                    style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700)),
+              ),
+            ],
+            if (r.isPendingHold && (r.pendingNote ?? '').trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.sm),
+                child: Text('ملاحظة التعليق: ${r.pendingNote}'),
+              ),
+            if (r.canAct) ...[
+              const SizedBox(height: AppSpacing.md),
+              ElevatedButton(
+                onPressed: () => _prepareAndOpenSale(r),
+                child: const Text('تجهيز المبيع'),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              OutlinedButton(
+                onPressed: () => _pendRequest(r),
+                child: const Text('معلقة'),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              TextButton(
+                onPressed: () => _rejectRequest(r),
+                child: const Text('رفض'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _prepareAndOpenSale(SalesWorkRequest request) async {
+    try {
+      final prepared = await SalesRepositoryFactory.instance.prepareSalesRequest(request.id);
+      if (!mounted) return;
+      await Navigator.pushNamed(context, '/sale', arguments: prepared);
+      if (mounted) await _load();
+    } on ApiException catch (e) {
+      if (mounted) _toast(e.message);
+    } catch (_) {
+      if (mounted) _toast('تعذر تجهيز المبيع');
+    }
+  }
+
+  Future<void> _pendRequest(SalesWorkRequest request) async {
+    final ok = await _RequestNoteDialog.open(
+      context,
+      title: 'تعليق الطلب',
+      label: 'الملاحظة *',
+      confirm: 'إرسال',
+      onConfirm: (note) =>
+          SalesRepositoryFactory.instance.pendSalesRequest(request.id, note),
+    );
+    if (!ok || !mounted) return;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    await _load();
+  }
+
+  Future<void> _rejectRequest(SalesWorkRequest request) async {
+    final ok = await _RequestNoteDialog.open(
+      context,
+      title: 'رفض الطلب',
+      label: 'سبب الرفض *',
+      confirm: 'رفض',
+      onConfirm: (reason) =>
+          SalesRepositoryFactory.instance.rejectSalesRequest(request.id, reason),
+    );
+    if (!ok || !mounted) return;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    await _load();
+  }
+
+  void _toast(String m) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+  }
+}
 
 class SalesRequestDetailsScreen extends StatefulWidget {
   const SalesRequestDetailsScreen({super.key, required this.requestId});
@@ -232,49 +335,63 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
     }
   }
 
-  Future<void> _start() async {
+  Future<void> _prepare() async {
     setState(() => _busy = true);
     try {
-      final row = await SalesRepositoryFactory.instance.startSalesRequest(widget.requestId);
+      final row = await SalesRepositoryFactory.instance.prepareSalesRequest(widget.requestId);
       if (!mounted) return;
       setState(() {
         _row = row;
         _busy = false;
       });
+      await Navigator.pushNamed(context, '/sale', arguments: row);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } catch (_) {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _reject() async {
-    final controller = TextEditingController();
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('رفض الطلب'),
-        content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'سبب الرفض *')),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('رجوع')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('رفض')),
-        ],
-      ),
+  Future<void> _pend() async {
+    SalesWorkRequest? updated;
+    final ok = await _RequestNoteDialog.open(
+      context,
+      title: 'تعليق الطلب',
+      label: 'الملاحظة *',
+      confirm: 'إرسال',
+      onConfirm: (note) async {
+        updated = await SalesRepositoryFactory.instance.pendSalesRequest(widget.requestId, note);
+      },
     );
-    if (reason == null || !mounted) return;
-    if (reason.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('سبب الرفض مطلوب')));
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final row = await SalesRepositoryFactory.instance.rejectSalesRequest(widget.requestId, reason.trim());
-      if (!mounted) return;
-      setState(() {
-        _row = row;
-        _busy = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _busy = false);
-    }
+    if (!ok || !mounted) return;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    setState(() {
+      if (updated != null) _row = updated;
+      _busy = false;
+    });
+  }
+
+  Future<void> _reject() async {
+    SalesWorkRequest? updated;
+    final ok = await _RequestNoteDialog.open(
+      context,
+      title: 'رفض الطلب',
+      label: 'سبب الرفض *',
+      confirm: 'رفض',
+      onConfirm: (reason) async {
+        updated = await SalesRepositoryFactory.instance.rejectSalesRequest(widget.requestId, reason);
+      },
+    );
+    if (!ok || !mounted) return;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    setState(() {
+      if (updated != null) _row = updated;
+      _busy = false;
+    });
   }
 
   @override
@@ -293,19 +410,21 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
                 const SizedBox(height: AppSpacing.md),
                 Text(row.notes ?? '', style: const TextStyle(color: AppColors.muted)),
                 const SizedBox(height: AppSpacing.md),
-                Text('الحالة: ${_requestStatusAr(row.status)}'),
-                const SizedBox(height: AppSpacing.lg),
-                if (row.status != 'Rejected' && row.status != 'Completed') ...[
-                  ElevatedButton(onPressed: _busy ? null : _start, child: const Text('بدء المعالجة')),
+                Text('الحالة: ${SalesRequestStatusLabels.of(row.status)}'),
+                if (row.isReturned && (row.returnNote ?? '').trim().isNotEmpty) ...[
                   const SizedBox(height: AppSpacing.sm),
-                  if (row.canConvert)
-                    ElevatedButton(
-                      onPressed: _busy
-                          ? null
-                          : () => Navigator.pushNamed(context, '/sale', arguments: row),
-                      child: const Text('إنشاء عملية بيع'),
-                    ),
-                  TextButton(onPressed: _busy ? null : _reject, child: const Text('رفض الطلب')),
+                  Text('ملاحظة الإعادة: ${row.returnNote}',
+                      style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700)),
+                ],
+                if (row.isPendingHold && (row.pendingNote ?? '').trim().isNotEmpty)
+                  Text('ملاحظة التعليق: ${row.pendingNote}'),
+                const SizedBox(height: AppSpacing.lg),
+                if (row.canAct) ...[
+                  ElevatedButton(onPressed: _busy ? null : _prepare, child: const Text('تجهيز المبيع')),
+                  const SizedBox(height: AppSpacing.sm),
+                  OutlinedButton(onPressed: _busy ? null : _pend, child: const Text('معلقة')),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextButton(onPressed: _busy ? null : _reject, child: const Text('رفض')),
                 ],
               ],
             ),
@@ -333,6 +452,139 @@ class _StatusBadge extends StatelessWidget {
             fontWeight: FontWeight.w700,
             fontSize: 12,
           )),
+    );
+  }
+}
+
+/// Owns the text controller for the full dialog lifetime so it is not disposed
+/// while the TextField is still in the tree (which trips InheritedElement
+/// `_dependents.isEmpty` after Navigator.pop).
+/// The route is popped once, only after [onConfirm] succeeds, so the parent
+/// never setStates during overlay teardown.
+class _RequestNoteDialog extends StatefulWidget {
+  const _RequestNoteDialog({
+    required this.title,
+    required this.label,
+    required this.confirm,
+    required this.onConfirm,
+  });
+
+  final String title;
+  final String label;
+  final String confirm;
+  final Future<void> Function(String note) onConfirm;
+
+  static Future<bool> open(
+    BuildContext context, {
+    required String title,
+    required String label,
+    required String confirm,
+    required Future<void> Function(String note) onConfirm,
+  }) async {
+    if (!context.mounted) return false;
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _RequestNoteDialog(
+        title: title,
+        label: label,
+        confirm: confirm,
+        onConfirm: onConfirm,
+      ),
+    );
+    return result == true;
+  }
+
+  @override
+  State<_RequestNoteDialog> createState() => _RequestNoteDialogState();
+}
+
+class _RequestNoteDialogState extends State<_RequestNoteDialog> {
+  late final TextEditingController _controller;
+  var _canSubmit = false;
+  var _closing = false;
+  var _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+    _controller.addListener(_onText);
+  }
+
+  void _onText() {
+    if (!mounted || _closing || _busy) return;
+    final can = _controller.text.trim().isNotEmpty;
+    if (can != _canSubmit) setState(() => _canSubmit = can);
+  }
+
+  void _pop([bool value = false]) {
+    if (_closing || !mounted) return;
+    _closing = true;
+    Navigator.of(context).pop(value);
+  }
+
+  Future<void> _submit() async {
+    if (_closing || _busy || !_canSubmit || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.onConfirm(_controller.text.trim());
+      if (!mounted) return;
+      _pop(true);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = 'تعذر إرسال الطلب';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onText);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _controller,
+            maxLines: 3,
+            autofocus: true,
+            enabled: !_busy,
+            decoration: InputDecoration(labelText: widget.label),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Text(_error!, style: const TextStyle(color: AppColors.danger)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => _pop(), child: const Text('رجوع')),
+        ElevatedButton(
+          onPressed: _canSubmit && !_busy ? _submit : null,
+          child: Text(widget.confirm),
+        ),
+      ],
     );
   }
 }

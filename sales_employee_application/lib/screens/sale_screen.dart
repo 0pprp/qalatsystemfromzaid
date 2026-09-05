@@ -28,13 +28,45 @@ class _SaleScreenState extends State<SaleScreen> {
   final _ration = TextEditingController();
   final _note = TextEditingController();
   final _installment = TextEditingController();
-  late final List<FocusNode> _fieldFocus = List.generate(8, (_) => FocusNode());
   int _eval = 3;
   final Map<int, int> _qty = {};
   List<SalesInventoryItem> _stock = [];
   bool _loadingStock = false;
   bool _saving = false;
   SalesWorkRequest? _fromRequest;
+  List<SalesCustomerList> _customerLists = [];
+  int? _customerListId;
+  int? _preferredListId;
+  bool _lockName = false;
+  bool _lockPhone = false;
+  bool _lockProvince = false;
+  bool _lockCard = false;
+  bool _lockAddress = false;
+  bool _lockLandmark = false;
+  bool _lockMukhtar = false;
+  bool _hydratedDirectory = false;
+
+  bool get _blocksSale => _eval == 1 || _eval == 2;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCustomerLists();
+  }
+
+  Future<void> _loadCustomerLists() async {
+    try {
+      final rows = await SalesRepositoryFactory.instance.activeCustomerLists();
+      if (!mounted) return;
+      setState(() {
+        _customerLists = rows;
+        _applyPreferredList();
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _customerLists = []);
+    }
+  }
 
   @override
   void didChangeDependencies() {
@@ -53,26 +85,115 @@ class _SaleScreenState extends State<SaleScreen> {
           phone: arg.customerPhone,
           province: arg.customerProvince,
           address: arg.customerAddress,
+          delegateId: arg.delegateId,
+          delegateName: arg.delegateName,
         );
       }
-      _name.text = arg.customerName;
-      _phone.text = arg.customerPhone ?? '';
-      _province.text = arg.customerProvince ?? 'النجف';
-      _address.text = arg.customerAddress ?? '';
+      _preferList(arg.delegateId);
+      _applyPreferredList();
+      _fillIfPresent(_name, arg.customerName, lock: (v) => _lockName = v);
+      _fillIfPresent(_phone, arg.customerPhone, lock: (v) => _lockPhone = v);
+      _fillIfPresent(_province, arg.customerProvince, lock: (v) => _lockProvince = v);
+      _fillIfPresent(_address, arg.customerAddress, lock: (v) => _lockAddress = v);
+      if (!_lockProvince && _province.text.trim().isEmpty) {
+        _province.text = 'النجف';
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) => _hydrateFromDirectory());
     }
+  }
+
+  void _fillIfPresent(TextEditingController c, String? value, {required void Function(bool) lock}) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) {
+      lock(false);
+      return;
+    }
+    c.text = text;
+    lock(true);
   }
 
   void _applyCustomer(SalesCustomer c) {
     _picked = c;
     _existing = true;
-    _name.text = c.fullName;
-    _phone.text = c.phone ?? '';
-    _province.text = c.province ?? 'النجف';
-    _card.text = c.nationalCardNumber ?? '';
-    _address.text = c.address ?? '';
-    _landmark.text = c.nearestLandmark ?? '';
-    _mukhtar.text = c.mukhtarName ?? '';
-    _ration.text = c.rationCenterNumber ?? '';
+    _fillIfPresent(_name, c.fullName, lock: (v) => _lockName = v);
+    _fillIfPresent(_phone, c.phone, lock: (v) => _lockPhone = v);
+    _fillIfPresent(_province, c.province, lock: (v) => _lockProvince = v);
+    _fillIfPresent(_card, c.nationalCardNumber, lock: (v) => _lockCard = v);
+    _fillIfPresent(_address, c.address, lock: (v) => _lockAddress = v);
+    _fillIfPresent(_landmark, c.nearestLandmark, lock: (v) => _lockLandmark = v);
+    _fillIfPresent(_mukhtar, c.mukhtarName, lock: (v) => _lockMukhtar = v);
+    if ((c.rationCenterNumber ?? '').trim().isNotEmpty) {
+      _ration.text = c.rationCenterNumber!.trim();
+    }
+    if (!_lockProvince && _province.text.trim().isEmpty) {
+      _province.text = 'النجف';
+    }
+    _preferList(c.delegateId);
+    _applyPreferredList();
+  }
+
+  void _preferList(int? id) {
+    if (id == null || id <= 0) return;
+    _preferredListId ??= id;
+  }
+
+  void _applyPreferredList() {
+    if (_customerListId != null && _customerLists.any((e) => e.listId == _customerListId)) {
+      return;
+    }
+    final preferred = _preferredListId;
+    if (preferred != null && _customerLists.any((e) => e.listId == preferred)) {
+      _customerListId = preferred;
+      return;
+    }
+    if (_customerListId != null && !_customerLists.any((e) => e.listId == _customerListId)) {
+      _customerListId = null;
+    }
+  }
+
+  Future<void> _hydrateFromDirectory() async {
+    if (_hydratedDirectory) return;
+    _hydratedDirectory = true;
+    final req = _fromRequest;
+    if (req == null) return;
+    try {
+      final query = (req.customerPhone ?? req.customerName).trim();
+      if (query.length < 2) return;
+      final rows = await SalesRepositoryFactory.instance.searchCustomers(query);
+      SalesCustomer? match;
+      if (req.existingCustomerId != null && req.existingCustomerId! > 0) {
+        for (final row in rows) {
+          if (row.customerId == req.existingCustomerId) {
+            match = row;
+            break;
+          }
+        }
+      }
+      match ??= () {
+        for (final row in rows) {
+          if ((req.customerPhone ?? '').isNotEmpty && row.phone == req.customerPhone) {
+            return row;
+          }
+        }
+        return null;
+      }();
+      if (match == null || !mounted) return;
+      setState(() {
+        if (_picked == null && match!.customerId > 0) {
+          _picked = match;
+          _existing = true;
+        }
+        if (!_lockCard) _fillIfPresent(_card, match!.nationalCardNumber, lock: (v) => _lockCard = v);
+        if (!_lockAddress) _fillIfPresent(_address, match!.address, lock: (v) => _lockAddress = v);
+        if (!_lockLandmark) _fillIfPresent(_landmark, match!.nearestLandmark, lock: (v) => _lockLandmark = v);
+        if (!_lockMukhtar) _fillIfPresent(_mukhtar, match!.mukhtarName, lock: (v) => _lockMukhtar = v);
+        if (_ration.text.trim().isEmpty && (match!.rationCenterNumber ?? '').trim().isNotEmpty) {
+          _ration.text = match.rationCenterNumber!.trim();
+        }
+        _preferList(match!.delegateId);
+        _applyPreferredList();
+      });
+    } catch (_) {}
   }
 
   @override
@@ -87,16 +208,15 @@ class _SaleScreenState extends State<SaleScreen> {
     _ration.dispose();
     _note.dispose();
     _installment.dispose();
-    for (final n in _fieldFocus) {
-      n.dispose();
-    }
     super.dispose();
   }
 
   Future<void> _loadStock() async {
     setState(() => _loadingStock = true);
     try {
-      _stock = await SalesRepositoryFactory.instance.inventory();
+      _stock = (await SalesRepositoryFactory.instance.inventory())
+          .where((i) => !SalesStaffInventoryFilter.isHidden(i.productName))
+          .toList();
     } finally {
       if (mounted) setState(() => _loadingStock = false);
     }
@@ -112,16 +232,44 @@ class _SaleScreenState extends State<SaleScreen> {
   }
 
   num get _previewFinal {
-    if (_eval == 1) return 0;
-    if (_eval == 2) return _previewBase * 2;
+    if (_blocksSale) return 0;
     return _previewBase;
+  }
+
+  String _customerListName() {
+    for (final list in _customerLists) {
+      if (list.listId == _customerListId) return list.listName;
+    }
+    return '${_customerListId ?? ''}';
   }
 
   String? _req(String? v) => (v == null || v.trim().isEmpty) ? 'مطلوب' : null;
 
+  bool _filled(TextEditingController c) => c.text.trim().isNotEmpty;
+
+  bool get _fromKnownSource => _fromRequest != null || _picked != null;
+
   Future<void> _next() async {
     if (_step == 0) {
       if (!(_form.currentState?.validate() ?? false)) return;
+      if (_customerLists.isEmpty) {
+        _toast('لا توجد قوائم معرفة في هذا الفرع');
+        return;
+      }
+      if (_customerListId == null || _customerListId! <= 0) {
+        _toast('اختيار قائمة الزبون مطلوب');
+        return;
+      }
+      if (!_filled(_name) ||
+          !_filled(_phone) ||
+          !_filled(_province) ||
+          !_filled(_card) ||
+          !_filled(_address) ||
+          !_filled(_landmark) ||
+          !_filled(_mukhtar)) {
+        _toast('بيانات الزبون غير مكتملة');
+        return;
+      }
       await _loadStock();
     }
     if (_step == 1 && !_qty.values.any((q) => q > 0)) {
@@ -169,6 +317,7 @@ class _SaleScreenState extends State<SaleScreen> {
           evaluationNote: _note.text.trim(),
           dailyInstallment: num.parse(_installment.text.trim()),
           salesRequestId: _fromRequest?.id,
+          customerListId: _customerListId,
         ),
       );
       if (!mounted) return;
@@ -222,7 +371,7 @@ class _SaleScreenState extends State<SaleScreen> {
                       onPressed: _saving ? null : (_step < 4 ? _next : _save),
                       child: Text(_step < 4
                           ? 'التالي'
-                          : (_eval == 1 ? 'حفظ الطلب المرفوض' : 'حفظ في المبيعات المعلقة')),
+                          : (_blocksSale ? 'حفظ الطلب المرفوض' : 'حفظ في المبيعات المعلقة')),
                     ),
                   ],
                 ),
@@ -271,43 +420,93 @@ class _SaleScreenState extends State<SaleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: true, label: Text('زبون موجود')),
-              ButtonSegment(value: false, label: Text('زبون جديد')),
-            ],
-            selected: {_existing},
-            onSelectionChanged: (s) => setState(() => _existing = s.first),
+          if (_fromRequest == null) ...[
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: true, label: Text('زبون موجود')),
+                ButtonSegment(value: false, label: Text('زبون جديد')),
+              ],
+              selected: {_existing},
+              onSelectionChanged: (s) => setState(() => _existing = s.first),
+            ),
+            if (_existing)
+              TextButton(
+                onPressed: () async {
+                  final result = await Navigator.pushNamed(context, '/search', arguments: 'pick');
+                  if (result is SalesCustomer) {
+                    setState(() => _applyCustomer(result));
+                  }
+                },
+                child: const Text('اختيار من البحث'),
+              ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+          if (_knownSummary().isNotEmpty) ...[
+            const Text('بيانات الزبون الموجودة', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            for (final line in _knownSummary())
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(line, style: const TextStyle(color: AppColors.muted)),
+              ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+          InputDecorator(
+            decoration: const InputDecoration(labelText: 'قائمة الزبون *'),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<int>(
+                isExpanded: true,
+                value: _customerLists.any((e) => e.listId == _customerListId) ? _customerListId : null,
+                hint: const Text('اختر قائمة الزبون'),
+                items: [
+                  for (final list in _customerLists)
+                    DropdownMenuItem(value: list.listId, child: Text(list.listName)),
+                ],
+                onChanged: (value) => setState(() => _customerListId = value),
+              ),
+            ),
           ),
-          if (_existing)
-            TextButton(
-              onPressed: () async {
-                final result = await Navigator.pushNamed(context, '/search', arguments: 'pick');
-                if (result is SalesCustomer) _applyCustomer(result);
-              },
-              child: const Text('اختيار من البحث'),
+          if (_customerLists.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text('لا توجد قوائم معرفة في هذا الفرع',
+                  style: TextStyle(color: AppColors.muted, fontSize: 12)),
             ),
           const SizedBox(height: AppSpacing.sm),
-          _field(_name, 'الاسم الكامل *', 0, validator: _req),
-          _field(_phone, 'رقم الهاتف *', 1, keyboard: TextInputType.phone, validator: _req),
-          _field(_province, 'المحافظة *', 2, validator: _req),
-          _field(_card, 'رقم البطاقة الوطنية *', 3, keyboard: TextInputType.number, validator: _req),
-          _field(_address, 'العنوان *', 4, validator: _req),
-          _field(_landmark, 'أقرب نقطة دالة *', 5, validator: _req),
-          _field(_mukhtar, 'اسم المختار *', 6, validator: _req),
-          _field(_ration, 'رقم مركز التموين (اختياري)', 7, keyboard: TextInputType.number, last: true),
+          if (!_lockName) _field(_name, 'الاسم الكامل *', validator: _req),
+          if (!_lockPhone) _field(_phone, 'رقم الهاتف *', keyboard: TextInputType.phone, validator: _req),
+          if (!_lockProvince) _field(_province, 'المحافظة *', validator: _req),
+          if (!_lockCard) _field(_card, 'رقم البطاقة الوطنية *', keyboard: TextInputType.number, validator: _req),
+          if (!_lockAddress) _field(_address, 'العنوان *', validator: _req),
+          if (!_lockLandmark) _field(_landmark, 'أقرب نقطة دالة *', validator: _req),
+          if (!_lockMukhtar) _field(_mukhtar, 'اسم المختار *', validator: _req),
+          if (!_fromKnownSource) _field(_ration, 'رقم مركز التموين (اختياري)', keyboard: TextInputType.number, last: true),
         ],
       ),
     );
   }
 
-  Widget _field(TextEditingController c, String label, int index,
+  List<String> _knownSummary() {
+    final lines = <String>[];
+    if (_lockName && _filled(_name)) lines.add(_name.text.trim());
+    if (_lockPhone && _filled(_phone)) lines.add(_phone.text.trim());
+    if (_lockProvince && _filled(_province)) lines.add(_province.text.trim());
+    if (_lockAddress && _filled(_address)) lines.add(_address.text.trim());
+    if (_lockCard && _filled(_card)) lines.add('البطاقة: ${_card.text.trim()}');
+    if (_lockLandmark && _filled(_landmark)) lines.add(_landmark.text.trim());
+    if (_lockMukhtar && _filled(_mukhtar)) lines.add('المختار: ${_mukhtar.text.trim()}');
+    if (_ration.text.trim().isNotEmpty && _fromKnownSource) {
+      lines.add('التموين: ${_ration.text.trim()}');
+    }
+    return lines;
+  }
+
+  Widget _field(TextEditingController c, String label,
       {TextInputType? keyboard, String? Function(String?)? validator, bool last = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: TextFormField(
         controller: c,
-        focusNode: _fieldFocus[index],
         keyboardType: keyboard,
         validator: validator,
         textInputAction: last ? TextInputAction.done : TextInputAction.next,
@@ -315,13 +514,6 @@ class _SaleScreenState extends State<SaleScreen> {
         autocorrect: false,
         smartDashesType: SmartDashesType.disabled,
         smartQuotesType: SmartQuotesType.disabled,
-        onFieldSubmitted: (_) {
-          if (last) {
-            _fieldFocus[index].unfocus();
-          } else {
-            _fieldFocus[index + 1].requestFocus();
-          }
-        },
         decoration: InputDecoration(labelText: label),
       ),
     );
@@ -407,24 +599,17 @@ class _SaleScreenState extends State<SaleScreen> {
           controller: _note,
           maxLines: 3,
           decoration: InputDecoration(
-            labelText: _eval == 1 ? 'سبب الرفض *' : 'الملاحظة *',
+            labelText: 'الملاحظة *',
           ),
         ),
-        if (_eval == 1) ...[
+        if (_blocksSale) ...[
           const SizedBox(height: AppSpacing.sm),
-          const Text(
-            'سيتم حفظ الطلب كطلب مرفوض في الأرشيف، ولن يمكن إتمام عملية البيع.',
-            style: TextStyle(color: AppColors.danger),
+          Text(
+            _eval == 1
+                ? 'تقييم مرفوض: ممنوع إتمام البيع. الملاحظة إجبارية.'
+                : 'تقييم مقبول: ممنوع إتمام البيع. لا يوجد تضاعف سعر ولا عقد مكتمل.',
+            style: const TextStyle(color: AppColors.danger),
           ),
-        ],
-        if (_eval == 2) ...[
-          const SizedBox(height: AppSpacing.md),
-          Text('السعر الأساسي: ${MoneyFormat.iqd(_previewBase)}'),
-          const Text('معامل التقييم: ×2'),
-          Text('سعر البيع النهائي: ${MoneyFormat.iqd(_previewFinal)}',
-              style: const TextStyle(fontWeight: FontWeight.w700)),
-          const Text('معاينة واجهة فقط. السعر النهائي يأتي من الخادم بعد الحفظ.',
-              style: TextStyle(color: AppColors.muted, fontSize: 12)),
         ],
         if (_eval >= 3) ...[
           const SizedBox(height: AppSpacing.md),
@@ -457,6 +642,7 @@ class _SaleScreenState extends State<SaleScreen> {
         Text(_name.text),
         Text(_phone.text),
         Text(_province.text),
+        Text('قائمة الزبون: ${_customerListName()}'),
         const SizedBox(height: AppSpacing.md),
         const Text('البضاعة', style: TextStyle(fontWeight: FontWeight.w700)),
         ..._stock.where((i) => (_qty[i.productId] ?? 0) > 0).map(
@@ -468,7 +654,7 @@ class _SaleScreenState extends State<SaleScreen> {
         Text('السعر الأساسي (معاينة): ${MoneyFormat.iqd(_previewBase)}'),
         Text('السعر النهائي (معاينة): ${MoneyFormat.iqd(_previewFinal)}'),
         Text('القسط اليومي: ${MoneyFormat.iqd(num.tryParse(_installment.text) ?? 0)}'),
-        if (_eval != 1) ...[
+        if (!_blocksSale) ...[
           const SizedBox(height: AppSpacing.md),
           const ListTile(
             title: Text('عقد البيع'),

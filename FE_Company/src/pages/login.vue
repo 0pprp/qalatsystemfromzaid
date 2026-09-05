@@ -47,26 +47,28 @@ async function login() {
     loginLoadingBtn.value = true
 
     try {
-      const gatewayRes = await fetch(`${salesGatewayBase()}Auth/LoginSalesManager`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form.value),
-      }).then(res => res.json()).catch(() => null)
+      if (!isDemo()) {
+        const gatewayRes = await fetch(`${salesGatewayBase()}Auth/LoginSalesManager`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(form.value),
+        }).then(res => res.json()).catch(() => null)
 
-      if (gatewayRes?.token && (gatewayRes.userType === 'مدير مبيعات' || gatewayRes.central)) {
-        localStorage.setItem('Token', gatewayRes.token)
-        localStorage.setItem('Expiration', gatewayRes.expiration)
-        localStorage.setItem('UserID', String(gatewayRes.userId ?? 0))
-        localStorage.setItem('UserName', gatewayRes.userName || form.value.userName)
-        localStorage.setItem('UserType', 'مدير مبيعات')
-        localStorage.setItem('SalesManagerScope', 'central')
-        localStorage.setItem('LinkCity', salesGatewayBase())
-        localStorage.setItem('CityName', 'كل المحافظات')
-        localStorage.removeItem('Database')
-        loginLoadingBtn.value = false
-        router.push('/sales-manager-dashboard')
+        if (gatewayRes?.token && (gatewayRes.userType === 'مدير مبيعات' || gatewayRes.central)) {
+          localStorage.setItem('Token', gatewayRes.token)
+          localStorage.setItem('Expiration', gatewayRes.expiration)
+          localStorage.setItem('UserID', String(gatewayRes.userId ?? 0))
+          localStorage.setItem('UserName', gatewayRes.userName || form.value.userName)
+          localStorage.setItem('UserType', 'مدير مبيعات')
+          localStorage.setItem('SalesManagerScope', 'central')
+          localStorage.setItem('LinkCity', salesGatewayBase())
+          localStorage.setItem('CityName', 'كل المحافظات')
+          localStorage.removeItem('Database')
+          loginLoadingBtn.value = false
+          router.push('/sales-manager-dashboard')
 
-        return
+          return
+        }
       }
     }
     catch {
@@ -141,7 +143,9 @@ async function login() {
     } catch (err) {
       loginLoadingBtn.value = false
       showAlert.value = true
-      errorMessage.value = err.message || 'تعذر الاتصال بالخادم المحلي. تأكد أن الـ API يعمل على المنفذ 5180.'
+      errorMessage.value = err.message || (isDemo()
+        ? 'تعذر الاتصال بخادم Demo. تأكد أن BE_Company يعمل على المنفذ 5401.'
+        : 'تعذر الاتصال بالخادم المحلي. تأكد أن الـ API يعمل على المنفذ 5180.')
     }
   } else {
     showAlert.value = true

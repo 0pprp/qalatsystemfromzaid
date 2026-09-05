@@ -21,7 +21,7 @@ class AppEnv {
   static bool get isProduction => !isDemo && !isLocal;
 
   static String apiBase() {
-    if (isDemo) return normalizeBase(demoApiBaseUrl);
+    if (isDemo) return normalizeBase(demoHostFallback);
     if (isLocal) return normalizeBase(localApiBaseUrl);
 
     final explicit = _apiBaseDefine.isNotEmpty ? _apiBaseDefine : _apiBaseUrlDefine;
@@ -70,10 +70,17 @@ class AppEnv {
   static String normalizeBase(String url) {
     var value = url.trim();
     if (value.isEmpty) return value;
+    value = value.replaceAll('\\', '/');
+    value = value.replaceAll(RegExp(r'/sales-gw/?', caseSensitive: false), '/');
     while (value.contains('/api/api')) {
       value = value.replaceAll('/api/api', '/api');
     }
+    if (_isDemoHost(value)) {
+      return demoHostFallback;
+    }
     if (!value.endsWith('/')) value = '$value/';
+    if (value.endsWith(':8080/')) value = '${value}api/';
     return value;
   }
 }
+

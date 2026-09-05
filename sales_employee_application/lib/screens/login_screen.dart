@@ -80,6 +80,13 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
       await Session.saveBranch(_selectedBranch!.toJson());
+    } else if (AppEnv.isDemo) {
+      await Session.saveBranch({
+        'name': AppEnv.loginCityLabel(),
+        'value': 'DatabaseCompanyNajaf_DEMO',
+        'database': 'DatabaseCompanyNajaf_DEMO',
+        'link': AppEnv.apiBase(),
+      });
     }
     setState(() => _loading = true);
     try {

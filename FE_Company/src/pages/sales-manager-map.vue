@@ -4,7 +4,7 @@ import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
-import { branchRowKey, locationStatusLabel, shouldMoveMarker, smGet, withCityQuery } from '@/composables/salesManagerApi'
+import { branchRowKey, locationStatusLabel, shouldMoveMarker, smGetEmployees } from '@/composables/salesManagerApi'
 import { isCentralSalesManager } from '@/composables/useSalesBranches'
 import { MAPBOX_TOKEN } from '@/composables/mapboxToken'
 import { getToken } from '@/services/tokenService'
@@ -61,7 +61,7 @@ function upsertMarker(row) {
     return
   }
 
-  const marker = new mapboxgl.Marker().setLngLat(lngLat).setPopup(
+  const marker = new mapboxgl.Marker({ anchor: 'bottom' }).setLngLat(lngLat).setPopup(
     new mapboxgl.Popup().setHTML(popupHtml(row)),
   ).addTo(map)
 
@@ -100,7 +100,7 @@ function applyLiveUpdate(body) {
 }
 
 async function load() {
-  const latest = liveEmployees(await smGet(withCityQuery('employees', cityValue.value)))
+  const latest = liveEmployees(await smGetEmployees(cityValue.value))
 
   employees.value = latest
   latest.forEach(upsertMarker)
@@ -136,12 +136,14 @@ onMounted(async () => {
   await nextTick()
   if (token && mapEl.value) {
     mapboxgl.accessToken = token
+    mapEl.value.setAttribute('dir', 'ltr')
     map = new mapboxgl.Map({
       container: mapEl.value,
       style: 'mapbox://styles/mapbox/streets-v12',
       center: [44.33, 32.0],
       zoom: 11,
     })
+    map.getContainer().setAttribute('dir', 'ltr')
     map.on('load', load)
   }
   else {
@@ -184,7 +186,8 @@ onUnmounted(() => {
     <div
       v-show="token"
       ref="mapEl"
-      style="height: 420px; border-radius: 12px;"
+      class="sales-live-map"
+      dir="ltr"
     />
     <VTable class="mt-4">
       <thead>
@@ -230,3 +233,18 @@ onUnmounted(() => {
     </VCard>
   </div>
 </template>
+
+<style scoped lang="scss">
+.sales-live-map {
+  height: 420px;
+  border-radius: 12px;
+  direction: ltr;
+  /* html { zoom: 90% } in styles.scss desyncs Mapbox marker transforms on zoom */
+  zoom: calc(10 / 9);
+
+  :deep(.mapboxgl-marker) {
+    inset: auto !important;
+    right: auto !important;
+  }
+}
+</style>

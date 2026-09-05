@@ -7,15 +7,18 @@ import 'package:sales_employee_application/tracking/tracking_config.dart';
 class TrackingChannel {
   static const _channel = MethodChannel('saleshaider/location');
 
-  static Future<bool> start({required int shiftId, required DateTime cutoffAtUtc}) async {
+  static Future<bool> start({required int shiftId, required DateTime cutoffAtUtc, DateTime? startedAtUtc}) async {
     try {
+      final startedMs = (startedAtUtc ?? DateTime.now()).toUtc().millisecondsSinceEpoch;
       ShiftStartDebug.log(
-        'MethodChannel.invokeMethod start shiftId=$shiftId cutoffAtUtcMs=${cutoffAtUtc.toUtc().millisecondsSinceEpoch}',
+        'MethodChannel.invokeMethod start shiftId=$shiftId cutoffAtUtcMs=${cutoffAtUtc.toUtc().millisecondsSinceEpoch} startedAtUtcMs=$startedMs',
       );
       await _channel.invokeMethod('start', {
         'shiftId': shiftId,
         'cutoffAtUtcMs': cutoffAtUtc.toUtc().millisecondsSinceEpoch,
+        'startedAtUtcMs': startedMs,
         'intervalMs': TrackingConfig.movingInterval.inMilliseconds,
+        'officialIntervalMs': TrackingConfig.officialInterval.inMilliseconds,
         'minDistance': TrackingConfig.minimumDistanceMeters,
         'stationaryIntervalMs': TrackingConfig.stationaryInterval.inMilliseconds,
         'apiBase': Session.apiBase ?? AppEnv.apiBase(),

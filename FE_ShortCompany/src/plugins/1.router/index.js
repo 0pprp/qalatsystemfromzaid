@@ -54,6 +54,9 @@ router.beforeEach((to, from, next) => {
     return next('/login')
   }
 
+  if (to.path === '/support')
+    return next('/')
+
   const userType = localStorage.getItem('UserType') || ''
   const decisionPaths = ['/decision-board', '/decisions-list']
   if (decisionPaths.includes(to.path) && userType !== 'مدير فرع' && userType !== 'محاسب رئيسي') {

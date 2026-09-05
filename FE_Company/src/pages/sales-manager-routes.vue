@@ -2,18 +2,13 @@
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import { smGet, employeeApiPath, withCityQuery } from '@/composables/salesManagerApi'
+import { smGet, employeeApiPath, smGetEmployees } from '@/composables/salesManagerApi'
 import { MAPBOX_TOKEN } from '@/composables/mapboxToken'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import {
-  dropBeforePermission,
-  lineCollection,
-  matchTrackToRoads,
-  minuteIndex,
+  formatIraqClock,
   normalizePoints,
-  pointsCollection,
-  segmentByTravel,
-  thinByMeters,
+  officialTenMinutePoints,
 } from '@/composables/gpsTrack'
 import { useToast } from '@/composables/useToast'
 
@@ -22,16 +17,20 @@ const employees = ref([])
 const cityValue = ref('')
 const employeeId = ref(null)
 const date = ref(new Date().toISOString().slice(0, 10))
-const route = ref(null)
-const minutePoints = ref([])
+const points = ref([])
 const selectedIndex = ref(-1)
 const loading = ref(false)
+const emptyMessage = ref('')
 const token = MAPBOX_TOKEN
 const mapEl = ref(null)
 let map
 let resizeObserver
+let bleedEl
+const markers = []
 
 onMounted(async () => {
+  bleedEl = document.querySelector('.layout-page-content')
+  bleedEl?.classList.add('sales-route-bleed')
   await ensureMap()
 })
 
@@ -43,7 +42,7 @@ async function loadEmployees() {
     return
   }
   try {
-    employees.value = await smGet(withCityQuery('employees', cityValue.value))
+    employees.value = await smGetEmployees(cityValue.value)
   }
   catch {
     toast.error('تعذر تحميل الموظفين')
@@ -51,8 +50,10 @@ async function loadEmployees() {
 }
 
 onUnmounted(() => {
+  bleedEl?.classList.remove('sales-route-bleed')
   resizeObserver?.disconnect()
   window.removeEventListener('resize', resizeMap)
+  clearMarkers()
   map?.remove()
   map = null
 })
@@ -70,127 +71,83 @@ function whenMapReady(cb) {
     map.once('load', cb)
 }
 
-function fitToLines(lines) {
-  const bounds = new mapboxgl.LngLatBounds()
-  let any = false
-  for (const line of lines) {
-    for (const coord of line) {
-      bounds.extend(coord)
-      any = true
-    }
+function fitToPins(list) {
+  if (!list.length)
+    return
+  if (list.length === 1) {
+    map.flyTo({ center: [list[0].lng, list[0].lat], zoom: 15, duration: 500 })
+
+    return
   }
-  if (any)
-    map.fitBounds(bounds, { padding: 48, maxZoom: 16, duration: 600 })
+  const bounds = new mapboxgl.LngLatBounds()
+  for (const point of list)
+    bounds.extend([point.lng, point.lat])
+  map.fitBounds(bounds, { padding: 48, maxZoom: 16, duration: 600 })
 }
 
-function paintRoute(lines, points) {
+function popupHtml(point) {
+  const acc = Number.isFinite(point.acc)
+    ? `الدقة: ${Math.round(point.acc)} متر`
+    : ''
+
+  return `<div dir="rtl" class="sales-route-popup">
+    <div>${point.timeLabel || ''}</div>
+    ${acc ? `<div>${acc}</div>` : ''}
+  </div>`
+}
+
+function clearMarkers() {
+  for (const marker of markers)
+    marker.remove()
+  markers.length = 0
+}
+
+function closePopups() {
+  for (const marker of markers)
+    marker.getPopup()?.remove()
+}
+
+function paintPoints(list) {
   if (!map)
     return
 
-  const routeData = lineCollection(lines)
-  const stopsData = pointsCollection(points)
-
+  if (map.getLayer('route-line'))
+    map.removeLayer('route-line')
   if (map.getSource('route'))
-    map.getSource('route').setData(routeData)
-  else {
-    map.addSource('route', { type: 'geojson', data: routeData })
-    map.addLayer({
-      id: 'route-line',
-      type: 'line',
-      source: 'route',
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#16a34a', 'line-width': 6, 'line-opacity': 0.95 },
-    })
-  }
-
+    map.removeSource('route')
+  if (map.getLayer('stops-circle'))
+    map.removeLayer('stops-circle')
   if (map.getSource('stops'))
-    map.getSource('stops').setData(stopsData)
-  else {
-    map.addSource('stops', { type: 'geojson', data: stopsData })
-    map.addLayer({
-      id: 'stops-circle',
-      type: 'circle',
-      source: 'stops',
-      paint: {
-        'circle-radius': 5,
-        'circle-color': '#16a34a',
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#ffffff',
-        'circle-pitch-alignment': 'map',
-      },
+    map.removeSource('stops')
+
+  clearMarkers()
+  for (const [index, point] of list.entries()) {
+    const marker = new mapboxgl.Marker({ color: '#16a34a', anchor: 'bottom' })
+      .setLngLat([point.lng, point.lat])
+      .setPopup(new mapboxgl.Popup({ offset: 18, closeButton: false }).setHTML(popupHtml(point)))
+      .addTo(map)
+    marker.getElement().addEventListener('click', () => {
+      selectedIndex.value = index
     })
-    map.on('click', 'stops-circle', e => {
-      const id = e.features?.[0]?.properties?.id
-      if (id == null)
-        return
-      focusPoint(Number(id), false)
-    })
-    map.on('mouseenter', 'stops-circle', () => { map.getCanvas().style.cursor = 'pointer' })
-    map.on('mouseleave', 'stops-circle', () => { map.getCanvas().style.cursor = '' })
+    markers.push(marker)
   }
 
-  ensureHighlightLayer()
-  clearHighlight()
-
-  if (lines.length)
-    fitToLines(lines)
-  requestAnimationFrame(() => resizeMap())
-}
-
-function highlightCollection(point) {
-  if (!point)
-    return { type: 'FeatureCollection', features: [] }
-
-  return {
-    type: 'FeatureCollection',
-    features: [{
-      type: 'Feature',
-      geometry: { type: 'Point', coordinates: [point.lng, point.lat] },
-    }],
-  }
-}
-
-function ensureHighlightLayer() {
-  if (!map || map.getSource('highlight'))
-    return
-
-  map.addSource('highlight', { type: 'geojson', data: highlightCollection(null) })
-  map.addLayer({
-    id: 'highlight-halo',
-    type: 'circle',
-    source: 'highlight',
-    paint: {
-      'circle-radius': 14,
-      'circle-color': '#16a34a',
-      'circle-opacity': 0.28,
-      'circle-pitch-alignment': 'map',
-    },
+  if (list.length)
+    fitToPins(list)
+  requestAnimationFrame(() => {
+    resizeMap()
+    if (list.length)
+      fitToPins(list)
   })
-  map.addLayer({
-    id: 'highlight-dot',
-    type: 'circle',
-    source: 'highlight',
-    paint: {
-      'circle-radius': 7,
-      'circle-color': '#16a34a',
-      'circle-stroke-width': 2,
-      'circle-stroke-color': '#ffffff',
-      'circle-pitch-alignment': 'map',
-    },
-  })
-}
-
-function clearHighlight() {
-  map?.getSource('highlight')?.setData(highlightCollection(null))
 }
 
 function focusPoint(index, fly = true) {
-  const point = minutePoints.value[index]
+  const point = points.value[index]
   if (!point || !map)
     return
   selectedIndex.value = index
-  ensureHighlightLayer()
-  map.getSource('highlight')?.setData(highlightCollection(point))
+  closePopups()
+  markers[index]?.togglePopup()
   if (fly)
     map.flyTo({ center: [point.lng, point.lat], zoom: 16, duration: 700 })
 }
@@ -225,7 +182,23 @@ async function ensureMap() {
   return true
 }
 
-async function loadRoute() {
+function extractPoints(payload) {
+  const body = payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+    ? payload.data
+    : payload
+  if (Array.isArray(body?.points))
+    return body.points
+  if (Array.isArray(body?.Points))
+    return body.Points
+
+  return []
+}
+
+function isHttpError(err) {
+  return !!(err?.response || err?.request || err?.isAxiosError)
+}
+
+async function loadLocations() {
   if (!cityValue.value) {
     toast.warning('اختر المحافظة أولاً')
 
@@ -238,23 +211,19 @@ async function loadRoute() {
   }
   loading.value = true
   selectedIndex.value = -1
-  clearHighlight()
+  emptyMessage.value = ''
   try {
-    route.value = await smGet(`${employeeApiPath(cityValue.value, employeeId.value, `/route?date=${date.value}`)}`)
+    const payload = await smGet(`${employeeApiPath(cityValue.value, employeeId.value, `/route?date=${date.value}`)}`)
+    const raw = extractPoints(payload)
+    const usable = officialTenMinutePoints(normalizePoints(raw))
 
-    const events = await smGet(`${employeeApiPath(cityValue.value, employeeId.value, `/tracking-events?date=${date.value}`)}`)
-    const raw = route.value?.points || []
-    let usable = normalizePoints(dropBeforePermission(raw, events))
-    if (!usable.length)
-      usable = normalizePoints(raw)
-    usable = thinByMeters(usable, 5)
+    points.value = usable.map(point => ({
+      ...point,
+      timeLabel: formatIraqClock(point.t),
+    }))
 
-    const times = minuteIndex(usable)
-
-    minutePoints.value = times
-
-    const segments = segmentByTravel(usable)
-    const lines = await matchTrackToRoads(segments, token)
+    if (!points.value.length)
+      emptyMessage.value = 'لا توجد نقاط موقع مسجلة لهذا اليوم'
 
     if (!await ensureMap()) {
       toast.error('مفتاح الخريطة غير مهيأ')
@@ -262,14 +231,20 @@ async function loadRoute() {
       return
     }
     whenMapReady(() => {
-      paintRoute(lines, minutePoints.value)
-      if (!usable.length)
-        toast.info('لا توجد نقاط مسار لهذا التاريخ')
+      paintPoints(points.value)
+      requestAnimationFrame(() => {
+        resizeMap()
+        if (points.value.length)
+          fitToPins(points.value)
+      })
     })
   }
   catch (err) {
     console.error(err)
-    toast.error('تعذر تحميل المسار')
+    points.value = []
+    emptyMessage.value = ''
+    if (isHttpError(err))
+      toast.error('تعذر تحميل نقاط الموقع')
   }
   finally {
     loading.value = false
@@ -281,7 +256,7 @@ async function loadRoute() {
   <div class="sales-route-page">
     <div class="sales-route-toolbar">
       <h4 class="mb-3">
-        المسارات
+        سجل المواقع
       </h4>
       <VRow dense>
         <VCol
@@ -327,9 +302,9 @@ async function loadRoute() {
             color="primary"
             :loading="loading"
             block
-            @click="loadRoute"
+            @click="loadLocations"
           >
-            عرض المسار
+            عرض المواقع
           </VBtn>
         </VCol>
       </VRow>
@@ -348,25 +323,30 @@ async function loadRoute() {
       />
     </div>
 
-    <div
-      v-if="minutePoints.length"
-      class="sales-route-times"
-    >
-      <div class="sales-route-times-title">
-        أحداث التتبع
+    <div class="sales-route-times">
+      <div
+        v-if="emptyMessage"
+        class="text-medium-emphasis"
+      >
+        {{ emptyMessage }}
       </div>
-      <div class="sales-route-times-list">
-        <button
-          v-for="(point, index) in minutePoints"
-          :key="point.t"
-          type="button"
-          class="sales-route-time"
-          :class="{ 'is-active': selectedIndex === index }"
-          @click="focusPoint(index)"
-        >
-          {{ point.timeLabel }}
-        </button>
-      </div>
+      <template v-else-if="points.length">
+        <div class="sales-route-times-title">
+          سجل المواقع
+        </div>
+        <div class="sales-route-times-list">
+          <button
+            v-for="(point, index) in points"
+            :key="`${point.t}-${index}`"
+            type="button"
+            class="sales-route-time"
+            :class="{ 'is-active': selectedIndex === index }"
+            @click="focusPoint(index)"
+          >
+            {{ point.timeLabel }}
+          </button>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -375,9 +355,11 @@ async function loadRoute() {
 .sales-route-page {
   display: flex;
   flex-direction: column;
+  inline-size: 100%;
+  max-inline-size: none;
   min-block-size: calc(100dvh - 4.5rem);
-  margin-block: -1.5rem;
-  margin-inline: -1.5rem;
+  margin: 0;
+  padding: 0;
 }
 
 .sales-route-toolbar {
@@ -390,12 +372,33 @@ async function loadRoute() {
   flex: 1 1 auto;
   min-block-size: 58dvh;
   inline-size: 100%;
+  max-inline-size: none;
+  margin: 0;
+  padding: 0;
 }
 
 .sales-route-map {
   position: absolute;
   inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  padding: 0;
   direction: ltr;
+  /* html { zoom: 90% } in styles.scss desyncs Mapbox marker transforms on zoom */
+  zoom: calc(10 / 9);
+
+  :deep(.mapboxgl-map),
+  :deep(.mapboxgl-canvas-container),
+  :deep(.mapboxgl-canvas) {
+    inline-size: 100% !important;
+    block-size: 100% !important;
+  }
+
+  :deep(.mapboxgl-marker) {
+    inset: auto !important;
+    right: auto !important;
+  }
 }
 
 .sales-route-times {
@@ -434,5 +437,27 @@ async function loadRoute() {
   border-color: #16a34a;
   background: #16a34a;
   color: #fff;
+}
+</style>
+
+<style lang="scss">
+.layout-page-content.sales-route-bleed {
+  inline-size: 100% !important;
+  max-inline-size: none !important;
+  margin-inline: 0 !important;
+  padding-inline: 0 !important;
+  padding-block: 0 !important;
+}
+
+.layout-page-content.sales-route-bleed .page-content-container {
+  inline-size: 100% !important;
+  max-inline-size: none !important;
+  margin-inline: 0 !important;
+  padding-inline: 0 !important;
+}
+
+.sales-route-popup {
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
 </style>

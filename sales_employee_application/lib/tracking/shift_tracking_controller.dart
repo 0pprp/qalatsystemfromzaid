@@ -42,7 +42,11 @@ class ShiftTrackingController {
         _store = store ?? defaultLocationStore(),
         _requestPermission = requestPermission ?? _defaultPermission,
         _startNative = startNative ??
-            ((shift) async => TrackingChannel.start(shiftId: shift.shiftId, cutoffAtUtc: shift.cutoffAtUtc)),
+            ((shift) async => TrackingChannel.start(
+                  shiftId: shift.shiftId,
+                  cutoffAtUtc: shift.cutoffAtUtc,
+                  startedAtUtc: shift.startedAtUtc,
+                )),
         _stopNative = stopNative ?? TrackingChannel.stop,
         _connectivity = connectivity ?? Connectivity().onConnectivityChanged {
     _sync = LocationSyncEngine(_store, _repo);

@@ -33,7 +33,7 @@ class _MemRepo implements SalesRepository {
   @override
   Future<SalesDraft> byId(int id) async => draft;
   @override
-  Future<SalesCompleteResult> completeSale(int id) async {
+  Future<SalesCompleteResult> completeSale(int id, [SalesShopComplete? shop]) async {
     completeCalls++;
     if (hold != null) return hold!.future;
     draft = draft.copyWith(
@@ -52,6 +52,12 @@ class _MemRepo implements SalesRepository {
       completedAt: draft.completedAt,
       documents: draft.documents,
     );
+  }
+
+  @override
+  Future<String> uploadShopImage(int saleId, List<int> bytes, String fileName) async {
+    if (bytes.isEmpty) throw Exception('صورة المحل مطلوبة');
+    return 'sales/$saleId/shop.jpg';
   }
 
   @override
@@ -81,7 +87,13 @@ class _MemRepo implements SalesRepository {
   @override
   Future<SalesWorkRequest> startSalesRequest(int id) async => throw UnimplementedError();
   @override
+  Future<SalesWorkRequest> prepareSalesRequest(int id) async => throw UnimplementedError();
+  @override
+  Future<SalesWorkRequest> pendSalesRequest(int id, String note) async => throw UnimplementedError();
+  @override
   Future<SalesWorkRequest> rejectSalesRequest(int id, String reason) async => throw UnimplementedError();
+  @override
+  Future<List<SalesCustomerList>> activeCustomerLists() async => [];
 }
 
 SalesDraft _draft({String status = 'Pending', int eval = 3}) => SalesDraft(
@@ -120,15 +132,32 @@ void main() {
     expect(find.widgetWithText(ElevatedButton, 'تم البيع'), findsNothing);
   });
 
+  testWidgets('No Complete for Accepted evaluation', (tester) async {
+    SalesRepositoryFactory.setInstance(_MemRepo(_draft(status: 'Rejected', eval: 2)));
+    await tester.pumpWidget(_app(const SaleDetailsScreen(saleId: 1)));
+    await tester.pumpAndSettle();
+    expect(find.text('طلب مرفوض'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'تم البيع'), findsNothing);
+  });
+
   testWidgets('Loading prevents double tap', (tester) async {
     final repo = _MemRepo(_draft())
       ..hold = Completer<SalesCompleteResult>()
       ..failDownload = true;
     SalesRepositoryFactory.setInstance(repo);
+    SaleDetailsScreen.debugShopImageBytes = [255, 216, 255, 217];
+    addTearDown(() => SaleDetailsScreen.debugShopImageBytes = null);
     await tester.pumpWidget(_app(const SaleDetailsScreen(saleId: 1)));
     await tester.pumpAndSettle();
     await tester.tap(find.text('تم البيع'));
     await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('shopName')), 'محل أحمد');
+    await tester.enterText(find.byKey(const Key('shopBusinessType')), 'مواد غذائية');
+    await tester.enterText(find.byKey(const Key('shopStockEstimatedValue')), '1500000');
+    await tester.enterText(find.byKey(const Key('estimatedDailyRevenue')), '80000');
+    await tester.enterText(find.byKey(const Key('shopLength')), '8');
+    await tester.enterText(find.byKey(const Key('shopWidth')), '5');
+    await tester.ensureVisible(find.text('نعم، تم البيع'));
     await tester.tap(find.text('نعم، تم البيع'));
     await tester.pump();
     await tester.tap(find.text('نعم، تم البيع'), warnIfMissed: false);

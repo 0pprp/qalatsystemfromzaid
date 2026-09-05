@@ -46,21 +46,22 @@ class SaleDocuments {
     final fonts = await _fonts();
     final doc = pw.Document();
     final paragraphs = ContractText.buildParagraphs(sale);
-    const pageMargin = pw.EdgeInsets.fromLTRB(22, 18, 22, 16);
+    // ~23mm A4 margins (64pt ≈ 22.6mm)
+    const pageMargin = pw.EdgeInsets.fromLTRB(64, 68, 64, 64);
     final style = pw.TextStyle(
       font: fonts.regular,
-      fontSize: 9.2,
-      lineSpacing: 0.15,
-      wordSpacing: 0.2,
+      fontSize: 12,
+      lineSpacing: 1.8,
+      wordSpacing: 0.4,
     );
     final fieldStyle = pw.TextStyle(
       font: fonts.bold,
-      fontSize: 9.2,
-      lineSpacing: 0.15,
-      wordSpacing: 0.2,
+      fontSize: 12,
+      lineSpacing: 1.8,
+      wordSpacing: 0.4,
     );
-    final titleStyle = pw.TextStyle(font: fonts.bold, fontSize: 16);
-    final signatureLabelStyle = pw.TextStyle(font: fonts.bold, fontSize: 10);
+    final titleStyle = pw.TextStyle(font: fonts.bold, fontSize: 22);
+    final signatureLabelStyle = pw.TextStyle(font: fonts.bold, fontSize: 12);
 
     doc.addPage(
       pw.Page(
@@ -74,27 +75,40 @@ class SaleDocuments {
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
             _contractTitle(titleStyle),
-            pw.SizedBox(height: 4),
-            for (final paragraph in paragraphs)
-              pw.Padding(
-                padding: const pw.EdgeInsets.only(bottom: 1.4),
-                child: _richParagraph(paragraph, bodyStyle: style, fieldStyle: fieldStyle),
+            pw.SizedBox(height: 14),
+            pw.Expanded(
+              flex: 7,
+              child: pw.Column(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                children: [
+                  for (final paragraph in paragraphs)
+                    _richParagraph(paragraph, bodyStyle: style, fieldStyle: fieldStyle),
+                ],
               ),
-            pw.SizedBox(height: 6),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                _signatureSpace('الطرف الأول', signatureLabelStyle, height: 46),
-                _signatureSpace('أمين الصندوق', signatureLabelStyle, width: 240, height: 46),
-              ],
             ),
-            pw.SizedBox(height: 6),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                _signatureSpace('الطرف الثاني', signatureLabelStyle, height: 38),
-                _signatureSpace('مندوب المبيعات', signatureLabelStyle, width: 240, height: 38),
-              ],
+            pw.SizedBox(height: 18),
+            pw.Expanded(
+              flex: 2,
+              child: pw.Column(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      _signatureSpace('الطرف الأول', signatureLabelStyle),
+                      _signatureSpace('أمين الصندوق', signatureLabelStyle, width: 240),
+                    ],
+                  ),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      _signatureSpace('الطرف الثاني', signatureLabelStyle),
+                      _signatureSpace('مندوب المبيعات', signatureLabelStyle, width: 240),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -107,21 +121,21 @@ class SaleDocuments {
     final fonts = await _fonts();
     final doc = pw.Document();
     final bodyParagraphs = DepositReceiptText.buildBodyParagraphs(contract: sale);
-    const pageMargin = pw.EdgeInsets.fromLTRB(28, 24, 28, 20);
+    const pageMargin = pw.EdgeInsets.fromLTRB(64, 68, 64, 64);
     final style = pw.TextStyle(
       font: fonts.regular,
-      fontSize: 11,
-      lineSpacing: 0.2,
-      wordSpacing: 0.2,
+      fontSize: 13,
+      lineSpacing: 2,
+      wordSpacing: 0.4,
     );
     final fieldStyle = pw.TextStyle(
       font: fonts.bold,
-      fontSize: 11,
-      lineSpacing: 0.2,
-      wordSpacing: 0.2,
+      fontSize: 13,
+      lineSpacing: 2,
+      wordSpacing: 0.4,
     );
-    final titleStyle = pw.TextStyle(font: fonts.bold, fontSize: 18);
-    final witnessTitleStyle = pw.TextStyle(font: fonts.bold, fontSize: 13);
+    final titleStyle = pw.TextStyle(font: fonts.bold, fontSize: 24);
+    final witnessTitleStyle = pw.TextStyle(font: fonts.bold, fontSize: 15);
 
     doc.addPage(
       pw.Page(
@@ -135,34 +149,50 @@ class SaleDocuments {
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
             pw.Center(child: pw.Text('وصل أمانة', style: titleStyle)),
-            pw.SizedBox(height: 10),
-            for (final paragraph in bodyParagraphs)
-              pw.Padding(
-                padding: const pw.EdgeInsets.only(bottom: 5),
-                child: _richParagraph(paragraph, bodyStyle: style, fieldStyle: fieldStyle),
+            pw.SizedBox(height: 22),
+            pw.Expanded(
+              flex: 5,
+              child: pw.Column(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                children: [
+                  for (final paragraph in bodyParagraphs)
+                    _richParagraph(paragraph, bodyStyle: style, fieldStyle: fieldStyle),
+                  pw.Row(
+                    children: [
+                      pw.Expanded(
+                        flex: 2,
+                        child: pw.Align(
+                          alignment: pw.Alignment.centerRight,
+                          child: pw.Text('بصمة المدين:', style: style),
+                        ),
+                      ),
+                      pw.Expanded(
+                        flex: 3,
+                        child: pw.Center(
+                          child: pw.Text('توقيع المدين:', style: style),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            pw.SizedBox(height: 6),
-            pw.Row(
-              children: [
-                pw.Expanded(
-                  flex: 2,
-                  child: pw.Align(
-                    alignment: pw.Alignment.centerRight,
-                    child: pw.Text('بصمة المدين:', style: style),
-                  ),
-                ),
-                pw.Expanded(
-                  flex: 3,
-                  child: pw.Center(
-                    child: pw.Text('توقيع المدين:', style: style),
-                  ),
-                ),
-              ],
             ),
-            pw.SizedBox(height: 18),
-            ..._witnessBlock('الشاهد الأول', witnessTitleStyle, style),
-            pw.SizedBox(height: 8),
-            ..._witnessBlock('الشاهد الثاني', witnessTitleStyle, style),
+            pw.SizedBox(height: 28),
+            pw.Expanded(
+              flex: 4,
+              child: pw.Directionality(
+                textDirection: pw.TextDirection.rtl,
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.Expanded(child: _witnessBlock('الشاهد الأول', witnessTitleStyle, style)),
+                    pw.SizedBox(height: 16),
+                    pw.Expanded(child: _witnessBlock('الشاهد الثاني', witnessTitleStyle, style)),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -171,8 +201,8 @@ class SaleDocuments {
   }
 
   static pw.Widget _contractTitle(pw.TextStyle titleStyle) {
-    const lineHeight = 22.0;
-    const wordGap = 6.0;
+    const lineHeight = 28.0;
+    const wordGap = 8.0;
 
     pw.Widget wordBox(String text) => pw.Container(
           height: lineHeight,
@@ -225,11 +255,9 @@ class SaleDocuments {
     String label,
     pw.TextStyle style, {
     double width = 200,
-    double height = 60,
   }) {
     return pw.SizedBox(
       width: width,
-      height: height,
       child: pw.Align(
         alignment: pw.Alignment.topRight,
         child: pw.Text(
@@ -241,32 +269,58 @@ class SaleDocuments {
     );
   }
 
-  static List<pw.Widget> _witnessBlock(
+  static pw.Widget _witnessBlock(
     String title,
     pw.TextStyle titleStyle,
     pw.TextStyle bodyStyle,
   ) {
-    return [
-      pw.Container(
-        width: 92,
-        padding: const pw.EdgeInsets.only(bottom: 2),
-        decoration: const pw.BoxDecoration(
-          border: pw.Border(
-            bottom: pw.BorderSide(width: 0.8, color: PdfColors.black),
+    return pw.Directionality(
+      textDirection: pw.TextDirection.rtl,
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.end,
+        children: [
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Container(
+              width: 110,
+              padding: const pw.EdgeInsets.only(bottom: 3),
+              decoration: const pw.BoxDecoration(
+                border: pw.Border(
+                  bottom: pw.BorderSide(width: 0.8, color: PdfColors.black),
+                ),
+              ),
+              child: pw.Text(
+                title,
+                style: titleStyle,
+                textAlign: pw.TextAlign.right,
+                textDirection: pw.TextDirection.rtl,
+              ),
+            ),
           ),
-        ),
-        child: pw.Text(
-          title,
-          style: titleStyle,
-          textAlign: pw.TextAlign.center,
-        ),
+          pw.SizedBox(height: 10),
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text(
+              'الأسم:',
+              style: bodyStyle,
+              textAlign: pw.TextAlign.right,
+              textDirection: pw.TextDirection.rtl,
+            ),
+          ),
+          pw.Spacer(),
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text(
+              'التوقيع:',
+              style: bodyStyle,
+              textAlign: pw.TextAlign.right,
+              textDirection: pw.TextDirection.rtl,
+            ),
+          ),
+          pw.Spacer(),
+        ],
       ),
-      pw.SizedBox(height: 6),
-      pw.Text('الأسم:', style: bodyStyle),
-      pw.SizedBox(height: 18),
-      pw.Text('التوقيع:', style: bodyStyle),
-      pw.SizedBox(height: 18),
-    ];
+    );
   }
 
   /// Cairo لا يحتوي علامات الاتجاه المخفية؛ حذفها يمنع � و□ حول القيم.

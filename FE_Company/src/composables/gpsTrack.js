@@ -11,17 +11,81 @@ export function haversineMeters(lng1, lat1, lng2, lat2) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)))
 }
 
+export function formatIraqClock(value) {
+  const ms = typeof value === 'number' ? value : parseUtcMillis(value)
+  if (!Number.isFinite(ms))
+    return ''
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Baghdad',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(new Date(ms))
+
+  const pick = type => parts.find(p => p.type === type)?.value || ''
+  const hour = String(pick('hour')).padStart(2, '0')
+  const minute = pick('minute').padStart(2, '0')
+  const suffix = /p/i.test(pick('dayPeriod')) ? 'مساءً' : 'صباحاً'
+
+  return `${hour}:${minute} ${suffix}`
+}
+
 export function formatIraqTime(value) {
   const ms = typeof value === 'number' ? value : parseUtcMillis(value)
   if (!Number.isFinite(ms))
     return ''
 
-  return new Intl.DateTimeFormat('en-GB', {
+  const date = new Date(ms)
+  const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Baghdad',
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
-    hour12: false,
-  }).format(new Date(ms))
+    hour12: true,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).formatToParts(date)
+
+  const pick = type => parts.find(p => p.type === type)?.value || ''
+  const hour = String(pick('hour')).padStart(2, '0')
+  const minute = pick('minute').padStart(2, '0')
+  const suffix = /p/i.test(pick('dayPeriod')) ? 'مساءً' : 'صباحاً'
+  const clock = `${hour}:${minute} ${suffix}`
+  const ymd = `${pick('year')}-${pick('month')}-${pick('day')}`
+  const todayParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Baghdad',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).formatToParts(new Date())
+  const today = `${todayParts.find(p => p.type === 'year')?.value}-${todayParts.find(p => p.type === 'month')?.value}-${todayParts.find(p => p.type === 'day')?.value}`
+  if (ymd !== today)
+    return `${pick('day')}/${pick('month')} ${clock}`
+
+  return clock
+}
+
+const IRAQ_OFFSET_MS = 3 * 60 * 60 * 1000
+const OFFICIAL_SLOT_MS = 10 * 60 * 1000
+
+export function floorIraqTenMinuteUtc(ms) {
+  const iraq = ms + IRAQ_OFFSET_MS
+  const slotted = Math.floor(iraq / OFFICIAL_SLOT_MS) * OFFICIAL_SLOT_MS
+
+  return slotted - IRAQ_OFFSET_MS
+}
+
+export function officialTenMinutePoints(points) {
+  const bySlot = new Map()
+  for (const point of points || []) {
+    const slot = floorIraqTenMinuteUtc(point.t)
+    bySlot.set(slot, { ...point, t: slot })
+  }
+
+  return [...bySlot.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, point]) => point)
 }
 
 const GRANT = 'LOCATION_PERMISSION_GRANTED'
@@ -35,7 +99,7 @@ export function normalizePoints(rawPoints) {
     .map(p => ({
       lng: Number(p.longitude ?? p.Longitude),
       lat: Number(p.latitude ?? p.Latitude),
-      t: parseUtcMillis(p.capturedAt ?? p.CapturedAt),
+      t: parseUtcMillis(p.capturedAtUtc ?? p.CapturedAtUtc ?? p.capturedAt ?? p.CapturedAt),
       acc: (p.accuracy ?? p.Accuracy) == null ? null : Number(p.accuracy ?? p.Accuracy),
     }))
     .filter(p => Number.isFinite(p.lng) && Number.isFinite(p.lat)
@@ -53,7 +117,7 @@ export function dropBeforePermission(rawPoints, events) {
   if (grant == null)
     return points
 
-  return points.filter(p => parseUtcMillis(p.capturedAt ?? p.CapturedAt ?? p.t) >= grant)
+  return points.filter(p => parseUtcMillis(p.capturedAtUtc ?? p.CapturedAtUtc ?? p.capturedAt ?? p.CapturedAt ?? p.t) >= grant)
 }
 
 export function thinByMeters(points, meters = 5) {

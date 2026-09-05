@@ -15,7 +15,16 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  static String get _base {
+  static String get _base => resolveBase();
+
+  /// Demo always uses published BE_Company :8080/api/. Never Session, Gateway, or /api/api.
+  static String resolveBase() {
+    if (AppEnv.isDemo) {
+      return AppEnv.normalizeBase(AppEnv.demoHostFallback);
+    }
+    if (AppEnv.isLocal) {
+      return AppEnv.apiBase();
+    }
     final session = Session.apiBase;
     if (session != null && session.isNotEmpty) {
       return AppEnv.normalizeBase(session);
@@ -37,11 +46,11 @@ class ApiClient {
 
   static Uri _uri(String path, [Map<String, String>? query]) {
     var normalized = path.startsWith('/') ? path.substring(1) : path;
-    final base = _base;
-    if (base.toLowerCase().endsWith('/api/') &&
-        normalized.toLowerCase().startsWith('api/')) {
+    normalized = normalized.replaceAll(RegExp(r'sales-gw/', caseSensitive: false), '');
+    while (normalized.toLowerCase().startsWith('api/')) {
       normalized = normalized.substring(4);
     }
+    final base = _base;
     return Uri.parse('$base$normalized').replace(queryParameters: query);
   }
 
@@ -85,6 +94,30 @@ class ApiClient {
           body: body == null ? null : jsonEncode(body),
         )
         .timeout(const Duration(seconds: 40));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(
+        _errorMessage(response),
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+    return _decode(response);
+  }
+
+  static Future<dynamic> postMultipart(
+    String path, {
+    required List<int> bytes,
+    required String fileName,
+    String field = 'file',
+  }) async {
+    final request = http.MultipartRequest('POST', _uri(path));
+    final token = Session.token;
+    if (token != null && token.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+    request.files.add(http.MultipartFile.fromBytes(field, bytes, filename: fileName));
+    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final response = await http.Response.fromStream(streamed);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException(
         _errorMessage(response),
@@ -149,3 +182,4 @@ class ApiClient {
     return _decode(response);
   }
 }
+

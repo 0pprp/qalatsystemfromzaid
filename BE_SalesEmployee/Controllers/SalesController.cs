@@ -75,6 +75,13 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("active-customer-lists")]
+        public async Task<IActionResult> ActiveCustomerLists(CancellationToken ct)
+        {
+            return await ProxyAssigned("sales/active-customer-lists", HttpMethod.Get, null, ct);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost]
         public async Task<IActionResult> CreateDraft([FromBody] JsonElement body, CancellationToken ct)
         {
@@ -103,10 +110,64 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
-        [HttpPost("{id:int}/complete")]
-        public async Task<IActionResult> Complete(int id, CancellationToken ct)
+        [HttpPost("{id:int}/shop-image")]
+        public async Task<IActionResult> UploadShopImage(int id, [FromForm] IFormFile? file, CancellationToken ct)
         {
-            return await ProxyAssigned($"sales/{id}/complete", HttpMethod.Post, null, ct);
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            if (file == null || file.Length <= 0)
+            {
+                return BadRequest(new { message = "صورة المحل مطلوبة." });
+            }
+
+            using var form = new MultipartFormDataContent();
+            await using var stream = file.OpenReadStream();
+            var part = new StreamContent(stream);
+            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
+            form.Add(part, "file", file.FileName);
+            return await ProxyAssigned($"sales/{id}/shop-image", HttpMethod.Post, form, ct);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("{id:int}/shop-image")]
+        public async Task<IActionResult> ShopImage(int id, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var user = TokenService.FromPrincipal(User);
+            using var response = await _proxy.SendAuthorizedAsync(
+                user.CityLink, $"sales/{id}/shop-image", HttpMethod.Get, user.BranchToken, null, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(ct);
+                return StatusCode((int)response.StatusCode, string.IsNullOrWhiteSpace(error) ? null : BranchProxyService.TryParseJson(error));
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+            return File(bytes, contentType);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("{id:int}/complete")]
+        public async Task<IActionResult> Complete(int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var json = body.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
+                ? "{}"
+                : body.GetRawText();
+            return await ProxyAssigned(
+                $"sales/{id}/complete",
+                HttpMethod.Post,
+                new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+                ct);
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
@@ -238,6 +299,20 @@ namespace BE_SalesEmployee.Controllers
             ProxyAssigned($"sales/requests/{id}/start-processing", HttpMethod.Post, null, ct);
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/{id:int}/prepare")]
+        public Task<IActionResult> Prepare(int id, CancellationToken ct) =>
+            ProxyAssigned($"sales/requests/{id}/prepare", HttpMethod.Post, null, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/{id:int}/pending")]
+        public async Task<IActionResult> Pend(int id, [FromBody] JsonElement body, CancellationToken ct) =>
+            await ProxyAssigned(
+                $"sales/requests/{id}/pending",
+                HttpMethod.Post,
+                new StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
+                ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/reject")]
         public async Task<IActionResult> RejectRequest(int id, [FromBody] JsonElement body, CancellationToken ct) =>
             await ProxyAssigned(
@@ -251,9 +326,9 @@ namespace BE_SalesEmployee.Controllers
         {
             var user = TokenService.FromPrincipal(User);
             var ratingLevel = ReadInt(body, "ratingLevel") ?? ReadInt(body, "RatingLevel");
-            if (ratingLevel == 1)
+            if (ratingLevel == 1 || ratingLevel == 2)
             {
-                return BadRequest(new { message = "لا يمكن إنشاء مبيع لتقييم مرفوض" });
+                return BadRequest(new { message = "لا يمكن إنشاء مبيع لتقييم مرفوض أو مقبول" });
             }
 
             using var saleResponse = await _proxy.SendAuthorizedAsync(

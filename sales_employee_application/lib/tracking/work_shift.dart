@@ -121,6 +121,7 @@ class LocalLocationPoint {
         'heading': heading,
         'capturedAtUtc': capturedAtUtc.toUtc().toIso8601String(),
         'deviceSequence': deviceSequence,
+        'isOfficial': true,
       };
 }
 

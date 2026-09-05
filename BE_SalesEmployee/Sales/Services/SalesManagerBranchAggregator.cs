@@ -9,7 +9,9 @@ namespace BE_SalesEmployee.Sales.Services
         Task<IReadOnlyList<AdminCity>> BranchesAsync(CancellationToken ct);
         Task<(int Status, object? Body)> GetAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> GetOneAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
+        Task<(int Status, object? Body)> GetFileAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct);
+        Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, CancellationToken ct);
         Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct);
     }
 
@@ -85,6 +87,38 @@ namespace BE_SalesEmployee.Sales.Services
             return ((int)response.StatusCode, Stamp(raw, city));
         }
 
+        public async Task<(int Status, object? Body)> GetFileAsync(
+            GatewayUser user,
+            string cityValue,
+            string companyPath,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return (400, new { message = "يجب تحديد المحافظة." });
+            }
+
+            var city = await FindAsync(cityValue, ct);
+            if (city == null)
+            {
+                return (404, new { message = "المحافظة غير موجودة." });
+            }
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(BranchTimeout);
+            using var response = await _proxy.SendManagerAsync(
+                city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                var raw = await response.Content.ReadAsStringAsync(ct);
+                return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : BranchProxyService.TryParseJson(raw));
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+            return (200, (bytes, contentType));
+        }
+
         public async Task<(int Status, object? Body)> PostAsync(
             GatewayUser user,
             string cityValue,
@@ -109,6 +143,43 @@ namespace BE_SalesEmployee.Sales.Services
                 city.Link, companyPath, HttpMethod.Post, jsonBody, user.UserName, cts.Token);
             var raw = await response.Content.ReadAsStringAsync(ct);
             return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : Stamp(raw, city) ?? BranchProxyService.TryParseJson(raw));
+        }
+
+        public async Task<(int Status, object? Body)> SearchCustomersAsync(
+            GatewayUser user,
+            string? query,
+            CancellationToken ct)
+        {
+            var q = NormalizeArabic(query);
+            if (q.Length < 2)
+            {
+                return (400, new { message = "اكتب حرفين على الأقل للبحث" });
+            }
+
+            var targets = await GetTargetsAsync(null, ct);
+            var chunks = await Task.WhenAll(targets.Select(city =>
+                FetchArrayAsync(user, city, $"sales-manager/customers/search?q={Uri.EscapeDataString(q)}", ct)));
+            var merged = new List<JsonNode>();
+            foreach (var chunk in chunks)
+            {
+                foreach (var item in chunk)
+                {
+                    if (item is not JsonObject obj)
+                    {
+                        continue;
+                    }
+
+                    ShapeCustomer(obj);
+                    if (!CustomerMatches(obj, q))
+                    {
+                        continue;
+                    }
+
+                    merged.Add(obj);
+                }
+            }
+
+            return (200, merged);
         }
 
         public async Task<(int Status, object? Body)> DashboardAsync(
@@ -250,7 +321,7 @@ namespace BE_SalesEmployee.Sales.Services
 
         private static string ReadId(JsonObject obj)
         {
-            foreach (var name in new[] { "employeeId", "EmployeeId", "saleId", "SaleId", "id", "Id" })
+            foreach (var name in new[] { "customerId", "CustomerId", "employeeId", "EmployeeId", "saleId", "SaleId", "id", "Id" })
             {
                 if (obj.TryGetPropertyValue(name, out var value) && value != null)
                 {
@@ -282,6 +353,98 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             return 0;
+        }
+
+        private static void ShapeCustomer(JsonObject obj)
+        {
+            var name = ReadAny(obj, "customerName", "CustomerName", "fullName", "FullName");
+            var phone = ReadAny(obj, "phone", "Phone");
+            var id = ReadAny(obj, "customerId", "CustomerId");
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                obj["customerName"] = name;
+                obj["fullName"] = name;
+            }
+
+            if (!string.IsNullOrWhiteSpace(phone))
+            {
+                obj["phone"] = phone;
+            }
+
+            if (int.TryParse(id, out var customerId) && customerId > 0)
+            {
+                obj["customerId"] = customerId;
+            }
+
+            var cityValue = ReadAny(obj, "cityValue", "CityValue", "sourceCityValue", "SourceCityValue");
+            if (!string.IsNullOrWhiteSpace(cityValue))
+            {
+                obj["cityValue"] = cityValue;
+            }
+
+            obj["branchKey"] = $"{ReadAny(obj, "cityValue")}:{ReadAny(obj, "customerId")}";
+        }
+
+        private static bool CustomerMatches(JsonObject obj, string normalizedQuery)
+        {
+            if (string.IsNullOrWhiteSpace(normalizedQuery))
+            {
+                return true;
+            }
+
+            var hay = NormalizeArabic(string.Join(" ",
+                ReadAny(obj, "customerName", "fullName"),
+                ReadAny(obj, "phone"),
+                ReadAny(obj, "cityName", "branchName")));
+            return hay.Contains(normalizedQuery, StringComparison.Ordinal);
+        }
+
+        internal static string NormalizeArabic(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var chars = value.Trim()
+                .Replace("أ", "ا", StringComparison.Ordinal)
+                .Replace("إ", "ا", StringComparison.Ordinal)
+                .Replace("آ", "ا", StringComparison.Ordinal)
+                .Replace("ى", "ي", StringComparison.Ordinal)
+                .ToCharArray();
+            var sb = new System.Text.StringBuilder(chars.Length);
+            var space = false;
+            foreach (var c in chars)
+            {
+                if (char.IsWhiteSpace(c))
+                {
+                    if (!space && sb.Length > 0)
+                    {
+                        sb.Append(' ');
+                    }
+
+                    space = true;
+                    continue;
+                }
+
+                space = false;
+                sb.Append(c);
+            }
+
+            return sb.ToString();
+        }
+
+        private static string ReadAny(JsonObject obj, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (obj.TryGetPropertyValue(name, out var value) && value != null)
+                {
+                    return value.ToString() ?? "";
+                }
+            }
+
+            return "";
         }
     }
 }

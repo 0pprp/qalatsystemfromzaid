@@ -18,7 +18,7 @@ class _RatingScreenState extends State<RatingScreen> {
 
   static const labels = {
     1: '1 — مرفوض (سبب إلزامي، لا بيع)',
-    2: '2 — مقبول (سعر البيع ×2)',
+    2: '2 — مقبول (لا بيع، ملاحظة إلزامية)',
     3: '3 — عادي + ملاحظة',
     4: '4 — عادي + ملاحظة',
     5: '5 — عادي + ملاحظة',
@@ -43,6 +43,10 @@ class _RatingScreenState extends State<RatingScreen> {
   }
 
   Future<void> _save() async {
+    if (_notes.text.trim().isEmpty) {
+      _toast('الملاحظة إلزامية');
+      return;
+    }
     if (_level == 1 && _reason.text.trim().isEmpty) {
       _toast('سبب الرفض إلزامي');
       return;
@@ -64,12 +68,10 @@ class _RatingScreenState extends State<RatingScreen> {
         reason: _reason.text.trim(),
       );
       if (!mounted) return;
-      _toast(_level == 1
-          ? 'تم حفظ الرفض — لا يمكن إنشاء مبيع'
-          : _level == 2
-              ? 'تم التقييم — الأسعار ستُضاعف في المبيع والعقد والوصل'
-              : 'تم حفظ التقييم');
-      if (_level != 1) {
+      _toast(_level == 1 || _level == 2
+          ? 'تم الحفظ — ممنوع إتمام البيع'
+          : 'تم حفظ التقييم');
+      if (_level != 1 && _level != 2) {
         AppState.instance.goTo(2);
       }
     } on ApiException catch (e) {

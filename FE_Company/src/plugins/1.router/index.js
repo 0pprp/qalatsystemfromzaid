@@ -59,6 +59,9 @@ router.beforeEach((to, from, next) => {
     return next('/login')
   }
 
+  if (to.path === '/support')
+    return next(homePath())
+
   const userType = localStorage.getItem('UserType') || ''
   if (userType === 'مدير مبيعات' && to.path === '/')
     return next('/sales-manager-dashboard')

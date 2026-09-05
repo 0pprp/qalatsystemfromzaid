@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
-import { branchRowKey, locationStatusLabel, smGet, withCityQuery } from '@/composables/salesManagerApi'
+import { branchRowKey, locationStatusLabel, smGetEmployees } from '@/composables/salesManagerApi'
 
 const rows = ref([])
 const cityValue = ref('')
@@ -11,9 +11,7 @@ async function load() {
   const q = []
   if (shiftStatus.value)
     q.push(`shiftStatus=${encodeURIComponent(shiftStatus.value)}`)
-  const path = `employees${q.length ? `?${q.join('&')}` : ''}`
-
-  rows.value = await smGet(withCityQuery(path, cityValue.value))
+  rows.value = await smGetEmployees(cityValue.value, q.join('&'))
 }
 
 onMounted(load)

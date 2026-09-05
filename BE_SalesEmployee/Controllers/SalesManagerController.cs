@@ -77,13 +77,51 @@ namespace BE_SalesEmployee.Controllers
             return ListAsync(cityValue, "sales-manager/sales" + q, ct);
         }
 
-        [HttpGet("sales/{cityValue}/{saleId:int}")]
-        public Task<IActionResult> Sale(string cityValue, int saleId, CancellationToken ct) =>
-            OneAsync(cityValue, $"sales-manager/sales/{saleId}", ct);
+        [HttpGet("customers/{cityValue}/profile")]
+        public Task<IActionResult> CustomerProfile(
+            string cityValue,
+            [FromQuery] int? customerId,
+            [FromQuery] string? name,
+            [FromQuery] string? phone,
+            CancellationToken ct)
+        {
+            var q = Query(
+                ("customerId", customerId?.ToString()),
+                ("name", name),
+                ("phone", phone));
+            return OneAsync(cityValue, "sales-manager/customers/profile" + q, ct);
+        }
+
+        [HttpPost("customers/{cityValue}/notes")]
+        public async Task<IActionResult> AddCustomerNote(string cityValue, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, "sales-manager/customers/notes", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpGet("sales/{cityValue}/{saleId:int}/shop-image")]
+        public async Task<IActionResult> ShopImage(string cityValue, int saleId, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetFileAsync(
+                user, cityValue, $"sales-manager/sales/{saleId}/shop-image", ct);
+            if (payload is ValueTuple<byte[], string> file)
+            {
+                return File(file.Item1, file.Item2);
+            }
+
+            return StatusCode(status, payload);
+        }
 
         [HttpGet("customers/search")]
-        public Task<IActionResult> Search([FromQuery] string? q, [FromQuery] string? cityValue, CancellationToken ct) =>
-            ListAsync(cityValue, $"sales-manager/customers/search?q={Uri.EscapeDataString(q ?? "")}", ct);
+        public async Task<IActionResult> Search([FromQuery] string? q, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.SearchCustomersAsync(user, q, ct);
+            return StatusCode(status, payload);
+        }
 
         [HttpGet("sales-requests")]
         public Task<IActionResult> Requests(
@@ -116,6 +154,24 @@ namespace BE_SalesEmployee.Controllers
 
             var (status, payload) = await _aggregator.PostAsync(
                 user, city, "sales-manager/sales-requests", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/{cityValue}/{id:int}/assign")]
+        public async Task<IActionResult> Assign(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/assign", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/{cityValue}/{id:int}/return")]
+        public async Task<IActionResult> Return(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/return", body.GetRawText(), ct);
             return StatusCode(status, payload);
         }
 
