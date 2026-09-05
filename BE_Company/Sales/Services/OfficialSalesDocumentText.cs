@@ -8,7 +8,6 @@ namespace BE_Company.Sales.Services
     /// </summary>
     public static class OfficialSalesDocumentText
     {
-        public const char Ltr = '\u200E';
 
         public sealed record Part(string Text, bool IsField);
 
@@ -234,18 +233,18 @@ namespace BE_Company.Sales.Services
             public void Text(string value) => _parts.Add(new Part(value, false));
 
             public void StaticParens(string inner) =>
-                _parts.Add(new Part($"{Ltr}({inner}){Ltr}", false));
+                _parts.Add(new Part($"({inner})", false));
 
             public void Field(string value)
             {
                 var trimmed = (value ?? string.Empty).Trim();
                 if (trimmed.Length == 0)
                 {
-                    _parts.Add(new Part($"{Ltr}( .............................. ){Ltr}", false));
+                    _parts.Add(new Part("( .............................. )", false));
                     return;
                 }
 
-                _parts.Add(new Part($"{Ltr}( {trimmed} ){Ltr}", true));
+                _parts.Add(new Part($"( {trimmed} )", true));
             }
 
             public Paragraph Build() => new(_parts);
