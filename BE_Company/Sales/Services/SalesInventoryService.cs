@@ -56,7 +56,6 @@ namespace BE_Company.Sales.Services
             {
                 var rows = await connection.QueryAsync<SalesCustomerListDTO>(new CommandDefinition(
                     SalesActiveCustomerListsQuery.Sql,
-                    new { FromDate = SalesActiveCustomerListsQuery.FromDate },
                     cancellationToken: ct));
                 return rows.Where(r => r.ListId > 0 && !string.IsNullOrWhiteSpace(r.ListName)).ToList();
             }
@@ -118,24 +117,13 @@ namespace BE_Company.Sales.Services
     }
 
     /// <summary>
-    /// قوائم الزبائن النشطة = Delegates التي لها واصل مالي فعلي منذ 2026-07-01.
-    /// مصدر الحقيقة هو شاشة الإحصائيات: Delegates_Statistics.AmountReceipt
-    /// من View_CustomersPaymentsDelegate_Final (CustomersPayments + AddToBox * 1448).
+    /// قوائم الزبون = كل Delegates في قاعدة الفرع الحالي، بدون فلترة نشاط أو تسديد.
     /// </summary>
     public static class SalesActiveCustomerListsQuery
     {
-        public static readonly DateTime FromDate = new(2026, 7, 1);
-
         public const string Sql = """
 SELECT d.DelegateID AS ListId, d.DelegateName AS ListName
 FROM dbo.Delegates d
-WHERE (
-    SELECT ISNULL(SUM(ISNULL(p.AmountDenar, 0)), 0)
-    FROM dbo.View_CustomersPaymentsDelegate_Final p
-    WHERE p.DelegateID = d.DelegateID
-      AND CONVERT(DATE, p.PaymentDate) >= @FromDate
-      AND CONVERT(DATE, p.PaymentDate) <= CONVERT(DATE, GETDATE())
-) > 0
 ORDER BY d.DelegateName
 """;
     }
