@@ -5,6 +5,7 @@ using BE_Company.Sales.DTO;
 using BE_Company.Sales.Models;
 using BE_Company.Sales.Services;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Xunit;
 
 namespace BE_Company.Sales.Tests
@@ -38,7 +39,7 @@ namespace BE_Company.Sales.Tests
             EvaluationLevel = eval,
             EvaluationNote = "ملاحظة",
             BaseSalePrice = 2000000,
-            FinalSalePrice = eval == 2 ? 4000000 : 2000000,
+            FinalSalePrice = SalesEvaluationLevels.BlocksSale(eval) ? 0 : 2000000,
             DailyInstallment = 25000,
             Items =
             [
@@ -47,16 +48,30 @@ namespace BE_Company.Sales.Tests
         };
 
         [Fact]
-        public async Task Complete_PendingAccepted_Succeeds()
+        public async Task Complete_Accepted_CannotComplete()
         {
-            var repo = Seed(SalesEvaluationLevels.Accepted);
-            var docs = new FakeDocumentService();
-            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), docs);
-            var result = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
-            Assert.Equal(SalesStatuses.Completed, result.Status);
-            Assert.Equal(4000000, result.FinalSalePrice);
-            Assert.Equal(1, repo.DeductionCount);
-            Assert.Equal(2, result.Documents.Count);
+            var repo = Seed(SalesEvaluationLevels.Accepted, SalesStatuses.Rejected);
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => svc.CompleteAsync(10, Identity(), CancellationToken.None));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(0, repo.DeductionCount);
+        }
+
+        [Fact]
+        public void Pricing_Accepted_DoesNotDouble()
+        {
+            var pricing = new SalesPricingService();
+            Assert.Equal(0, pricing.ComputeFinalSalePrice(2000000, SalesEvaluationLevels.Accepted));
+            Assert.Equal(SalesStatuses.Rejected, pricing.ResolveStatus(SalesEvaluationLevels.Accepted));
+            Assert.Equal(2000000, pricing.ComputeFinalSalePrice(2000000, SalesEvaluationLevels.Good));
+        }
+
+        [Fact]
+        public void Inventory_HidesFitoutAndExternalMobiles()
+        {
+            Assert.True(SalesInventoryService.IsHiddenFromSalesStaff("تجهيز محل"));
+            Assert.True(SalesInventoryService.IsHiddenFromSalesStaff("موبايلات خارجية"));
+            Assert.False(SalesInventoryService.IsHiddenFromSalesStaff("ثلاجة سامسونج"));
         }
 
         [Fact]
@@ -67,6 +82,42 @@ namespace BE_Company.Sales.Tests
             var result = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
             Assert.Equal(SalesStatuses.Completed, result.Status);
             Assert.Equal(2000000, result.FinalSalePrice);
+            Assert.Equal(1, repo.DeductionCount);
+        }
+
+        [Fact]
+        public async Task Complete_MissingShop_FailsWhenShopServicePresent()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            var shops = new FakeShopService();
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService(), shops: shops);
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => svc.CompleteAsync(10, Identity(), null, CancellationToken.None));
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Equal(0, repo.DeductionCount);
+            Assert.Equal(0, shops.UpsertCount);
+        }
+
+        [Fact]
+        public async Task Complete_Rejected_DoesNotUpsertShop()
+        {
+            var repo = Seed(SalesEvaluationLevels.Accepted, SalesStatuses.Rejected);
+            var shops = new FakeShopService();
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService(), shops: shops);
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => svc.CompleteAsync(10, Identity(), ValidShop(), CancellationToken.None));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(0, shops.UpsertCount);
+            Assert.Equal(0, repo.DeductionCount);
+        }
+
+        [Fact]
+        public async Task Complete_PendingGood_WithShop_Succeeds()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            var shops = new FakeShopService();
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService(), shops: shops);
+            var result = await svc.CompleteAsync(10, Identity(), ValidShop(), CancellationToken.None);
+            Assert.Equal(SalesStatuses.Completed, result.Status);
+            Assert.Equal(1, shops.UpsertCount);
             Assert.Equal(1, repo.DeductionCount);
         }
 
@@ -104,7 +155,7 @@ namespace BE_Company.Sales.Tests
         [Fact]
         public async Task InventoryDeductedExactlyOnce()
         {
-            var repo = Seed(SalesEvaluationLevels.Accepted);
+            var repo = Seed(SalesEvaluationLevels.Good);
             repo.Stock[5] = 3;
             var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
             await svc.CompleteAsync(10, Identity(), CancellationToken.None);
@@ -205,5 +256,60 @@ namespace BE_Company.Sales.Tests
             repo.Stock[5] = 3;
             return repo;
         }
+
+        private static SalesShopCompleteDTO ValidShop() => new()
+        {
+            ShopName = "محل أحمد",
+            ShopBusinessType = "مواد غذائية",
+            ShopStockEstimatedValue = 1500000,
+            EstimatedDailyRevenue = 80000,
+            ShopLength = 8,
+            ShopWidth = 5,
+            ShopImageKey = "sales/10/shop.jpg"
+        };
+    }
+
+    file sealed class FakeShopService : ISalesShopProfileService
+    {
+        public int UpsertCount { get; private set; }
+
+        public Task EnsureSchemaAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public void RequireCompletePayload(SalesShopCompleteDTO? shop)
+        {
+            if (shop == null
+                || string.IsNullOrWhiteSpace(shop.ShopName)
+                || string.IsNullOrWhiteSpace(shop.ShopBusinessType)
+                || string.IsNullOrWhiteSpace(shop.ShopImageKey))
+            {
+                throw new SalesCompleteException(400, "بيانات المحل مطلوبة قبل إتمام البيع.");
+            }
+
+            if (shop.ShopStockEstimatedValue <= 0 || shop.EstimatedDailyRevenue <= 0 || shop.ShopLength <= 0 || shop.ShopWidth <= 0)
+            {
+                throw new SalesCompleteException(400, "بيانات المحل مطلوبة قبل إتمام البيع.");
+            }
+        }
+
+        public Task<SalesShopProfileDTO> SaveImageAsync(int saleId, int employeeId, IFormFile file, CancellationToken ct) =>
+            Task.FromResult(new SalesShopProfileDTO { SaleId = saleId, ShopImageKey = $"sales/{saleId}/shop.jpg" });
+
+        public Task UpsertFromCompleteAsync(SalesDraftDTO sale, SalesShopCompleteDTO shop, CancellationToken ct)
+        {
+            UpsertCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task<SalesShopProfileDTO?> GetBySaleIdAsync(int saleId, CancellationToken ct) =>
+            Task.FromResult<SalesShopProfileDTO?>(null);
+
+        public Task<(string FileName, byte[] Bytes)?> ReadImageAsync(int saleId, CancellationToken ct) =>
+            Task.FromResult<(string FileName, byte[] Bytes)?>(null);
+
+        public Task<SalesCustomerProfileDTO> GetCustomerProfileAsync(int? customerId, string? customerName, string? phone, CancellationToken ct) =>
+            Task.FromResult(new SalesCustomerProfileDTO());
+
+        public Task<SalesCustomerNoteDTO> AddNoteAsync(SalesCustomerNoteCreateDTO note, string authorRole, string? authorName, CancellationToken ct) =>
+            Task.FromResult(new SalesCustomerNoteDTO { Note = note.Note ?? "", AuthorRole = authorRole });
     }
 }

@@ -48,12 +48,20 @@ namespace BE_Company.Sales.DTO
 
     public sealed class SalesManagerRoutePointDTO
     {
+        public int ShiftId { get; set; }
+        public long DeviceSequence { get; set; }
         public double Latitude { get; set; }
         public double Longitude { get; set; }
         public double? Accuracy { get; set; }
         public DateTime CapturedAt { get; set; }
+        public DateTime CapturedAtUtc
+        {
+            get => CapturedAt;
+            set => CapturedAt = value;
+        }
         public double? Speed { get; set; }
         public double? Heading { get; set; }
+        public bool IsOfficial { get; set; }
     }
 
     public sealed class SalesManagerTrackingEventDTO

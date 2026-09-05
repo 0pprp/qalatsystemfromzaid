@@ -17,6 +17,7 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesDraftRepository, SalesDraftRepository>();
             services.AddScoped<ISalesCompleteRepository, SalesCompleteRepository>();
             services.AddScoped<ISalesDocumentService, SalesDocumentService>();
+            services.AddScoped<ISalesShopProfileService, SalesShopProfileService>();
             services.AddScoped<ISalesCompleteService, SalesCompleteService>();
             services.AddScoped<SalesDraftService>();
             services.AddSingleton<IIraqClock, SystemIraqClock>();

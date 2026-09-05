@@ -35,12 +35,12 @@ namespace BE_Company.Sales.Services
 INSERT INTO dbo.SalesDrafts
 (EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
  FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
- EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, SalesRequestId)
+ EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, SalesRequestId, CustomerListId)
 OUTPUT INSERTED.SaleId
 VALUES
 (@EmployeeId, @UserName, @UserType, @CityValue, @CityName, @Status, @CustomerId, @SourceCityValue,
  @FullName, @Phone, @Province, @NationalCardNumber, @Address, @NearestLandmark, @MukhtarName, @RationCenterNumber,
- @EvaluationLevel, @EvaluationNote, @BaseSalePrice, @FinalSalePrice, @DailyInstallment, @SalesRequestId);",
+ @EvaluationLevel, @EvaluationNote, @BaseSalePrice, @FinalSalePrice, @DailyInstallment, @SalesRequestId, @CustomerListId);",
                     draft, tx, cancellationToken: ct));
 
                 foreach (var item in draft.Items)
@@ -80,7 +80,7 @@ VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSaleP
                 @"SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
                          FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
                          EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, CreatedAt,
-                         CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId
+                         CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
                   FROM dbo.SalesDrafts
                   WHERE EmployeeId = @EmployeeId
                   ORDER BY CreatedAt DESC",
@@ -114,7 +114,7 @@ VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSaleP
                 @"SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
                          FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
                          EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, CreatedAt,
-                         CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId
+                         CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
                   FROM dbo.SalesDrafts
                   WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId",
                 new { SaleId = saleId, EmployeeId = employeeId }, cancellationToken: ct));
@@ -198,6 +198,8 @@ IF COL_LENGTH(N'dbo.SalesDrafts', N'DocumentsStatus') IS NULL
     ALTER TABLE dbo.SalesDrafts ADD DocumentsStatus NVARCHAR(30) NULL;
 IF COL_LENGTH(N'dbo.SalesDrafts', N'SalesRequestId') IS NULL
     ALTER TABLE dbo.SalesDrafts ADD SalesRequestId INT NULL;
+IF COL_LENGTH(N'dbo.SalesDrafts', N'CustomerListId') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD CustomerListId INT NULL;
 IF OBJECT_ID(N'dbo.SalesDraftItems', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SalesDraftItems (

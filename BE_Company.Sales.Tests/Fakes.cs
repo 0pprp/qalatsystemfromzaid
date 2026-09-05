@@ -37,7 +37,7 @@ namespace BE_Company.Sales.Tests
                 throw new SalesCompleteException(403, "لا يمكنك إتمام عملية تخص موظفاً أو فرعاً آخر.");
             }
 
-            if (sale.Status == SalesStatuses.Rejected || sale.EvaluationLevel == SalesEvaluationLevels.Rejected)
+            if (sale.Status == SalesStatuses.Rejected || SalesEvaluationLevels.BlocksSale(sale.EvaluationLevel))
             {
                 throw new SalesCompleteException(409, "لا يمكن إتمام عملية بيع مرفوضة.");
             }

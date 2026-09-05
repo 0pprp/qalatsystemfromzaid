@@ -11,6 +11,9 @@ namespace BE_Company.Sales.Authorization
         public static bool IsKnown(int level) =>
             level is Rejected or Accepted or Good or VeryGood or Excellent;
 
+        public static bool BlocksSale(int level) =>
+            level is Rejected or Accepted;
+
         public static string DisplayName(int level) => level switch
         {
             Rejected => "مرفوض",

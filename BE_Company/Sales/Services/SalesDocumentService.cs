@@ -85,15 +85,8 @@ namespace BE_Company.Sales.Services
 
         private byte[] BuildContract(SalesDraftDTO sale)
         {
-            var goods = SalesCompleteRules.GoodsDescription(sale.Items);
-            var date = (sale.CompletedAt ?? DateTime.Now).ToString("yyyy/MM/dd");
-            var total = sale.FinalSalePrice.ToString("#,##0");
-            var totalWords = IraqiDinarWords.ToArabic(sale.FinalSalePrice);
-            var installment = sale.DailyInstallment.ToString("#,##0");
-            var installmentWords = IraqiDinarWords.ToArabic(sale.DailyInstallment);
-            var ration = sale.RationCenterNumber?.Trim();
-            var hasRation = !string.IsNullOrWhiteSpace(ration);
-            var employee = sale.UserName?.Trim() ?? string.Empty;
+            var values = OfficialSalesDocumentText.FromSale(sale);
+            var paragraphs = OfficialSalesDocumentText.BuildContractParagraphs(values);
             var bold = BoldFamily();
 
             return Document.Create(container =>
@@ -101,96 +94,25 @@ namespace BE_Company.Sales.Services
                 container.Page(page =>
                 {
                     ConfigurePage(page);
-                    page.Content().Border(1.5f).Padding(14).Column(col =>
+                    page.Content().Column(col =>
                     {
-                        col.Item().Row(row =>
+                        col.Item().AlignCenter().Element(c => ContractTitle(c, bold));
+                        col.Item().PaddingTop(6);
+                        foreach (var paragraph in paragraphs)
                         {
-                            Signature(row, "الطرف الأول");
-                            Signature(row, "الطرف الثاني");
-                            Signature(row, "مندوب المبيعات");
-                            Signature(row, "أمين الصندوق");
-                        });
-                        col.Item().PaddingTop(8).AlignCenter().Text("عقد بيع").Bold().FontFamily(bold).FontSize(16);
-                        col.Item().PaddingTop(10).Text(text =>
+                            col.Item().PaddingBottom(3).Element(c => RichParagraph(c, paragraph, bold, 12));
+                        }
+
+                        col.Item().PaddingTop(8).Row(row =>
                         {
-                            text.Span("حرصاً من الطرفين على إتمام عملية البيع والشراء وفقاً للأحكام والشروط المتفق عليها، فقد تم تحرير هذا العقد بتاريخ ").FontSize(10.5f);
-                            text.Span(date).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span(".").FontSize(10.5f);
+                            SignatureSpace(row, "الطرف الأول", 200, 88);
+                            SignatureSpace(row, "أمين الصندوق", 260, 88);
                         });
-                        col.Item().PaddingTop(8).Text(text =>
+                        col.Item().PaddingTop(10).Row(row =>
                         {
-                            text.Span("الطرف الأول: ").FontSize(10.5f);
-                            text.Span("شركة قلعة الضمان للتجارة العامة محدودة المسؤولية").Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span(".").FontSize(10.5f);
+                            SignatureSpace(row, "الطرف الثاني", 200, 60);
+                            SignatureSpace(row, "مندوب المبيعات", 260, 60);
                         });
-                        Mix(col, "الطرف الثاني: ", sale.FullName, bold);
-                        col.Item().Text(text =>
-                        {
-                            text.Span("والذي يحمل البطاقة الوطنية المرقمة ").FontSize(10.5f);
-                            text.Span(sale.NationalCardNumber ?? string.Empty).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span(" والساكن في محافظة ").FontSize(10.5f);
-                            text.Span(sale.Province ?? string.Empty).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span(".").FontSize(10.5f);
-                        });
-                        col.Item().Text(text =>
-                        {
-                            text.Span("أقرب نقطة دالة ").FontSize(10.5f);
-                            text.Span(sale.NearestLandmark ?? string.Empty).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span("  رقم الهاتف ").FontSize(10.5f);
-                            text.Span(sale.Phone ?? string.Empty).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span("  واتساب ").FontSize(10.5f);
-                            text.Span(sale.Phone ?? string.Empty).Bold().FontFamily(bold).FontSize(10.5f);
-                        });
-                        col.Item().Text(text =>
-                        {
-                            text.Span("اسم المختار ").FontSize(10.5f);
-                            text.Span(sale.MukhtarName ?? string.Empty).Bold().FontFamily(bold).FontSize(10.5f);
-                            if (hasRation)
-                            {
-                                text.Span("  رقم مركز التموين ").FontSize(10.5f);
-                                text.Span(ration).Bold().FontFamily(bold).FontSize(10.5f);
-                            }
-                        });
-                        col.Item().PaddingTop(8).Text(text =>
-                        {
-                            text.Span("1. باع الطرف الأول إلى الطرف الثاني بضاعة نوع ").FontSize(10.5f);
-                            text.Span(goods).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span(" بسعر كلي والبالغ قدره رقماً ").FontSize(10.5f);
-                            text.Span(total).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span(" كتابة ").FontSize(10.5f);
-                            text.Span(totalWords).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span(".").FontSize(10.5f);
-                        });
-                        col.Item().PaddingTop(4).Text(text =>
-                        {
-                            text.Span("2. يلتزم الطرف الثاني بتسديد المبلغ الكلي على شكل دفعات بقسط يومي قدره رقماً ").FontSize(10.5f);
-                            text.Span(installment).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span(" كتابة ").FontSize(10.5f);
-                            text.Span(installmentWords).Bold().FontFamily(bold).FontSize(10.5f);
-                            text.Span(".").FontSize(10.5f);
-                        });
-                        col.Item().Text("يبدأ القسط الأول من تاريخ توقيع هذا العقد ويستمر دون توقف إلى نهاية تسديد كامل المبلغ.").FontSize(10.5f);
-                        col.Item().PaddingTop(4).Text("3. على الطرف الثاني إشعار الطرف الأول عند انتقال محل عمله أو سكنه ويبلغ الطرف الأول بعنوان محل عمله أو سكنه الجديد.").FontSize(10.5f);
-                        col.Item().PaddingTop(4).Text(hasRation
-                            ? "4. يسلم الطرف الثاني إلى الطرف الأول نسخة ملونة من مستمسكاته الأصلية (هويته وبطاقة سكنه وبطاقة تموينه)."
-                            : "4. يسلم الطرف الثاني إلى الطرف الأول نسخة ملونة من مستمسكاته الأصلية (هويته وبطاقة سكنه).").FontSize(10.5f);
-                        col.Item().PaddingTop(4).Text("5. الطرف الثاني مسؤول عن فحص البضاعة عند استلامها قبل توقيع العقد للتأكد من خلوها من أي عيب أو تلف.").FontSize(10.5f);
-                        col.Item().PaddingTop(4).Text("6. يتحمل الطرف المتخلف عن الالتزام بهذا العقد كافة تكاليف الدعوى بما فيها الرسوم وأتعاب المحاماة.").FontSize(10.5f);
-                        col.Item().PaddingTop(4).Text("7. في حال إخلال الطرف الثاني بأحد شروط هذا العقد، يلزم دفع تعويض للطرف الآخر مبلغ قدره نفس قيمة العقد.").FontSize(10.5f);
-                        col.Item().PaddingTop(4).Text("8. في حال تخلف الطرف الثاني عن التسديد لـ 7 مرات متوالية أو متقطعة يترتب عليه استحقاق كامل المبلغ المتبقي فوراً.").FontSize(10.5f);
-                        col.Item().PaddingTop(4).Text("9. تختص محكمة النجف الأشرف بأي نزاع مدني أو جزائي بخصوص الدعاوى الناشئة عن هذا العقد.").FontSize(10.5f);
-                        col.Item().PaddingTop(4).Text("10. يكون هذا العقد ملزم للطرفين وورثتهم.").FontSize(10.5f);
-                        col.Item().PaddingTop(10).Text(text =>
-                        {
-                            text.Span("أني الموقع أدناه أعمل مندوب مبيعات الشركة ").FontSize(10.5f);
-                            if (!string.IsNullOrEmpty(employee))
-                            {
-                                text.Span(employee).Bold().FontFamily(bold).FontSize(10.5f);
-                            }
-                            text.Span(".").FontSize(10.5f);
-                        });
-                        col.Item().Text("أتعهد بأني باشرت ببيع البضاعة إلى الطرف الثاني وقد تم استلامها من قبله وفقاً لتعليمات الشركة، وقد تأكدت من جميع معلومات الزبون المذكورة في هذا العقد أعلاه ومنها المستمسكات الأصلية وعنوانه المثبت أعلاه ورقم موبايله، وعليه وقعت.").FontSize(10.5f);
-                        col.Item().PaddingTop(8).Text("أني أمين صندوق الفرع أشهد بأن مندوب المبيعات قد وقع أمامي.").FontSize(10.5f);
                     });
                 });
             }).GeneratePdf();
@@ -198,59 +120,32 @@ namespace BE_Company.Sales.Services
 
         private byte[] BuildPromissoryNote(SalesDraftDTO sale)
         {
-            var date = (sale.CompletedAt ?? DateTime.Now).ToString("yyyy/MM/dd");
-            var amount = sale.FinalSalePrice.ToString("#,##0");
-            var words = IraqiDinarWords.ToArabic(sale.FinalSalePrice);
+            var values = OfficialSalesDocumentText.FromSale(sale);
+            var paragraphs = OfficialSalesDocumentText.BuildReceiptParagraphs(values);
             var bold = BoldFamily();
             return Document.Create(container =>
             {
                 container.Page(page =>
                 {
                     ConfigurePage(page);
-                    page.Content().Border(1.5f).Padding(18).Column(col =>
+                    page.Content().Column(col =>
                     {
-                        col.Item().AlignCenter().Text("وصل أمانة").Bold().FontFamily(bold).FontSize(18);
-                        col.Item().PaddingTop(22).Text(text =>
+                        col.Item().AlignCenter().Text("وصل أمانة").Bold().FontFamily(bold).FontSize(24);
+                        col.Item().PaddingTop(16);
+                        foreach (var paragraph in paragraphs)
                         {
-                            text.Span("المبلغ رقماً: ").FontSize(12);
-                            text.Span(amount).Bold().FontFamily(bold).FontSize(12);
-                        });
-                        col.Item().PaddingTop(8).Text(text =>
+                            col.Item().PaddingBottom(10).Element(c => RichParagraph(c, paragraph, bold, 12));
+                        }
+
+                        col.Item().PaddingTop(8).Row(row =>
                         {
-                            text.Span("كتابة: ").FontSize(12);
-                            text.Span(words).Bold().FontFamily(bold).FontSize(12);
+                            row.RelativeItem(2).AlignRight().Text("بصمة المدين:").FontSize(12);
+                            row.RelativeItem(3).AlignCenter().Text("توقيع المدين:").FontSize(12);
                         });
-                        col.Item().PaddingTop(16).Text(text =>
-                        {
-                            text.Span("إني الموقع أدناه أقر وأعترف بأني مدين لشركة قلعة الضمان للتجارة العامة محدودة المسؤولية بالمبلغ أعلاه وأتعهد بأن أعيده متى ما طلبت الشركة مني ولأجله وقعت بتاريخ ").FontSize(12);
-                            text.Span(date).Bold().FontFamily(bold).FontSize(12);
-                            text.Span(".").FontSize(12);
-                        });
-                        Mix(col, "اسم المستلم: ", sale.FullName, bold, 12);
-                        Mix(col, "رقم البطاقة الوطنية: ", sale.NationalCardNumber, bold, 12);
-                        Mix(col, "اسم المختار: ", sale.MukhtarName, bold, 12);
-                        Mix(col, "العنوان: ", sale.Address, bold, 12);
-                        col.Item().PaddingTop(28).Row(row =>
-                        {
-                            row.RelativeItem().Text("بصمة المدين: ....................").FontSize(12);
-                            row.RelativeItem().AlignLeft().Text("توقيع المدين: ....................").FontSize(12);
-                        });
-                        col.Item().PaddingTop(36).Row(row =>
-                        {
-                            row.RelativeItem().Column(c =>
-                            {
-                                c.Item().Text("الأول الشاهد").Bold().FontFamily(bold).FontSize(12);
-                                c.Item().PaddingTop(10).Text("الاسم: ....................").FontSize(12);
-                                c.Item().PaddingTop(8).Text("التوقيع: ....................").FontSize(12);
-                            });
-                            row.ConstantItem(28);
-                            row.RelativeItem().Column(c =>
-                            {
-                                c.Item().Text("الثاني الشاهد").Bold().FontFamily(bold).FontSize(12);
-                                c.Item().PaddingTop(10).Text("الاسم: ....................").FontSize(12);
-                                c.Item().PaddingTop(8).Text("التوقيع: ....................").FontSize(12);
-                            });
-                        });
+                        col.Item().PaddingTop(36);
+                        WitnessBlock(col, "الشاهد الأول", bold);
+                        col.Item().PaddingTop(12);
+                        WitnessBlock(col, "الشاهد الثاني", bold);
                     });
                 });
             }).GeneratePdf();
@@ -259,33 +154,61 @@ namespace BE_Company.Sales.Services
         private void ConfigurePage(PageDescriptor page)
         {
             page.Size(PageSizes.A4);
-            page.Margin(22);
+            page.MarginLeft(40);
+            page.MarginRight(40);
+            page.MarginTop(44);
+            page.MarginBottom(44);
             page.ContentFromRightToLeft();
-            page.DefaultTextStyle(t => t.FontFamily(ResolveFontFamily()).FontSize(10.5f).LineHeight(1.65f));
+            page.DefaultTextStyle(t => t.FontFamily(ResolveFontFamily()).FontSize(12).LineHeight(1.1f));
         }
 
-        private static void Mix(ColumnDescriptor col, string label, string? value, string boldFamily, float size = 10.5f)
+        private static void ContractTitle(IContainer container, string boldFamily)
         {
-            col.Item().PaddingTop(8).Text(text =>
+            container.AlignCenter().BorderBottom(1.5f).PaddingBottom(3).Row(row =>
             {
-                text.Span(label).FontSize(size);
-                text.Span(value ?? string.Empty).Bold().FontFamily(boldFamily).FontSize(size);
+                row.AutoItem().Height(30).AlignMiddle().Text("عقد").Bold().FontFamily(boldFamily).FontSize(24);
+                row.ConstantItem(6);
+                row.AutoItem().Height(30).AlignMiddle().Text("بيع").Bold().FontFamily(boldFamily).FontSize(24);
             });
+        }
+
+        private static void RichParagraph(
+            IContainer container,
+            OfficialSalesDocumentText.Paragraph paragraph,
+            string boldFamily,
+            float size)
+        {
+            container.AlignRight().Text(text =>
+            {
+                foreach (var part in paragraph.Parts)
+                {
+                    var span = text.Span(part.Text).FontSize(size);
+                    if (part.IsField)
+                    {
+                        span.Bold().FontFamily(boldFamily);
+                    }
+                }
+            });
+        }
+
+        private static void SignatureSpace(RowDescriptor row, string label, float width, float height)
+        {
+            row.ConstantItem(width).Height(height).AlignTop().AlignRight().Text(label).Bold().FontSize(13);
+        }
+
+        private static void WitnessBlock(ColumnDescriptor col, string title, string boldFamily)
+        {
+            col.Item().Width(92).BorderBottom(0.8f).PaddingBottom(2).AlignCenter()
+                .Text(title).Bold().FontFamily(boldFamily).FontSize(15);
+            col.Item().PaddingTop(8).Text("الأسم:").FontSize(12);
+            col.Item().PaddingTop(34).Text("التوقيع:").FontSize(12);
+            col.Item().Height(36);
         }
 
         private static string BoldFamily()
         {
             RegisterFontsOnce();
             return _boldRegistered ? "Cairo-Bold" : (_fontRegistered ? "Cairo" : "Arial");
-        }
-
-        private static void Signature(RowDescriptor row, string label)
-        {
-            row.RelativeItem().Column(c =>
-            {
-                c.Item().AlignCenter().Text(label).Bold().FontSize(9);
-                c.Item().PaddingTop(25).AlignCenter().Text("..................").FontSize(8);
-            });
         }
 
         private string ResolveFontFamily()

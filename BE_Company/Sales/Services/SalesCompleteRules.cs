@@ -7,7 +7,8 @@ namespace BE_Company.Sales.Services
     {
         public static string? ValidateForComplete(SalesDraftDTO sale)
         {
-            if (sale.Status == SalesStatuses.Rejected || sale.EvaluationLevel == SalesEvaluationLevels.Rejected)
+            if (sale.Status == SalesStatuses.Rejected
+                || SalesEvaluationLevels.BlocksSale(sale.EvaluationLevel))
             {
                 return "لا يمكن إتمام عملية بيع مرفوضة.";
             }

@@ -15,12 +15,32 @@ namespace BE_Company.Sales.Authorization
         public const string UserTypeMainAccountant = "محاسب رئيسي";
         public const string UserTypeSubAccountant = "محاسب فرعي";
         public const string UserTypeBranchManager = "مدير فرع";
+        public const string UserTypeFollower = "متابع";
+        public const string UserTypeDelegate = "مندوب";
+        public const string RequestCreator = "RequestCreator";
 
         public static bool IsSalesEmployee(string? userType) =>
             string.Equals(userType, UserTypeSalesEmployee, StringComparison.Ordinal);
 
         public static bool IsSalesManager(string? userType) =>
             string.Equals(userType, UserTypeSalesManager, StringComparison.Ordinal);
+
+        public static bool IsBranchManager(string? userType) =>
+            string.Equals(userType, UserTypeBranchManager, StringComparison.Ordinal);
+
+        public static bool IsFollower(string? userType) =>
+            !string.IsNullOrWhiteSpace(userType)
+            && (string.Equals(userType, UserTypeFollower, StringComparison.Ordinal)
+                || userType.StartsWith(UserTypeFollower, StringComparison.Ordinal));
+
+        public static bool IsDelegate(string? userType) =>
+            !string.IsNullOrWhiteSpace(userType)
+            && (string.Equals(userType, UserTypeDelegate, StringComparison.Ordinal)
+                || (userType.Contains(UserTypeDelegate, StringComparison.Ordinal)
+                    && !IsSalesEmployee(userType)));
+
+        public static bool CanCreateSalesRequest(string? userType) =>
+            IsSalesManager(userType) || IsBranchManager(userType) || IsFollower(userType) || IsDelegate(userType);
 
         public static bool IsAnySales(string? userType) =>
             IsSalesEmployee(userType) || IsSalesManager(userType);
@@ -34,6 +54,10 @@ namespace BE_Company.Sales.Authorization
             if (IsSalesManager(userType))
             {
                 return SalesManager;
+            }
+            if (CanCreateSalesRequest(userType))
+            {
+                return RequestCreator;
             }
             return null;
         }

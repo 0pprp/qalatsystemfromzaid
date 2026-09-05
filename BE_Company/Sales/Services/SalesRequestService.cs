@@ -20,16 +20,13 @@ namespace BE_Company.Sales.Services
             _employees = employees;
         }
 
-        public async Task<SalesRequestDTO> CreateAsync(SalesIdentity manager, SalesRequestCreateDTO request, CancellationToken ct)
+        public async Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct)
         {
-            if (!string.Equals(manager.Role, SalesRoles.SalesManager, StringComparison.Ordinal))
+            if (SalesRoles.IsSalesEmployee(actor.UserType)
+                || (!SalesRoles.CanCreateSalesRequest(actor.UserType)
+                    && !string.Equals(actor.Role, SalesRoles.SalesManager, StringComparison.Ordinal)))
             {
                 throw new SalesCompleteException(StatusCodes.Status403Forbidden, "غير مصرح.");
-            }
-
-            if (request.TargetEmployeeId <= 0)
-            {
-                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "يجب اختيار موظف المبيعات.");
             }
 
             var name = request.Customer?.FullName?.Trim();
@@ -39,23 +36,15 @@ namespace BE_Company.Sales.Services
             }
 
             await _repo.EnsureSchemaAsync(ct);
-            var employeeName = request.TargetEmployeeName;
-            if (_employees != null && string.IsNullOrWhiteSpace(employeeName))
-            {
-                var match = (await _employees.ListEmployeesAsync(ct))
-                    .FirstOrDefault(e => e.EmployeeId == request.TargetEmployeeId);
-                employeeName = match?.EmployeeName;
-            }
-
             var row = new SalesRequestDTO
             {
-                CreatedByUserId = manager.EmployeeId,
-                CreatedByName = manager.EmployeeName,
-                CreatedByUserType = manager.UserType,
-                TargetEmployeeId = request.TargetEmployeeId,
-                TargetEmployeeName = employeeName,
-                CityValue = manager.BranchId,
-                CityName = manager.BranchName,
+                CreatedByUserId = actor.EmployeeId,
+                CreatedByName = actor.EmployeeName,
+                CreatedByUserType = actor.UserType,
+                TargetEmployeeId = 0,
+                TargetEmployeeName = null,
+                CityValue = actor.BranchId,
+                CityName = actor.BranchName,
                 CustomerSourceType = request.ExistingCustomerId is > 0 ? "ExistingCustomer" : "NewCustomer",
                 ExistingCustomerId = request.ExistingCustomerId is > 0 ? request.ExistingCustomerId : null,
                 CustomerSourceCityValue = request.CustomerSourceCityValue,
@@ -73,69 +62,118 @@ namespace BE_Company.Sales.Services
             }
 
             var saved = await _repo.InsertAsync(row, ct);
-            return WithTimeline(saved);
+            await AppendHistoryAsync(saved, SalesRequestEvents.Created, actor, saved.Notes, ct);
+            return await HydrateAsync(saved, ct);
         }
 
         public async Task<IReadOnlyList<SalesRequestDTO>> ListForManagerAsync(string? status, int? employeeId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var rows = await _repo.ListAsync(employeeId, status, fromUtc, toUtc, ct);
-            return rows.Select(WithTimeline).ToList();
+            var result = new List<SalesRequestDTO>();
+            foreach (var row in rows)
+            {
+                result.Add(await HydrateAsync(row, ct));
+            }
+
+            return result;
         }
 
         public async Task<SalesRequestDTO?> GetForManagerAsync(int id, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var row = await _repo.GetByIdAsync(id, ct);
-            return row == null ? null : WithTimeline(row);
+            return row == null ? null : await HydrateAsync(row, ct);
         }
 
         public async Task<IReadOnlyList<SalesRequestDTO>> ListForEmployeeAsync(int employeeId, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var rows = await _repo.ListAsync(employeeId, null, null, null, ct);
-            return rows.Select(WithTimeline).ToList();
+            var result = new List<SalesRequestDTO>();
+            foreach (var row in rows.Where(r => r.TargetEmployeeId == employeeId && r.TargetEmployeeId > 0))
+            {
+                result.Add(await HydrateAsync(row, ct));
+            }
+
+            return result;
         }
 
         public async Task<SalesRequestDTO> GetForEmployeeAsync(int id, int employeeId, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(id, employeeId, ct);
-            return WithTimeline(row);
+            return await HydrateAsync(row, ct);
         }
 
         public async Task<SalesRequestDTO> ViewAsync(int id, int employeeId, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(id, employeeId, ct);
-            if (row.Status == SalesRequestStatuses.New)
+            if (row.ViewedAtUtc == null)
             {
-                row.Status = SalesRequestStatuses.Viewed;
                 row.ViewedAtUtc = _clock.UtcNow;
+                if (row.Status == SalesRequestStatuses.New)
+                {
+                    row.Status = SalesRequestStatuses.Assigned;
+                }
+
                 await _repo.UpdateAsync(row, ct);
+                await AppendHistoryAsync(row, SalesRequestEvents.Viewed, EmployeeActor(employeeId, row), null, ct);
             }
 
-            return WithTimeline(row);
+            return await HydrateAsync(row, ct);
         }
 
-        public async Task<SalesRequestDTO> StartProcessingAsync(int id, int employeeId, CancellationToken ct)
+        public Task<SalesRequestDTO> StartProcessingAsync(int id, int employeeId, CancellationToken ct) =>
+            PrepareForSaleAsync(id, employeeId, ct);
+
+        public async Task<SalesRequestDTO> PrepareForSaleAsync(int id, int employeeId, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(id, employeeId, ct);
-            EnsureNotTerminal(row);
-            if (row.Status is SalesRequestStatuses.New or SalesRequestStatuses.Viewed)
+            EnsureNotConverted(row);
+            if (!SalesRequestStatuses.CanPrepare(row.Status))
             {
-                if (row.Status == SalesRequestStatuses.New)
-                {
-                    row.ViewedAtUtc ??= _clock.UtcNow;
-                }
-
-                row.Status = SalesRequestStatuses.InProgress;
-                row.ProcessingAtUtc = _clock.UtcNow;
-                await _repo.UpdateAsync(row, ct);
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تجهيز هذا الطلب.");
             }
 
-            return WithTimeline(row);
+            if (row.Status != SalesRequestStatuses.PreparedForSale)
+            {
+                row.Status = SalesRequestStatuses.PreparedForSale;
+                row.ProcessingAtUtc = _clock.UtcNow;
+                row.ViewedAtUtc ??= row.ProcessingAtUtc;
+                await _repo.UpdateAsync(row, ct);
+                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSale, EmployeeActor(employeeId, row), null, ct);
+            }
+
+            return await HydrateAsync(row, ct);
+        }
+
+        public async Task<SalesRequestDTO> PendAsync(int id, int employeeId, string note, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(note))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "ملاحظة التعليق مطلوبة.");
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await RequireOwned(id, employeeId, ct);
+            EnsureNotConverted(row);
+            if (!SalesRequestStatuses.CanPend(row.Status))
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تعليق هذا الطلب.");
+            }
+
+            var trimmed = note.Trim();
+            row.Status = SalesRequestStatuses.Pending;
+            row.PendingNote = trimmed;
+            row.ViewedAtUtc ??= _clock.UtcNow;
+            await _repo.UpdateAsync(row, ct);
+            var actor = EmployeeActor(employeeId, row);
+            await AppendHistoryAsync(row, SalesRequestEvents.Pending, actor, trimmed, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.PendingNote, actor, trimmed, ct);
+            return await HydrateAsync(row, ct);
         }
 
         public async Task<SalesRequestDTO> RejectAsync(int id, int employeeId, string reason, CancellationToken ct)
@@ -150,15 +188,105 @@ namespace BE_Company.Sales.Services
             EnsureNotConverted(row);
             if (row.Status == SalesRequestStatuses.Rejected)
             {
-                return WithTimeline(row);
+                return await HydrateAsync(row, ct);
             }
 
-            EnsureNotTerminal(row);
+            if (!SalesRequestStatuses.CanReject(row.Status))
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن رفض هذا الطلب.");
+            }
+
+            var trimmed = reason.Trim();
             row.Status = SalesRequestStatuses.Rejected;
             row.RejectedAtUtc = _clock.UtcNow;
-            row.RejectionReason = reason.Trim();
+            row.RejectionReason = trimmed;
             await _repo.UpdateAsync(row, ct);
-            return WithTimeline(row);
+            var actor = EmployeeActor(employeeId, row);
+            await AppendHistoryAsync(row, SalesRequestEvents.Rejected, actor, trimmed, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.RejectionReason, actor, trimmed, ct);
+            return await HydrateAsync(row, ct);
+        }
+
+        public async Task<SalesRequestDTO> AssignAsync(SalesIdentity manager, int id, SalesRequestAssignDTO request, CancellationToken ct)
+        {
+            EnsureManager(manager);
+            if (request.EmployeeId <= 0)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "يجب اختيار موظف المبيعات.");
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
+            if (row.TargetEmployeeId > 0 && row.Status != SalesRequestStatuses.New)
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مسند مسبقاً.");
+            }
+
+            var employeeName = request.EmployeeName;
+            if (_employees != null && string.IsNullOrWhiteSpace(employeeName))
+            {
+                var match = (await _employees.ListEmployeesAsync(ct))
+                    .FirstOrDefault(e => e.EmployeeId == request.EmployeeId);
+                employeeName = match?.EmployeeName;
+            }
+
+            row.TargetEmployeeId = request.EmployeeId;
+            row.TargetEmployeeName = employeeName;
+            if (!string.IsNullOrWhiteSpace(request.CityValue))
+            {
+                row.CityValue = request.CityValue.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.CityName))
+            {
+                row.CityName = request.CityName.Trim();
+            }
+
+            row.Status = SalesRequestStatuses.Assigned;
+            row.AssignedAtUtc = _clock.UtcNow;
+            row.AssignedByUserId = manager.EmployeeId;
+            row.AssignedByName = string.IsNullOrWhiteSpace(manager.EmployeeName) ? "مدير المبيعات" : manager.EmployeeName;
+            await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.Assigned, manager, null, ct);
+            return await HydrateAsync(row, ct);
+        }
+
+        public async Task<SalesRequestDTO> ReturnAsync(SalesIdentity manager, int id, string note, CancellationToken ct)
+        {
+            EnsureManager(manager);
+            if (string.IsNullOrWhiteSpace(note))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "ملاحظة الإعادة مطلوبة.");
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
+            if (row.Status != SalesRequestStatuses.Rejected)
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "يمكن إعادة الطلب المرفوض فقط.");
+            }
+
+            if (row.TargetEmployeeId <= 0)
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يوجد موظف مسند لإعادة الطلب إليه.");
+            }
+
+            var trimmed = note.Trim();
+            var previousReason = row.RejectionReason;
+            row.Status = SalesRequestStatuses.Returned;
+            row.ReturnNote = trimmed;
+            await _repo.UpdateAsync(row, ct);
+            if (!string.Equals(row.RejectionReason, previousReason, StringComparison.Ordinal))
+            {
+                row.RejectionReason = previousReason;
+                await _repo.UpdateAsync(row, ct);
+            }
+
+            await AppendHistoryAsync(row, SalesRequestEvents.Returned, manager, trimmed, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.ReturnNote, manager, trimmed, ct);
+            return await HydrateAsync(row, ct);
         }
 
         public async Task MarkConvertedAsync(int requestId, int employeeId, int saleId, DateTime utcNow, CancellationToken ct)
@@ -180,10 +308,16 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مرتبط بعملية بيع أخرى.");
             }
 
+            if (!SalesRequestStatuses.CanConvertToSale(row.Status))
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "يجب تجهيز الطلب للبيع قبل إتمام العملية.");
+            }
+
             row.Status = SalesRequestStatuses.ConvertedToSale;
             row.ConvertedToSaleId = saleId;
             row.ProcessingAtUtc ??= utcNow;
             await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.ConvertedToSale, EmployeeActor(employeeId, row), saleId.ToString(), ct);
         }
 
         public async Task MarkCompletedBySaleIdAsync(int saleId, DateTime utcNow, CancellationToken ct)
@@ -204,13 +338,14 @@ namespace BE_Company.Sales.Services
             row.Status = SalesRequestStatuses.Completed;
             row.CompletedAtUtc = utcNow;
             await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.Completed, EmployeeActor(row.TargetEmployeeId, row), null, ct);
         }
 
         private async Task<SalesRequestDTO> RequireOwned(int id, int employeeId, CancellationToken ct)
         {
             var row = await _repo.GetByIdAsync(id, ct)
                       ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
-            if (row.TargetEmployeeId != employeeId)
+            if (row.TargetEmployeeId <= 0 || row.TargetEmployeeId != employeeId)
             {
                 throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكنك الوصول إلى طلب موظف آخر.");
             }
@@ -218,29 +353,79 @@ namespace BE_Company.Sales.Services
             return row;
         }
 
+        private static void EnsureManager(SalesIdentity manager)
+        {
+            if (!string.Equals(manager.Role, SalesRoles.SalesManager, StringComparison.Ordinal)
+                && !SalesRoles.IsSalesManager(manager.UserType))
+            {
+                throw new SalesCompleteException(StatusCodes.Status403Forbidden, "غير مصرح.");
+            }
+        }
+
         private static void EnsureNotConverted(SalesRequestDTO row)
         {
             if (row.Status is SalesRequestStatuses.ConvertedToSale or SalesRequestStatuses.Completed)
             {
-                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن رفض طلب تحول إلى عملية بيع.");
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تعديل طلب تحول إلى عملية بيع.");
             }
         }
 
-        private static void EnsureNotTerminal(SalesRequestDTO row)
+        private async Task AppendHistoryAsync(
+            SalesRequestDTO row,
+            string eventType,
+            SalesIdentity actor,
+            string? note,
+            CancellationToken ct)
         {
-            if (row.Status is SalesRequestStatuses.Rejected or SalesRequestStatuses.Completed)
+            await _repo.InsertHistoryAsync(new SalesRequestHistoryDTO
             {
-                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تعديل هذا الطلب.");
-            }
+                RequestId = row.Id,
+                Event = eventType,
+                Status = row.Status,
+                ActorUserId = actor.EmployeeId,
+                ActorName = actor.EmployeeName,
+                ActorType = actor.UserType ?? actor.Role,
+                EmployeeId = row.TargetEmployeeId > 0 ? row.TargetEmployeeId : null,
+                Note = note,
+                CreatedAtUtc = _clock.UtcNow
+            }, ct);
+        }
+
+        private static SalesIdentity EmployeeActor(int employeeId, SalesRequestDTO row) => new()
+        {
+            EmployeeId = employeeId,
+            EmployeeName = row.TargetEmployeeName ?? "موظف مبيعات",
+            BranchId = row.CityValue ?? string.Empty,
+            BranchName = row.CityName ?? string.Empty,
+            Role = SalesRoles.SalesEmployee,
+            UserType = SalesRoles.UserTypeSalesEmployee
+        };
+
+        private async Task<SalesRequestDTO> HydrateAsync(SalesRequestDTO row, CancellationToken ct)
+        {
+            row.History = (await _repo.ListHistoryAsync(row.Id, ct)).ToList();
+            return WithTimeline(row);
         }
 
         internal static SalesRequestDTO WithTimeline(SalesRequestDTO row)
         {
+            if (row.History.Count > 0)
+            {
+                row.Timeline = row.History.Select(h => new SalesRequestTimelineItemDTO
+                {
+                    Event = h.Event,
+                    AtUtc = h.CreatedAtUtc,
+                    Detail = h.Note
+                }).ToList();
+                return row;
+            }
+
             row.Timeline =
             [
                 new() { Event = "Created", AtUtc = row.CreatedAtUtc },
+                new() { Event = "Assigned", AtUtc = row.AssignedAtUtc },
                 new() { Event = "Viewed", AtUtc = row.ViewedAtUtc },
-                new() { Event = "InProgress", AtUtc = row.ProcessingAtUtc },
+                new() { Event = "PreparedForSale", AtUtc = row.ProcessingAtUtc },
                 new() { Event = "Converted", AtUtc = row.ConvertedToSaleId == null ? null : row.ProcessingAtUtc, Detail = row.ConvertedToSaleId?.ToString() },
                 new() { Event = row.Status == SalesRequestStatuses.Rejected ? "Rejected" : "Completed", AtUtc = row.RejectedAtUtc ?? row.CompletedAtUtc, Detail = row.RejectionReason }
             ];

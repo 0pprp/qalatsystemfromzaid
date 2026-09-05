@@ -25,6 +25,7 @@ namespace BE_Company.Sales.Controllers
         private readonly IIraqClock _clock;
         private readonly CustomerDirectoryService _directory;
         private readonly IConfiguration _configuration;
+        private readonly ISalesShopProfileService _shops;
 
         public SalesController(
             SalesDevelopmentGuard guard,
@@ -39,7 +40,8 @@ namespace BE_Company.Sales.Controllers
             ISalesRequestService requests,
             IIraqClock clock,
             CustomerDirectoryService directory,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            ISalesShopProfileService shops)
         {
             _guard = guard;
             _identity = identity;
@@ -54,6 +56,7 @@ namespace BE_Company.Sales.Controllers
             _clock = clock;
             _directory = directory;
             _configuration = configuration;
+            _shops = shops;
         }
 
         [Authorize(Policy = SalesPolicies.AnySales)]
@@ -154,6 +157,20 @@ namespace BE_Company.Sales.Controllers
             }
 
             var rows = await _inventory.GetBranchInventoryAsync(ct);
+            return Ok(rows);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("active-customer-lists")]
+        public async Task<ActionResult<IEnumerable<SalesCustomerListDTO>>> ActiveCustomerLists(CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var rows = await _inventory.GetActiveCustomerListsAsync(ct);
             return Ok(rows);
         }
 
@@ -262,8 +279,71 @@ namespace BE_Company.Sales.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("{id:int}/shop-image")]
+        public async Task<IActionResult> UploadShopImage(int id, [FromForm] IFormFile? file, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            if (file == null || file.Length <= 0)
+            {
+                return BadRequest(new { message = "صورة المحل مطلوبة." });
+            }
+
+            try
+            {
+                var saved = await _shops.SaveImageAsync(id, identity.EmployeeId, file, ct);
+                return Ok(saved);
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("{id:int}/shop-image")]
+        public async Task<IActionResult> ShopImage(int id, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            var sale = await _drafts.GetByIdAsync(id, identity.EmployeeId, ct);
+            if (sale == null)
+            {
+                return NotFound();
+            }
+
+            var image = await _shops.ReadImageAsync(id, ct);
+            if (image == null)
+            {
+                return NotFound();
+            }
+
+            return File(image.Value.Bytes, GuessImageType(image.Value.FileName), image.Value.FileName);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("{id:int}/complete")]
-        public async Task<ActionResult<SalesCompleteResponseDTO>> Complete(int id, CancellationToken ct)
+        public async Task<ActionResult<SalesCompleteResponseDTO>> Complete(int id, [FromBody] SalesShopCompleteDTO? shop, CancellationToken ct)
         {
             var blocked = await BlockIfNotDemo(ct);
             if (blocked != null)
@@ -279,7 +359,7 @@ namespace BE_Company.Sales.Controllers
 
             try
             {
-                var result = await _complete.CompleteAsync(id, identity, ct);
+                var result = await _complete.CompleteAsync(id, identity, shop, ct);
                 return Ok(result);
             }
             catch (SalesCompleteException ex)
@@ -444,6 +524,28 @@ namespace BE_Company.Sales.Controllers
             }
         }
 
+        [HttpPost("requests")]
+        public async Task<IActionResult> CreateIntakeRequest([FromBody] SalesRequestCreateDTO body, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null) return blocked;
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null) return Unauthorized();
+            if (SalesRoles.IsSalesEmployee(identity.UserType) || !SalesRoles.CanCreateSalesRequest(identity.UserType))
+            {
+                return Forbid();
+            }
+
+            try
+            {
+                return Ok(await _requests.CreateAsync(identity, body, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpGet("requests")]
         public async Task<IActionResult> MyRequests(CancellationToken ct)
@@ -501,7 +603,29 @@ namespace BE_Company.Sales.Controllers
             if (identity == null) return Unauthorized();
             try
             {
-                return Ok(await _requests.StartProcessingAsync(id, identity.EmployeeId, ct));
+                return Ok(await _requests.PrepareForSaleAsync(id, identity.EmployeeId, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/{id:int}/prepare")]
+        public Task<IActionResult> PrepareRequest(int id, CancellationToken ct) => StartProcessing(id, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/{id:int}/pending")]
+        public async Task<IActionResult> PendRequest(int id, [FromBody] SalesRequestNoteDTO body, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null) return blocked;
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null) return Unauthorized();
+            try
+            {
+                return Ok(await _requests.PendAsync(id, identity.EmployeeId, body.Note ?? body.Reason ?? string.Empty, ct));
             }
             catch (SalesCompleteException ex)
             {
@@ -525,6 +649,18 @@ namespace BE_Company.Sales.Controllers
             {
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
+        }
+
+        private static string GuessImageType(string fileName)
+        {
+            var ext = Path.GetExtension(fileName).ToLowerInvariant();
+            return ext switch
+            {
+                ".png" => "image/png",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                _ => "image/jpeg"
+            };
         }
 
         private static bool IsOpenSale(SalesDraftDTO row) =>

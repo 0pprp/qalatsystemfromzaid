@@ -48,7 +48,7 @@ namespace BE_Company.Sales.Services
                       FROM dbo.SalesDraftItems WHERE SaleId = @SaleId",
                     new { SaleId = saleId }, tx, cancellationToken: ct))).ToList();
 
-                if (header.Status == SalesStatuses.Rejected || header.EvaluationLevel == SalesEvaluationLevels.Rejected)
+                if (header.Status == SalesStatuses.Rejected || SalesEvaluationLevels.BlocksSale(header.EvaluationLevel))
                 {
                     throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن إتمام عملية بيع مرفوضة.");
                 }
@@ -269,7 +269,7 @@ END;",
                             CustomerID = sale.CustomerId,
                             DateCreate = now,
                             StoreID = storeId == 0 ? (int?)null : storeId,
-                            DelegateID = (int?)null,
+                            DelegateID = sale.CustomerListId,
                             DiscountAmountTotal = 0d,
                             DiscountAmountTotalDay = 0d
                         },
@@ -294,7 +294,7 @@ END;",
                             UserID = employeeId,
                             DateCreate = now,
                             StoreID = storeId == 0 ? (int?)null : storeId,
-                            DelegateID = (int?)null,
+                            DelegateID = sale.CustomerListId,
                             DiscountAmountTotal = 0d,
                             DiscountAmountTotalDay = 0d
                         },
@@ -376,7 +376,7 @@ END;",
 SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
        FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
        EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, CreatedAt,
-       CompletedAt, CompletedBy, DocumentsStatus
+       CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
 FROM dbo.SalesDrafts WITH (UPDLOCK, ROWLOCK)
 WHERE SaleId = @SaleId";
 

@@ -152,13 +152,14 @@ namespace BE_Company.Sales.Services
             var newestAccepted = (SalesLocationPointRequestDTO?)null;
             foreach (var point in request.Points)
             {
-                if (!IsValidPoint(point, shift))
+                var official = OfficialSlot.SnapOfficial(point);
+                if (!IsValidPoint(official, shift))
                 {
                     result.Rejected++;
                     continue;
                 }
 
-                var inserted = await _repo.TryInsertPointAsync(identity.EmployeeId, shift.ShiftId, Normalize(point), utc, ct);
+                var inserted = await _repo.TryInsertPointAsync(identity.EmployeeId, shift.ShiftId, official, utc, ct);
                 if (inserted == 0)
                 {
                     result.Duplicates++;
@@ -166,9 +167,9 @@ namespace BE_Company.Sales.Services
                 else
                 {
                     result.Accepted++;
-                    if (newestAccepted == null || point.CapturedAtUtc > newestAccepted.CapturedAtUtc)
+                    if (newestAccepted == null || official.CapturedAtUtc > newestAccepted.CapturedAtUtc)
                     {
-                        newestAccepted = point;
+                        newestAccepted = official;
                     }
                 }
             }
@@ -242,18 +243,12 @@ namespace BE_Company.Sales.Services
                 return false;
             }
 
-            if (captured > shift.CutoffAtUtc)
+            if (captured >= shift.CutoffAtUtc)
             {
                 return false;
             }
 
             return true;
-        }
-
-        private static SalesLocationPointRequestDTO Normalize(SalesLocationPointRequestDTO point)
-        {
-            point.CapturedAtUtc = DateTime.SpecifyKind(point.CapturedAtUtc, DateTimeKind.Utc);
-            return point;
         }
     }
 

@@ -23,6 +23,12 @@ namespace BE_Company.Sales.DTO
         public string? Notes { get; set; }
     }
 
+    public sealed class SalesCustomerListDTO
+    {
+        public int ListId { get; set; }
+        public string ListName { get; set; } = string.Empty;
+    }
+
     public sealed class SalesDraftCustomerDTO
     {
         public string? FullName { get; set; }
@@ -50,6 +56,7 @@ namespace BE_Company.Sales.DTO
         public string? EvaluationNote { get; set; }
         public decimal DailyInstallment { get; set; }
         public int? SalesRequestId { get; set; }
+        public int? CustomerListId { get; set; }
     }
 
     public sealed class SalesDraftItemDTO
@@ -91,6 +98,8 @@ namespace BE_Company.Sales.DTO
         public int? CompletedBy { get; set; }
         public string? DocumentsStatus { get; set; }
         public int? SalesRequestId { get; set; }
+        public int? CustomerListId { get; set; }
+        public string? CustomerListName { get; set; }
         public List<SalesDraftItemDTO> Items { get; set; } = [];
         public List<SalesDocumentDTO> Documents { get; set; } = [];
     }

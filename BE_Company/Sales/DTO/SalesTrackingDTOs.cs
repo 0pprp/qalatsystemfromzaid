@@ -25,6 +25,9 @@ namespace BE_Company.Sales.DTO
         public double? Heading { get; set; }
         public double? Altitude { get; set; }
         public DateTime CapturedAtUtc { get; set; }
+        public DateTime? OfficialSlotUtc { get; set; }
+        public DateTime? ActualCapturedAtUtc { get; set; }
+        public bool IsOfficial { get; set; } = true;
         public long DeviceSequence { get; set; }
         public string? DeviceSessionId { get; set; }
     }

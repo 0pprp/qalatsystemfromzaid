@@ -12,14 +12,9 @@ namespace BE_Company.Sales.Services
     {
         public decimal ComputeFinalSalePrice(decimal baseSalePrice, int evaluationLevel)
         {
-            if (evaluationLevel == SalesEvaluationLevels.Rejected)
+            if (SalesEvaluationLevels.BlocksSale(evaluationLevel))
             {
                 return 0;
-            }
-
-            if (evaluationLevel == SalesEvaluationLevels.Accepted)
-            {
-                return baseSalePrice * 2;
             }
 
             return baseSalePrice;
@@ -27,7 +22,7 @@ namespace BE_Company.Sales.Services
 
         public string ResolveStatus(int evaluationLevel)
         {
-            return evaluationLevel == SalesEvaluationLevels.Rejected
+            return SalesEvaluationLevels.BlocksSale(evaluationLevel)
                 ? SalesStatuses.Rejected
                 : SalesStatuses.Pending;
         }

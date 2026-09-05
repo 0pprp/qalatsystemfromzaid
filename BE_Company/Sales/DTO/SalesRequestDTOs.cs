@@ -18,9 +18,37 @@ namespace BE_Company.Sales.DTO
         public string? Notes { get; set; }
     }
 
+    public sealed class SalesRequestAssignDTO
+    {
+        public int EmployeeId { get; set; }
+        public string? EmployeeName { get; set; }
+        public string? CityValue { get; set; }
+        public string? CityName { get; set; }
+    }
+
     public sealed class SalesRequestRejectDTO
     {
         public string? Reason { get; set; }
+    }
+
+    public sealed class SalesRequestNoteDTO
+    {
+        public string? Note { get; set; }
+        public string? Reason { get; set; }
+    }
+
+    public sealed class SalesRequestHistoryDTO
+    {
+        public int Id { get; set; }
+        public int RequestId { get; set; }
+        public string Event { get; set; } = string.Empty;
+        public string? Status { get; set; }
+        public int? ActorUserId { get; set; }
+        public string? ActorName { get; set; }
+        public string? ActorType { get; set; }
+        public int? EmployeeId { get; set; }
+        public string? Note { get; set; }
+        public DateTime CreatedAtUtc { get; set; }
     }
 
     public sealed class SalesRequestDTO
@@ -30,6 +58,7 @@ namespace BE_Company.Sales.DTO
         public string? CreatedByName { get; set; }
         public string? CreatedByUserType { get; set; }
         public int TargetEmployeeId { get; set; }
+        public int EmployeeId => TargetEmployeeId;
         public string? TargetEmployeeName { get; set; }
         public string? CityValue { get; set; }
         public string? CityName { get; set; }
@@ -49,7 +78,13 @@ namespace BE_Company.Sales.DTO
         public DateTime? CompletedAtUtc { get; set; }
         public DateTime? RejectedAtUtc { get; set; }
         public string? RejectionReason { get; set; }
+        public DateTime? AssignedAtUtc { get; set; }
+        public int? AssignedByUserId { get; set; }
+        public string? AssignedByName { get; set; }
+        public string? PendingNote { get; set; }
+        public string? ReturnNote { get; set; }
         public List<SalesRequestTimelineItemDTO> Timeline { get; set; } = [];
+        public List<SalesRequestHistoryDTO> History { get; set; } = [];
     }
 
     public sealed class SalesRequestTimelineItemDTO

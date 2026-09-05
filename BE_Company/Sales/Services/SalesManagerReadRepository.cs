@@ -71,9 +71,12 @@ ORDER BY StartedAtUtc DESC",
         {
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
+            await connection.OpenAsync(ct);
+            await EnsureOfficialColumnsAsync(connection, ct);
             var rows = await connection.QueryAsync<SalesManagerRoutePointDTO>(new CommandDefinition(@"
-SELECT TOP (@Max) CAST(Latitude AS FLOAT) AS Latitude, CAST(Longitude AS FLOAT) AS Longitude,
- Accuracy, CapturedAtUtc AS CapturedAt, Speed, Heading
+SELECT TOP (@Max) ShiftId, DeviceSequence, CAST(Latitude AS FLOAT) AS Latitude, CAST(Longitude AS FLOAT) AS Longitude,
+ Accuracy, CapturedAtUtc AS CapturedAt, Speed, Heading,
+ CAST(ISNULL(IsOfficial, 0) AS BIT) AS IsOfficial
 FROM dbo.SalesLocationPoints
 WHERE EmployeeId = @EmployeeId AND CapturedAtUtc >= @FromUtc AND CapturedAtUtc <= @ToUtc
 ORDER BY CapturedAtUtc ASC, DeviceSequence ASC",
@@ -165,6 +168,23 @@ SELECT COUNT(1) FROM dbo.SalesDrafts WHERE EmployeeId = @EmployeeId AND CreatedA
 SELECT COUNT(1) FROM dbo.SalesDrafts
 WHERE Status = @Pending AND (@EmployeeId IS NULL OR EmployeeId = @EmployeeId)",
                 new { Pending = SalesStatuses.Pending, EmployeeId = employeeId }, cancellationToken: ct));
+        }
+
+        private static async Task EnsureOfficialColumnsAsync(SqlConnection connection, CancellationToken ct)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.SalesLocationPoints', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.SalesLocationPoints', N'IsOfficial') IS NULL
+        ALTER TABLE dbo.SalesLocationPoints ADD IsOfficial BIT NOT NULL CONSTRAINT DF_SalesLocationPoints_IsOfficial DEFAULT (0);
+    IF COL_LENGTH(N'dbo.SalesLocationPoints', N'OfficialSlotUtc') IS NULL
+        ALTER TABLE dbo.SalesLocationPoints ADD OfficialSlotUtc DATETIME NULL;
+    IF COL_LENGTH(N'dbo.SalesLocationPoints', N'ActualCapturedAtUtc') IS NULL
+        ALTER TABLE dbo.SalesLocationPoints ADD ActualCapturedAtUtc DATETIME NULL;
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UX_SalesLocationPoints_ShiftOfficialSlot' AND object_id = OBJECT_ID(N'dbo.SalesLocationPoints'))
+        CREATE UNIQUE INDEX UX_SalesLocationPoints_ShiftOfficialSlot ON dbo.SalesLocationPoints (ShiftId, OfficialSlotUtc) WHERE OfficialSlotUtc IS NOT NULL;
+END;",
+                cancellationToken: ct));
         }
 
         private string RequireConnection() =>

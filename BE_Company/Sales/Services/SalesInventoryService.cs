@@ -10,6 +10,7 @@ namespace BE_Company.Sales.Services
     {
         Task<IReadOnlyList<SalesInventoryItemDTO>> GetBranchInventoryAsync(CancellationToken ct);
         Task<SalesInventoryItemDTO?> GetProductAsync(int productId, CancellationToken ct);
+        Task<IReadOnlyList<SalesCustomerListDTO>> GetActiveCustomerListsAsync(CancellationToken ct);
     }
 
     public sealed class SalesInventoryService : ISalesInventoryService
@@ -37,13 +38,66 @@ namespace BE_Company.Sales.Services
                 commandType: CommandType.StoredProcedure,
                 cancellationToken: ct));
 
-            return rows.Where(i => i.ItemID.HasValue).Select(Map).ToList();
+            return rows.Where(i => i.ItemID.HasValue && !IsHiddenFromSalesStaff(i.ItemName)).Select(Map).ToList();
         }
 
         public async Task<SalesInventoryItemDTO?> GetProductAsync(int productId, CancellationToken ct)
         {
             var items = await GetBranchInventoryAsync(ct);
             return items.FirstOrDefault(i => i.ProductId == productId);
+        }
+
+        public async Task<IReadOnlyList<SalesCustomerListDTO>> GetActiveCustomerListsAsync(CancellationToken ct)
+        {
+            var cs = _guard.GetSalesConnectionString()
+                     ?? throw new InvalidOperationException("Sales module has no usable branch connection.");
+            await using var connection = new SqlConnection(cs);
+            try
+            {
+                var rows = await connection.QueryAsync<SalesCustomerListDTO>(new CommandDefinition(
+                    SalesActiveCustomerListsQuery.Sql,
+                    new { FromDate = SalesActiveCustomerListsQuery.FromDate },
+                    cancellationToken: ct));
+                return rows.Where(r => r.ListId > 0 && !string.IsNullOrWhiteSpace(r.ListName)).ToList();
+            }
+            catch
+            {
+                return [];
+            }
+        }
+
+        public static bool IsHiddenFromSalesStaff(string? productName)
+        {
+            var n = NormalizeArabic(productName);
+            if (string.IsNullOrWhiteSpace(n))
+            {
+                return false;
+            }
+
+            if (n.Contains("تجهيز", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var mobile = n.Contains("موبايل", StringComparison.Ordinal) || n.Contains("موبايلات", StringComparison.Ordinal);
+            return mobile && n.Contains("خارج", StringComparison.Ordinal);
+        }
+
+        internal static string NormalizeArabic(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            return value
+                .Replace("أ", "ا", StringComparison.Ordinal)
+                .Replace("إ", "ا", StringComparison.Ordinal)
+                .Replace("آ", "ا", StringComparison.Ordinal)
+                .Replace("ة", "ه", StringComparison.Ordinal)
+                .Replace("ى", "ي", StringComparison.Ordinal)
+                .Replace("ـ", "", StringComparison.Ordinal)
+                .Trim();
         }
 
         private static SalesInventoryItemDTO Map(ItemsGetDTO item)
@@ -61,5 +115,28 @@ namespace BE_Company.Sales.Services
                 Notes = item.Notes
             };
         }
+    }
+
+    /// <summary>
+    /// قوائم الزبائن النشطة = Delegates التي لها واصل مالي فعلي منذ 2026-07-01.
+    /// مصدر الحقيقة هو شاشة الإحصائيات: Delegates_Statistics.AmountReceipt
+    /// من View_CustomersPaymentsDelegate_Final (CustomersPayments + AddToBox * 1448).
+    /// </summary>
+    public static class SalesActiveCustomerListsQuery
+    {
+        public static readonly DateTime FromDate = new(2026, 7, 1);
+
+        public const string Sql = """
+SELECT d.DelegateID AS ListId, d.DelegateName AS ListName
+FROM dbo.Delegates d
+WHERE (
+    SELECT ISNULL(SUM(ISNULL(p.AmountDenar, 0)), 0)
+    FROM dbo.View_CustomersPaymentsDelegate_Final p
+    WHERE p.DelegateID = d.DelegateID
+      AND CONVERT(DATE, p.PaymentDate) >= @FromDate
+      AND CONVERT(DATE, p.PaymentDate) <= CONVERT(DATE, GETDATE())
+) > 0
+ORDER BY d.DelegateName
+""";
     }
 }

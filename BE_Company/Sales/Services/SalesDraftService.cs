@@ -53,6 +53,10 @@ namespace BE_Company.Sales.Services
             {
                 throw new ArgumentException("يجب اختيار مادة واحدة على الأقل");
             }
+            if (request.CustomerListId is null or <= 0)
+            {
+                throw new ArgumentException("قائمة الزبون مطلوبة.");
+            }
 
             await _drafts.EnsureSchemaAsync(ct);
 
@@ -148,7 +152,8 @@ namespace BE_Company.Sales.Services
                 FinalSalePrice = _pricing.ComputeFinalSalePrice(baseSalePrice, request.EvaluationLevel),
                 DailyInstallment = Math.Round(request.DailyInstallment, 0, MidpointRounding.AwayFromZero),
                 Items = draftItems,
-                SalesRequestId = request.SalesRequestId
+                SalesRequestId = request.SalesRequestId,
+                CustomerListId = request.CustomerListId
             };
 
             if (request.SalesRequestId is > 0)

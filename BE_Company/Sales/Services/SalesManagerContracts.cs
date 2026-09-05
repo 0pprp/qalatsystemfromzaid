@@ -6,11 +6,52 @@ namespace BE_Company.Sales.Services
     public static class SalesRequestStatuses
     {
         public const string New = "New";
+        public const string Assigned = "Assigned";
         public const string Viewed = "Viewed";
+        public const string Pending = "Pending";
+        public const string PreparedForSale = "PreparedForSale";
         public const string InProgress = "InProgress";
         public const string ConvertedToSale = "ConvertedToSale";
         public const string Rejected = "Rejected";
+        public const string Returned = "Returned";
         public const string Completed = "Completed";
+
+        public static bool IsUnassigned(string? status) =>
+            string.Equals(status, New, StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsOpenForEmployee(string? status) =>
+            status is Assigned or Viewed or Pending or PreparedForSale or InProgress or Returned;
+
+        public static bool CanPrepare(string? status) =>
+            status is Assigned or Viewed or Pending or PreparedForSale or InProgress or Returned;
+
+        public static bool CanPend(string? status) =>
+            status is Assigned or Viewed or Pending or PreparedForSale or InProgress or Returned;
+
+        public static bool CanReject(string? status) =>
+            status is Assigned or Viewed or Pending or PreparedForSale or InProgress or Returned;
+
+        public static bool CanConvertToSale(string? status) =>
+            status is PreparedForSale or InProgress;
+
+        public static bool IsTerminal(string? status) =>
+            status is Completed or ConvertedToSale;
+    }
+
+    public static class SalesRequestEvents
+    {
+        public const string Created = "Created";
+        public const string Assigned = "Assigned";
+        public const string Pending = "Pending";
+        public const string PendingNote = "PendingNote";
+        public const string PreparedForSale = "PreparedForSale";
+        public const string Rejected = "Rejected";
+        public const string RejectionReason = "RejectionReason";
+        public const string Returned = "Returned";
+        public const string ReturnNote = "ReturnNote";
+        public const string Completed = "Completed";
+        public const string ConvertedToSale = "ConvertedToSale";
+        public const string Viewed = "Viewed";
     }
 
     public static class SalesLocationStatuses
@@ -94,18 +135,24 @@ namespace BE_Company.Sales.Services
         Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct);
         Task UpdateAsync(SalesRequestDTO row, CancellationToken ct);
         Task<int> CountByStatusAsync(string status, CancellationToken ct);
+        Task InsertHistoryAsync(SalesRequestHistoryDTO row, CancellationToken ct);
+        Task<IReadOnlyList<SalesRequestHistoryDTO>> ListHistoryAsync(int requestId, CancellationToken ct);
     }
 
     public interface ISalesRequestService
     {
-        Task<SalesRequestDTO> CreateAsync(SalesIdentity manager, SalesRequestCreateDTO request, CancellationToken ct);
+        Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForManagerAsync(string? status, int? employeeId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct);
         Task<SalesRequestDTO?> GetForManagerAsync(int id, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForEmployeeAsync(int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> GetForEmployeeAsync(int id, int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> ViewAsync(int id, int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> StartProcessingAsync(int id, int employeeId, CancellationToken ct);
+        Task<SalesRequestDTO> PrepareForSaleAsync(int id, int employeeId, CancellationToken ct);
+        Task<SalesRequestDTO> PendAsync(int id, int employeeId, string note, CancellationToken ct);
         Task<SalesRequestDTO> RejectAsync(int id, int employeeId, string reason, CancellationToken ct);
+        Task<SalesRequestDTO> AssignAsync(SalesIdentity manager, int id, SalesRequestAssignDTO request, CancellationToken ct);
+        Task<SalesRequestDTO> ReturnAsync(SalesIdentity manager, int id, string note, CancellationToken ct);
         Task MarkConvertedAsync(int requestId, int employeeId, int saleId, DateTime utcNow, CancellationToken ct);
         Task MarkCompletedBySaleIdAsync(int saleId, DateTime utcNow, CancellationToken ct);
     }

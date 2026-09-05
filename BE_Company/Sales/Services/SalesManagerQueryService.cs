@@ -85,8 +85,10 @@ namespace BE_Company.Sales.Services
                 toUtc = IraqTimeService.ToUtcFromIraq(startIraq.AddDays(1));
             }
 
-            var total = await _read.CountRouteAsync(employeeId, fromUtc, toUtc, ct);
-            var points = await _read.GetRouteAsync(employeeId, fromUtc, toUtc, _options.MaxRoutePoints, ct);
+            var totalRaw = await _read.CountRouteAsync(employeeId, fromUtc, toUtc, ct);
+            var points = OfficialSlot.SelectRoutePoints(await _read.GetRouteAsync(employeeId, fromUtc, toUtc, _options.MaxRoutePoints, ct))
+                .Select(AsIndependentUtcPin)
+                .ToList();
             var cityName = _configuration["SalesManagement:BranchName"] ?? "النجف";
             return new SalesManagerRouteDTO
             {
@@ -94,15 +96,15 @@ namespace BE_Company.Sales.Services
                 Shift = shift == null ? null : new SalesManagerRouteShiftDTO
                 {
                     Id = shift.ShiftId,
-                    StartedAt = shift.StartedAtUtc,
-                    ClosedAt = shift.ClosedAtUtc,
-                    CutoffAt = shift.CutoffAtUtc,
+                    StartedAt = Utc(shift.StartedAtUtc),
+                    ClosedAt = shift.ClosedAtUtc == null ? null : Utc(shift.ClosedAtUtc.Value),
+                    CutoffAt = Utc(shift.CutoffAtUtc),
                     Status = shift.Status
                 },
-                Points = points.ToList(),
-                TotalPoints = total,
+                Points = points,
+                TotalPoints = points.Count,
                 ReturnedPoints = points.Count,
-                IsTruncated = total > points.Count
+                IsTruncated = totalRaw > _options.MaxRoutePoints
             };
         }
 
@@ -190,6 +192,15 @@ namespace BE_Company.Sales.Services
                 PendingSalesCount = await _read.CountPendingSalesAsync(employeeId, ct)
             };
         }
+
+        private static SalesManagerRoutePointDTO AsIndependentUtcPin(SalesManagerRoutePointDTO point)
+        {
+            point.CapturedAt = Utc(point.CapturedAt);
+            return point;
+        }
+
+        private static DateTime Utc(DateTime value) =>
+            value.Kind == DateTimeKind.Utc ? value : DateTime.SpecifyKind(value, DateTimeKind.Utc);
 
         private (string CityValue, string CityName) BranchLabel()
         {
