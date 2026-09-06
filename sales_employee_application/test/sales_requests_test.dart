@@ -11,6 +11,31 @@ import 'package:sales_employee_application/utils/sales_format.dart';
 void main() {
   tearDown(() => SalesRepositoryFactory.reset());
 
+  testWidgets('Submit sales request button shows full Arabic label at 360px', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SalesRepositoryFactory.setInstance(MockSalesRepository());
+    await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.themeData,
+      builder: (context, child) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: child ?? const SizedBox.shrink(),
+      ),
+      home: const PendingSalesScreen(),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final label = find.text('إرسال طلب بيع');
+    expect(label, findsOneWidget);
+    final box = tester.getRect(label);
+    expect(box.width, greaterThan(70));
+    expect(box.height, greaterThan(10));
+    expect(box.left, greaterThanOrEqualTo(0));
+    expect(box.right, lessThanOrEqualTo(360.5));
+  });
+
   testWidgets('Requests tab is real and lists assigned requests', (tester) async {
     final repo = MockSalesRepository()
       ..seedRequest(SalesWorkRequest(

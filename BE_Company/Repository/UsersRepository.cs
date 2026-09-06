@@ -4,6 +4,7 @@ using BE_Company.IRepository;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using System.Data;
+using System.Threading;
 
 namespace BE_Company.Repository
 {
@@ -75,6 +76,45 @@ namespace BE_Company.Repository
                 commandType: CommandType.StoredProcedure);
                 return result;
             }
+        }
+
+        private static int _sessionColumnReady;
+
+        public async Task EnsureSalesEmployeeSessionColumnAsync()
+        {
+            if (Volatile.Read(ref _sessionColumnReady) == 1)
+            {
+                return;
+            }
+
+            using var connection = new SqlConnection(_connectionString);
+            await connection.ExecuteAsync(@"
+IF COL_LENGTH(N'dbo.Users', N'SessionVersion') IS NULL
+    ALTER TABLE dbo.Users ADD SessionVersion INT NOT NULL CONSTRAINT DF_Users_SessionVersion DEFAULT (0);
+");
+            Volatile.Write(ref _sessionColumnReady, 1);
+        }
+
+        public async Task<int> BumpSalesEmployeeSessionVersionAsync(int userId)
+        {
+            await EnsureSalesEmployeeSessionColumnAsync();
+            using var connection = new SqlConnection(_connectionString);
+            return await connection.QuerySingleAsync<int>(@"
+UPDATE dbo.Users
+SET SessionVersion = ISNULL(SessionVersion, 0) + 1
+OUTPUT INSERTED.SessionVersion
+WHERE UserID = @UserID;
+", new { UserID = userId });
+        }
+
+        public async Task<int> GetSalesEmployeeSessionVersionAsync(int userId)
+        {
+            await EnsureSalesEmployeeSessionColumnAsync();
+            using var connection = new SqlConnection(_connectionString);
+            var version = await connection.ExecuteScalarAsync<int?>(
+                "SELECT ISNULL(SessionVersion, 0) FROM dbo.Users WHERE UserID = @UserID",
+                new { UserID = userId });
+            return version ?? -1;
         }
 
         public async Task<UsersGetDTO?> Users_Create(UsersPostDTO usersPostDTO)

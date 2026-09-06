@@ -210,11 +210,31 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
               padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
               child: SizedBox(
                 width: double.infinity,
-                height: 48,
-                child: ElevatedButton.icon(
+                child: ElevatedButton(
                   onPressed: () => Navigator.pushNamed(context, '/submit-request'),
-                  icon: const Icon(Icons.send_outlined),
-                  label: const Text('إرسال طلب بيع'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.darkGreen,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(48),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.send_outlined, size: 20),
+                      SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'إرسال طلب بيع',
+                          maxLines: 1,
+                          overflow: TextOverflow.visible,
+                          softWrap: false,
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

@@ -61,7 +61,12 @@ const navItems = computed(() => {
     return true
   })
 
-  return withRequestsUnreadBadge(items)
+  try {
+    return withRequestsUnreadBadge(items)
+  }
+  catch {
+    return items
+  }
 })
 
 const activeNavItem = computed(() => findByRouteName(navItems.value, route.name) ?? null)

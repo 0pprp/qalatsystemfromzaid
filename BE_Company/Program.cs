@@ -56,6 +56,7 @@ app.UseAuthorization();
 
 // Middleware to extract user info from JWT
 app.UseMiddleware<UserLevelMiddleware>();
+app.UseMiddleware<SalesEmployeeSessionMiddleware>();
 
 app.MapControllers();
 app.MapHub<BE_Company.Sales.Services.SalesTrackingHub>("/hubs/sales-tracking");

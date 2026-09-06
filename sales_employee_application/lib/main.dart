@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:sales_employee_application/app_nav.dart';
 import 'package:sales_employee_application/config/app_env.dart';
 import 'package:sales_employee_application/screens/home_screen.dart';
 import 'package:sales_employee_application/screens/login_screen.dart';
@@ -10,7 +11,9 @@ import 'package:sales_employee_application/screens/shift_screen.dart';
 import 'package:sales_employee_application/screens/submit_sales_request_screen.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/screens/warehouse_screen.dart';
+import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/session.dart';
+import 'package:sales_employee_application/services/session_kicked.dart';
 import 'package:sales_employee_application/tracking/shift_tracking_controller.dart';
 import 'package:sales_employee_application/tracking/tracking_channel.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
@@ -19,6 +22,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   AppEnv.logIfDebug();
   await Session.init();
+  ApiClient.onSessionReplaced = SessionKicked.handle;
   runApp(const SalesEmployeeApp());
 }
 
@@ -28,6 +32,7 @@ class SalesEmployeeApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: AppNav.key,
       debugShowCheckedModeBanner: false,
       title: 'موظف المبيعات',
       theme: AppTheme.themeData,

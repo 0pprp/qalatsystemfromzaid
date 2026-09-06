@@ -41,7 +41,7 @@ namespace BE_Company.Controllers
                 {
                     return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
                 }
-                var authenticationResponse = BuildToken(data, _configuration, _usersRepository);
+                var authenticationResponse = BuildToken(data, _configuration);
                 return Ok(authenticationResponse);
             }
             catch (Exception ex)
@@ -64,7 +64,12 @@ namespace BE_Company.Controllers
                 {
                     return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
                 }
-                var authenticationResponse = BuildToken(data, _configuration, _usersRepository);
+                int? sessionVersion = null;
+                if (BE_Company.Sales.Authorization.SalesRoles.IsSalesEmployee(data.UserType) && data.UserID is int employeeUserId)
+                {
+                    sessionVersion = await _usersRepository.BumpSalesEmployeeSessionVersionAsync(employeeUserId);
+                }
+                var authenticationResponse = BuildToken(data, _configuration, sessionVersion);
                 return Ok(authenticationResponse);
             }
             catch (Exception ex)
@@ -74,7 +79,7 @@ namespace BE_Company.Controllers
         }
 
 
-        private static AuthenticationResponseDTO BuildToken(UsersGetDTO user, IConfiguration configuration, IUsersRepository usersRepository)
+        private static AuthenticationResponseDTO BuildToken(UsersGetDTO user, IConfiguration configuration, int? sessionVersion = null)
         {
             var claims = new List<Claim>
             {
@@ -83,6 +88,10 @@ namespace BE_Company.Controllers
                 new Claim("UserImage", user.UserImage ?? string.Empty),
                 new Claim("UserType", user.UserType ?? string.Empty),
             };
+            if (sessionVersion is int version)
+            {
+                claims.Add(new Claim(BE_Company.Services.SalesEmployeeSession.ClaimName, version.ToString()));
+            }
             var key = KeysHandler.GetKey(configuration).First();
             var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
             var expiration = DateTime.UtcNow.AddHours(24);

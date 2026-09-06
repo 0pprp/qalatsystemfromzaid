@@ -48,7 +48,12 @@ const navItems = computed(() => {
     return true
   })
 
-  return withRequestsUnreadBadge(items)
+  try {
+    return withRequestsUnreadBadge(items)
+  }
+  catch {
+    return items
+  }
 })
 </script>
 

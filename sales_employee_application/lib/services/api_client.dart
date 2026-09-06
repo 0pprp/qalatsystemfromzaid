@@ -16,6 +16,15 @@ class ApiException implements Exception {
 
 class ApiClient {
   static String get _base => resolveBase();
+  static bool _handlingSessionReplaced = false;
+
+  static Future<void> Function()? onSessionReplaced;
+
+  static bool isSessionReplaced(int statusCode, String message, [String? body]) {
+    if (statusCode != 401) return false;
+    final hay = '$message\n${body ?? ''}';
+    return hay.contains('SESSION_REPLACED') || hay.contains('من جهاز آخر');
+  }
 
   /// Demo always uses published BE_Company :8080/api/. Never Session, Gateway, or /api/api.
   static String resolveBase() {
@@ -72,17 +81,32 @@ class ApiClient {
     return 'فشل الطلب (${response.statusCode})';
   }
 
+  static Future<void> _throwIfFailed(http.Response response) async {
+    if (response.statusCode >= 200 && response.statusCode < 300) return;
+    final message = _errorMessage(response);
+    if (!_handlingSessionReplaced &&
+        Session.isLoggedIn &&
+        isSessionReplaced(response.statusCode, message, response.body)) {
+      _handlingSessionReplaced = true;
+      try {
+        await onSessionReplaced?.call();
+      } catch (_) {
+      } finally {
+        _handlingSessionReplaced = false;
+      }
+    }
+    throw ApiException(
+      message,
+      statusCode: response.statusCode,
+      body: response.body,
+    );
+  }
+
   static Future<dynamic> get(String path, {Map<String, String>? query}) async {
     final response = await http
         .get(_uri(path, query), headers: _headers)
         .timeout(const Duration(seconds: 25));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(
-        _errorMessage(response),
-        statusCode: response.statusCode,
-        body: response.body,
-      );
-    }
+    await _throwIfFailed(response);
     return _decode(response);
   }
 
@@ -94,26 +118,14 @@ class ApiClient {
           body: body == null ? null : jsonEncode(body),
         )
         .timeout(const Duration(seconds: 40));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(
-        _errorMessage(response),
-        statusCode: response.statusCode,
-        body: response.body,
-      );
-    }
+    await _throwIfFailed(response);
     return _decode(response);
   }
 
   static Future<dynamic> delete(String path) async {
     final headers = Map<String, String>.from(_headers)..remove('Content-Type');
     final response = await http.delete(_uri(path), headers: headers).timeout(const Duration(seconds: 25));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(
-        _errorMessage(response),
-        statusCode: response.statusCode,
-        body: response.body,
-      );
-    }
+    await _throwIfFailed(response);
     return _decode(response);
   }
 
@@ -131,13 +143,7 @@ class ApiClient {
     request.files.add(http.MultipartFile.fromBytes(field, bytes, filename: fileName));
     final streamed = await request.send().timeout(const Duration(seconds: 60));
     final response = await http.Response.fromStream(streamed);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(
-        _errorMessage(response),
-        statusCode: response.statusCode,
-        body: response.body,
-      );
-    }
+    await _throwIfFailed(response);
     return _decode(response);
   }
 
@@ -146,13 +152,7 @@ class ApiClient {
     final response = await http
         .get(_uri(path), headers: headers)
         .timeout(const Duration(seconds: 60));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(
-        _errorMessage(response),
-        statusCode: response.statusCode,
-        body: response.body,
-      );
-    }
+    await _throwIfFailed(response);
     return response.bodyBytes;
   }
 
@@ -185,13 +185,7 @@ class ApiClient {
       headers['X-Sales-Directory-Key'] = AppEnv.directorySearchKey;
     }
     final response = await http.get(uri, headers: headers).timeout(timeout);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(
-        _errorMessage(response),
-        statusCode: response.statusCode,
-        body: response.body,
-      );
-    }
+    await _throwIfFailed(response);
     return _decode(response);
   }
 }
