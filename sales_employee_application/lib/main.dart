@@ -79,7 +79,7 @@ class _SplashScreenState extends State<_SplashScreen> {
         await TrackingChannel.stop();
       } catch (_) {}
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/home');
+      Navigator.pushReplacementNamed(context, '/shift');
       return;
     }
     try {

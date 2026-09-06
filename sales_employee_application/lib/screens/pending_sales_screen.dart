@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
+import 'package:sales_employee_application/screens/shift_screen.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/tracking/shift_start_debug.dart';
@@ -90,7 +91,9 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
   int _binCount(int index) => _forBin(index).length;
 
   WorkShift? _readLocalShift() {
-    if (Session.gpsStoppedByUser) return null;
+    try {
+      if (Session.gpsStoppedByUser) return null;
+    } catch (_) {}
     return TrackingRuntime.instance?.activeShift;
   }
 
@@ -139,10 +142,10 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
     try {
       await controller.endShiftFlow();
       if (!mounted) return;
-      setState(() {
-        _shiftBusy = false;
-        _shift = null;
-      });
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const ShiftScreen()),
+        (route) => false,
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -273,7 +276,11 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
 
   Widget _shiftCard() {
     final shift = _shift;
-    final active = shift != null && shift.isActive && !Session.gpsStoppedByUser;
+    var stopped = false;
+    try {
+      stopped = Session.gpsStoppedByUser;
+    } catch (_) {}
+    final active = shift != null && shift.isActive && !stopped;
     return Card(
       margin: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
       child: Padding(

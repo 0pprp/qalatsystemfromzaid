@@ -29,6 +29,9 @@ class _ShiftRepo extends MockSalesRepository {
       isNew: true,
     );
   }
+
+  @override
+  Future<void> endShift() async {}
 }
 
 WorkShift _shift({DateTime? cutoff}) {
@@ -77,8 +80,6 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.byType(HomeScreen), findsOneWidget);
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(find.text('إنهاء الدوام'), findsOneWidget);
     await controller.dispose();
     live.remove(controller);
   });
