@@ -461,8 +461,31 @@ namespace BE_SalesEmployee.Sales.Services
             obj["cityValue"] = city.Value;
             obj["cityName"] = city.Name;
             obj["branchName"] = city.Name;
+            ReplaceIfInternal(obj, "province", city.Name, city);
+            ReplaceIfInternal(obj, "Province", city.Name, city);
+            ReplaceIfInternal(obj, "customerProvince", city.Name, city);
+            ReplaceIfInternal(obj, "CustomerProvince", city.Name, city);
+            obj["sourceCityName"] = city.Name;
             obj["branchDatabase"] = city.Database;
             obj["branchKey"] = $"{city.Value}:{ReadId(obj)}";
+        }
+
+        private static void ReplaceIfInternal(JsonObject obj, string key, string display, AdminCity city)
+        {
+            if (string.IsNullOrWhiteSpace(display))
+            {
+                return;
+            }
+
+            obj.TryGetPropertyValue(key, out var current);
+            var text = current?.ToString();
+            if (string.IsNullOrWhiteSpace(text)
+                || string.Equals(text, city.Value, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(text, city.Database, StringComparison.OrdinalIgnoreCase)
+                || text.StartsWith("Database", StringComparison.OrdinalIgnoreCase))
+            {
+                obj[key] = display;
+            }
         }
 
         private static string ReadId(JsonObject obj)
@@ -522,17 +545,19 @@ namespace BE_SalesEmployee.Sales.Services
                 obj["customerId"] = customerId;
             }
 
+            var cityName = ReadAny(obj, "cityName", "CityName", "sourceCityName", "SourceCityName");
+            var province = ReadAny(obj, "province", "Province");
             var cityValue = ReadAny(obj, "cityValue", "CityValue", "sourceCityValue", "SourceCityValue");
             if (!string.IsNullOrWhiteSpace(cityValue))
             {
                 obj["cityValue"] = cityValue;
             }
 
-            var cityName = ReadAny(obj, "cityName", "CityName", "province", "Province", "sourceCityName", "SourceCityName");
-            if (!string.IsNullOrWhiteSpace(cityName))
+            var display = FirstHumanCity(cityName, province, cityValue);
+            if (!string.IsNullOrWhiteSpace(display))
             {
-                obj["cityName"] = cityName;
-                obj["province"] = cityName;
+                obj["cityName"] = display;
+                obj["province"] = display;
             }
 
             var address = ReadAny(obj, "address", "Address");
@@ -542,6 +567,33 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             obj["branchKey"] = $"{ReadAny(obj, "cityValue")}:{ReadAny(obj, "customerId")}";
+        }
+
+        private static string FirstHumanCity(string? cityName, string? province, string? cityValue)
+        {
+            foreach (var item in new[] { cityName, province })
+            {
+                var text = item?.Trim() ?? string.Empty;
+                if (text.Length == 0)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(cityValue)
+                    && string.Equals(text, cityValue, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (text.StartsWith("Database", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return text;
+            }
+
+            return string.Empty;
         }
 
         private static bool CustomerMatches(JsonObject obj, string normalizedQuery)

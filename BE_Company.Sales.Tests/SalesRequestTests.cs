@@ -202,7 +202,24 @@ namespace BE_Company.Sales.Tests
             Assert.Null(created.ManagerReadAtUtc);
             Assert.False(created.IsManagerRead);
             Assert.Contains(created.History, h => h.Event == SalesRequestEvents.EmployeeSubmitted);
+            Assert.Equal("النجف", created.CustomerProvince);
             Assert.Empty(await Svc(repo).ListForEmployeeAsync(7, CancellationToken.None));
+        }
+
+        [Fact]
+        public async Task EmployeeSubmit_ReplacesDatabaseProvinceWithBranchName()
+        {
+            var created = await Svc(new FakeRequestRepository()).SubmitByEmployeeAsync(Employee(7), new SalesRequestCreateDTO
+            {
+                Customer = new SalesRequestCustomerDTO
+                {
+                    FullName = "زبون موظف",
+                    Phone = "07701234567",
+                    Address = "الكوفة",
+                    Province = "DatabaseCompanyNajaf_DEMO"
+                }
+            }, CancellationToken.None);
+            Assert.Equal("النجف", created.CustomerProvince);
         }
 
         [Fact]

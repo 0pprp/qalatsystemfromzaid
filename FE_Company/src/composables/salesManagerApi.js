@@ -225,7 +225,47 @@ export const requestStatusLabel = {
   Returned: 'طلبات البيع',
   ConvertedToSale: 'جاهز للبيع',
   Completed: 'تم البيع',
-  Rejected: 'مرفوض',
+  Rejected: 'تم الرفض',
+}
+
+export function isInternalCityKey(value, cityValue = '') {
+  const text = String(value || '').trim()
+  if (!text)
+    return true
+  const key = String(cityValue || '').trim()
+  if (key && text === key)
+    return true
+  if (/^Database/i.test(text))
+    return true
+
+  return /_DEMO$/i.test(text) && !/[\s\u0600-\u06FF]/.test(text)
+}
+
+export function displayCityName(row, branches = []) {
+  if (!row || typeof row !== 'object')
+    return ''
+  const key = String(row.cityValue || row.CityValue || row.sourceCityValue || row.SourceCityValue || '').trim()
+  const candidates = [
+    row.cityName,
+    row.CityName,
+    row.branchName,
+    row.BranchName,
+    row.sourceCityName,
+    row.SourceCityName,
+    row.customerProvince,
+    row.CustomerProvince,
+    row.province,
+    row.Province,
+  ]
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim()
+    if (text && !isInternalCityKey(text, key))
+      return text
+  }
+  const match = (branches || []).find(item =>
+    String(item.value) === key
+    || String(item.database || item.Database || '') === key)
+  return String(match?.name || match?.title || '').trim()
 }
 
 export const requestHistoryLabel = {

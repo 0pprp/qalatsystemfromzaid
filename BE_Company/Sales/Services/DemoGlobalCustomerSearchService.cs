@@ -43,6 +43,7 @@ namespace BE_Company.Sales.Services
             {
                 cityName = cityValue;
             }
+            var displayName = SalesCityDisplay.HumanName(cityName, "النجف - DEMO", cityValue);
             return rows
                 .Where(c => c.CustomerID.HasValue)
                 .Select(c => new SalesCustomerSearchDTO
@@ -50,11 +51,11 @@ namespace BE_Company.Sales.Services
                     CustomerId = c.CustomerID!.Value,
                     FullName = c.CustomerName ?? string.Empty,
                     Phone = c.PhoneNumber,
-                    Province = string.IsNullOrWhiteSpace(c.CityName) ? cityName : c.CityName,
+                    Province = SalesCityDisplay.HumanName(c.CityName, displayName, cityValue),
                     Address = c.Address,
                     SalePrice = ToMoney(c.AmountTotalSales),
                     SourceCityValue = cityValue,
-                    SourceCityName = cityName
+                    SourceCityName = displayName
                 })
                 .Take(ResultLimit)
                 .ToList();

@@ -98,7 +98,7 @@ namespace BE_Company.Sales.Services
             }
 
             var province = request.Customer?.Province?.Trim();
-            if (string.IsNullOrWhiteSpace(province))
+            if (string.IsNullOrWhiteSpace(province) || SalesCityDisplay.IsInternalKey(province, actor.BranchId))
             {
                 province = actor.BranchName;
             }

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   customerProfileApiPath,
+  displayCityName,
   managerCustomerDocumentDeletePath,
   managerCustomerDocumentFilePath,
   managerCustomerDocumentUploadPath,
@@ -205,7 +206,7 @@ function openEdit() {
   editForm.value = {
     name: pick(profile.value, 'customerName', 'CustomerName') || '',
     phone: pick(profile.value, 'phone', 'Phone') || '',
-    province: pick(profile.value, 'province', 'Province', 'cityName', 'CityName') || '',
+    province: displayCityName(profile.value) || '',
     address: pick(profile.value, 'address', 'Address') || '',
   }
   editOpen.value = true
@@ -420,7 +421,7 @@ onUnmounted(() => {
             الهاتف: {{ pick(profile, 'phone', 'Phone') || '—' }}
           </VCol>
           <VCol md="4">
-            المحافظة: {{ pick(profile, 'province', 'Province', 'cityName', 'CityName') || '—' }}
+            المحافظة: {{ displayCityName(profile) || '—' }}
           </VCol>
           <VCol md="8">
             العنوان: {{ pick(profile, 'address', 'Address') || '—' }}

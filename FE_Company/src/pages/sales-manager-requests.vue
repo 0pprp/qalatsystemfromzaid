@@ -15,6 +15,7 @@ import {
   smGetEmployees,
   smPost,
   withCityQuery,
+  displayCityName,
 } from '@/composables/salesManagerApi'
 import { isDemo } from '@/composables/useCities'
 import { useSalesBranches } from '@/composables/useSalesBranches'
@@ -75,8 +76,19 @@ function employeeIdOf(row) {
 }
 
 function isUnassigned(row) {
-  const s = String(row?.status || '')
+  const s = requestStatus(row)
+  if (s === 'Rejected' || s === 'Completed')
+    return false
   return s === 'New' || employeeIdOf(row) <= 0
+}
+
+function requestStatus(row) {
+  if (row == null)
+    return ''
+  if (typeof row === 'string')
+    return row
+
+  return String(pick(row, 'status', 'Status') || '')
 }
 
 function isEmployeeSubmitted(row) {
@@ -97,7 +109,7 @@ function submittedBy(row) {
 }
 
 function matchesTab(row) {
-  const s = String(row?.status || '')
+  const s = requestStatus(row)
   switch (tab.value) {
     case 'unassigned':
       return isUnassigned(row)
@@ -137,12 +149,14 @@ function statusColor(status) {
   }
 }
 
-function isPrepared(status) {
+function isPrepared(row) {
+  const status = requestStatus(row)
   return status === 'PreparedForSale' || status === 'InProgress' || status === 'ConvertedToSale'
 }
 
-function statusText(status) {
-  return requestStatusLabel[status] || status
+function statusText(row) {
+  const s = requestStatus(row)
+  return requestStatusLabel[s] || s
 }
 
 function lastNote(row) {
@@ -221,7 +235,7 @@ function resetIntake(d) {
   intakeForm.value = {
     fullName: pick(d, 'customerName', 'CustomerName') || '',
     phone: pick(d, 'customerPhone', 'CustomerPhone') || '',
-    province: pick(d, 'customerProvince', 'CustomerProvince') || pick(d, 'cityName', 'CityName') || '',
+    province: displayCityName(d, branches.value),
     address: pick(d, 'customerAddress', 'CustomerAddress') || '',
     notes: pick(d, 'notes', 'Notes') || '',
   }
@@ -278,7 +292,7 @@ function selectIntakeCustomer(c) {
   intakeForm.value = {
     fullName: c.fullName || c.customerName || intakeForm.value.fullName,
     phone: c.phone || c.Phone || intakeForm.value.phone,
-    province: c.province || c.cityName || c.Province || intakeForm.value.province,
+    province: displayCityName(c, branches.value) || intakeForm.value.province,
     address: c.address || c.Address || intakeForm.value.address,
     notes: intakeForm.value.notes,
   }
@@ -456,11 +470,23 @@ const profilePhone = computed(() =>
   || pick(selected.value, 'customerPhone', 'CustomerPhone')
   || '')
 const profileProvince = computed(() =>
-  pick(saleDetail.value, 'province', 'Province')
-  || pick(detail.value, 'customerProvince', 'CustomerProvince')
-  || pick(selected.value, 'customerProvince', 'CustomerProvince')
-  || pick(profile.value, 'cityName', 'CityName')
-  || pick(selected.value, 'cityName', 'CityName')
+  displayCityName({
+    ...profile.value,
+    ...saleDetail.value,
+    ...detail.value,
+    ...selected.value,
+    cityName: pick(profile.value, 'cityName', 'CityName')
+      || pick(saleDetail.value, 'cityName', 'CityName')
+      || pick(detail.value, 'cityName', 'CityName')
+      || pick(selected.value, 'cityName', 'CityName'),
+    customerProvince: pick(detail.value, 'customerProvince', 'CustomerProvince')
+      || pick(selected.value, 'customerProvince', 'CustomerProvince'),
+    province: pick(saleDetail.value, 'province', 'Province')
+      || pick(profile.value, 'province', 'Province'),
+    cityValue: pick(profile.value, 'cityValue', 'CityValue')
+      || pick(detail.value, 'cityValue', 'CityValue')
+      || pick(selected.value, 'cityValue', 'CityValue'),
+  }, branches.value)
   || '')
 const profileAddress = computed(() =>
   pick(saleDetail.value, 'address', 'Address')
@@ -670,6 +696,24 @@ async function sendReturn() {
   }
 }
 
+function applyRequestRow(updated) {
+  if (!updated)
+    return
+  const id = pick(updated, 'id', 'Id')
+  const city = String(pick(updated, 'cityValue', 'CityValue') || '')
+  const status = requestStatus(updated)
+  const merged = { ...updated, status }
+  rows.value = rows.value.map(r => (
+    pick(r, 'id', 'Id') === id && String(pick(r, 'cityValue', 'CityValue') || '') === (city || String(pick(r, 'cityValue', 'CityValue') || ''))
+      ? { ...r, ...merged }
+      : r
+  ))
+  if (pick(detail.value, 'id', 'Id') === id)
+    detail.value = { ...detail.value, ...merged }
+  if (pick(selected.value, 'id', 'Id') === id)
+    selected.value = { ...selected.value, ...merged }
+}
+
 async function rejectSubmitted() {
   const reason = rejectReason.value.trim()
   if (!reason) {
@@ -682,7 +726,8 @@ async function rejectSubmitted() {
     return
   busy.value = true
   try {
-    detail.value = await smPost(requestActionPath(d, 'reject'), { reason })
+    const updated = await smPost(requestActionPath(d, 'reject'), { reason })
+    applyRequestRow(updated)
     rejectOpen.value = false
     rejectReason.value = ''
     toast.success('تم رفض الطلب')
@@ -712,7 +757,7 @@ async function markAllRead() {
 }
 
 function canManagerReject(row) {
-  const s = String(row?.status || '')
+  const s = requestStatus(row)
 
   return isEmployeeSubmitted(row) && s !== 'Completed' && s !== 'Rejected'
 }
@@ -1028,18 +1073,18 @@ onUnmounted(() => {
               </div>
               <VChip
                 size="small"
-                :color="statusColor(row.status)"
+                :color="statusColor(requestStatus(row))"
               >
-                {{ statusText(row.status) }}
+                {{ statusText(row) }}
               </VChip>
             </div>
             <strong>{{ row.customerName }}</strong>
             <div>الهاتف: {{ row.customerPhone || row.CustomerPhone || '—' }}</div>
-            <div>المحافظة: {{ row.customerProvince || row.CustomerProvince || row.branchName || row.cityName }}</div>
+            <div>المحافظة: {{ displayCityName(row, branches) }}</div>
             <div>العنوان: {{ row.customerAddress || row.CustomerAddress || '—' }}</div>
             <div>الموظف: {{ isEmployeeSubmitted(row) ? submittedBy(row) : (row.targetEmployeeName || 'غير مسند') }}</div>
             <div>التاريخ: {{ formatIraqDate(row.createdAtUtc || row.CreatedAtUtc) }}</div>
-            <div>الحالة: {{ statusText(row.status) }}</div>
+            <div>الحالة: {{ statusText(row) }}</div>
             <div v-if="lastNote(row)">
               آخر ملاحظة/سبب: {{ lastNote(row) }}
             </div>
@@ -1050,7 +1095,7 @@ onUnmounted(() => {
               سبب الرفض: {{ row.rejectionReason || row.RejectionReason }}
             </div>
             <VChip
-              v-if="row.status === 'Returned'"
+              v-if="requestStatus(row) === 'Returned'"
               size="small"
               color="warning"
               class="mt-1"
@@ -1061,7 +1106,7 @@ onUnmounted(() => {
               آخر تحديث: {{ lastUpdated(row) }}
             </div>
             <VBtn
-              v-if="row.status === 'Completed'"
+              v-if="requestStatus(row) === 'Completed'"
               class="mt-3"
               color="primary"
               size="small"
@@ -1086,27 +1131,27 @@ onUnmounted(() => {
           <div>الهاتف: {{ detail.customerPhone || '—' }}</div>
           <div>العنوان: {{ detail.customerAddress || '—' }}</div>
           <div>الموظف: {{ isEmployeeSubmitted(detail) ? submittedBy(detail) : (detail.targetEmployeeName || 'غير مسند') }}</div>
-          <div>المحافظة: {{ detail.customerProvince || detail.cityName || detail.branchName || detail.cityValue }}</div>
+          <div>المحافظة: {{ displayCityName(detail, branches) }}</div>
           <div class="d-flex align-center gap-2 mt-1">
             <span>الحالة:</span>
             <VChip
               size="small"
-              :color="statusColor(detail.status)"
+              :color="statusColor(requestStatus(detail))"
             >
-              {{ statusText(detail.status) }}
+              {{ statusText(detail) }}
             </VChip>
             <VChip
-              v-if="detail.status === 'Returned'"
+              v-if="requestStatus(detail) === 'Returned'"
               size="small"
               color="warning"
             >
               معاد للموظف
             </VChip>
           </div>
-          <div v-if="isPrepared(detail.status)" class="mt-1">
+          <div v-if="isPrepared(detail)" class="mt-1">
             مجهز للبيع — الموظف هو من يكمل البيع.
           </div>
-          <div v-if="detail.status === 'Pending' && (detail.pendingNote || detail.PendingNote)">
+          <div v-if="requestStatus(detail) === 'Pending' && (detail.pendingNote || detail.PendingNote)">
             ملاحظة التعليق: {{ detail.pendingNote || detail.PendingNote }}
           </div>
           <div v-if="detail.rejectionReason || detail.RejectionReason">
@@ -1146,7 +1191,7 @@ onUnmounted(() => {
             الاكتمال: {{ formatIraqTime(detail.completedAtUtc) }}
           </div>
 
-          <template v-if="detail.status === 'New' || employeeIdOf(detail) <= 0">
+          <template v-if="isUnassigned(detail)">
             <VDivider class="my-4" />
             <div class="font-weight-bold mb-4">
               بحث زبون
@@ -1191,7 +1236,7 @@ onUnmounted(() => {
                   العنوان: {{ c.address || '—' }}
                 </div>
                 <div>
-                  المحافظة: {{ c.province || c.cityName || '—' }}
+                  المحافظة: {{ displayCityName(c, branches) || '—' }}
                 </div>
                 <VBtn
                   class="mt-3"
@@ -1254,7 +1299,7 @@ onUnmounted(() => {
               hide-details="auto"
             />
             <div class="mb-4">
-              محافظة الإسناد: {{ detail.cityName || detail.branchName || requestCity(detail) }}
+              محافظة الإسناد: {{ displayCityName(detail, branches) }}
             </div>
             <VSelect
               v-model="assignEmployeeId"
@@ -1288,10 +1333,10 @@ onUnmounted(() => {
             </VBtn>
           </template>
 
-          <template v-if="detail.status === 'Assigned' || detail.status === 'Viewed'">
+          <template v-if="requestStatus(detail) === 'Assigned' || requestStatus(detail) === 'Viewed'">
             <VDivider class="my-4" />
             <div>الموظف الحالي: {{ detail.targetEmployeeName || 'غير مسند' }}</div>
-            <div>الحالة: {{ statusText(detail.status) }}</div>
+            <div>الحالة: {{ statusText(detail) }}</div>
             <VBtn
               v-if="canManagerReject(detail)"
               class="mt-3"
@@ -1303,7 +1348,7 @@ onUnmounted(() => {
             </VBtn>
           </template>
 
-          <template v-if="detail.status === 'Rejected'">
+          <template v-if="requestStatus(detail) === 'Rejected'">
             <VDivider class="my-4" />
             <VBtn
               color="warning"
@@ -1317,7 +1362,7 @@ onUnmounted(() => {
             </div>
           </template>
 
-          <template v-if="detail.status === 'Completed'">
+          <template v-if="requestStatus(detail) === 'Completed'">
             <VDivider class="my-4" />
             <VBtn
               color="primary"

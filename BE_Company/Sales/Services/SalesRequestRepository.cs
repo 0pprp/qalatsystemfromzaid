@@ -71,7 +71,7 @@ ORDER BY CreatedAtUtc DESC";
             await using var connection = new SqlConnection(cs);
             await connection.ExecuteAsync(new CommandDefinition(@"
 UPDATE dbo.SalesRequests SET
- Status = @Status, TargetEmployeeId = @TargetEmployeeId, TargetEmployeeName = @TargetEmployeeName,
+ [Status] = @Status, TargetEmployeeId = @TargetEmployeeId, TargetEmployeeName = @TargetEmployeeName,
  CityValue = @CityValue, CityName = @CityName,
  CustomerSourceType = @CustomerSourceType, ExistingCustomerId = @ExistingCustomerId,
  CustomerSourceCityValue = @CustomerSourceCityValue,
