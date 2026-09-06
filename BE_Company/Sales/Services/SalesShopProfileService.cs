@@ -1,3 +1,5 @@
+using BE_Company.DTO;
+using BE_Company.IRepository;
 using BE_Company.Sales.Authorization;
 using BE_Company.Sales.DTO;
 using Dapper;
@@ -24,19 +26,25 @@ namespace BE_Company.Sales.Services
         private readonly ISalesCompleteRepository _complete;
         private readonly ISalesManagerReadRepository _sales;
         private readonly ISalesRequestService _requests;
+        private readonly ICustomersPaymentsRepository _payments;
+        private readonly ICustomersSalesRepository _customerSales;
 
         public SalesShopProfileService(
             SalesDevelopmentGuard guard,
             IWebHostEnvironment env,
             ISalesCompleteRepository complete,
             ISalesManagerReadRepository sales,
-            ISalesRequestService requests)
+            ISalesRequestService requests,
+            ICustomersPaymentsRepository payments,
+            ICustomersSalesRepository customerSales)
         {
             _guard = guard;
             _env = env;
             _complete = complete;
             _sales = sales;
             _requests = requests;
+            _payments = payments;
+            _customerSales = customerSales;
         }
 
         public async Task EnsureSchemaAsync(CancellationToken ct)
@@ -219,13 +227,54 @@ VALUES
                 MatchesCustomer(r.ExistingCustomerId, r.CustomerName, r.CustomerPhone, customerId, customerName, phone)).ToList();
 
             var shops = new List<SalesShopProfileDTO>();
-            foreach (var sale in matchedSales)
+            var profileSales = new List<SalesCustomerProfileSaleDTO>();
+            foreach (var sale in matchedSales.OrderByDescending(s => s.CompletedAt ?? s.CreatedAt))
             {
+                var full = await _sales.GetSaleAsync(sale.SaleId, ct) ?? sale;
                 var shop = await GetBySaleIdAsync(sale.SaleId, ct);
                 if (shop != null)
                 {
                     shops.Add(shop);
                 }
+
+                var documents = new List<SalesDocumentDTO>();
+                try
+                {
+                    documents = (await _complete.GetDocumentsAsync(sale.SaleId, sale.EmployeeId, ct))
+                        .Select(SalesDocumentMapper.ToDto)
+                        .Select(d =>
+                        {
+                            d.DownloadUrl = $"/api/sales-manager/sales/{sale.SaleId}/documents/{d.DocumentId}/download";
+                            return d;
+                        })
+                        .ToList();
+                    documents = PreferFinalDocuments(documents);
+                }
+                catch
+                {
+                    documents = [];
+                }
+
+                profileSales.Add(new SalesCustomerProfileSaleDTO
+                {
+                    SaleId = full.SaleId,
+                    Date = full.CompletedAt ?? full.CreatedAt,
+                    Status = full.Status,
+                    EmployeeName = full.UserName,
+                    BaseSalePrice = full.BaseSalePrice,
+                    DefaultTotalSalePrice = full.DefaultTotalSalePrice > 0 ? full.DefaultTotalSalePrice : full.BaseSalePrice,
+                    OverrideTotalSalePrice = full.OverrideTotalSalePrice,
+                    FinalSalePrice = full.FinalSalePrice,
+                    DefaultDailyInstallment = full.DefaultDailyInstallment,
+                    OverrideDailyInstallment = full.OverrideDailyInstallment,
+                    DailyInstallment = full.DailyInstallment,
+                    DefaultDownPayment = full.DefaultDownPayment,
+                    OverrideDownPayment = full.OverrideDownPayment,
+                    DownPayment = full.DownPayment,
+                    Items = full.Items ?? [],
+                    Shop = shop,
+                    Documents = documents
+                });
             }
 
             var notes = await ListStoredNotesAsync(customerId, customerName, phone, ct);
@@ -255,28 +304,100 @@ VALUES
                 Phone = phone ?? matchedRequests.FirstOrDefault()?.CustomerPhone,
                 CustomerId = customerId,
                 CityValue = matchedRequests.FirstOrDefault()?.CityValue,
-                CityName = matchedRequests.FirstOrDefault()?.CityName
+                CityName = matchedRequests.FirstOrDefault()?.CityName,
+                Address = matchedRequests.FirstOrDefault()?.CustomerAddress,
+                Province = matchedRequests.FirstOrDefault()?.CustomerProvince
             };
+            var sampleFull = sample.SaleId > 0 ? await _sales.GetSaleAsync(sample.SaleId, ct) ?? sample : sample;
+
+            CustomersGetDTO? account = null;
+            IEnumerable<CustomersPaymentsGetDTO> payments = [];
+            IEnumerable<CustomersSalesGetDTO> officialSales = [];
+            var resolvedCustomerId = customerId ?? sample.CustomerId ?? matchedRequests.FirstOrDefault()?.ExistingCustomerId;
+            if (resolvedCustomerId is > 0)
+            {
+                try
+                {
+                    account = await _customerSales.Customers_GetByCustomerID(resolvedCustomerId);
+                }
+                catch
+                {
+                    account = null;
+                }
+
+                try
+                {
+                    payments = await _payments.CustomersPayments_GetByCustomerID(resolvedCustomerId)
+                               ?? [];
+                }
+                catch
+                {
+                    payments = [];
+                }
+
+                try
+                {
+                    officialSales = await _customerSales.CustomersSales_GetByCustomerIDNew(resolvedCustomerId, null, null)
+                                    ?? [];
+                }
+                catch
+                {
+                    officialSales = [];
+                }
+            }
 
             var history = matchedRequests.SelectMany(r => r.History ?? []).OrderBy(h => h.CreatedAtUtc).ToList();
             var latestShop = shops.OrderByDescending(s => s.CreatedAtUtc).FirstOrDefault();
+            var firstRequest = matchedRequests.FirstOrDefault();
 
             return new SalesCustomerProfileDTO
             {
-                CustomerId = customerId ?? sample.CustomerId ?? matchedRequests.FirstOrDefault()?.ExistingCustomerId,
-                CustomerName = sample.FullName,
-                Phone = sample.Phone,
-                CityValue = sample.CityValue,
-                CityName = sample.CityName,
-                Sales = matchedSales.Select(s => new SalesCustomerProfileSaleDTO
+                CustomerId = resolvedCustomerId,
+                CustomerName = account?.CustomerName ?? sampleFull.FullName,
+                Phone = account?.PhoneNumber ?? sampleFull.Phone,
+                Address = account?.Address ?? sampleFull.Address ?? firstRequest?.CustomerAddress,
+                Province = account?.CityName ?? sampleFull.Province ?? firstRequest?.CustomerProvince ?? sample.CityName,
+                NationalCardNumber = sampleFull.NationalCardNumber,
+                DelegateName = account?.DelegateName,
+                DelegateId = account?.DelegateID,
+                CustomerListName = sampleFull.CustomerListName,
+                CityValue = sample.CityValue ?? firstRequest?.CityValue,
+                CityName = account?.CityName ?? sample.CityName ?? firstRequest?.CityName,
+                PaymentSummary = account == null ? null : new SalesPaymentSummaryDTO
                 {
-                    SaleId = s.SaleId,
-                    Date = s.CompletedAt ?? s.CreatedAt,
-                    Status = s.Status,
-                    BaseSalePrice = s.BaseSalePrice,
-                    FinalSalePrice = s.FinalSalePrice,
-                    DailyInstallment = s.DailyInstallment
-                }).ToList(),
+                    AmountTotalSales = account.AmountTotalSales,
+                    ReceiptsTotal = account.ReceiptsTotal,
+                    AmountRemaining = account.AmountRemaining,
+                    LastPaymentDate = account.LastPaymentDate,
+                    CountReceiptDevice = account.CountReceiptDevice
+                },
+                Payments = payments
+                    .OrderByDescending(p => p.PaymentDate)
+                    .Select(p => new SalesCustomerPaymentDTO
+                    {
+                        CustomerPaymentId = p.CustomerPaymentID,
+                        PaymentDate = p.PaymentDate,
+                        Amount = p.AmountDenar,
+                        BoundNumber = p.BoundNumber,
+                        Note = p.Location,
+                        ItemsNames = p.ItemsNames
+                    })
+                    .ToList(),
+                OfficialSales = officialSales
+                    .OrderByDescending(s => s.DateCreate)
+                    .Select(s => new SalesOfficialSaleDTO
+                    {
+                        CustomerSaleId = s.CustomerSaleID,
+                        DateCreate = s.DateCreate,
+                        ItemsNames = s.ItemsNames,
+                        AmountTotalSales = s.AmountTotalSalesDenar ?? s.AmountTotalDenar,
+                        ReceiptsTotal = s.ReceiptsTotal,
+                        AmountRemaining = s.AmountRemaining,
+                        SaleName = s.SaleName,
+                        UserName = s.UserName
+                    })
+                    .ToList(),
+                Sales = profileSales,
                 Shops = shops,
                 LatestShop = latestShop,
                 Evaluations = matchedSales.Select(s => new SalesCustomerProfileEvaluationDTO
@@ -379,6 +500,21 @@ ORDER BY CreatedAtUtc", cancellationToken: ct));
             var phoneOk = !string.IsNullOrWhiteSpace(phone)
                           && string.Equals(rowPhone?.Trim(), phone.Trim(), StringComparison.OrdinalIgnoreCase);
             return nameOk || phoneOk;
+        }
+
+        private static List<SalesDocumentDTO> PreferFinalDocuments(List<SalesDocumentDTO> documents)
+        {
+            var finals = documents
+                .Where(d => d.Type == SalesDocumentService.Contract || d.Type == SalesDocumentService.PromissoryNote)
+                .ToList();
+            if (finals.Count > 0)
+            {
+                return finals;
+            }
+
+            return documents
+                .Where(d => d.Type == SalesDocumentService.PreviewContract || d.Type == SalesDocumentService.PreviewPromissoryNote)
+                .ToList();
         }
 
         private string ResolveImagePath(string key)

@@ -425,11 +425,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
 
   Future<void> _openCheckout(SalesWorkRequest request) async {
     try {
-      if (request.convertedToSaleId != null) {
-        await Navigator.pushNamed(context, '/sale-details', arguments: request.convertedToSaleId);
-      } else {
-        await Navigator.pushNamed(context, '/sale', arguments: request);
-      }
+      await Navigator.pushNamed(context, '/sale', arguments: request);
       if (mounted) await _load();
     } catch (_) {
       if (mounted) _toast('تعذر فتح عملية البيع');
@@ -518,11 +514,7 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
     if (row == null) return;
     setState(() => _busy = true);
     try {
-      if (row.convertedToSaleId != null) {
-        await Navigator.pushNamed(context, '/sale-details', arguments: row.convertedToSaleId);
-      } else {
-        await Navigator.pushNamed(context, '/sale', arguments: row);
-      }
+      await Navigator.pushNamed(context, '/sale', arguments: row);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

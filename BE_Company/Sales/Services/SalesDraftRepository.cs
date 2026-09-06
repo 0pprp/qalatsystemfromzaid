@@ -78,6 +78,60 @@ VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSaleP
             }
         }
 
+        public async Task<SalesDraftDTO> ReplaceContentsAsync(SalesDraftDTO draft, CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            await connection.OpenAsync(ct);
+            await using var tx = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+            try
+            {
+                await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.SalesDrafts SET
+ UserName = @UserName, UserType = @UserType, CityValue = @CityValue, CityName = @CityName,
+ Status = @Status, CustomerId = @CustomerId, SourceCityValue = @SourceCityValue,
+ FullName = @FullName, Phone = @Phone, Province = @Province, NationalCardNumber = @NationalCardNumber,
+ Address = @Address, NearestLandmark = @NearestLandmark, MukhtarName = @MukhtarName, RationCenterNumber = @RationCenterNumber,
+ EvaluationLevel = @EvaluationLevel, EvaluationNote = @EvaluationNote,
+ BaseSalePrice = @BaseSalePrice, FinalSalePrice = @FinalSalePrice, DailyInstallment = @DailyInstallment,
+ DefaultTotalSalePrice = @DefaultTotalSalePrice, DefaultDailyInstallment = @DefaultDailyInstallment, DefaultDownPayment = @DefaultDownPayment,
+ OverrideTotalSalePrice = @OverrideTotalSalePrice, OverrideDailyInstallment = @OverrideDailyInstallment, OverrideDownPayment = @OverrideDownPayment,
+ DownPayment = @DownPayment, SalesRequestId = @SalesRequestId, CustomerListId = @CustomerListId
+WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId;",
+                    draft, tx, cancellationToken: ct));
+
+                await connection.ExecuteAsync(new CommandDefinition(
+                    "DELETE FROM dbo.SalesDraftItems WHERE SaleId = @SaleId",
+                    new { draft.SaleId }, tx, cancellationToken: ct));
+
+                foreach (var item in draft.Items)
+                {
+                    item.SaleItemId = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
+INSERT INTO dbo.SalesDraftItems (SaleId, ProductId, ProductName, Quantity, UnitSalePrice, LineSalePrice)
+OUTPUT INSERTED.SaleItemId
+VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSalePrice);",
+                        new
+                        {
+                            draft.SaleId,
+                            item.ProductId,
+                            item.ProductName,
+                            item.Quantity,
+                            item.UnitSalePrice,
+                            item.LineSalePrice
+                        }, tx, cancellationToken: ct));
+                }
+
+                await tx.CommitAsync(ct);
+                var saved = await GetByIdAsync(draft.SaleId, draft.EmployeeId, ct);
+                return saved ?? draft;
+            }
+            catch
+            {
+                await tx.RollbackAsync(ct);
+                throw;
+            }
+        }
+
         public async Task<IReadOnlyList<SalesDraftDTO>> GetByEmployeeAsync(int employeeId, CancellationToken ct)
         {
             var cs = RequireConnection();

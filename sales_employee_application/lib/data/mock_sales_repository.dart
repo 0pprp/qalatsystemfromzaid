@@ -112,10 +112,13 @@ class MockSalesRepository implements SalesRepository {
       throw Exception('قائمة الزبون مطلوبة.');
     }
     if (request.salesRequestId != null) {
-      if (_converted.contains(request.salesRequestId)) {
-        throw Exception('الطلب مرتبط بعملية بيع أخرى.');
+      final existingId = _requestDrafts[request.salesRequestId!];
+      if (existingId != null) {
+        final matches = _drafts.where((d) => d.saleId == existingId);
+        if (matches.isNotEmpty && matches.first.isCompleted) {
+          throw Exception('الطلب مرتبط بعملية بيع مكتملة.');
+        }
       }
-      _converted.add(request.salesRequestId!);
     }
     final stock = await inventory();
     num base = 0;
@@ -141,8 +144,9 @@ class MockSalesRepository implements SalesRepository {
     final daily = request.overrideDailyInstallment ??
         (request.dailyInstallment > 0 ? request.dailyInstallment : defaultDaily);
     final down = request.overrideDownPayment ?? ((finalPrice * 0.05).round());
+    final resumeId = request.salesRequestId == null ? null : _requestDrafts[request.salesRequestId!];
     final draft = SalesDraft(
-      saleId: _nextId++,
+      saleId: resumeId ?? _nextId++,
       fullName: request.customer['fullName'] ?? '',
       phone: request.customer['phone'],
       province: request.customer['province'],
@@ -164,8 +168,16 @@ class MockSalesRepository implements SalesRepository {
       defaultDownPayment: ((base * 0.05).round()),
       createdAt: DateTime.now(),
       items: lines,
+      customerListId: request.customerListId,
+      overrideTotalSalePrice: request.overrideTotalSalePrice,
+      overrideDailyInstallment: request.overrideDailyInstallment,
+      overrideDownPayment: request.overrideDownPayment,
     );
+    _drafts.removeWhere((d) => d.saleId == draft.saleId);
     _drafts.insert(0, draft);
+    if (request.salesRequestId != null) {
+      _requestDrafts[request.salesRequestId!] = draft.saleId;
+    }
     return draft;
   }
 
@@ -371,7 +383,7 @@ class MockSalesRepository implements SalesRepository {
   Future<void> recordTrackingEvent(int? shiftId, String eventType) async {}
 
   final List<SalesWorkRequest> _requests = [];
-  final Set<int> _converted = {};
+  final Map<int, int> _requestDrafts = {};
 
   @override
   Future<List<SalesWorkRequest>> salesRequests() async => List.of(_requests);

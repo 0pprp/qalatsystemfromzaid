@@ -196,3 +196,40 @@ export const requestHistoryLabel = {
   ConvertedToSale: 'تحويل إلى بيع',
   Completed: 'اكتمال',
 }
+
+export function customerProfileApiPath(city, { customerId, name, phone } = {}) {
+  if (customerId) {
+    if (isDemo() || !isCentralSalesManager())
+      return `customers/${customerId}/profile`
+
+    return `customers/${encodeURIComponent(city)}/${customerId}/profile`
+  }
+
+  const params = new URLSearchParams()
+  if (name)
+    params.set('name', name)
+  if (phone)
+    params.set('phone', phone)
+
+  return isDemo() || !isCentralSalesManager()
+    ? `customers/profile?${params}`
+    : `customers/${encodeURIComponent(city)}/profile?${params}`
+}
+
+export function managerSalePath(city, saleId, suffix = '') {
+  if (isDemo() || !isCentralSalesManager())
+    return `sales/${saleId}${suffix}`
+
+  return `sales/${encodeURIComponent(city)}/${saleId}${suffix}`
+}
+
+export function overrideLabel(value) {
+  if (value == null || value === '')
+    return 'لم يتم التعديل'
+
+  const n = Number(value)
+  if (!Number.isFinite(n))
+    return 'لم يتم التعديل'
+
+  return `${n.toLocaleString('en-US')} د.ع`
+}

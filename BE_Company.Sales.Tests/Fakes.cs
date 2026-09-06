@@ -10,6 +10,7 @@ namespace BE_Company.Sales.Tests
     {
         public Task EnsureSchemaAsync(CancellationToken ct) => Task.CompletedTask;
         public Task<SalesDraftDTO> CreateAsync(SalesDraftDTO draft, CancellationToken ct) => Task.FromResult(draft);
+        public Task<SalesDraftDTO> ReplaceContentsAsync(SalesDraftDTO draft, CancellationToken ct) => Task.FromResult(draft);
         public Task<IReadOnlyList<SalesDraftDTO>> GetByEmployeeAsync(int employeeId, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SalesDraftDTO>>([]);
         public Task<SalesDraftDTO?> GetByIdAsync(int saleId, int employeeId, CancellationToken ct) =>

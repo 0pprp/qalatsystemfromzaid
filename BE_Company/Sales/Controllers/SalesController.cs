@@ -206,6 +206,10 @@ namespace BE_Company.Sales.Controllers
             {
                 return BadRequest(new { message = ex.Message });
             }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
@@ -275,6 +279,14 @@ namespace BE_Company.Sales.Controllers
             }
 
             await _complete.AttachDocumentsAsync(row, identity.EmployeeId, ct);
+            try
+            {
+                row.Shop = await _shops.GetBySaleIdAsync(id, ct);
+            }
+            catch
+            {
+                row.Shop = null;
+            }
             return Ok(row);
         }
 
@@ -399,6 +411,10 @@ namespace BE_Company.Sales.Controllers
             catch (ArgumentException ex)
             {
                 return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "فشل إنشاء معاينة المستندات: " + ex.Message });
             }
         }
 

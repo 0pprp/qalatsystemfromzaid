@@ -82,6 +82,10 @@ String salesApiMessage(int? statusCode, String fallback) {
     case 503:
       return 'بيئة Sales Demo غير جاهزة حالياً.';
     case 500:
+      final text = fallback.trim();
+      if (text.isNotEmpty && text != 'حدث خطأ عام. حاول لاحقاً.') {
+        return text;
+      }
       return 'حدث خطأ عام. حاول لاحقاً.';
     default:
       return fallback;

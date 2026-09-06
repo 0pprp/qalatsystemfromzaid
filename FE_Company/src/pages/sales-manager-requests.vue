@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { formatIraqTime } from '@/composables/gpsTrack'
@@ -20,6 +21,7 @@ import { useSalesBranches } from '@/composables/useSalesBranches'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
+const router = useRouter()
 const { branches } = useSalesBranches()
 const rows = ref([])
 const tab = ref('all')
@@ -333,21 +335,40 @@ async function loadShopImage(city, saleId) {
 }
 
 async function openCustomerProfile(row, d = null) {
-  if (row)
-    selected.value = row
-  profileOpen.value = true
-  let source = d || detail.value
-  if (!source && row?.id) {
-    try {
-      source = isDemo()
-        ? await smGet(`sales-requests/${row.id}`)
-        : await smGet(`sales-requests/${encodeURIComponent(row.cityValue)}/${row.id}`)
-    }
-    catch {
-      source = row
-    }
+  const source = d || detail.value || row
+  const city = requestCity(source) || requestCity(row)
+  if (!city) {
+    toast.error('حدد المحافظة أولاً')
+
+    return
   }
-  await loadProfile(row || selected.value, source || row)
+  router.push({
+    path: '/sales-manager-customer-profile',
+    query: {
+      cityValue: city,
+      customerId: pick(source, 'existingCustomerId', 'ExistingCustomerId', 'customerId', 'CustomerId') || '',
+      name: pick(source, 'customerName', 'CustomerName', 'fullName') || intakeForm.value.fullName || '',
+      phone: pick(source, 'customerPhone', 'CustomerPhone', 'phone') || intakeForm.value.phone || '',
+    },
+  })
+}
+
+function openIntakeCustomerProfile(c) {
+  const city = String(c.cityValue || c.CityValue || c.sourceCityValue || c.SourceCityValue || requestCity() || '')
+  if (!city) {
+    toast.error('حدد المحافظة أولاً')
+
+    return
+  }
+  router.push({
+    path: '/sales-manager-customer-profile',
+    query: {
+      cityValue: city,
+      customerId: pick(c, 'customerId', 'CustomerId') || '',
+      name: pick(c, 'fullName', 'customerName', 'CustomerName') || '',
+      phone: pick(c, 'phone', 'Phone') || '',
+    },
+  })
 }
 
 async function loadProfile(row, d) {
@@ -1044,6 +1065,15 @@ onUnmounted(() => {
                 <div>
                   المحافظة: {{ c.province || c.cityName || '—' }}
                 </div>
+                <VBtn
+                  class="mt-3"
+                  size="small"
+                  color="primary"
+                  variant="tonal"
+                  @click.stop="openIntakeCustomerProfile(c)"
+                >
+                  عرض بروفايل الزبون
+                </VBtn>
               </VCardText>
             </VCard>
             <div class="font-weight-bold mb-4 mt-6">

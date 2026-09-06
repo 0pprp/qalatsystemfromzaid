@@ -118,6 +118,10 @@ namespace BE_SalesEmployee.Controllers
             return OneAsync(cityValue, "sales-manager/customers/profile" + q, ct);
         }
 
+        [HttpGet("customers/{cityValue}/{customerId:int}/profile")]
+        public Task<IActionResult> CustomerProfileById(string cityValue, int customerId, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/customers/{customerId}/profile", ct);
+
         [HttpPost("customers/{cityValue}/notes")]
         public async Task<IActionResult> AddCustomerNote(string cityValue, [FromBody] JsonElement body, CancellationToken ct)
         {

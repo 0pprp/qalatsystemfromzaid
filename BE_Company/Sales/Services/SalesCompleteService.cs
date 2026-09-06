@@ -169,8 +169,21 @@ namespace BE_Company.Sales.Services
                 await _shops.UpsertFromCompleteAsync(current, shop, ct);
             }
 
-            var preview = await _documents.EnsurePreviewGeneratedAsync(current, ct);
-            return ToPreview(current, preview);
+            try
+            {
+                var preview = await _documents.EnsurePreviewGeneratedAsync(current, ct);
+                return ToPreview(current, preview);
+            }
+            catch (SalesCompleteException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status500InternalServerError,
+                    "فشل إنشاء معاينة المستندات: " + ex.Message);
+            }
         }
 
         private static bool HasShopPayload(SalesShopCompleteDTO shop) =>

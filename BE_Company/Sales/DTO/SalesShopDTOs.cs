@@ -62,8 +62,17 @@ namespace BE_Company.Sales.DTO
         public int? CustomerId { get; set; }
         public string CustomerName { get; set; } = string.Empty;
         public string? Phone { get; set; }
+        public string? Address { get; set; }
+        public string? Province { get; set; }
+        public string? NationalCardNumber { get; set; }
+        public string? DelegateName { get; set; }
+        public int? DelegateId { get; set; }
+        public string? CustomerListName { get; set; }
         public string? CityValue { get; set; }
         public string? CityName { get; set; }
+        public SalesPaymentSummaryDTO? PaymentSummary { get; set; }
+        public List<SalesCustomerPaymentDTO> Payments { get; set; } = [];
+        public List<SalesOfficialSaleDTO> OfficialSales { get; set; } = [];
         public List<SalesCustomerProfileSaleDTO> Sales { get; set; } = [];
         public List<SalesShopProfileDTO> Shops { get; set; } = [];
         public SalesShopProfileDTO? LatestShop { get; set; }
@@ -73,14 +82,56 @@ namespace BE_Company.Sales.DTO
         public List<SalesCustomerNoteDTO> Notes { get; set; } = [];
     }
 
+    public sealed class SalesPaymentSummaryDTO
+    {
+        public double? AmountTotalSales { get; set; }
+        public double? ReceiptsTotal { get; set; }
+        public double? AmountRemaining { get; set; }
+        public DateTime? LastPaymentDate { get; set; }
+        public int? CountReceiptDevice { get; set; }
+    }
+
+    public sealed class SalesCustomerPaymentDTO
+    {
+        public int? CustomerPaymentId { get; set; }
+        public DateTime? PaymentDate { get; set; }
+        public double? Amount { get; set; }
+        public int? BoundNumber { get; set; }
+        public string? Note { get; set; }
+        public string? ItemsNames { get; set; }
+    }
+
+    public sealed class SalesOfficialSaleDTO
+    {
+        public int? CustomerSaleId { get; set; }
+        public DateTime? DateCreate { get; set; }
+        public string? ItemsNames { get; set; }
+        public double? AmountTotalSales { get; set; }
+        public double? ReceiptsTotal { get; set; }
+        public double? AmountRemaining { get; set; }
+        public string? SaleName { get; set; }
+        public string? UserName { get; set; }
+    }
+
     public sealed class SalesCustomerProfileSaleDTO
     {
         public int SaleId { get; set; }
         public DateTime Date { get; set; }
         public string Status { get; set; } = string.Empty;
+        public string? EmployeeName { get; set; }
         public decimal BaseSalePrice { get; set; }
+        public decimal DefaultTotalSalePrice { get; set; }
+        public decimal? OverrideTotalSalePrice { get; set; }
         public decimal FinalSalePrice { get; set; }
+        public decimal DefaultDailyInstallment { get; set; }
+        public decimal? OverrideDailyInstallment { get; set; }
         public decimal DailyInstallment { get; set; }
+        public decimal DefaultDownPayment { get; set; }
+        public decimal? OverrideDownPayment { get; set; }
+        public decimal DownPayment { get; set; }
+        public List<SalesDraftItemDTO> Items { get; set; } = [];
+        public SalesShopProfileDTO? Shop { get; set; }
+        public List<SalesDocumentDTO> Documents { get; set; } = [];
     }
 
     public sealed class SalesCustomerProfileEvaluationDTO

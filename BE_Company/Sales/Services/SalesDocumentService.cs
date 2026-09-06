@@ -132,11 +132,12 @@ namespace BE_Company.Sales.Services
                     {
                         col.Item().AlignCenter().Element(c => ContractTitle(c, bold));
                         col.Item().Height(14);
-                        col.Item().Extend().Column(body =>
+                        col.Item().Column(body =>
                         {
+                            body.Spacing(8);
                             foreach (var paragraph in paragraphs)
                             {
-                                body.Item().Extend().AlignTop().Element(c => RichParagraph(c, paragraph, bold, 12));
+                                body.Item().AlignTop().Element(c => RichParagraph(c, paragraph, bold, 12));
                             }
                         });
                         col.Item().Height(18);
@@ -170,13 +171,15 @@ namespace BE_Company.Sales.Services
                     {
                         col.Item().AlignCenter().Text("وصل أمانة").Bold().FontFamily(bold).FontSize(24);
                         col.Item().Height(22);
-                        col.Item().Extend().Column(body =>
+                        col.Item().Column(body =>
                         {
+                            body.Spacing(8);
                             foreach (var paragraph in paragraphs)
                             {
-                                body.Item().Extend().AlignTop().Element(c => RichParagraph(c, paragraph, bold, 13));
+                                body.Item().AlignTop().Element(c => RichParagraph(c, paragraph, bold, 13));
                             }
 
+                            body.Item().Height(16);
                             body.Item().Row(row =>
                             {
                                 row.RelativeItem(2).AlignRight().Text("بصمة المدين:").FontSize(13);

@@ -1,19 +1,17 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { formatIraqTime } from '@/composables/gpsTrack'
-import { branchRowKey, smGet, smGetBlob, withCityQuery } from '@/composables/salesManagerApi'
-import { isDemo } from '@/composables/useCities'
+import { branchRowKey, smGet, withCityQuery } from '@/composables/salesManagerApi'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
+const router = useRouter()
 const rows = ref([])
 const cityValue = ref('')
 const employeeId = ref('')
 const date = ref('')
-const profileOpen = ref(false)
-const profile = ref(null)
-const profileRow = ref(null)
 
 function pick(obj, ...keys) {
   if (!obj)
@@ -38,85 +36,37 @@ function saleCity(row) {
   return pick(row, 'cityValue', 'CityValue') || cityValue.value
 }
 
-function salePath(row, suffix) {
-  const id = pick(row, 'saleId', 'SaleId')
-  const city = saleCity(row)
-  if (isDemo())
-    return `sales/${id}${suffix}`
-
-  return `sales/${encodeURIComponent(city)}/${id}${suffix}`
-}
-
-function customerProfilePath(city, params) {
-  return isDemo()
-    ? `customers/profile?${params}`
-    : `customers/${encodeURIComponent(city)}/profile?${params}`
-}
-
-function isContract(doc) {
-  const type = String(pick(doc, 'type', 'Type') || '')
-  return type === 'Contract' || type === 'PreviewContract'
-}
-
-function isPromissory(doc) {
-  const type = String(pick(doc, 'type', 'Type') || '')
-  return type === 'PromissoryNote' || type === 'PreviewPromissoryNote'
-}
-
 async function load() {
   const q = ['status=Completed']
   if (employeeId.value)
     q.push(`employeeId=${employeeId.value}`)
   if (date.value)
     q.push(`date=${date.value}`)
-  rows.value = await smGet(withCityQuery(`sales?${q.join('&')}`, cityValue.value)) || []
-}
-
-async function openDocument(row, kind) {
   try {
-    const docs = await smGet(salePath(row, '/documents')) || []
-    const list = Array.isArray(docs) ? docs : []
-    const doc = list.find(item => (kind === 'contract' ? isContract(item) : isPromissory(item)))
-    if (!doc) {
-      toast.error(kind === 'contract' ? 'عقد البيع غير متوفر' : 'وصل الأمانة غير متوفر')
-
-      return
-    }
-    const id = pick(doc, 'documentId', 'DocumentId')
-    const blob = await smGetBlob(salePath(row, `/documents/${id}/download`))
-    const url = URL.createObjectURL(blob)
-    window.open(url, '_blank')
+    rows.value = await smGet(withCityQuery(`sales?${q.join('&')}`, cityValue.value)) || []
   }
-  catch {
-    toast.error('تعذر فتح المستند')
+  catch (err) {
+    rows.value = []
+    toast.error(err?.response?.data?.message || 'تعذر تحميل المبيعات')
   }
 }
 
-async function openProfile(row) {
-  profileRow.value = row
-  profileOpen.value = true
-  profile.value = null
+function openProfile(row) {
   const city = saleCity(row)
-  if (!city)
+  if (!city) {
+    toast.error('حدد المحافظة أولاً')
+
     return
-  const params = new URLSearchParams()
-  const customerId = pick(row, 'customerId', 'CustomerId')
-  const name = pick(row, 'customerName', 'CustomerName', 'fullName', 'FullName')
-  const phone = pick(row, 'customerPhone', 'CustomerPhone', 'phone', 'Phone')
-  if (customerId)
-    params.set('customerId', String(customerId))
-  if (name)
-    params.set('name', name)
-  if (phone)
-    params.set('phone', phone)
-  if (![...params.keys()].length)
-    return
-  try {
-    profile.value = await smGet(customerProfilePath(city, params))
   }
-  catch {
-    profile.value = null
-  }
+  router.push({
+    path: '/sales-manager-customer-profile',
+    query: {
+      cityValue: city,
+      customerId: pick(row, 'customerId', 'CustomerId') || '',
+      name: pick(row, 'customerName', 'CustomerName', 'fullName', 'FullName') || '',
+      phone: pick(row, 'customerPhone', 'CustomerPhone', 'phone', 'Phone') || '',
+    },
+  })
 }
 
 onMounted(load)
@@ -164,8 +114,7 @@ onMounted(load)
           <th>السعر النهائي</th>
           <th>القسط</th>
           <th>المقدمة</th>
-          <th>العقد</th>
-          <th>وصل الأمانة</th>
+          <th>التاريخ</th>
           <th>بروفايل الزبون</th>
         </tr>
       </thead>
@@ -180,63 +129,18 @@ onMounted(load)
           <td>{{ money(row.finalSalePrice) }}</td>
           <td>{{ money(row.dailyInstallment) }}</td>
           <td>{{ money(row.downPayment) }}</td>
-          <td>
-            <VBtn
-              size="small"
-              variant="text"
-              @click="openDocument(row, 'contract')"
-            >
-              عقد البيع
-            </VBtn>
-          </td>
-          <td>
-            <VBtn
-              size="small"
-              variant="text"
-              @click="openDocument(row, 'promissory')"
-            >
-              وصل الأمانة
-            </VBtn>
-          </td>
+          <td>{{ formatIraqTime(pick(row, 'completedAt', 'CompletedAt', 'createdAt', 'CreatedAt')) }}</td>
           <td>
             <VBtn
               size="small"
               color="primary"
               @click="openProfile(row)"
             >
-              بروفايل الزبون
+              فتح بروفايل الزبون
             </VBtn>
           </td>
         </tr>
       </tbody>
     </VTable>
-
-    <VDialog
-      v-model="profileOpen"
-      max-width="640"
-    >
-      <VCard>
-        <VCardTitle>بروفايل الزبون</VCardTitle>
-        <VCardText>
-          <div>الاسم: {{ pick(profile, 'customerName', 'CustomerName') || pick(profileRow, 'customerName', 'fullName') }}</div>
-          <div>الهاتف: {{ pick(profile, 'phone', 'Phone') || pick(profileRow, 'customerPhone', 'phone') }}</div>
-          <div>المحافظة: {{ pick(profileRow, 'province', 'cityName', 'branchName') }}</div>
-          <div v-if="pick(profile, 'latestShop', 'LatestShop')">
-            المحل: {{ pick(profile.latestShop || profile.LatestShop, 'shopName', 'ShopName') }}
-          </div>
-          <div class="text-medium-emphasis mt-2">
-            {{ formatIraqTime(pick(profileRow, 'completedAt', 'CompletedAt', 'createdAt', 'CreatedAt')) }}
-          </div>
-        </VCardText>
-        <VCardActions>
-          <VBtn
-            variant="text"
-            @click="profileOpen = false"
-          >
-            إغلاق
-          </VBtn>
-        </VCardActions>
-      </VCard>
-    </VDialog>
   </div>
 </template>

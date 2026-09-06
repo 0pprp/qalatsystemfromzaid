@@ -24,8 +24,16 @@ class SaleScreen extends StatefulWidget {
 
 class _SaleScreenState extends State<SaleScreen> {
   static const _lastStep = 4;
+  static const _stepNames = [
+    'بيانات الزبون',
+    'المنتجات',
+    'الأسعار',
+    'بيانات المحل',
+    'المراجعة',
+  ];
   int _step = 0;
   bool _existing = false;
+  bool _resumeAttempted = false;
   SalesCustomer? _picked;
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
@@ -117,8 +125,84 @@ class _SaleScreenState extends State<SaleScreen> {
       if (!_lockProvince && _province.text.trim().isEmpty) {
         _province.text = 'النجف';
       }
+      _resumeDraftIfAny();
     }
   }
+
+  Future<void> _resumeDraftIfAny() async {
+    if (_resumeAttempted) return;
+    _resumeAttempted = true;
+    final id = _fromRequest?.convertedToSaleId;
+    if (id == null || id <= 0) return;
+    try {
+      await _loadStock();
+      final draft = await SalesRepositoryFactory.instance.byId(id);
+      if (!mounted || draft.isCompleted) return;
+      _applyDraft(draft);
+    } catch (e, st) {
+      debugPrint('resume sale draft failed: $e\n$st');
+    }
+  }
+
+  void _applyDraft(SalesDraft draft) {
+    _created = draft;
+    _previewDocs = const [];
+    if (draft.nationalCardNumber != null && draft.nationalCardNumber!.trim().isNotEmpty) {
+      _card.text = draft.nationalCardNumber!.trim();
+    }
+    if (draft.nearestLandmark != null && draft.nearestLandmark!.trim().isNotEmpty) {
+      _landmark.text = draft.nearestLandmark!.trim();
+    }
+    if (draft.mukhtarName != null && draft.mukhtarName!.trim().isNotEmpty) {
+      _mukhtar.text = draft.mukhtarName!.trim();
+    }
+    if (draft.rationCenterNumber != null && draft.rationCenterNumber!.trim().isNotEmpty) {
+      _ration.text = draft.rationCenterNumber!.trim();
+    }
+    if (draft.customerListId != null && draft.customerListId! > 0) {
+      _customerListId = draft.customerListId;
+      _preferList(draft.customerListId);
+      _applyPreferredList();
+    }
+    for (final item in draft.items) {
+      if (item.productId > 0 && item.quantity > 0) {
+        _qty[item.productId] = item.quantity;
+      }
+    }
+    _defaultTotal = draft.defaultTotalSalePrice ?? draft.baseSalePrice;
+    _defaultDaily = draft.defaultDailyInstallment ?? draft.dailyInstallment;
+    _defaultDown = draft.defaultDownPayment ?? ((draft.finalSalePrice * 0.05).round());
+    _fillOverride(_totalPrice, draft.overrideTotalSalePrice);
+    _fillOverride(_installment, draft.overrideDailyInstallment);
+    _fillOverride(_downPayment, draft.overrideDownPayment);
+    final shop = draft.shop;
+    if (shop != null) {
+      if (shop.shopName.trim().isNotEmpty) _shopName.text = shop.shopName.trim();
+      if (shop.shopBusinessType.trim().isNotEmpty) _shopType.text = shop.shopBusinessType.trim();
+      if (shop.shopStockEstimatedValue > 0) {
+        _shopStock.text = shop.shopStockEstimatedValue.round().toString();
+      }
+      if (shop.estimatedDailyRevenue > 0) {
+        _shopDaily.text = shop.estimatedDailyRevenue.round().toString();
+      }
+      if (shop.shopLength > 0) _shopLength.text = _numText(shop.shopLength);
+      if (shop.shopWidth > 0) _shopWidth.text = _numText(shop.shopWidth);
+      if (shop.shopImageKey != null && shop.shopImageKey!.trim().isNotEmpty) {
+        _shopImageKey = shop.shopImageKey!.trim();
+      }
+    }
+    setState(() {});
+  }
+
+  void _fillOverride(TextEditingController c, num? value) {
+    if (value == null) {
+      c.clear();
+      return;
+    }
+    c.text = value.round().toString();
+  }
+
+  String _numText(num value) => value % 1 == 0 ? value.round().toString() : value.toString();
 
   void _fillIfPresent(TextEditingController c, String? value, {required void Function(bool) lock}) {
     final text = value?.trim() ?? '';
@@ -349,7 +433,7 @@ class _SaleScreenState extends State<SaleScreen> {
   Future<bool> _createDraftAndPreview() async {
     setState(() => _saving = true);
     try {
-      _created ??= await SalesRepositoryFactory.instance.createSale(
+      final created = await SalesRepositoryFactory.instance.createSale(
         SalesDraftCreateRequest(
           customerId: (_existing && _picked != null && !_picked!.isForeignBranch)
               ? _picked!.customerId
@@ -376,7 +460,7 @@ class _SaleScreenState extends State<SaleScreen> {
           customerListId: _customerListId,
         ),
       );
-      final created = _created!;
+      _created = created;
       if (_shopImageKey == null || _shopImageKey!.isEmpty) {
         final bytes = _shopImageBytes ?? const <int>[];
         _shopImageKey = await SalesRepositoryFactory.instance.uploadShopImage(
@@ -398,10 +482,12 @@ class _SaleScreenState extends State<SaleScreen> {
       });
       return true;
     } on ApiException catch (e) {
+      debugPrint('sale preview failed status=${e.statusCode} message=${e.message} body=${e.body}');
       _toast(e.message);
       return false;
-    } catch (_) {
-      _toast('تعذر تجهيز معاينة البيع');
+    } catch (e, st) {
+      debugPrint('sale preview failed: $e\n$st');
+      _toast(e.toString());
       return false;
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -536,6 +622,14 @@ class _SaleScreenState extends State<SaleScreen> {
     }
   }
 
+  void _goBack() {
+    if (_step <= 0 || _saving) return;
+    setState(() {
+      _step--;
+      _previewDocs = const [];
+    });
+  }
+
   void _toast(String m) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
   }
@@ -549,43 +643,53 @@ class _SaleScreenState extends State<SaleScreen> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
-              child: Text('الخطوة ${_step + 1} من ${_lastStep + 1}',
-                  style: const TextStyle(color: AppColors.muted)),
+              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'الخطوة ${_step + 1} من ${_lastStep + 1}',
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _stepNames[_step],
+                    style: const TextStyle(color: AppColors.muted, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
             ),
             Expanded(child: _stepBody()),
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.md,
-                AppSpacing.sm,
+                AppSpacing.md,
                 AppSpacing.md,
                 AppSpacing.md,
               ),
               child: Row(
                 children: [
-                  if (_step > 0)
-                    TextButton(
-                      onPressed: _saving
-                          ? null
-                          : () => setState(() {
-                                if (_created != null && _step > 3) {
-                                  _step = 3;
-                                } else if (_created == null) {
-                                  _step--;
-                                }
-                              }),
-                      child: const Text('رجوع'),
+                  if (_step > 0) ...[
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _saving ? null : _goBack,
+                        child: const Text('السابق'),
+                      ),
                     ),
-                  const Spacer(),
-                  ElevatedButton(
-                    onPressed: _saving ? null : (_step < _lastStep ? _next : _completeSale),
-                    child: _saving
-                        ? const SizedBox(
-                            height: 22,
-                            width: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : Text(_step < _lastStep ? 'التالي' : 'تم البيع'),
+                    const SizedBox(width: AppSpacing.sm),
+                  ],
+                  Expanded(
+                    flex: _step > 0 ? 2 : 1,
+                    child: ElevatedButton(
+                      onPressed: _saving ? null : (_step < _lastStep ? _next : _completeSale),
+                      child: _saving
+                          ? const SizedBox(
+                              height: 22,
+                              width: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : Text(_step < _lastStep ? 'التالي' : 'تم البيع'),
+                    ),
                   ),
                 ],
               ),
@@ -650,18 +754,25 @@ class _SaleScreenState extends State<SaleScreen> {
               ),
             const SizedBox(height: AppSpacing.sm),
           ],
-          InputDecorator(
-            decoration: const InputDecoration(labelText: 'قائمة الزبون *'),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<int>(
-                isExpanded: true,
-                value: _customerLists.any((e) => e.listId == _customerListId) ? _customerListId : null,
-                hint: const Text('اختر قائمة الزبون'),
-                items: [
-                  for (final list in _customerLists)
-                    DropdownMenuItem(value: list.listId, child: Text(list.listName)),
-                ],
-                onChanged: (value) => setState(() => _customerListId = value),
+          const Text('قائمة الزبون *', style: TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                contentPadding: EdgeInsets.fromLTRB(12, 4, 12, 4),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<int>(
+                  isExpanded: true,
+                  value: _customerLists.any((e) => e.listId == _customerListId) ? _customerListId : null,
+                  hint: const Text('اختر قائمة الزبون'),
+                  items: [
+                    for (final list in _customerLists)
+                      DropdownMenuItem(value: list.listId, child: Text(list.listName)),
+                  ],
+                  onChanged: (value) => setState(() => _customerListId = value),
+                ),
               ),
             ),
           ),
@@ -700,7 +811,7 @@ class _SaleScreenState extends State<SaleScreen> {
   Widget _field(TextEditingController c, String label,
       {TextInputType? keyboard, String? Function(String?)? validator, bool last = false}) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: TextFormField(
         controller: c,
         keyboardType: keyboard,
@@ -710,7 +821,12 @@ class _SaleScreenState extends State<SaleScreen> {
         autocorrect: false,
         smartDashesType: SmartDashesType.disabled,
         smartQuotesType: SmartQuotesType.disabled,
-        decoration: InputDecoration(labelText: label),
+        decoration: InputDecoration(
+          labelText: label,
+          alignLabelWithHint: true,
+          floatingLabelBehavior: FloatingLabelBehavior.auto,
+          contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+        ),
       ),
     );
   }
@@ -731,8 +847,9 @@ class _SaleScreenState extends State<SaleScreen> {
               final q = _qty[item.productId] ?? 0;
               final empty = item.availableQuantity <= 0;
               return Card(
+                margin: const EdgeInsets.only(bottom: AppSpacing.md),
                 child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  padding: const EdgeInsets.all(AppSpacing.md),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -781,48 +898,40 @@ class _SaleScreenState extends State<SaleScreen> {
       children: [
         Text('السعر الإجمالي الافتراضي: ${MoneyFormat.iqd(_defaultTotal)}',
             style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: AppSpacing.sm),
         Text('القسط اليومي الافتراضي: ${MoneyFormat.iqd(_defaultDaily)}'),
+        const SizedBox(height: AppSpacing.sm),
         Text('المقدمة الافتراضية (5%): ${MoneyFormat.iqd(_defaultDown)}'),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpacing.lg),
         const Text(
           'حقول التعديل اختيارية. إذا بقي الحقل فارغاً يُعتمد الافتراضي.',
           style: TextStyle(color: AppColors.muted),
         ),
-        const SizedBox(height: AppSpacing.sm),
-        TextField(
-          controller: _totalPrice,
-          keyboardType: const TextInputType.numberWithOptions(decimal: false),
-          enableSuggestions: false,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: 'السعر الإجمالي (اختياري)',
-            suffixText: 'د.ع',
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        TextField(
-          controller: _installment,
-          keyboardType: const TextInputType.numberWithOptions(decimal: false),
-          enableSuggestions: false,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: 'القسط اليومي (اختياري)',
-            suffixText: 'د.ع',
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        TextField(
-          controller: _downPayment,
-          keyboardType: const TextInputType.numberWithOptions(decimal: false),
-          textInputAction: TextInputAction.done,
-          enableSuggestions: false,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: 'المقدمة (اختياري)',
-            suffixText: 'د.ع',
-          ),
-        ),
+        const SizedBox(height: AppSpacing.md),
+        _priceField(_totalPrice, 'السعر الإجمالي (اختياري)'),
+        _priceField(_installment, 'القسط اليومي (اختياري)'),
+        _priceField(_downPayment, 'المقدمة (اختياري)', last: true),
       ],
+    );
+  }
+
+  Widget _priceField(TextEditingController c, String label, {bool last = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+      child: TextField(
+        controller: c,
+        keyboardType: const TextInputType.numberWithOptions(decimal: false),
+        textInputAction: last ? TextInputAction.done : TextInputAction.next,
+        enableSuggestions: false,
+        autocorrect: false,
+        decoration: InputDecoration(
+          labelText: label,
+          suffixText: 'د.ع',
+          alignLabelWithHint: true,
+          floatingLabelBehavior: FloatingLabelBehavior.auto,
+          contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+        ),
+      ),
     );
   }
 
@@ -840,28 +949,36 @@ class _SaleScreenState extends State<SaleScreen> {
         _field(_shopWidth, 'عرض المحل بالمتر *', keyboard: TextInputType.number, validator: _req),
         Align(
           alignment: Alignment.centerRight,
-          child: Text(
-            'المساحة: ${_shopArea.toStringAsFixed(_shopArea % 1 == 0 ? 0 : 2)} م²',
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: Text(
+              'المساحة: ${_shopArea.toStringAsFixed(_shopArea % 1 == 0 ? 0 : 2)} م²',
+            ),
           ),
         ),
-        const SizedBox(height: AppSpacing.sm),
         _field(_shopNote, 'ملاحظة الموظف (اختياري)', last: true),
         OutlinedButton(
           onPressed: _pickShopImage,
-          child: const Text('اختيار صورة المحل'),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text('اختيار صورة المحل'),
+          ),
         ),
         if (_shopImageBytes != null && _shopImageBytes!.isNotEmpty) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.md),
           Text(_shopImageName.isEmpty ? 'تم اختيار الصورة' : _shopImageName),
           if (SaleScreen.debugShopImageBytes == null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Image.memory(
               Uint8List.fromList(_shopImageBytes!),
-              height: 80,
+              height: 120,
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => const Text('تم اختيار الصورة'),
             ),
           ],
+        ] else if (_shopImageKey != null && _shopImageKey!.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.md),
+          const Text('تم حفظ صورة المحل سابقاً. يمكنك استبدالها.'),
         ],
         if (_shopError != null)
           Padding(
@@ -883,22 +1000,30 @@ class _SaleScreenState extends State<SaleScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text('بيانات الزبون', style: TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: AppSpacing.sm),
         Text(_name.text),
+        const SizedBox(height: 6),
         Text(_phone.text),
+        const SizedBox(height: 6),
         Text(_province.text),
+        const SizedBox(height: 6),
         Text(_address.text),
+        const SizedBox(height: 6),
         Text('قائمة الزبون: ${_customerListName()}'),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpacing.lg),
         const Text('المنتجات', style: TextStyle(fontWeight: FontWeight.w700)),
         ..._stock.where((i) => (_qty[i.productId] ?? 0) > 0).map(
               (i) => Text('${i.productName} × ${_qty[i.productId]}'),
             ),
         const SizedBox(height: AppSpacing.md),
         const Text('الأسعار', style: TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: AppSpacing.sm),
         Text('السعر الإجمالي: ${MoneyFormat.iqd(_previewFinal)}'),
+        const SizedBox(height: 6),
         Text('القسط اليومي: ${MoneyFormat.iqd(_parsedOrDefault(_installment, _defaultDaily))}'),
+        const SizedBox(height: 6),
         Text('المقدمة: ${MoneyFormat.iqd(_parsedOrDefault(_downPayment, _defaultDown))}'),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpacing.lg),
         const Text('بيانات المحل', style: TextStyle(fontWeight: FontWeight.w700)),
         Text(_shopName.text),
         Text(_shopType.text),

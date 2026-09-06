@@ -114,8 +114,11 @@ ORDER BY OccurredAtUtc ASC",
             await using var connection = new SqlConnection(cs);
             var rows = await connection.QueryAsync<SalesDraftDTO>(new CommandDefinition(@"
 SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
- FullName, Phone, Province, EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, DownPayment,
- CreatedAt, CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId
+ FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
+ EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, DownPayment,
+ DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
+ OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment,
+ CreatedAt, CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
 FROM dbo.SalesDrafts
 WHERE (@EmployeeId IS NULL OR EmployeeId = @EmployeeId)
 AND (@Status IS NULL OR Status = @Status)
@@ -135,7 +138,9 @@ ORDER BY CreatedAt DESC",
 SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
  FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
  EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, DownPayment,
- CreatedAt, CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId
+ DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
+ OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment,
+ CreatedAt, CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
 FROM dbo.SalesDrafts WHERE SaleId = @SaleId",
                 new { SaleId = saleId }, cancellationToken: ct));
             if (header == null)

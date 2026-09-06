@@ -92,7 +92,9 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 18),
+        floatingLabelBehavior: FloatingLabelBehavior.auto,
+        alignLabelWithHint: true,
+        contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
           borderSide: const BorderSide(color: AppColors.line),

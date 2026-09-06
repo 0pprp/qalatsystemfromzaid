@@ -260,6 +260,11 @@ class SalesDraft {
     this.defaultTotalSalePrice,
     this.defaultDailyInstallment,
     this.defaultDownPayment,
+    this.overrideTotalSalePrice,
+    this.overrideDailyInstallment,
+    this.overrideDownPayment,
+    this.customerListId,
+    this.shop,
   });
 
   final int saleId;
@@ -287,6 +292,11 @@ class SalesDraft {
   final num? defaultTotalSalePrice;
   final num? defaultDailyInstallment;
   final num? defaultDownPayment;
+  final num? overrideTotalSalePrice;
+  final num? overrideDailyInstallment;
+  final num? overrideDownPayment;
+  final int? customerListId;
+  final SalesShopProfile? shop;
 
   bool get isRejected => status == 'Rejected';
   bool get isCompleted =>
@@ -328,6 +338,11 @@ class SalesDraft {
         defaultTotalSalePrice: defaultTotalSalePrice,
         defaultDailyInstallment: defaultDailyInstallment,
         defaultDownPayment: defaultDownPayment,
+        overrideTotalSalePrice: overrideTotalSalePrice,
+        overrideDailyInstallment: overrideDailyInstallment,
+        overrideDownPayment: overrideDownPayment,
+        customerListId: customerListId,
+        shop: shop,
       );
 
   factory SalesDraft.fromJson(Map<String, dynamic> json) => SalesDraft(
@@ -362,6 +377,53 @@ class SalesDraft {
         defaultTotalSalePrice: num.tryParse('${json['defaultTotalSalePrice'] ?? json['DefaultTotalSalePrice'] ?? ''}'),
         defaultDailyInstallment: num.tryParse('${json['defaultDailyInstallment'] ?? json['DefaultDailyInstallment'] ?? ''}'),
         defaultDownPayment: num.tryParse('${json['defaultDownPayment'] ?? json['DefaultDownPayment'] ?? ''}'),
+        overrideTotalSalePrice: num.tryParse('${json['overrideTotalSalePrice'] ?? json['OverrideTotalSalePrice'] ?? ''}'),
+        overrideDailyInstallment: num.tryParse('${json['overrideDailyInstallment'] ?? json['OverrideDailyInstallment'] ?? ''}'),
+        overrideDownPayment: num.tryParse('${json['overrideDownPayment'] ?? json['OverrideDownPayment'] ?? ''}'),
+        customerListId: int.tryParse('${json['customerListId'] ?? json['CustomerListId'] ?? ''}'),
+        shop: json['shop'] is Map
+            ? SalesShopProfile.fromJson(Map<String, dynamic>.from(json['shop'] as Map))
+            : json['Shop'] is Map
+                ? SalesShopProfile.fromJson(Map<String, dynamic>.from(json['Shop'] as Map))
+                : null,
+      );
+}
+
+class SalesShopProfile {
+  SalesShopProfile({
+    required this.shopName,
+    required this.shopBusinessType,
+    required this.shopStockEstimatedValue,
+    required this.estimatedDailyRevenue,
+    required this.shopLength,
+    required this.shopWidth,
+    this.shopArea,
+    this.shopImageKey,
+    this.shopImageUrl,
+  });
+
+  final String shopName;
+  final String shopBusinessType;
+  final num shopStockEstimatedValue;
+  final num estimatedDailyRevenue;
+  final num shopLength;
+  final num shopWidth;
+  final num? shopArea;
+  final String? shopImageKey;
+  final String? shopImageUrl;
+
+  factory SalesShopProfile.fromJson(Map<String, dynamic> json) => SalesShopProfile(
+        shopName: '${json['shopName'] ?? json['ShopName'] ?? ''}',
+        shopBusinessType: '${json['shopBusinessType'] ?? json['ShopBusinessType'] ?? ''}',
+        shopStockEstimatedValue:
+            num.tryParse('${json['shopStockEstimatedValue'] ?? json['ShopStockEstimatedValue'] ?? 0}') ?? 0,
+        estimatedDailyRevenue:
+            num.tryParse('${json['estimatedDailyRevenue'] ?? json['EstimatedDailyRevenue'] ?? 0}') ?? 0,
+        shopLength: num.tryParse('${json['shopLength'] ?? json['ShopLength'] ?? 0}') ?? 0,
+        shopWidth: num.tryParse('${json['shopWidth'] ?? json['ShopWidth'] ?? 0}') ?? 0,
+        shopArea: num.tryParse('${json['shopArea'] ?? json['ShopArea'] ?? ''}'),
+        shopImageKey: json['shopImageKey']?.toString() ?? json['ShopImageKey']?.toString(),
+        shopImageUrl: json['shopImageUrl']?.toString() ?? json['ShopImageUrl']?.toString(),
       );
 }
 

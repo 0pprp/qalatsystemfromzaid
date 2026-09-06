@@ -113,5 +113,6 @@ namespace BE_Company.Sales.DTO
         public string? CustomerListName { get; set; }
         public List<SalesDraftItemDTO> Items { get; set; } = [];
         public List<SalesDocumentDTO> Documents { get; set; } = [];
+        public SalesShopProfileDTO? Shop { get; set; }
     }
 }

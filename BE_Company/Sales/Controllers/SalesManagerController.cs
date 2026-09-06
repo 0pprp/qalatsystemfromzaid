@@ -112,6 +112,7 @@ namespace BE_Company.Sales.Controllers
                 EmployeeId = s.EmployeeId,
                 EmployeeName = s.UserName,
                 CityName = s.CityName,
+                CityValue = s.CityValue,
                 Province = s.Province,
                 CustomerId = s.CustomerId,
                 BaseSalePrice = s.BaseSalePrice,
@@ -191,6 +192,27 @@ namespace BE_Company.Sales.Controllers
             }
 
             var profile = await _shops.GetCustomerProfileAsync(customerId, name, phone, ct);
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity != null)
+            {
+                profile.CityValue ??= identity.BranchId;
+                profile.CityName ??= identity.BranchName;
+            }
+
+            return Ok(profile);
+        }
+
+        [HttpGet("customers/{customerId:int}/profile")]
+        public async Task<IActionResult> CustomerProfileById(int customerId, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            if (customerId <= 0)
+            {
+                return BadRequest(new { message = "حدد الزبون." });
+            }
+
+            var profile = await _shops.GetCustomerProfileAsync(customerId, null, null, ct);
             var identity = _identity.FromAuthenticatedUser();
             if (identity != null)
             {

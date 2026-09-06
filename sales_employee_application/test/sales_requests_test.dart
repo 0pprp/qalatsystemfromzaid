@@ -191,7 +191,7 @@ void main() {
     expect(SalesStaffInventoryFilter.isHidden('ثلاجة سامسونج'), isFalse);
   });
 
-  test('Duplicate convert prevented', () async {
+  test('Resume convert reuses existing draft', () async {
     final repo = MockSalesRepository();
     final req = SalesDraftCreateRequest(
       customer: const {'fullName': 'أ', 'phone': '1', 'province': 'النجف'},
@@ -202,8 +202,9 @@ void main() {
       salesRequestId: 4,
       customerListId: 1,
     );
-    await repo.createSale(req);
-    expect(() => repo.createSale(req), throwsException);
+    final first = await repo.createSale(req);
+    final second = await repo.createSale(req);
+    expect(second.saleId, first.saleId);
   });
 
   testWidgets('Create sale from request prefills customer', (tester) async {

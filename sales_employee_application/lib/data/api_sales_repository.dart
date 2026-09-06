@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:sales_employee_application/config/app_env.dart';
 import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository.dart';
@@ -16,7 +17,8 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   Never _throw(ApiException e) {
-    throw ApiException(salesApiMessage(e.statusCode, e.message), statusCode: e.statusCode);
+    debugPrint('sales api error status=${e.statusCode} message=${e.message} body=${e.body}');
+    throw ApiException(salesApiMessage(e.statusCode, e.message), statusCode: e.statusCode, body: e.body);
   }
 
   static bool _onIraqDay(DateTime value, DateTime iraqDate) {

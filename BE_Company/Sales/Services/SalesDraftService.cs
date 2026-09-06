@@ -179,7 +179,16 @@ namespace BE_Company.Sales.Services
                 var existing = await _requests.GetForEmployeeAsync(request.SalesRequestId.Value, employeeId, ct);
                 if (existing.ConvertedToSaleId is > 0)
                 {
-                    throw new ArgumentException("الطلب مرتبط بعملية بيع أخرى.");
+                    var current = await _drafts.GetByIdAsync(existing.ConvertedToSaleId.Value, employeeId, ct)
+                                  ?? throw new ArgumentException("الطلب مرتبط بعملية بيع أخرى.");
+                    if (SalesCompleteRules.AlreadyCompleted(current.Status))
+                    {
+                        throw new ArgumentException("الطلب مرتبط بعملية بيع مكتملة.");
+                    }
+
+                    draft.SaleId = current.SaleId;
+                    draft.Status = SalesStatuses.Pending;
+                    return await _drafts.ReplaceContentsAsync(draft, ct);
                 }
             }
 
