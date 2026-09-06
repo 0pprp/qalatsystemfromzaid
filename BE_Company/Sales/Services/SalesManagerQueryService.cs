@@ -7,6 +7,7 @@ namespace BE_Company.Sales.Services
     {
         private readonly ISalesManagerReadRepository _read;
         private readonly ISalesRequestRepository _requests;
+        private readonly ISalesDraftRepository _drafts;
         private readonly IIraqClock _clock;
         private readonly SalesManagerTrackingOptions _options;
         private readonly IConfiguration _configuration;
@@ -14,12 +15,14 @@ namespace BE_Company.Sales.Services
         public SalesManagerQueryService(
             ISalesManagerReadRepository read,
             ISalesRequestRepository requests,
+            ISalesDraftRepository drafts,
             IIraqClock clock,
             SalesManagerTrackingOptions options,
             IConfiguration configuration)
         {
             _read = read;
             _requests = requests;
+            _drafts = drafts;
             _clock = clock;
             _options = options;
             _configuration = configuration;
@@ -131,6 +134,7 @@ namespace BE_Company.Sales.Services
 
         public async Task<SalesManagerDashboardDTO> DashboardAsync(CancellationToken ct)
         {
+            await _drafts.EnsureSchemaAsync(ct);
             await _requests.EnsureSchemaAsync(ct);
             var employees = await ListEmployeesAsync(null, null, ct);
             var todayIraq = IraqTimeService.IraqNow(_clock).Date;
