@@ -8,7 +8,6 @@ import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/screens/sale_complete_success_screen.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/sale_document_storage.dart';
-import 'package:sales_employee_application/services/sale_documents.dart';
 import 'package:sales_employee_application/services/shop_gps.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
@@ -354,7 +353,7 @@ class _SaleScreenState extends State<SaleScreen> {
         return;
       }
       if (_customerListId == null || _customerListId! <= 0) {
-        _toast('اختيار قائمة الزبون مطلوب');
+        _toast('اختيار القائمة/المندوب مطلوب');
         return;
       }
       if (!_filled(_name) ||
@@ -574,27 +573,6 @@ class _SaleScreenState extends State<SaleScreen> {
         failed = true;
       }
     }
-    if ((contract == null || receipt == null) && _created != null && docs.isNotEmpty) {
-      try {
-        final draft = _created!;
-        if (contract == null) {
-          final file = await SaleDocumentStorage.savePdf(
-            'Sale_${draft.saleId}_Contract.pdf',
-            await SaleDocuments.contractBytesFromDraft(draft),
-          );
-          contract = file.path;
-        }
-        if (receipt == null) {
-          final file = await SaleDocumentStorage.savePdf(
-            'Sale_${draft.saleId}_PromissoryNote.pdf',
-            await SaleDocuments.receiptBytesFromDraft(draft),
-          );
-          receipt = file.path;
-        }
-      } catch (_) {
-        failed = true;
-      }
-    }
     if (docs.isEmpty) failed = true;
     return _SaleDownloadBundle(
       contractPath: contract,
@@ -605,24 +583,7 @@ class _SaleScreenState extends State<SaleScreen> {
 
   Future<void> _openOrDownload(SalesDocument doc) async {
     try {
-      final draft = _created;
-      if (doc.documentId != null || doc.downloadUrl.isNotEmpty) {
-        try {
-          final bytes = await SalesRepositoryFactory.instance.downloadDocument(draft?.saleId ?? 0, doc);
-          final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
-          await OpenFilex.open(file.path);
-          return;
-        } catch (_) {}
-      }
-      if (draft != null) {
-        final bytes = doc.isContract
-            ? await SaleDocuments.contractBytesFromDraft(draft)
-            : await SaleDocuments.receiptBytesFromDraft(draft);
-        final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
-        await OpenFilex.open(file.path);
-        return;
-      }
-      final bytes = await SalesRepositoryFactory.instance.downloadDocument(0, doc);
+      final bytes = await SalesRepositoryFactory.instance.downloadDocument(_created?.saleId ?? 0, doc);
       final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
       await OpenFilex.open(file.path);
     } catch (_) {
@@ -892,7 +853,7 @@ class _SaleScreenState extends State<SaleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('قائمة الزبون *', style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text('القائمة/المندوب *', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -904,7 +865,7 @@ class _SaleScreenState extends State<SaleScreen> {
                 child: DropdownButton<int>(
                   isExpanded: true,
                   value: _customerLists.any((e) => e.listId == _customerListId) ? _customerListId : null,
-                  hint: const Text('اختر قائمة الزبون'),
+                  hint: const Text('اختر القائمة/المندوب'),
                   items: [
                     for (final list in _customerLists)
                       DropdownMenuItem(value: list.listId, child: Text(list.listName)),
@@ -1163,7 +1124,7 @@ class _SaleScreenState extends State<SaleScreen> {
         const SizedBox(height: 6),
         Text(_address.text),
         const SizedBox(height: 6),
-        Text('قائمة الزبون: ${_customerListName()}'),
+        Text('القائمة/المندوب: ${_customerListName()}'),
         const SizedBox(height: AppSpacing.lg),
         const Text('المنتجات', style: TextStyle(fontWeight: FontWeight.w700)),
         ..._stock.where((i) => (_qty[i.productId] ?? 0) > 0).map(

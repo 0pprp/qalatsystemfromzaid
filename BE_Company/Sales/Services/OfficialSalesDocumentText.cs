@@ -13,7 +13,28 @@ namespace BE_Company.Sales.Services
 
         public sealed record Paragraph(IReadOnlyList<Part> Parts)
         {
-            public string PlainText => string.Concat(Parts.Select(p => p.Text));
+            public string PlainText
+            {
+                get
+                {
+                    var buffer = new System.Text.StringBuilder();
+                    foreach (var part in Parts)
+                    {
+                        var text = part.Text ?? string.Empty;
+                        if (buffer.Length > 0 && text.Length > 0
+                            && !char.IsWhiteSpace(buffer[^1])
+                            && !char.IsWhiteSpace(text[0])
+                            && text[0] is not '.' and not '،' and not ',' and not ':')
+                        {
+                            buffer.Append(' ');
+                        }
+
+                        buffer.Append(text);
+                    }
+
+                    return buffer.ToString();
+                }
+            }
         }
 
         public static string FormatDate(DateTime date) => date.ToString("yyyy/MM/dd");

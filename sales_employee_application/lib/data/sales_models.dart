@@ -264,6 +264,7 @@ class SalesDraft {
     this.overrideDailyInstallment,
     this.overrideDownPayment,
     this.customerListId,
+    this.customerListName,
     this.shop,
   });
 
@@ -296,6 +297,7 @@ class SalesDraft {
   final num? overrideDailyInstallment;
   final num? overrideDownPayment;
   final int? customerListId;
+  final String? customerListName;
   final SalesShopProfile? shop;
 
   bool get isRejected => status == 'Rejected';
@@ -342,6 +344,7 @@ class SalesDraft {
         overrideDailyInstallment: overrideDailyInstallment,
         overrideDownPayment: overrideDownPayment,
         customerListId: customerListId,
+        customerListName: customerListName,
         shop: shop,
       );
 
@@ -381,6 +384,7 @@ class SalesDraft {
         overrideDailyInstallment: num.tryParse('${json['overrideDailyInstallment'] ?? json['OverrideDailyInstallment'] ?? ''}'),
         overrideDownPayment: num.tryParse('${json['overrideDownPayment'] ?? json['OverrideDownPayment'] ?? ''}'),
         customerListId: int.tryParse('${json['customerListId'] ?? json['CustomerListId'] ?? ''}'),
+        customerListName: json['customerListName']?.toString() ?? json['CustomerListName']?.toString(),
         shop: json['shop'] is Map
             ? SalesShopProfile.fromJson(Map<String, dynamic>.from(json['shop'] as Map))
             : json['Shop'] is Map

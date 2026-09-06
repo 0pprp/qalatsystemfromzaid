@@ -58,29 +58,25 @@ namespace BE_Company.Sales.Tests
         [Fact]
         public void Contract_NormalData_IsSingleA4Page()
         {
-            var bytes = OfficialSalesPdfRenderer.BuildContract(Draft());
-            Assert.Equal(1, PageCount(bytes));
+            AssertSingleA4(OfficialSalesPdfRenderer.BuildContract(Draft()));
         }
 
         [Fact]
         public void PromissoryNote_NormalData_IsSingleA4Page()
         {
-            var bytes = OfficialSalesPdfRenderer.BuildPromissoryNote(Draft());
-            Assert.Equal(1, PageCount(bytes));
+            AssertSingleA4(OfficialSalesPdfRenderer.BuildPromissoryNote(Draft()));
         }
 
         [Fact]
         public void Contract_LongData_IsSingleA4Page()
         {
-            var bytes = OfficialSalesPdfRenderer.BuildContract(LongDraft());
-            Assert.Equal(1, PageCount(bytes));
+            AssertSingleA4(OfficialSalesPdfRenderer.BuildContract(LongDraft()));
         }
 
         [Fact]
         public void PromissoryNote_LongData_IsSingleA4Page()
         {
-            var bytes = OfficialSalesPdfRenderer.BuildPromissoryNote(LongDraft());
-            Assert.Equal(1, PageCount(bytes));
+            AssertSingleA4(OfficialSalesPdfRenderer.BuildPromissoryNote(LongDraft()));
         }
 
         [Fact]
@@ -106,11 +102,14 @@ namespace BE_Company.Sales.Tests
             Assert.Contains("رقم البطاقة الوطنية: ( N1234567 )", text);
         }
 
-        private static int PageCount(byte[] pdf)
+        private static void AssertSingleA4(byte[] pdf)
         {
             using var stream = new MemoryStream(pdf);
             using var document = PdfDocument.Open(stream);
-            return document.NumberOfPages;
+            Assert.Equal(1, document.NumberOfPages);
+            var page = document.GetPage(1);
+            Assert.InRange(page.Width, 590, 600);
+            Assert.InRange(page.Height, 835, 850);
         }
     }
 }

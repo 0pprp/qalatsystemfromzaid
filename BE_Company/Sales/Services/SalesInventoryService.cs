@@ -65,6 +65,67 @@ namespace BE_Company.Sales.Services
             }
         }
 
+        public static async Task AttachListNamesAsync(
+            SqlConnection connection,
+            IEnumerable<SalesDraftDTO> drafts,
+            CancellationToken ct)
+        {
+            var list = drafts as IList<SalesDraftDTO> ?? drafts.ToList();
+            var ids = list
+                .Where(d => d.CustomerListId is > 0)
+                .Select(d => d.CustomerListId!.Value)
+                .Distinct()
+                .ToArray();
+            if (ids.Length == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var rows = await connection.QueryAsync<(int Id, string? Name)>(new CommandDefinition(
+                    "SELECT DelegateID AS Id, DelegateName AS Name FROM dbo.Delegates WHERE DelegateID IN @Ids",
+                    new { Ids = ids },
+                    cancellationToken: ct));
+                var map = rows
+                    .GroupBy(r => r.Id)
+                    .ToDictionary(g => g.Key, g => g.First().Name ?? string.Empty);
+                foreach (var draft in list)
+                {
+                    if (draft.CustomerListId is int id
+                        && map.TryGetValue(id, out var name)
+                        && !string.IsNullOrWhiteSpace(name))
+                    {
+                        draft.CustomerListName = name;
+                    }
+                }
+            }
+            catch
+            {
+                // Isolated tests may not have dbo.Delegates.
+            }
+        }
+
+        public static async Task<string?> NameAsync(SqlConnection connection, int? listId, CancellationToken ct)
+        {
+            if (listId is not > 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                return await connection.QueryFirstOrDefaultAsync<string?>(new CommandDefinition(
+                    "SELECT TOP 1 DelegateName FROM dbo.Delegates WHERE DelegateID = @Id",
+                    new { Id = listId },
+                    cancellationToken: ct));
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         public static bool IsHiddenFromSalesStaff(string? productName)
         {
             var n = NormalizeArabic(productName);

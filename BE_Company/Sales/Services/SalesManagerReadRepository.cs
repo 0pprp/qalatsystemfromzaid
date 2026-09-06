@@ -127,7 +127,9 @@ AND (@ToUtc IS NULL OR CreatedAt <= @ToUtc)
 ORDER BY CreatedAt DESC",
                 new { EmployeeId = employeeId, Status = status, FromUtc = fromUtc, ToUtc = toUtc },
                 cancellationToken: ct));
-            return rows.ToList();
+            var list = rows.ToList();
+            await SalesInventoryService.AttachListNamesAsync(connection, list, ct);
+            return list;
         }
 
         public async Task<SalesDraftDTO?> GetSaleAsync(int saleId, CancellationToken ct)
@@ -153,6 +155,7 @@ SELECT SaleItemId, ProductId, ProductName, Quantity, UnitSalePrice, LineSalePric
 FROM dbo.SalesDraftItems WHERE SaleId = @SaleId",
                 new { SaleId = saleId }, cancellationToken: ct));
             header.Items = items.ToList();
+            await SalesInventoryService.AttachListNamesAsync(connection, [header], ct);
             return header;
         }
 

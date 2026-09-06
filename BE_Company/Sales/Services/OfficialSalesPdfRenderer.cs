@@ -23,6 +23,8 @@ namespace BE_Company.Sales.Services
         private static bool _boldRegistered;
         private static readonly object FontLock = new();
 
+        public static float ContentHeight => PageSizes.A4.Height - (Margin * 2f);
+
         public static byte[] BuildContract(SalesDraftDTO sale)
         {
             var values = OfficialSalesDocumentText.FromSale(sale);
@@ -34,7 +36,7 @@ namespace BE_Company.Sales.Services
                 container.Page(page =>
                 {
                     ConfigurePage(page);
-                    page.Content().StopPaging().ScaleToFit().Column(col =>
+                    FitSingleA4Page(page).Column(col =>
                     {
                         col.Item().AlignCenter().BorderBottom(1.2f).PaddingBottom(4)
                             .Text("عقد بيع").Bold().FontFamily(bold).FontSize(TitleFontSize);
@@ -72,7 +74,7 @@ namespace BE_Company.Sales.Services
                 container.Page(page =>
                 {
                     ConfigurePage(page);
-                    page.Content().StopPaging().ScaleToFit().Column(col =>
+                    FitSingleA4Page(page).Column(col =>
                     {
                         col.Item().AlignCenter()
                             .Text("وصل أمانة").Bold().FontFamily(bold).FontSize(ReceiptTitleFontSize);
@@ -100,11 +102,25 @@ namespace BE_Company.Sales.Services
         {
             page.Size(PageSizes.A4);
             page.Margin(Margin);
+            page.PageColor(Colors.White);
             page.ContentFromRightToLeft();
             page.DefaultTextStyle(t => t
                 .FontFamily(ResolveFontFamily())
                 .FontSize(BodyFontSize)
-                .LineHeight(LineHeight));
+                .LineHeight(LineHeight)
+                .DirectionFromRightToLeft());
+        }
+
+        /// <summary>
+        /// StopPaging+ScaleToFit يقيس المحتوى بلا قيد أولاً فيطلب صفحات إضافية ثم يتركها فارغة.
+        /// الصندوق ثابت الارتفاع يمنع محرك الصفحات من إنشاء صفحة ثانية.
+        /// </summary>
+        private static IContainer FitSingleA4Page(PageDescriptor page)
+        {
+            return page.Content()
+                .Height(ContentHeight)
+                .AlignTop()
+                .ScaleToFit();
         }
 
         private static void BodyParagraph(IContainer container, string text)

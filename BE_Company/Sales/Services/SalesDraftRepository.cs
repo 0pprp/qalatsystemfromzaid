@@ -166,6 +166,7 @@ VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSaleP
                 header.Items = lookup[header.SaleId].Select(MapItem).ToList();
             }
 
+            await SalesInventoryService.AttachListNamesAsync(connection, headers, ct);
             return headers;
         }
 
@@ -214,6 +215,7 @@ WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId",
                   FROM dbo.SalesDraftItems WHERE SaleId = @SaleId",
                 new { SaleId = saleId }, cancellationToken: ct));
             header.Items = items.Select(MapItem).ToList();
+            await SalesInventoryService.AttachListNamesAsync(connection, [header], ct);
             return header;
         }
 

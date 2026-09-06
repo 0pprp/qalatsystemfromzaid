@@ -237,7 +237,7 @@ void main() {
     expect(find.text('رقم البطاقة الوطنية *'), findsOneWidget);
     expect(find.text('أقرب نقطة دالة *'), findsOneWidget);
     expect(find.text('اسم المختار *'), findsOneWidget);
-    expect(find.text('قائمة الزبون *'), findsOneWidget);
+    expect(find.text('القائمة/المندوب *'), findsOneWidget);
     expect(find.text('رقم مركز التموين (اختياري)'), findsNothing);
   });
 }

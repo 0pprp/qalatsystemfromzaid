@@ -94,10 +94,7 @@ namespace BE_SalesEmployee.Controllers
                 user, cityValue, $"sales-manager/sales/{saleId}/documents/{documentId}/download", ct);
             if (payload is ValueTuple<byte[], string> file)
             {
-                var type = string.IsNullOrWhiteSpace(file.Item2) || file.Item2 == "image/jpeg"
-                    ? "application/pdf"
-                    : file.Item2;
-                return File(file.Item1, type);
+                return File(file.Item1, "application/pdf", $"Sale_{saleId}_document.pdf");
             }
 
             return StatusCode(status, payload);
@@ -170,31 +167,53 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [HttpPost("customers/{cityValue}/documents")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(50_000_000)]
+        [RequestFormLimits(MultipartBodyLengthLimit = 50_000_000)]
         public async Task<IActionResult> UploadCustomerDocument(
             string cityValue,
             [FromQuery] string? type,
             [FromQuery] int? customerId,
             [FromQuery] string? name,
             [FromQuery] string? phone,
+            [FromQuery] int? saleId,
             [FromForm] IFormFile? file,
             CancellationToken ct)
         {
             var user = TokenService.FromPrincipal(User);
+            file ??= Request.Form.Files.FirstOrDefault(f => f.Length > 0);
             if (file == null || file.Length <= 0)
             {
                 return BadRequest(new { message = "الصورة مطلوبة." });
             }
 
             using var form = new MultipartFormDataContent();
-            await using var stream = file.OpenReadStream();
-            var part = new StreamContent(stream);
-            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
-            form.Add(part, "file", file.FileName);
+            var bytes = new byte[file.Length];
+            await using (var input = file.OpenReadStream())
+            {
+                var read = 0;
+                while (read < bytes.Length)
+                {
+                    var n = await input.ReadAsync(bytes.AsMemory(read, bytes.Length - read), ct);
+                    if (n == 0)
+                    {
+                        break;
+                    }
+
+                    read += n;
+                }
+            }
+
+            var part = new ByteArrayContent(bytes);
+            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType);
+            form.Add(part, "file", string.IsNullOrWhiteSpace(file.FileName) ? "document.jpg" : file.FileName);
             var q = Query(
                 ("type", type),
                 ("customerId", customerId?.ToString()),
                 ("name", name),
-                ("phone", phone));
+                ("phone", phone),
+                ("saleId", saleId?.ToString()));
             var (status, payload) = await _aggregator.SendContentAsync(
                 user, cityValue, "sales-manager/customers/documents" + q, HttpMethod.Post, form, ct);
             return StatusCode(status, payload);

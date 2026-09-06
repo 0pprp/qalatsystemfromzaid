@@ -7,9 +7,9 @@ import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/screens/sale_complete_success_screen.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/sale_document_storage.dart';
-import 'package:sales_employee_application/services/sale_documents.dart';
 import 'package:sales_employee_application/services/shop_gps.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
+import 'package:sales_employee_application/utils/iraq_time.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
 import 'package:sales_employee_application/widgets/shop_location_button.dart';
 import 'package:sales_employee_application/widgets/tappable_phone.dart';
@@ -250,27 +250,6 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
         failed = true;
       }
     }
-    if ((contract == null || receipt == null) && _draft != null && docs.isNotEmpty) {
-      try {
-        final draft = _draft!;
-        if (contract == null) {
-          final file = await SaleDocumentStorage.savePdf(
-            'Sale_${draft.saleId}_Contract.pdf',
-            await SaleDocuments.contractBytesFromDraft(draft),
-          );
-          contract = file.path;
-        }
-        if (receipt == null) {
-          final file = await SaleDocumentStorage.savePdf(
-            'Sale_${draft.saleId}_PromissoryNote.pdf',
-            await SaleDocuments.receiptBytesFromDraft(draft),
-          );
-          receipt = file.path;
-        }
-      } catch (_) {
-        failed = true;
-      }
-    }
     if (docs.isEmpty) {
       failed = true;
     }
@@ -279,24 +258,7 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
 
   Future<void> _openOrDownload(SalesDocument doc) async {
     try {
-      final draft = _draft;
-      if (doc.documentId != null || doc.downloadUrl.isNotEmpty) {
-        try {
-          final bytes = await SalesRepositoryFactory.instance.downloadDocument(draft?.saleId ?? 0, doc);
-          final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
-          await OpenFilex.open(file.path);
-          return;
-        } catch (_) {}
-      }
-      if (draft != null) {
-        final bytes = doc.isContract
-            ? await SaleDocuments.contractBytesFromDraft(draft)
-            : await SaleDocuments.receiptBytesFromDraft(draft);
-        final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
-        await OpenFilex.open(file.path);
-        return;
-      }
-      final bytes = await SalesRepositoryFactory.instance.downloadDocument(_draft!.saleId, doc);
+      final bytes = await SalesRepositoryFactory.instance.downloadDocument(_draft?.saleId ?? 0, doc);
       final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
       await OpenFilex.open(file.path);
     } catch (_) {
@@ -322,6 +284,10 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
                         Text(d.fullName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                         TappablePhone(d.phone),
                         Text(d.province ?? ''),
+                        if ((d.customerListName ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text('القائمة/المندوب: ${d.customerListName}'),
+                        ],
                         const SizedBox(height: AppSpacing.md),
                         Text('الحالة: ${SalesStatusLabels.of(d.status)}'),
                         const SizedBox(height: AppSpacing.md),
@@ -331,7 +297,7 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
                         Text('السعر النهائي: ${MoneyFormat.iqd(d.finalSalePrice)}'),
                         Text('القسط اليومي: ${MoneyFormat.iqd(d.dailyInstallment)}'),
                         Text('الدفعة المقدمة: ${MoneyFormat.iqd(d.downPayment)}'),
-                        Text('التاريخ: ${d.createdAt}'),
+                        Text('التاريخ: ${IraqTime.formatDate(d.createdAt)}'),
                         if (_error != null)
                           Padding(
                             padding: const EdgeInsets.only(top: AppSpacing.sm),
@@ -363,7 +329,7 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
                         ]
                         else if (d.isCompleted) ...[
                           const Text('تم البيع', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.darkGreen)),
-                          if (d.completedAt != null) Text('التاريخ: ${d.completedAt}'),
+                          if (d.completedAt != null) Text('التاريخ: ${IraqTime.formatDate(d.completedAt)}'),
                           Text('السعر النهائي: ${MoneyFormat.iqd(d.finalSalePrice)}'),
                           const SizedBox(height: AppSpacing.md),
                           const Text('المستندات', style: TextStyle(fontWeight: FontWeight.w700)),

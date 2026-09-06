@@ -1,4 +1,13 @@
 class IraqTime {
+  static String formatDate(DateTime? value) {
+    if (value == null) return '';
+    final iraq = value.isUtc ? value.toUtc().add(const Duration(hours: 3)) : value;
+    final y = iraq.year.toString().padLeft(4, '0');
+    final m = iraq.month.toString().padLeft(2, '0');
+    final d = iraq.day.toString().padLeft(2, '0');
+    return '$y/$m/$d';
+  }
+
   static DateTime now() {
     return DateTime.now().toUtc().add(const Duration(hours: 3));
   }

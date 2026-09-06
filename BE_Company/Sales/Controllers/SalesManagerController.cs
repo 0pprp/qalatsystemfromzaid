@@ -310,6 +310,9 @@ namespace BE_Company.Sales.Controllers
         }
 
         [HttpPost("customers/documents")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(50_000_000)]
+        [RequestFormLimits(MultipartBodyLengthLimit = 50_000_000)]
         public async Task<IActionResult> UploadCustomerDocument(
             [FromQuery] string? type,
             [FromQuery] int? customerId,
@@ -321,6 +324,7 @@ namespace BE_Company.Sales.Controllers
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
+            file = SalesCustomerDocumentMatcher.ResolveUpload(file, Request);
             if (file == null || file.Length <= 0)
             {
                 return BadRequest(new { message = "الصورة مطلوبة." });

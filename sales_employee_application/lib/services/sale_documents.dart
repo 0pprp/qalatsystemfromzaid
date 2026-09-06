@@ -8,8 +8,7 @@ import 'package:sales_employee_application/services/official_contract/deposit_re
 import 'package:sales_employee_application/services/official_contract/official_contract_data.dart';
 import 'package:sales_employee_application/services/official_contract/sale_document_map.dart';
 
-/// تخطيط PDF المحلي يطابق السيرفر: A4 عمودي، فقرة واحدة بدون TextSpan.
-/// المصدر الرسمي للملفات المعتمدة هو التوليد Server-side.
+/// مولد محلي للاختبارات فقط. الملفات المعتمدة تُنزَّل من OfficialSalesPdfRenderer عبر الـ API.
 class SaleDocuments {
   static const double _margin = 48;
   static const double _bodySize = 11.5;

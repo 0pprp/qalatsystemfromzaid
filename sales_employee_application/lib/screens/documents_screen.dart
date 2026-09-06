@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:sales_employee_application/services/sale_documents.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:sales_employee_application/data/sales_repository_factory.dart';
+import 'package:sales_employee_application/services/sale_document_storage.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/widgets/tappable_phone.dart';
@@ -19,13 +21,23 @@ class DocumentsScreen extends StatelessWidget {
       );
     }
 
-    Future<void> run(Future<void> Function(Map<String, dynamic>) action) async {
+    Future<void> openFromServer(bool contract) async {
       try {
-        await action(sale);
+        final saleId = int.tryParse('${sale['saleId'] ?? sale['SaleId'] ?? ''}');
+        if (saleId == null) {
+          throw Exception('لا يوجد رقم عملية لتنزيل المستند من الخادم.');
+        }
+        final docs = await SalesRepositoryFactory.instance.documents(saleId);
+        final doc = docs.firstWhere(
+          (item) => contract ? item.isContract : item.isPromissoryNote,
+        );
+        final bytes = await SalesRepositoryFactory.instance.downloadDocument(saleId, doc);
+        final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
+        await OpenFilex.open(file.path);
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('تعذر إنشاء المستند: $e')),
+            SnackBar(content: Text('تعذر تنزيل المستند من الخادم: $e')),
           );
         }
       }
@@ -49,25 +61,25 @@ class DocumentsScreen extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         ElevatedButton.icon(
-          onPressed: () => run(SaleDocuments.printContract),
+          onPressed: () => openFromServer(true),
           icon: const Icon(Icons.picture_as_pdf),
           label: const Text('طباعة عقد البيع'),
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
-          onPressed: () => run(SaleDocuments.shareContract),
+          onPressed: () => openFromServer(true),
           icon: const Icon(Icons.share, color: AppTheme.primaryColor),
           label: const Text('مشاركة عقد البيع'),
         ),
         const SizedBox(height: 20),
         ElevatedButton.icon(
-          onPressed: () => run(SaleDocuments.printTrustReceipt),
+          onPressed: () => openFromServer(false),
           icon: const Icon(Icons.receipt_long),
           label: const Text('طباعة وصل الأمانة'),
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
-          onPressed: () => run(SaleDocuments.shareTrustReceipt),
+          onPressed: () => openFromServer(false),
           icon: const Icon(Icons.share, color: AppTheme.primaryColor),
           label: const Text('مشاركة وصل الأمانة'),
         ),

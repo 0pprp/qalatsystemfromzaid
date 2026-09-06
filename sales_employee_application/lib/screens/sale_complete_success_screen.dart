@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
+import 'package:sales_employee_application/utils/iraq_time.dart';
+import 'package:sales_employee_application/utils/sales_format.dart';
 
 class SaleCompleteSuccessScreen extends StatelessWidget {
   const SaleCompleteSuccessScreen({
@@ -37,8 +39,8 @@ class SaleCompleteSuccessScreen extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.sm),
             const Text('تم تسجيل البيع وخصم المواد من المخزن.'),
-            if (completedAt != null) Text('التاريخ: $completedAt'),
-            Text('السعر النهائي: $finalSalePrice'),
+            if (completedAt != null) Text('التاريخ: ${IraqTime.formatDate(completedAt)}'),
+            Text('السعر النهائي: ${MoneyFormat.iqd(finalSalePrice)}'),
             const SizedBox(height: AppSpacing.md),
             if (downloadFailed)
               const Text(

@@ -148,10 +148,36 @@ export async function smPut(path, body) {
 
 export async function smPostForm(path, formData) {
   const token = getToken()
-  const headers = token ? { Authorization: `Bearer ${token}` } : {}
-  const { data } = await axios.post(`${salesManagerBase()}${path}`, formData, { headers })
+  const { data } = await axios.post(`${salesManagerBase()}${path}`, formData, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    timeout: 120000,
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+  })
 
   return data
+}
+
+export function smErrorMessage(err, fallback) {
+  const data = err?.response?.data
+  if (data && typeof data === 'object') {
+    if (data.message)
+      return data.message
+    if (data.title)
+      return data.title
+  }
+  if (typeof data === 'string' && data.trim()) {
+    try {
+      const parsed = JSON.parse(data)
+
+      return parsed.message || parsed.title || fallback
+    }
+    catch {
+      return fallback
+    }
+  }
+
+  return fallback
 }
 
 export async function smDelete(path) {
@@ -257,7 +283,7 @@ export function managerCustomerDocumentFilePath(city, documentId) {
   return `customer-documents/${encodeURIComponent(city)}/${documentId}/file`
 }
 
-export function managerCustomerDocumentUploadPath(city, { type, customerId, name, phone } = {}) {
+export function managerCustomerDocumentUploadPath(city, { type, customerId, name, phone, saleId } = {}) {
   const params = new URLSearchParams()
   if (type)
     params.set('type', type)
@@ -267,6 +293,8 @@ export function managerCustomerDocumentUploadPath(city, { type, customerId, name
     params.set('name', name)
   if (phone)
     params.set('phone', phone)
+  if (saleId)
+    params.set('saleId', String(saleId))
   const q = params.toString()
   if (isDemo() || !isCentralSalesManager())
     return q ? `customers/documents?${q}` : 'customers/documents'

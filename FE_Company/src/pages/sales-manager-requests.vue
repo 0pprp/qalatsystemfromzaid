@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
-import { formatIraqTime } from '@/composables/gpsTrack'
+import { formatIraqDate, formatIraqTime } from '@/composables/iraqDate'
 import {
   branchRowKey,
   evaluationLabel,
@@ -1307,7 +1307,7 @@ onUnmounted(() => {
               القسط اليومي: {{ money(pick(item, 'dailyInstallment', 'DailyInstallment')) }}
             </div>
             <div class="text-medium-emphasis">
-              التاريخ: {{ formatIraqTime(pick(item, 'date', 'Date')) }}
+              التاريخ: {{ formatIraqDate(pick(item, 'date', 'Date')) }}
             </div>
           </div>
 
@@ -1381,7 +1381,7 @@ onUnmounted(() => {
             <div>{{ pick(item, 'authorRole', 'AuthorRole') }} — {{ pick(item, 'authorName', 'AuthorName') }}</div>
             <div>{{ pick(item, 'note', 'Note') }}</div>
             <div class="text-medium-emphasis">
-              {{ formatIraqTime(pick(item, 'createdAtUtc', 'CreatedAtUtc')) }}
+              {{ formatIraqDate(pick(item, 'createdAtUtc', 'CreatedAtUtc')) }}
             </div>
           </div>
           <VTextarea

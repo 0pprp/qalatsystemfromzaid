@@ -363,6 +363,23 @@ VALUES
             var firstRequest = matchedRequests.FirstOrDefault();
             var openRequest = matchedRequests.FirstOrDefault(r => !IsFrozenRequest(r.Status));
 
+            var listId = FirstPositive(
+                sampleFull.CustomerListId,
+                matchedSales.Select(s => s.CustomerListId).FirstOrDefault(id => id is > 0),
+                account?.DelegateID);
+            var listName = FirstNonEmpty(
+                sampleFull.CustomerListName,
+                matchedSales.Select(s => s.CustomerListName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)));
+            if (string.IsNullOrWhiteSpace(listName) && listId is > 0)
+            {
+                var cs = _guard.GetSalesConnectionString();
+                if (!string.IsNullOrWhiteSpace(cs))
+                {
+                    await using var connection = new SqlConnection(cs);
+                    listName = await SalesInventoryService.NameAsync(connection, listId, ct);
+                }
+            }
+
             return new SalesCustomerProfileDTO
             {
                 CustomerId = resolvedCustomerId,
@@ -371,14 +388,14 @@ VALUES
                 Address = account?.Address ?? openRequest?.CustomerAddress ?? sampleFull.Address ?? firstRequest?.CustomerAddress,
                 Province = FirstNonEmpty(
                     openRequest?.CustomerProvince,
-                    account?.CityName,
                     sampleFull.Province,
                     firstRequest?.CustomerProvince,
-                    sample.CityName),
+                    account?.CityName),
                 NationalCardNumber = sampleFull.NationalCardNumber,
-                DelegateName = account?.DelegateName,
-                DelegateId = account?.DelegateID,
-                CustomerListName = sampleFull.CustomerListName,
+                DelegateName = listName,
+                DelegateId = listId,
+                CustomerListId = listId,
+                CustomerListName = listName,
                 CityValue = sample.CityValue ?? firstRequest?.CityValue,
                 CityName = account?.CityName ?? sample.CityName ?? firstRequest?.CityName,
                 PaymentSummary = account == null ? null : new SalesPaymentSummaryDTO
@@ -608,6 +625,9 @@ ORDER BY CreatedAtUtc", cancellationToken: ct));
 
         private static string? FirstNonEmpty(params string?[] values) =>
             values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+
+        private static int? FirstPositive(params int?[] values) =>
+            values.FirstOrDefault(v => v is > 0);
 
         private static string? EmptyToNull(string? value)
         {

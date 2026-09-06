@@ -47,10 +47,7 @@ namespace BE_Company.Sales.Services
             CancellationToken ct)
         {
             var path = Path.Combine(folder, fileName);
-            var bytes = type == PreviewContract
-                ? OfficialSalesPdfRenderer.BuildContract(sale)
-                : OfficialSalesPdfRenderer.BuildPromissoryNote(sale);
-            await File.WriteAllBytesAsync(path, bytes, ct);
+            await File.WriteAllBytesAsync(path, Render(sale, type), ct);
             return await _complete.UpsertDocumentAsync(new SalesDocumentRecord
             {
                 SaleId = sale.SaleId,
@@ -69,16 +66,20 @@ namespace BE_Company.Sales.Services
         {
             var record = await _complete.GetDocumentAsync(saleId, documentId, employeeId, ct)
                          ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "المستند غير موجود.");
-            if (!File.Exists(record.StoragePath))
+            var sale = await _complete.GetOwnedSaleAsync(saleId, employeeId, ct)
+                       ?? throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكنك تنزيل مستندات عملية لا تخصك.");
+
+            var bytes = Render(sale, record.DocumentType);
+            var path = string.IsNullOrWhiteSpace(record.StoragePath)
+                ? DefaultPath(sale.SaleId, record.DocumentType)
+                : record.StoragePath;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllBytesAsync(path, bytes, ct);
+            if (!string.Equals(record.StoragePath, path, StringComparison.OrdinalIgnoreCase))
             {
-                var sale = await _complete.GetOwnedSaleAsync(saleId, employeeId, ct)
-                           ?? throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكنك تنزيل مستندات عملية لا تخصك.");
-                await EnsureGeneratedAsync(sale, ct);
-                record = await _complete.GetDocumentAsync(saleId, documentId, employeeId, ct)
-                         ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "المستند غير موجود.");
+                record.StoragePath = path;
             }
 
-            var bytes = await File.ReadAllBytesAsync(record.StoragePath, ct);
             return (record, bytes);
         }
 
@@ -89,23 +90,25 @@ namespace BE_Company.Sales.Services
             CancellationToken ct)
         {
             var current = existing.FirstOrDefault(d => string.Equals(d.DocumentType, type, StringComparison.OrdinalIgnoreCase));
-            if (current != null && File.Exists(current.StoragePath))
-            {
-                return current;
-            }
-
             var folder = Path.Combine(_env.ContentRootPath, "App_Data", "sales", sale.SaleId.ToString());
             Directory.CreateDirectory(folder);
             var fileName = type == Contract
                 ? $"Sale_{sale.SaleId}_Contract.pdf"
                 : $"Sale_{sale.SaleId}_PromissoryNote.pdf";
-            var path = Path.Combine(folder, fileName);
-            var bytes = type == Contract
-                ? OfficialSalesPdfRenderer.BuildContract(sale)
-                : OfficialSalesPdfRenderer.BuildPromissoryNote(sale);
-            await File.WriteAllBytesAsync(path, bytes, ct);
+            var path = current != null && !string.IsNullOrWhiteSpace(current.StoragePath)
+                ? current.StoragePath
+                : Path.Combine(folder, fileName);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllBytesAsync(path, Render(sale, type), ct);
 
-            var saved = await _complete.UpsertDocumentAsync(new SalesDocumentRecord
+            if (current != null)
+            {
+                current.StoragePath = path;
+                current.FileName = string.IsNullOrWhiteSpace(current.FileName) ? fileName : current.FileName;
+                return current;
+            }
+
+            return await _complete.UpsertDocumentAsync(new SalesDocumentRecord
             {
                 SaleId = sale.SaleId,
                 DocumentType = type,
@@ -113,7 +116,38 @@ namespace BE_Company.Sales.Services
                 StoragePath = path,
                 CreatedAt = DateTime.Now
             }, ct);
-            return saved;
+        }
+
+        public static byte[] Render(SalesDraftDTO sale, string documentType)
+        {
+            if (IsContract(documentType))
+            {
+                return OfficialSalesPdfRenderer.BuildContract(sale);
+            }
+
+            if (IsPromissory(documentType))
+            {
+                return OfficialSalesPdfRenderer.BuildPromissoryNote(sale);
+            }
+
+            throw new SalesCompleteException(StatusCodes.Status400BadRequest, "نوع المستند غير مدعوم.");
+        }
+
+        public static bool IsContract(string? type) =>
+            string.Equals(type, Contract, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(type, PreviewContract, StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsPromissory(string? type) =>
+            string.Equals(type, PromissoryNote, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(type, PreviewPromissoryNote, StringComparison.OrdinalIgnoreCase);
+
+        private string DefaultPath(int saleId, string documentType)
+        {
+            var folder = Path.Combine(_env.ContentRootPath, "App_Data", "sales", saleId.ToString());
+            var fileName = IsContract(documentType)
+                ? $"Sale_{saleId}_Contract.pdf"
+                : $"Sale_{saleId}_PromissoryNote.pdf";
+            return Path.Combine(folder, fileName);
         }
     }
 }

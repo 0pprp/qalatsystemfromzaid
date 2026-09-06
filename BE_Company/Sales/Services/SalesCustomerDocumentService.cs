@@ -66,10 +66,22 @@ namespace BE_Company.Sales.Services
             await EnsureSchemaAsync(ct);
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
+            var drafts = await connection.QueryAsync<(int SaleId, int? CustomerId, string? FullName, string? Phone)>(
+                new CommandDefinition(
+                    "SELECT SaleId, CustomerId, FullName, Phone FROM dbo.SalesDrafts",
+                    cancellationToken: ct));
+            var saleIds = drafts
+                .Where(d =>
+                    (customerId is > 0 && d.CustomerId == customerId)
+                    || SalesCustomerDocumentMatcher.NamesMatch(d.FullName, customerName)
+                    || SalesCustomerDocumentMatcher.PhonesMatch(d.Phone, phone))
+                .Select(d => d.SaleId)
+                .ToHashSet();
+
             var rows = await connection.QueryAsync<SalesCustomerDocumentDTO>(new CommandDefinition(
                 SelectSql + " ORDER BY CreatedAtUtc, Id", cancellationToken: ct));
             return rows
-                .Where(r => Matches(r, customerId, customerName, phone))
+                .Where(r => SalesCustomerDocumentMatcher.Matches(r, customerId, customerName, phone, saleIds))
                 .Select(r => Shape(r, managerUrls))
                 .ToList();
         }
@@ -120,6 +132,12 @@ namespace BE_Company.Sales.Services
                 {
                     customerPhone = sale.Phone;
                 }
+            }
+
+            if (saleId is null or <= 0 && customerId is null or <= 0
+                && string.IsNullOrWhiteSpace(customerName) && string.IsNullOrWhiteSpace(customerPhone))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "حدد الزبون.");
             }
 
             await EnsureSchemaAsync(ct);
@@ -277,20 +295,6 @@ WHERE Id = @Id",
             return row;
         }
 
-        private static bool Matches(SalesCustomerDocumentDTO row, int? customerId, string? customerName, string? phone)
-        {
-            if (customerId is > 0 && row.CustomerId == customerId)
-            {
-                return true;
-            }
-
-            var nameOk = !string.IsNullOrWhiteSpace(customerName)
-                         && string.Equals(row.CustomerName?.Trim(), customerName.Trim(), StringComparison.OrdinalIgnoreCase);
-            var phoneOk = !string.IsNullOrWhiteSpace(phone)
-                          && string.Equals(row.CustomerPhone?.Trim(), phone.Trim(), StringComparison.OrdinalIgnoreCase);
-            return nameOk || phoneOk;
-        }
-
         private void TryDeleteFile(string? key)
         {
             if (string.IsNullOrWhiteSpace(key))
@@ -361,5 +365,86 @@ BEGIN
     CREATE INDEX IX_SalesCustomerDocuments_SaleId ON dbo.SalesCustomerDocuments (SaleId);
     CREATE INDEX IX_SalesCustomerDocuments_CustomerId ON dbo.SalesCustomerDocuments (CustomerId);
 END;";
+    }
+
+    public static class SalesCustomerDocumentMatcher
+    {
+        public static IFormFile? ResolveUpload(IFormFile? file, HttpRequest request)
+        {
+            if (file is { Length: > 0 })
+            {
+                return file;
+            }
+
+            try
+            {
+                return request.Form.Files.FirstOrDefault(f => f.Length > 0);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public static bool Matches(
+            SalesCustomerDocumentDTO row,
+            int? customerId,
+            string? customerName,
+            string? phone,
+            IReadOnlyCollection<int>? saleIds)
+        {
+            if (customerId is > 0 && row.CustomerId == customerId)
+            {
+                return true;
+            }
+
+            if (saleIds != null && row.SaleId is int saleId && saleIds.Contains(saleId))
+            {
+                return true;
+            }
+
+            return NamesMatch(row.CustomerName, customerName) || PhonesMatch(row.CustomerPhone, phone);
+        }
+
+        public static bool NamesMatch(string? left, string? right)
+        {
+            var a = NormalizeName(left);
+            var b = NormalizeName(right);
+            return a.Length > 0 && a == b;
+        }
+
+        public static bool PhonesMatch(string? left, string? right)
+        {
+            var a = PhoneDigits(left);
+            var b = PhoneDigits(right);
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
+            {
+                return false;
+            }
+
+            if (a == b)
+            {
+                return true;
+            }
+
+            var tailA = a.Length > 10 ? a[^10..] : a;
+            var tailB = b.Length > 10 ? b[^10..] : b;
+            return tailA.Length >= 7 && tailA == tailB;
+        }
+
+        public static string? PhoneDigits(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            var digits = new string(value.Where(char.IsDigit).ToArray());
+            return digits.Length == 0 ? null : digits;
+        }
+
+        private static string NormalizeName(string? value) =>
+            string.Join(" ", (value ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .ToLowerInvariant();
     }
 }

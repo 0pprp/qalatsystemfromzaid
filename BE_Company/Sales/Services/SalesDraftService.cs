@@ -43,7 +43,7 @@ namespace BE_Company.Sales.Services
             }
             if (request.CustomerListId is null or <= 0)
             {
-                throw new ArgumentException("قائمة الزبون مطلوبة.");
+                throw new ArgumentException("القائمة/المندوب مطلوبة.");
             }
 
             await _drafts.EnsureSchemaAsync(ct);

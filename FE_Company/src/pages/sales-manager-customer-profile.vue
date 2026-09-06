@@ -1,7 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { formatIraqTime } from '@/composables/gpsTrack'
 import {
   customerProfileApiPath,
   managerCustomerDocumentDeletePath,
@@ -11,11 +10,13 @@ import {
   managerSalePath,
   overrideLabel,
   smDelete,
+  smErrorMessage,
   smGet,
   smGetBlob,
   smPostForm,
   smPut,
 } from '@/composables/salesManagerApi'
+import { formatIraqDate } from '@/composables/iraqDate'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
@@ -290,18 +291,20 @@ async function uploadCustomerDocument(type, file) {
   try {
     const form = new FormData()
     form.append('file', file)
+    const latestSale = sales.value[0]
     await smPostForm(managerCustomerDocumentUploadPath(city, {
       type,
       customerId: pick(profile.value, 'customerId', 'CustomerId') || customerId.value,
       name: pick(profile.value, 'customerName', 'CustomerName') || customerName.value,
       phone: pick(profile.value, 'phone', 'Phone') || customerPhone.value,
+      saleId: pick(latestSale, 'saleId', 'SaleId'),
     }), form)
     await load()
 
     return true
   }
   catch (err) {
-    toast.error(err?.response?.data?.message || 'تعذر رفع المستند')
+    toast.error(smErrorMessage(err, 'تعذر رفع المستند'))
 
     return false
   }
@@ -340,7 +343,14 @@ async function openDocument(sale, doc) {
   }
   try {
     const blob = await smGetBlob(managerSalePath(city, saleId, `/documents/${documentId}/download`))
-    const url = URL.createObjectURL(blob)
+    const buffer = await blob.arrayBuffer()
+    const header = new TextDecoder('latin1').decode(buffer.slice(0, 5))
+    if (header !== '%PDF-') {
+      toast.error('تعذر فتح المستند')
+      return
+    }
+    const pdf = new Blob([buffer], { type: 'application/pdf' })
+    const url = URL.createObjectURL(pdf)
     window.open(url, '_blank')
   }
   catch {
@@ -547,7 +557,7 @@ onUnmounted(() => {
               v-for="row in payments"
               :key="pick(row, 'customerPaymentId', 'CustomerPaymentId') || pick(row, 'paymentDate', 'PaymentDate')"
             >
-              <td>{{ formatIraqTime(pick(row, 'paymentDate', 'PaymentDate')) || '—' }}</td>
+              <td>{{ formatIraqDate(pick(row, 'paymentDate', 'PaymentDate')) || '—' }}</td>
               <td>{{ money(pick(row, 'amount', 'Amount')) }}</td>
               <td>{{ pick(row, 'boundNumber', 'BoundNumber') || '—' }}</td>
               <td>{{ pick(row, 'note', 'Note', 'itemsNames', 'ItemsNames') || '—' }}</td>
@@ -566,7 +576,7 @@ onUnmounted(() => {
         </h5>
         <VRow class="mb-4">
           <VCol md="4">
-            تاريخ البيع: {{ formatIraqTime(pick(sale, 'date', 'Date')) || '—' }}
+            تاريخ البيع: {{ formatIraqDate(pick(sale, 'date', 'Date')) || '—' }}
           </VCol>
           <VCol md="4">
             موظف المبيعات: {{ pick(sale, 'employeeName', 'EmployeeName') || '—' }}
@@ -738,7 +748,7 @@ onUnmounted(() => {
               v-for="row in officialSales"
               :key="pick(row, 'customerSaleId', 'CustomerSaleId') || pick(row, 'dateCreate', 'DateCreate')"
             >
-              <td>{{ formatIraqTime(pick(row, 'dateCreate', 'DateCreate')) || '—' }}</td>
+              <td>{{ formatIraqDate(pick(row, 'dateCreate', 'DateCreate')) || '—' }}</td>
               <td>{{ pick(row, 'itemsNames', 'ItemsNames') || '—' }}</td>
               <td>{{ money(pick(row, 'amountTotalSales', 'AmountTotalSales')) }}</td>
               <td>{{ money(pick(row, 'receiptsTotal', 'ReceiptsTotal')) }}</td>

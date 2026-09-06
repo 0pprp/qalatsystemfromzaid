@@ -82,7 +82,7 @@ function demoCompanyProxy() {
               path: destPath,
               method: req.method,
               headers,
-              timeout: 8000,
+              timeout: 120000,
             }, proxyRes => {
               const canRetry = index + 1 < DEMO_COMPANY_TARGETS.length
                 && proxyRes.statusCode === 404

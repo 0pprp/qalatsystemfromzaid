@@ -82,6 +82,7 @@ namespace BE_Company.Sales.DTO
         public string? NationalCardNumber { get; set; }
         public string? DelegateName { get; set; }
         public int? DelegateId { get; set; }
+        public int? CustomerListId { get; set; }
         public string? CustomerListName { get; set; }
         public string? CityValue { get; set; }
         public string? CityName { get; set; }

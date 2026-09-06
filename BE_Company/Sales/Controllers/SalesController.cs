@@ -383,6 +383,9 @@ namespace BE_Company.Sales.Controllers
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("{id:int}/customer-documents")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(50_000_000)]
+        [RequestFormLimits(MultipartBodyLengthLimit = 50_000_000)]
         public async Task<IActionResult> UploadCustomerDocument(
             int id,
             [FromQuery] string? type,
@@ -401,6 +404,7 @@ namespace BE_Company.Sales.Controllers
                 return Unauthorized();
             }
 
+            file = SalesCustomerDocumentMatcher.ResolveUpload(file, Request);
             if (file == null || file.Length <= 0)
             {
                 return BadRequest(new { message = "الصورة مطلوبة." });

@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
-import { formatIraqTime } from '@/composables/gpsTrack'
+import { formatIraqDate } from '@/composables/iraqDate'
 import { branchRowKey, smGet, withCityQuery } from '@/composables/salesManagerApi'
 import { useToast } from '@/composables/useToast'
 
@@ -129,7 +129,7 @@ onMounted(load)
           <td>{{ money(row.finalSalePrice) }}</td>
           <td>{{ money(row.dailyInstallment) }}</td>
           <td>{{ money(row.downPayment) }}</td>
-          <td>{{ formatIraqTime(pick(row, 'completedAt', 'CompletedAt', 'createdAt', 'CreatedAt')) }}</td>
+          <td>{{ formatIraqDate(pick(row, 'completedAt', 'CompletedAt', 'createdAt', 'CreatedAt')) }}</td>
           <td>
             <VBtn
               size="small"

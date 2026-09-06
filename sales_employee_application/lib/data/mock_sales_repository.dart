@@ -109,7 +109,7 @@ class MockSalesRepository implements SalesRepository {
   Future<SalesDraft> createSale(SalesDraftCreateRequest request) async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
     if (request.customerListId == null || request.customerListId! <= 0) {
-      throw Exception('قائمة الزبون مطلوبة.');
+      throw Exception('القائمة/المندوب مطلوبة.');
     }
     if (request.salesRequestId != null) {
       final existingId = _requestDrafts[request.salesRequestId!];
