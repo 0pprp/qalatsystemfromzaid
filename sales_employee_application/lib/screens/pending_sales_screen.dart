@@ -10,45 +10,51 @@ import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
 
 class PendingSalesScreen extends StatefulWidget {
-  const PendingSalesScreen({super.key});
+  const PendingSalesScreen({super.key, this.binIndex});
+
+  /// `null` = لوحة الحالات. غير ذلك = قائمة هذه الحالة فقط.
+  final int? binIndex;
 
   @override
   State<PendingSalesScreen> createState() => _PendingSalesScreenState();
 }
 
-class _PendingSalesScreenState extends State<PendingSalesScreen>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabs;
+class _PendingSalesScreenState extends State<PendingSalesScreen> {
+  static const _bins = [
+    (title: 'طلبات البيع', empty: 'لا توجد طلبات بيع', icon: Icons.assignment_outlined),
+    (title: 'جاهز للبيع', empty: 'لا توجد طلبات جاهزة للبيع', icon: Icons.storefront_outlined),
+    (title: 'تم البيع', empty: 'لا توجد مبيعات مكتملة', icon: Icons.check_circle_outline),
+    (title: 'معلقة', empty: 'لا توجد طلبات معلقة', icon: Icons.pause_circle_outline),
+    (title: 'مرفوض', empty: 'لا توجد طلبات مرفوضة', icon: Icons.cancel_outlined),
+  ];
+
   List<SalesWorkRequest> _requests = [];
   WorkShift? _shift;
   bool _loading = true;
   bool _shiftBusy = false;
   String? _error;
   String? _shiftError;
-  bool _tabsReady = false;
+  bool _openedToday = false;
+
+  bool get _isDashboard => widget.binIndex == null;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 5, vsync: this);
     _load();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_tabsReady) return;
-    _tabsReady = true;
+    if (!_isDashboard || _openedToday) return;
     final arg = ModalRoute.of(context)?.settings.arguments;
     if (arg == 'today' || arg == 2) {
-      _tabs.index = 2;
+      _openedToday = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openBin(2);
+      });
     }
-  }
-
-  @override
-  void dispose() {
-    _tabs.dispose();
-    super.dispose();
   }
 
   Future<void> _load() async {
@@ -81,7 +87,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
     }
   }
 
-  int get _newCount => _requests.where((r) => r.isNew).length;
+  int _binCount(int index) => _forBin(index).length;
 
   WorkShift? _readLocalShift() {
     if (Session.gpsStoppedByUser) return null;
@@ -146,7 +152,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
     }
   }
 
-  List<SalesWorkRequest> _forTab(int index) {
+  List<SalesWorkRequest> _forBin(int index) {
     switch (index) {
       case 0:
         return _requests.where((r) => r.isIncoming).toList();
@@ -161,72 +167,106 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
     }
   }
 
+  Future<void> _openBin(int index) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => PendingSalesScreen(binIndex: index)),
+    );
+    if (mounted) await _load();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(Session.userName.isEmpty ? 'موظف المبيعات' : Session.userName),
-        actions: [
-          IconButton(
-            tooltip: 'مخزن الفرع',
-            onPressed: () => Navigator.pushNamed(context, '/warehouse'),
-            icon: const Icon(Icons.inventory_2_outlined),
-          ),
-          TextButton(
-            onPressed: () async {
-              await Session.logout();
-              if (context.mounted) {
-                Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
-              }
-            },
-            child: const Text('خروج'),
-          ),
-        ],
-        bottom: TabBar(
-          controller: _tabs,
-          isScrollable: true,
-          labelColor: AppColors.darkGreen,
-          tabs: [
-            Tab(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('طلبات البيع'),
-                  if (_newCount > 0) ...[
-                    const SizedBox(width: 6),
-                    CircleAvatar(
-                      radius: 10,
-                      backgroundColor: AppColors.danger,
-                      child: Text('$_newCount',
-                          style: const TextStyle(color: Colors.white, fontSize: 11)),
-                    ),
-                  ],
-                ],
-              ),
+    if (_isDashboard) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(Session.userName.isEmpty ? 'موظف المبيعات' : Session.userName),
+          actions: [
+            IconButton(
+              tooltip: 'مخزن الفرع',
+              onPressed: () => Navigator.pushNamed(context, '/warehouse'),
+              icon: const Icon(Icons.inventory_2_outlined),
             ),
-            const Tab(text: 'جاهز للبيع'),
-            const Tab(text: 'تم البيع'),
-            const Tab(text: 'معلقة'),
-            const Tab(text: 'مرفوض'),
+            TextButton(
+              onPressed: () async {
+                await Session.logout();
+                if (context.mounted) {
+                  Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
+                }
+              },
+              child: const Text('خروج'),
+            ),
           ],
         ),
+        body: Column(
+          children: [
+            _shiftCard(),
+            Expanded(child: _dashboardBody()),
+          ],
+        ),
+      );
+    }
+
+    final bin = _bins[widget.binIndex!];
+    return Scaffold(
+      appBar: AppBar(title: Text(bin.title)),
+      body: _requestsList(widget.binIndex!, bin.empty),
+    );
+  }
+
+  Widget _dashboardBody() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)));
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.lg),
+        itemCount: _bins.length,
+        separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.md),
+        itemBuilder: (context, i) => _binCard(i),
       ),
-      body: Column(
-        children: [
-          _shiftCard(),
-          Expanded(
-            child: TabBarView(
-              controller: _tabs,
-              children: [
-                _requestsTab(0, 'لا توجد طلبات بيع'),
-                _requestsTab(1, 'لا توجد طلبات جاهزة للبيع'),
-                _requestsTab(2, 'لا توجد مبيعات مكتملة'),
-                _requestsTab(3, 'لا توجد طلبات معلقة'),
-                _requestsTab(4, 'لا توجد طلبات مرفوضة'),
-              ],
-            ),
+    );
+  }
+
+  Widget _binCard(int index) {
+    final bin = _bins[index];
+    final count = _binCount(index);
+    return Card(
+      child: InkWell(
+        onTap: () => _openBin(index),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.lg),
+          child: Row(
+            children: [
+              Icon(bin.icon, size: 36, color: AppColors.darkGreen),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      bin.title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 18,
+                        color: AppColors.darkGreen,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$count',
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_left, color: AppColors.muted, size: 28),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -270,12 +310,12 @@ class _PendingSalesScreenState extends State<PendingSalesScreen>
     );
   }
 
-  Widget _requestsTab(int index, String empty) {
+  Widget _requestsList(int index, String empty) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
       return Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)));
     }
-    final rows = _forTab(index);
+    final rows = _forBin(index);
     if (rows.isEmpty) {
       return Center(child: Text(empty, style: const TextStyle(color: AppColors.muted)));
     }

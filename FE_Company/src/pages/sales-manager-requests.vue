@@ -44,7 +44,6 @@ const importBusy = ref(false)
 const importPreview = ref(null)
 const intakeQuery = ref('')
 const intakeCustomers = ref([])
-const intakeKeepNew = ref(true)
 const intakeSelected = ref(null)
 const intakeForm = ref({
   fullName: '',
@@ -182,7 +181,6 @@ async function openDetails(row, resetAssign = true) {
 function resetIntake(d) {
   intakeQuery.value = pick(d, 'customerName', 'CustomerName') || ''
   intakeCustomers.value = []
-  intakeKeepNew.value = true
   intakeSelected.value = null
   intakeForm.value = {
     fullName: pick(d, 'customerName', 'CustomerName') || '',
@@ -193,8 +191,21 @@ function resetIntake(d) {
   }
 }
 
-function searchCity() {
-  return cityValue.value || detail.value?.cityValue || selected.value?.cityValue || ''
+function requestCity(row = detail.value || selected.value) {
+  return pick(row, 'cityValue', 'CityValue') || ''
+}
+
+function requestId(row = detail.value || selected.value) {
+  return pick(row, 'id', 'Id')
+}
+
+function requestActionPath(row, suffix) {
+  const id = requestId(row)
+  const city = requestCity(row)
+  if (isDemo())
+    return `sales-requests/${id}/${suffix}`
+
+  return `sales-requests/${encodeURIComponent(city)}/${id}/${suffix}`
 }
 
 async function searchIntakeCustomers() {
@@ -204,9 +215,9 @@ async function searchIntakeCustomers() {
 
     return
   }
-  const city = searchCity()
+  const city = requestCity()
   if (!city) {
-    toast.error('حدد المحافظة في الفلتر للبحث')
+    toast.error('لا يمكن البحث بدون محافظة الطلب')
 
     return
   }
@@ -220,8 +231,14 @@ async function searchIntakeCustomers() {
 }
 
 function selectIntakeCustomer(c) {
+  const requestBranch = String(requestCity() || '')
+  const customerBranch = String(c.cityValue || c.CityValue || c.sourceCityValue || c.SourceCityValue || requestBranch)
+  if (customerBranch && requestBranch && customerBranch !== requestBranch) {
+    toast.error('لا يمكن ربط زبون من محافظة أخرى')
+
+    return
+  }
   intakeSelected.value = c
-  intakeKeepNew.value = false
   intakeForm.value = {
     fullName: c.fullName || c.customerName || intakeForm.value.fullName,
     phone: c.phone || c.Phone || intakeForm.value.phone,
@@ -229,11 +246,6 @@ function selectIntakeCustomer(c) {
     address: c.address || c.Address || intakeForm.value.address,
     notes: intakeForm.value.notes,
   }
-}
-
-function keepIntakeNew() {
-  intakeKeepNew.value = true
-  intakeSelected.value = null
 }
 
 function customerKey(c) {
@@ -435,14 +447,18 @@ async function addManagerNote() {
 }
 
 async function loadEmployees() {
-  const city = assignCityValue.value || detail.value?.cityValue
+  const city = requestCity() || assignCityValue.value || detail.value?.cityValue
+  assignCityValue.value = city || ''
   if (!city) {
     employees.value = []
 
     return
   }
   try {
-    employees.value = await smGetEmployees(city)
+    employees.value = (await smGetEmployees(city)).map(row => ({
+      ...row,
+      employeeId: Number(row.employeeId || row.EmployeeId || 0),
+    }))
   }
   catch {
     employees.value = []
@@ -491,8 +507,11 @@ async function assign() {
   const d = detail.value
   if (!d || d.status !== 'New')
     return
-  if (!assignCityValue.value || !assignEmployeeId.value) {
-    toast.error('اختر المحافظة وموظف المبيعات')
+  const city = requestCity(d)
+  const id = requestId(d)
+  const employeeId = Number(assignEmployeeId.value || 0)
+  if (!city || !employeeId) {
+    toast.error('اختر موظف المبيعات')
 
     return
   }
@@ -502,35 +521,50 @@ async function assign() {
 
     return
   }
-  const employee = employees.value.find(e => e.employeeId === assignEmployeeId.value)
-  const sourceCity = intakeSelected.value?.cityValue || intakeSelected.value?.CityValue
-  const sameBranch = !intakeKeepNew.value
-    && sourceCity
-    && String(sourceCity) === String(d.cityValue)
+  const employee = employees.value.find(e => Number(e.employeeId) === employeeId)
+  const selectedCustomer = intakeSelected.value
+  const sourceCity = selectedCustomer
+    ? String(selectedCustomer.cityValue || selectedCustomer.CityValue || selectedCustomer.sourceCityValue || selectedCustomer.SourceCityValue || city)
+    : ''
+  const sameBranch = !!selectedCustomer && String(sourceCity) === String(city)
+  const existingId = sameBranch
+    ? Number(selectedCustomer.customerId || selectedCustomer.CustomerId || 0)
+    : 0
+  const path = requestActionPath(d, 'assign')
+  const payload = {
+    employeeId,
+    employeeName: employee?.employeeName,
+    cityValue: city,
+    cityName: employee?.cityName || employee?.branchName || d.cityName,
+    existingCustomerId: existingId > 0 ? existingId : null,
+    customerSourceCityValue: sameBranch ? sourceCity : null,
+    customerName: name,
+    customerPhone: intakeForm.value.phone,
+    customerProvince: intakeForm.value.province,
+    customerAddress: intakeForm.value.address,
+    notes: intakeForm.value.notes,
+  }
   busy.value = true
   try {
-    detail.value = await smPost(
-      `sales-requests/${encodeURIComponent(d.cityValue)}/${d.id}/assign`,
-      {
-        employeeId: assignEmployeeId.value,
-        employeeName: employee?.employeeName,
-        cityValue: assignCityValue.value,
-        cityName: employee?.cityName || employee?.branchName,
-        keepNewCustomer: intakeKeepNew.value,
-        existingCustomerId: sameBranch ? (intakeSelected.value?.customerId || intakeSelected.value?.CustomerId) : null,
-        customerSourceCityValue: sourceCity || null,
-        customerName: name,
-        customerPhone: intakeForm.value.phone,
-        customerProvince: intakeForm.value.province,
-        customerAddress: intakeForm.value.address,
-        notes: intakeForm.value.notes,
-      },
-    )
+    detail.value = await smPost(path, payload)
     toast.success('تم إرسال الطلب للموظف')
     await load()
   }
   catch (err) {
-    toast.error(err?.response?.data?.message || 'تعذر إسناد الطلب')
+    const status = err?.response?.status
+    const backend = err?.response?.data
+    const message = backend?.message || backend?.Message || err?.message || 'تعذر إسناد الطلب'
+    console.error('assign request failed', {
+      url: `${salesManagerBase()}${path}`,
+      requestId: id,
+      cityValue: city,
+      employeeId,
+      payload,
+      status,
+      body: backend,
+      message,
+    })
+    toast.error(status ? `${message} (${status})` : message)
   }
   finally {
     busy.value = false
@@ -965,86 +999,113 @@ onUnmounted(() => {
 
           <template v-if="detail.status === 'New' || employeeIdOf(detail) <= 0">
             <VDivider class="my-4" />
-            <div class="font-weight-bold mb-2">
+            <div class="font-weight-bold mb-4">
               بحث زبون
             </div>
             <VTextField
               v-model="intakeQuery"
+              class="mb-4"
               label="بحث عن زبون"
+              variant="outlined"
+              hide-details="auto"
+              density="comfortable"
               @keyup.enter="searchIntakeCustomers"
             />
             <VBtn
-              class="mb-3"
+              class="mb-4"
               @click="searchIntakeCustomers"
             >
               بحث
             </VBtn>
             <div
               v-if="!intakeCustomers.length"
-              class="text-medium-emphasis mb-2"
+              class="text-medium-emphasis mb-4"
             >
-              ابحث داخل المحافظة المختارة في الفلتر، ثم اختر زبون موجود أو اتركه كزبون جديد.
+              البحث داخل محافظة الطلب فقط. اختيار نتيجة اختياري.
             </div>
-            <VList v-else>
-              <VListItem
-                v-for="c in intakeCustomers"
-                :key="customerKey(c)"
-                :active="intakeSelected && customerKey(intakeSelected) === customerKey(c)"
-                @click="selectIntakeCustomer(c)"
-              >
-                <VListItemTitle>{{ c.fullName || c.customerName }}</VListItemTitle>
-                <VListItemSubtitle>
-                  الهاتف: {{ c.phone || '—' }} — العنوان: {{ c.address || '—' }} — المحافظة: {{ c.province || c.cityName || '—' }}
-                </VListItemSubtitle>
-              </VListItem>
-            </VList>
-            <VBtn
-              class="mt-2"
-              variant="text"
-              @click="keepIntakeNew"
+            <VCard
+              v-for="c in intakeCustomers"
+              :key="customerKey(c)"
+              class="mb-3 intake-result"
+              variant="outlined"
+              :class="{ 'border-primary': intakeSelected && customerKey(intakeSelected) === customerKey(c) }"
+              @click="selectIntakeCustomer(c)"
             >
-              تركه كزبون جديد
-            </VBtn>
-            <div class="text-medium-emphasis mt-1 mb-3">
-              {{ intakeKeepNew ? 'سيُرسل كزبون جديد' : 'تم اختيار زبون موجود — يمكن تعديل البيانات قبل الإرسال' }}
-            </div>
-            <div class="font-weight-bold mb-2">
+              <VCardText>
+                <div class="font-weight-bold mb-2">
+                  {{ c.fullName || c.customerName }}
+                </div>
+                <div class="mb-1">
+                  الهاتف: {{ c.phone || '—' }}
+                </div>
+                <div class="mb-1">
+                  العنوان: {{ c.address || '—' }}
+                </div>
+                <div>
+                  المحافظة: {{ c.province || c.cityName || '—' }}
+                </div>
+              </VCardText>
+            </VCard>
+            <div class="font-weight-bold mb-4 mt-6">
               بيانات الطلب قبل الإرسال
             </div>
             <VTextField
               v-model="intakeForm.fullName"
-              label="الاسم *"
+              class="mb-4"
+              label="الاسم"
+              variant="outlined"
+              hide-details="auto"
+              density="comfortable"
             />
             <VTextField
               v-model="intakeForm.phone"
+              class="mb-4"
               label="الهاتف"
+              variant="outlined"
+              hide-details="auto"
+              density="comfortable"
             />
             <VTextField
               v-model="intakeForm.province"
+              class="mb-4"
               label="المحافظة"
+              variant="outlined"
+              hide-details="auto"
+              density="comfortable"
             />
             <VTextField
               v-model="intakeForm.address"
+              class="mb-4"
               label="العنوان"
+              variant="outlined"
+              hide-details="auto"
+              density="comfortable"
             />
             <VTextarea
               v-model="intakeForm.notes"
+              class="mb-4"
               label="الملاحظات"
+              variant="outlined"
               auto-grow
+              hide-details="auto"
             />
-            <div class="mb-2">
-              المحافظة للإسناد: {{ detail.cityName || detail.branchName || assignCityValue }}
+            <div class="mb-4">
+              محافظة الإسناد: {{ detail.cityName || detail.branchName || requestCity(detail) }}
             </div>
             <VSelect
               v-model="assignEmployeeId"
+              class="mb-4"
               :items="employees"
               item-title="employeeName"
               item-value="employeeId"
               label="موظف المبيعات"
+              variant="outlined"
+              hide-details="auto"
+              density="comfortable"
               :disabled="!assignCityValue"
             />
             <VBtn
-              class="mt-3"
+              class="mt-2"
               color="primary"
               :loading="busy"
               :disabled="!assignEmployeeId"
@@ -1416,3 +1477,12 @@ onUnmounted(() => {
     </VDialog>
   </div>
 </template>
+
+<style scoped>
+.intake-result {
+  cursor: pointer;
+}
+.intake-result.border-primary {
+  border-width: 2px;
+}
+</style>

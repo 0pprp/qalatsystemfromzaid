@@ -29,6 +29,9 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('طلبات البيع'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('ستتوفر طلبات المبيعات لاحقاً'), findsNothing);
     expect(find.text('سعد كاظم'), findsOneWidget);
     expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsOneWidget);
@@ -59,6 +62,9 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('طلبات البيع'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     final pendBtn = find.widgetWithText(OutlinedButton, 'معلقة');
     expect(pendBtn, findsOneWidget);
     await tester.tap(pendBtn);
@@ -71,7 +77,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.takeException(), isNull);
-    await tester.tap(find.widgetWithText(Tab, 'معلقة'));
+    await tester.pageBack();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('معلقة'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('سعد كاظم'), findsOneWidget);
@@ -94,7 +103,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('ahmed'), findsNothing);
-    await tester.tap(find.widgetWithText(Tab, 'تم البيع'));
+    await tester.tap(find.text('تم البيع'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('ahmed'), findsOneWidget);

@@ -198,6 +198,11 @@ namespace BE_SalesEmployee.Sales.Services
             CancellationToken ct)
         {
             var targets = await GetTargetsAsync(cityValue, ct);
+            if (targets.Count == 0 && !string.IsNullOrWhiteSpace(cityValue))
+            {
+                return (400, new { message = "المحافظة غير موجودة." });
+            }
+
             var totals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
             {
                 ["employeesOnShift"] = 0,
@@ -208,6 +213,8 @@ namespace BE_SalesEmployee.Sales.Services
                 ["newSalesRequests"] = 0
             };
 
+            var ok = 0;
+            string? lastError = null;
             await Task.WhenAll(targets.Select(async city =>
             {
                 try
@@ -216,12 +223,13 @@ namespace BE_SalesEmployee.Sales.Services
                     cts.CancelAfter(BranchTimeout);
                     using var response = await _proxy.SendManagerAsync(
                         city.Link, "sales-manager/dashboard", HttpMethod.Get, null, user.UserName, cts.Token);
+                    var raw = await response.Content.ReadAsStringAsync(ct);
                     if (!response.IsSuccessStatusCode)
                     {
+                        lastError = $"تعذر تحميل نظرة عامة من {city.Name}.";
                         return;
                     }
 
-                    var raw = await response.Content.ReadAsStringAsync(ct);
                     using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
                     lock (totals)
                     {
@@ -229,13 +237,20 @@ namespace BE_SalesEmployee.Sales.Services
                         {
                             totals[key] += ReadInt(doc.RootElement, key);
                         }
+
+                        ok++;
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // one branch must not fail the dashboard
+                    lastError = ex.Message;
                 }
             }));
+
+            if (targets.Count > 0 && ok == 0)
+            {
+                return (502, new { message = string.IsNullOrWhiteSpace(lastError) ? "تعذر تحميل نظرة عامة." : lastError });
+            }
 
             return (200, totals);
         }

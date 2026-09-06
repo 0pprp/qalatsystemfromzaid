@@ -140,14 +140,17 @@ namespace BE_Company.Sales.Services
                 windowStart = IraqTimeService.ToUtcFromIraq(todayIraq.AddDays(-1).Add(IraqTimeService.CutoffTime));
             }
 
-            var sales = await _read.ListSalesAsync(null, null, windowStart, _clock.UtcNow, ct);
+            var utc = _clock.UtcNow;
+            var sales = await _read.ListSalesAsync(null, SalesStatuses.Completed, windowStart, utc, ct);
             return new SalesManagerDashboardDTO
             {
                 EmployeesOnShift = employees.Count(e => e.ShiftStatus == SalesShiftStatuses.Active),
                 EmployeesOffShift = employees.Count(e => e.ShiftStatus != SalesShiftStatuses.Active),
-                LiveLocations = employees.Count(e => e.LocationStatus == SalesLocationStatuses.Live),
-                SalesToday = sales.Count,
-                PendingSales = await _read.CountPendingSalesAsync(null, ct),
+                LiveLocations = employees.Count(e =>
+                    e.ShiftStatus == SalesShiftStatuses.Active && e.LocationStatus == SalesLocationStatuses.Live),
+                SalesToday = sales.Count(s =>
+                    string.Equals(s.Status, SalesStatuses.Completed, StringComparison.OrdinalIgnoreCase)),
+                PendingSales = await _requests.CountByStatusAsync(SalesRequestStatuses.Pending, ct),
                 NewSalesRequests = await _requests.CountByStatusAsync(SalesRequestStatuses.New, ct)
             };
         }

@@ -6,6 +6,7 @@ import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
 const cityValue = ref('')
+const loadError = ref('')
 
 const cards = ref({
   employeesOnShift: 0,
@@ -16,12 +17,47 @@ const cards = ref({
   newSalesRequests: 0,
 })
 
-async function load() {
-  try {
-    cards.value = await smGet(withCityQuery('dashboard', cityValue.value))
+function num(raw, ...keys) {
+  if (!raw)
+    return 0
+  for (const key of keys) {
+    const value = raw[key]
+    if (value != null && value !== '')
+      return Number(value) || 0
   }
-  catch {
-    toast.error('تعذر تحميل نظرة عامة')
+
+  return 0
+}
+
+function mapDashboard(raw) {
+  return {
+    employeesOnShift: num(raw, 'employeesOnShift', 'EmployeesOnShift'),
+    employeesOffShift: num(raw, 'employeesOffShift', 'EmployeesOffShift'),
+    liveLocations: num(raw, 'liveLocations', 'LiveLocations'),
+    salesToday: num(raw, 'salesToday', 'SalesToday'),
+    pendingSales: num(raw, 'pendingSales', 'PendingSales'),
+    newSalesRequests: num(raw, 'newSalesRequests', 'NewSalesRequests'),
+  }
+}
+
+async function load() {
+  loadError.value = ''
+  try {
+    const raw = await smGet(withCityQuery('dashboard', cityValue.value))
+    cards.value = mapDashboard(raw)
+  }
+  catch (err) {
+    const status = err?.response?.status
+    const backend = err?.response?.data
+    const message = backend?.message || backend?.Message || err?.message || 'تعذر تحميل نظرة عامة'
+    loadError.value = status ? `${message} (${status})` : message
+    console.error('dashboard failed', {
+      cityValue: cityValue.value,
+      status,
+      body: backend,
+      message,
+    })
+    toast.error(loadError.value)
   }
 }
 
@@ -44,6 +80,14 @@ onMounted(load)
         />
       </VCol>
     </VRow>
+    <VAlert
+      v-if="loadError"
+      class="mb-4"
+      type="error"
+      variant="tonal"
+    >
+      {{ loadError }}
+    </VAlert>
     <VRow>
       <VCol
         cols="12"
@@ -73,7 +117,7 @@ onMounted(load)
         cols="12"
         md="4"
       >
-        <VCard><VCardText>المبيعات المعلقة<br><strong>{{ cards.pendingSales }}</strong></VCardText></VCard>
+        <VCard><VCardText>الطلبات المعلقة<br><strong>{{ cards.pendingSales }}</strong></VCardText></VCard>
       </VCol>
       <VCol
         cols="12"
