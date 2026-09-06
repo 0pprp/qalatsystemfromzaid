@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
@@ -14,6 +15,7 @@ namespace BE_Company.Sales.Authorization
         public const string SchemeName = "SalesGateway";
         public const string HeaderName = "X-Sales-Gateway-Key";
         public const string ManagerNameHeader = "X-Sales-Manager-Name";
+        public const string ManagerNameB64Header = "X-Sales-Manager-Name-B64";
         public const string AuthSourceClaim = "AuthSource";
         public const string AuthSourceGateway = "Gateway";
 
@@ -45,10 +47,7 @@ namespace BE_Company.Sales.Authorization
                 return Task.FromResult(AuthenticateResult.Fail("Invalid sales gateway key."));
             }
 
-            var name = Request.Headers.TryGetValue(ManagerNameHeader, out var managerName)
-                       && !string.IsNullOrWhiteSpace(managerName)
-                ? managerName.ToString()
-                : "مدير المبيعات";
+            var name = ResolveManagerName(Request.Headers);
 
             var claims = new[]
             {
@@ -60,6 +59,33 @@ namespace BE_Company.Sales.Authorization
             var identity = new ClaimsIdentity(claims, Scheme.Name);
             var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name);
             return Task.FromResult(AuthenticateResult.Success(ticket));
+        }
+
+        private static string ResolveManagerName(IHeaderDictionary headers)
+        {
+            if (headers.TryGetValue(ManagerNameB64Header, out var b64) &&
+                !string.IsNullOrWhiteSpace(b64))
+            {
+                try
+                {
+                    var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(b64.ToString().Trim()));
+                    if (!string.IsNullOrWhiteSpace(decoded))
+                    {
+                        return decoded;
+                    }
+                }
+                catch (FormatException)
+                {
+                }
+            }
+
+            if (headers.TryGetValue(ManagerNameHeader, out var managerName) &&
+                !string.IsNullOrWhiteSpace(managerName))
+            {
+                return managerName.ToString();
+            }
+
+            return "SalesManager";
         }
     }
 }

@@ -113,7 +113,8 @@ namespace BE_SalesEmployee.Services
             }
             if (!string.IsNullOrWhiteSpace(managerName))
             {
-                request.Headers.TryAddWithoutValidation("X-Sales-Manager-Name", managerName);
+                var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(managerName));
+                request.Headers.TryAddWithoutValidation("X-Sales-Manager-Name-B64", b64);
             }
             if (jsonBody != null)
             {
