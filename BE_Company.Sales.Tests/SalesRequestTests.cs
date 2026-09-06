@@ -152,7 +152,7 @@ namespace BE_Company.Sales.Tests
             var created = await Svc(repo).CreateAsync(Manager(), new SalesRequestCreateDTO
             {
                 TargetEmployeeId = 45,
-                Customer = new SalesRequestCustomerDTO { FullName = "زبون", Phone = "0770" }
+                Customer = new SalesRequestCustomerDTO { FullName = "زبون", Phone = "07701234567" }
             }, CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.New, created.Status);
             Assert.Equal(0, created.TargetEmployeeId);
@@ -177,6 +177,128 @@ namespace BE_Company.Sales.Tests
             var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => Svc(new FakeRequestRepository()).CreateAsync(
                 Employee(1), new SalesRequestCreateDTO { TargetEmployeeId = 1, Customer = new() { FullName = "أ" } }, CancellationToken.None));
             Assert.Equal(403, ex.StatusCode);
+        }
+
+        [Fact]
+        public async Task Employee_SubmitsUnassignedRequest_FromAuthIdentity()
+        {
+            var repo = new FakeRequestRepository();
+            var created = await Svc(repo).SubmitByEmployeeAsync(Employee(7), new SalesRequestCreateDTO
+            {
+                TargetEmployeeId = 99,
+                ExistingCustomerId = 12,
+                Customer = new SalesRequestCustomerDTO
+                {
+                    FullName = "زبون موظف",
+                    Phone = "07701234567",
+                    Address = "الكوفة"
+                }
+            }, CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.New, created.Status);
+            Assert.Equal(0, created.TargetEmployeeId);
+            Assert.Equal(7, created.CreatedByUserId);
+            Assert.Equal(SalesRequestSources.EmployeeSubmitted, created.CustomerSourceType);
+            Assert.Null(created.ExistingCustomerId);
+            Assert.Null(created.ManagerReadAtUtc);
+            Assert.False(created.IsManagerRead);
+            Assert.Contains(created.History, h => h.Event == SalesRequestEvents.EmployeeSubmitted);
+            Assert.Empty(await Svc(repo).ListForEmployeeAsync(7, CancellationToken.None));
+        }
+
+        [Fact]
+        public async Task EmployeeSubmit_RequiresValidPhoneAndAddress()
+        {
+            var svc = Svc(new FakeRequestRepository());
+            var phone = await Assert.ThrowsAsync<SalesCompleteException>(() => svc.SubmitByEmployeeAsync(Employee(1), new SalesRequestCreateDTO
+            {
+                Customer = new() { FullName = "أ", Phone = "0770", Address = "عنوان" }
+            }, CancellationToken.None));
+            Assert.Equal(400, phone.StatusCode);
+
+            var address = await Assert.ThrowsAsync<SalesCompleteException>(() => svc.SubmitByEmployeeAsync(Employee(1), new SalesRequestCreateDTO
+            {
+                Customer = new() { FullName = "أ", Phone = "07701234567" }
+            }, CancellationToken.None));
+            Assert.Equal(400, address.StatusCode);
+        }
+
+        [Fact]
+        public async Task Manager_ReadUnread_DoesNotChangeStatus()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await svc.SubmitByEmployeeAsync(Employee(3), new SalesRequestCreateDTO
+            {
+                Customer = new() { FullName = "أ", Phone = "07701234567", Address = "حي" }
+            }, CancellationToken.None);
+            Assert.Equal(1, await svc.CountUnreadEmployeeSubmittedAsync(CancellationToken.None));
+            var read = await svc.MarkReadAsync(Manager(), created.Id, CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.New, read.Status);
+            Assert.True(read.IsManagerRead);
+            Assert.Equal(0, await svc.CountUnreadEmployeeSubmittedAsync(CancellationToken.None));
+            Assert.Contains(read.History, h => h.Event == SalesRequestEvents.ManagerViewed);
+        }
+
+        [Fact]
+        public async Task Manager_AssignsEmployeeSubmitted_SameRow_NoAutoLink()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await svc.SubmitByEmployeeAsync(Employee(3), new SalesRequestCreateDTO
+            {
+                Customer = new() { FullName = "أ", Phone = "07701234567", Address = "حي" }
+            }, CancellationToken.None);
+            var assigned = await svc.AssignAsync(Manager(), created.Id, new SalesRequestAssignDTO
+            {
+                EmployeeId = 2,
+                ExistingCustomerId = 88,
+                KeepNewCustomer = true
+            }, CancellationToken.None);
+            Assert.Single(repo.Rows);
+            Assert.Equal(created.Id, assigned.Id);
+            Assert.Equal(2, assigned.TargetEmployeeId);
+            Assert.Equal(SalesRequestStatuses.Assigned, assigned.Status);
+            Assert.Equal(SalesRequestSources.EmployeeSubmitted, assigned.CustomerSourceType);
+            Assert.Null(assigned.ExistingCustomerId);
+            Assert.Contains(assigned.History, h => h.Event == SalesRequestEvents.Assigned);
+        }
+
+        [Fact]
+        public async Task Manager_Reject_RequiresReason()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await svc.SubmitByEmployeeAsync(Employee(3), new SalesRequestCreateDTO
+            {
+                Customer = new() { FullName = "أ", Phone = "07701234567", Address = "حي" }
+            }, CancellationToken.None);
+            var missing = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+                svc.ManagerRejectAsync(Manager(), created.Id, "  ", CancellationToken.None));
+            Assert.Equal(400, missing.StatusCode);
+
+            var rejected = await svc.ManagerRejectAsync(Manager(), created.Id, "غير مكتمل", CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Rejected, rejected.Status);
+            Assert.Equal("غير مكتمل", rejected.RejectionReason);
+            Assert.Contains(rejected.History, h => h.Event == SalesRequestEvents.Rejected);
+        }
+
+        [Fact]
+        public async Task MarkAllRead_MarksOnlyEmployeeSubmitted()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            await svc.SubmitByEmployeeAsync(Employee(3), new SalesRequestCreateDTO
+            {
+                Customer = new() { FullName = "أ", Phone = "07701234567", Address = "حي" }
+            }, CancellationToken.None);
+            await svc.CreateAsync(Manager(), new SalesRequestCreateDTO
+            {
+                Customer = new() { FullName = "مدير", Phone = "07701234567" }
+            }, CancellationToken.None);
+            var marked = await svc.MarkAllReadAsync(Manager(), CancellationToken.None);
+            Assert.Equal(1, marked);
+            Assert.Equal(0, await svc.CountUnreadEmployeeSubmittedAsync(CancellationToken.None));
+            Assert.Equal(SalesRequestSources.NewCustomer, repo.Rows.Single(r => r.CreatedByUserId == 90).CustomerSourceType);
         }
 
         [Fact]

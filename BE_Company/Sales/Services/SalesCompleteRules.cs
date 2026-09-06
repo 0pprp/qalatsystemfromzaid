@@ -48,6 +48,11 @@ namespace BE_Company.Sales.Services
                 return "بيانات الزبون غير مكتملة.";
             }
 
+            if (!SalesIraqPhone.IsValid(sale.Phone))
+            {
+                return SalesIraqPhone.Message;
+            }
+
             return null;
         }
 

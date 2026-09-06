@@ -232,6 +232,8 @@ export const requestHistoryLabel = {
   Created: 'إنشاء',
   Assigned: 'إسناد',
   Viewed: 'مشاهدة',
+  EmployeeSubmitted: 'إرسال من الموظف',
+  ManagerViewed: 'مشاهدة المدير',
   Pending: 'تعليق',
   PendingNote: 'ملاحظة تعليق',
   PreparedForSale: 'تجهيز للبيع',

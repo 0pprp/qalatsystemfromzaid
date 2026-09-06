@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sales_employee_application/config/app_env.dart';
 import 'package:sales_employee_application/config/company_branches.dart';
 import 'package:sales_employee_application/services/api_client.dart';
+import 'package:sales_employee_application/services/device_handover.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 
@@ -74,22 +75,23 @@ class _LoginScreenState extends State<LoginScreen> {
       _alert('لا يمكن ترك أي شيء فارغ');
       return;
     }
-    if (AppEnv.isProduction) {
-      if (_selectedBranch == null) {
-        _alert('اختر الفرع أولاً');
-        return;
-      }
-      await Session.saveBranch(_selectedBranch!.toJson());
-    } else if (AppEnv.isDemo) {
-      await Session.saveBranch({
-        'name': AppEnv.loginCityLabel(),
-        'value': 'DatabaseCompanyNajaf_DEMO',
-        'database': 'DatabaseCompanyNajaf_DEMO',
-        'link': AppEnv.apiBase(),
-      });
+    if (AppEnv.isProduction && _selectedBranch == null) {
+      _alert('اختر الفرع أولاً');
+      return;
     }
     setState(() => _loading = true);
     try {
+      await _kickPreviousUserIfNeeded(_userCtrl.text.trim());
+      if (AppEnv.isProduction) {
+        await Session.saveBranch(_selectedBranch!.toJson());
+      } else if (AppEnv.isDemo) {
+        await Session.saveBranch({
+          'name': AppEnv.loginCityLabel(),
+          'value': 'DatabaseCompanyNajaf_DEMO',
+          'database': 'DatabaseCompanyNajaf_DEMO',
+          'link': AppEnv.apiBase(),
+        });
+      }
       if (AppEnv.useMockSalesRepository) {
         await Session.saveLogin({
           'token': 'mock-token',
@@ -116,6 +118,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _alert(payload['message']?.toString() ?? 'فشل تسجيل الدخول');
         return;
       }
+      await _kickPreviousUserIfNeeded(_userCtrl.text.trim(), payload);
       await Session.saveLogin({
         ...payload,
         'token': token,
@@ -131,6 +134,19 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _kickPreviousUserIfNeeded(
+    String userName, [
+    Map<String, dynamic>? payload,
+  ]) async {
+    if (!Session.isLoggedIn) return;
+    final incoming = <String, dynamic>{
+      ...?payload,
+      'userName': userName,
+    };
+    if (Session.isSameLoggedInUser(incoming)) return;
+    await DeviceHandover.kickPreviousUser();
   }
 
   void _alert(String message) {

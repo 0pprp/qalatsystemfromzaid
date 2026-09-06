@@ -124,6 +124,15 @@ class _MemRepo implements SalesRepository {
   @override
   Future<SalesWorkRequest> rejectSalesRequest(int id, String reason) async => throw UnimplementedError();
   @override
+  Future<SalesWorkRequest> submitSalesRequest({
+    required String fullName,
+    required String phone,
+    required String province,
+    required String address,
+    String? notes,
+  }) async =>
+      throw UnimplementedError();
+  @override
   Future<List<SalesCustomerList>> activeCustomerLists() async => [];
 }
 

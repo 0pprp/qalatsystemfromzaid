@@ -2,6 +2,7 @@
 import allNavItems from '@/navigation/horizontal'
 import { themeConfig } from '@themeConfig'
 import { useUserRole } from '@/composables/useUserRole'
+import { useSalesRequestUnread, withRequestsUnreadBadge } from '@/composables/useSalesRequestUnread'
 
 // Components
 import AppLoadingIndicator from "@/components/AppLoadingIndicator.vue"
@@ -30,9 +31,10 @@ watch([
 
 const cityName = ref(localStorage.getItem('CityName'))
 const { canManageUsers, canBackup, canViewDecisions, isSalesManager } = useUserRole()
+useSalesRequestUnread()
 
 const navItems = computed(() => {
-  return allNavItems.filter(item => {
+  const items = allNavItems.filter(item => {
     if (isSalesManager.value)
       return item.title === 'إدارة المبيعات'
 
@@ -45,6 +47,8 @@ const navItems = computed(() => {
 
     return true
   })
+
+  return withRequestsUnreadBadge(items)
 })
 </script>
 

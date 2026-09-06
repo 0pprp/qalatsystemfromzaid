@@ -4,6 +4,7 @@ import AppTextField from "@core/components/app-form-elements/AppTextField.vue"
 import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone } from '@core/utils/validators'
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
@@ -465,13 +466,18 @@ async function moveCustomer() {
 }
 
 async function editCustomer() {
+  if (!isIraqMobile(formData.value.phoneNumber)) {
+    alert(IRAQ_MOBILE_ERROR)
+
+    return
+  }
   try {
     const headers = getAuthHeaders()
 
     const data = {
       customerID: formData.value.customerID,
       customerName: formData.value.customerName,
-      phoneNumber: formData.value.phoneNumber,
+      phoneNumber: normalizeIraqPhone(formData.value.phoneNumber),
       address: formData.value.address,
       shopName: formData.value.shopName,
       saleName: formData.value.saleName,
@@ -608,7 +614,7 @@ watch(() => formData.value.contents, () => {
 const isFormValid = computed(() => {
   const contentsValid = formData.value.contents.every(content => content.itemID && content.quantity && content.itemPriceDenar && content.amountDayDenar)
   
-  return formData.value.delegateID && formData.value.storeID && formData.value.customerName && formData.value.phoneNumber && formData.value.address && formData.value.shopName && formData.value.nearestFunctionPoint && formData.value.saleName && formData.value.receiptName && formData.value.dateCreate && contentsValid
+  return formData.value.delegateID && formData.value.storeID && formData.value.customerName && isIraqMobile(formData.value.phoneNumber) && formData.value.address && formData.value.shopName && formData.value.nearestFunctionPoint && formData.value.saleName && formData.value.receiptName && formData.value.dateCreate && contentsValid
 })
 
 async function changeDelegate(delegateID) {
@@ -617,6 +623,11 @@ async function changeDelegate(delegateID) {
 
 // دالة إرسال النموذج
 const submitForm = async () => {
+  if (!isIraqMobile(formData.value.phoneNumber)) {
+    alert(IRAQ_MOBILE_ERROR)
+
+    return
+  }
   if (formData.value.contents.some(content => !content.itemID || !content.quantity || !content.itemPriceDenar || !content.amountDayDenar)) {
     alert("الرجاء ملء جميع الحقول المطلوبة")
     
@@ -642,7 +653,7 @@ const submitForm = async () => {
     DiscountAmountDay: formData.value.discountAmountDay,
     DateCreate: new Date(formData.value.dateCreate).toLocaleDateString('en-CA'),
     CustomerName: formData.value.customerName,
-    PhoneNumber: formData.value.phoneNumber,
+    PhoneNumber: normalizeIraqPhone(formData.value.phoneNumber),
     Address: formData.value.address,
     ShopName: formData.value.shopName,
     NearestFunctionPoint: formData.value.nearestFunctionPoint,
@@ -770,11 +781,8 @@ function getStatus(item) {
 }
 
 const limitPhoneLength = event => {
-  let value = event.target.value.toString()
-  if (value.length > 11) {
-    value = value.slice(0, 11)
-    event.target.value = value
-  }
+  const value = normalizeIraqPhone(event.target.value)
+  event.target.value = value
   formData.value.phoneNumber = value
 }
 
@@ -1486,9 +1494,13 @@ onMounted(() => {
               </VLabel>
               <AppTextField
                 v-model="formData.phoneNumber"
-                type="number"
+                maxlength="11"
+                inputmode="numeric"
+                hint="11 رقم ويبدأ بـ 07"
+                persistent-hint
                 required
                 prepend-inner-icon="tabler-phone"
+                :rules="[iraqPhoneValidator]"
                 @input="limitPhoneLength"
                 @keypress="e => !/[0-9]/.test(e.key) && e.preventDefault()"
               />
@@ -2107,6 +2119,11 @@ onMounted(() => {
                 <VTextField
                   v-model="formData.phoneNumber"
                   prepend-inner-icon="tabler-phone"
+                  maxlength="11"
+                  inputmode="numeric"
+                  hint="11 رقم ويبدأ بـ 07"
+                  persistent-hint
+                  :rules="[iraqPhoneValidator]"
                   @input="limitPhoneLength"
                   @keypress="e => !/[0-9]/.test(e.key) && e.preventDefault()"
                 />

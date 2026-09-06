@@ -93,3 +93,24 @@ export const alphaDashValidator = value => {
   
   return /^[\w-]*$/.test(valueAsString) || 'All Character are not valid'
 }
+
+export const IRAQ_MOBILE_ERROR = 'يجب أن يكون 11 رقم ويبدأ بـ 07'
+
+export const normalizeIraqPhone = value => {
+  let digits = String(value ?? '').replace(/\D/g, '')
+  if (digits.startsWith('964') && digits.length >= 13)
+    digits = `0${digits.slice(3)}`
+  if (digits.length > 11)
+    digits = digits.slice(0, 11)
+
+  return digits
+}
+
+export const isIraqMobile = value => /^07\d{9}$/.test(normalizeIraqPhone(value))
+
+export const iraqPhoneValidator = value => {
+  if (isEmpty(value))
+    return 'مطلوب'
+
+  return isIraqMobile(value) || IRAQ_MOBILE_ERROR
+}

@@ -5,6 +5,7 @@ import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { isDemo } from '@/composables/useCities'
 import { smGet, smGetEmployees, smPost } from '@/composables/salesManagerApi'
 import { useToast } from '@/composables/useToast'
+import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone } from '@core/utils/validators'
 
 const toast = useToast()
 const router = useRouter()
@@ -64,6 +65,35 @@ async function loadEmployees() {
 
 watch(cityValue, loadEmployees)
 
+function nextStep() {
+  if (step.value === 1) {
+    if (isNewCustomer.value) {
+      if (!String(newCustomer.value.fullName || '').trim()) {
+        toast.error('اسم الزبون مطلوب')
+
+        return
+      }
+      newCustomer.value.phone = normalizeIraqPhone(newCustomer.value.phone)
+      if (!isIraqMobile(newCustomer.value.phone)) {
+        toast.error(IRAQ_MOBILE_ERROR)
+
+        return
+      }
+    }
+    else if (!selectedCustomer.value) {
+      toast.error('اختر زبون أو أدخل زبون جديد')
+
+      return
+    }
+    else if (selectedCustomer.value.phone && !isIraqMobile(selectedCustomer.value.phone)) {
+      toast.error('رقم هاتف الزبون غير صالح. أدخله كزبون جديد بصيغة 07 و11 رقم')
+
+      return
+    }
+  }
+  step.value++
+}
+
 async function send() {
   if (!cityValue.value) {
     toast.error('يجب اختيار المحافظة')
@@ -76,11 +106,25 @@ async function send() {
     return
   }
 
+  if (isNewCustomer.value) {
+    newCustomer.value.phone = normalizeIraqPhone(newCustomer.value.phone)
+    if (!isIraqMobile(newCustomer.value.phone)) {
+      toast.error(IRAQ_MOBILE_ERROR)
+
+      return
+    }
+  }
+  else if (selectedCustomer.value?.phone && !isIraqMobile(selectedCustomer.value.phone)) {
+    toast.error('رقم هاتف الزبون غير صالح. أدخله كزبون جديد بصيغة 07 و11 رقم')
+
+    return
+  }
+
   const customer = isNewCustomer.value
     ? newCustomer.value
     : {
       fullName: selectedCustomer.value.fullName || selectedCustomer.value.customerName,
-      phone: selectedCustomer.value.phone,
+      phone: normalizeIraqPhone(selectedCustomer.value.phone),
       province: selectedCustomer.value.province || selectedCustomer.value.cityName,
       address: selectedCustomer.value.address,
     }
@@ -190,6 +234,12 @@ async function send() {
             <VTextField
               v-model="newCustomer.phone"
               label="الهاتف *"
+              maxlength="11"
+              inputmode="numeric"
+              hint="11 رقم ويبدأ بـ 07"
+              persistent-hint
+              :rules="[iraqPhoneValidator]"
+              @update:model-value="v => newCustomer.phone = normalizeIraqPhone(v)"
             />
             <VTextField
               v-model="newCustomer.province"
@@ -257,7 +307,7 @@ async function send() {
       <VBtn
         v-if="step < 4"
         color="primary"
-        @click="step++"
+        @click="nextStep"
       >
         التالي
       </VBtn>

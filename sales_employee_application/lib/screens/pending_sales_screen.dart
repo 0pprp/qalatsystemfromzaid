@@ -3,6 +3,7 @@ import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/screens/shift_screen.dart';
 import 'package:sales_employee_application/services/api_client.dart';
+import 'package:sales_employee_application/services/device_handover.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/tracking/shift_start_debug.dart';
 import 'package:sales_employee_application/tracking/shift_tracking_controller.dart';
@@ -193,7 +194,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
             ),
             TextButton(
               onPressed: () async {
-                await Session.logout();
+                await DeviceHandover.kickPreviousUser(endServerShift: false);
                 if (context.mounted) {
                   Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
                 }
@@ -205,6 +206,18 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
         body: Column(
           children: [
             _shiftCard(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
+              child: SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: () => Navigator.pushNamed(context, '/submit-request'),
+                  icon: const Icon(Icons.send_outlined),
+                  label: const Text('إرسال طلب بيع'),
+                ),
+              ),
+            ),
             Expanded(child: _dashboardBody()),
           ],
         ),

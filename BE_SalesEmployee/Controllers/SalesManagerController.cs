@@ -266,6 +266,46 @@ namespace BE_SalesEmployee.Controllers
             return ListAsync(cityValue, "sales-manager/sales-requests" + q, ct);
         }
 
+        [HttpGet("sales-requests/employee-submitted")]
+        public Task<IActionResult> EmployeeSubmitted([FromQuery] string? cityValue, CancellationToken ct) =>
+            ListAsync(cityValue, "sales-manager/sales-requests/employee-submitted", ct);
+
+        [HttpGet("sales-requests/unread-count")]
+        public async Task<IActionResult> UnreadCount([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.SumCountAsync(
+                user, cityValue, "sales-manager/sales-requests/unread-count", ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/mark-all-read")]
+        public async Task<IActionResult> MarkAllRead([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostFanoutAsync(
+                user, cityValue, "sales-manager/sales-requests/mark-all-read", "{}", ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/{cityValue}/{id:int}/mark-read")]
+        public async Task<IActionResult> MarkRead(string cityValue, int id, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/mark-read", "{}", ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/{cityValue}/{id:int}/reject")]
+        public async Task<IActionResult> Reject(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/reject", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
         [HttpGet("sales-requests/{cityValue}/{id:int}")]
         public Task<IActionResult> RequestDetails(string cityValue, int id, CancellationToken ct) =>
             OneAsync(cityValue, $"sales-manager/sales-requests/{id}", ct);

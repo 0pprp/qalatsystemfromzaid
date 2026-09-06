@@ -18,6 +18,7 @@ import {
 } from '@/composables/salesManagerApi'
 import { formatIraqDate } from '@/composables/iraqDate'
 import { useToast } from '@/composables/useToast'
+import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone } from '@core/utils/validators'
 
 const toast = useToast()
 const route = useRoute()
@@ -221,6 +222,11 @@ async function saveCustomer() {
     toast.error('اسم الزبون مطلوب')
     return
   }
+  editForm.value.phone = normalizeIraqPhone(editForm.value.phone)
+  if (!isIraqMobile(editForm.value.phone)) {
+    toast.error(IRAQ_MOBILE_ERROR)
+    return
+  }
   editBusy.value = true
   try {
     const payload = {
@@ -228,7 +234,7 @@ async function saveCustomer() {
       originalName: pick(profile.value, 'customerName', 'CustomerName') || customerName.value || '',
       originalPhone: pick(profile.value, 'phone', 'Phone') || customerPhone.value || '',
       customerName: name,
-      phone: String(editForm.value.phone || '').trim(),
+      phone: normalizeIraqPhone(editForm.value.phone),
       province: String(editForm.value.province || '').trim(),
       address: String(editForm.value.address || '').trim(),
     }
@@ -786,6 +792,12 @@ onUnmounted(() => {
               <VTextField
                 v-model="editForm.phone"
                 label="رقم الهاتف"
+                maxlength="11"
+                inputmode="numeric"
+                hint="11 رقم ويبدأ بـ 07"
+                persistent-hint
+                :rules="[iraqPhoneValidator]"
+                @update:model-value="v => editForm.phone = normalizeIraqPhone(v)"
               />
             </VCol>
             <VCol

@@ -31,4 +31,11 @@ abstract class SalesRepository {
   Future<SalesWorkRequest> prepareSalesRequest(int id);
   Future<SalesWorkRequest> pendSalesRequest(int id, String note);
   Future<SalesWorkRequest> rejectSalesRequest(int id, String reason);
+  Future<SalesWorkRequest> submitSalesRequest({
+    required String fullName,
+    required String phone,
+    required String province,
+    required String address,
+    String? notes,
+  });
 }

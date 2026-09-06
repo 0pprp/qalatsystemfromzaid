@@ -7,6 +7,7 @@ import 'package:sales_employee_application/screens/sale_details_screen.dart';
 import 'package:sales_employee_application/screens/sale_screen.dart';
 import 'package:sales_employee_application/screens/search_screen.dart';
 import 'package:sales_employee_application/screens/shift_screen.dart';
+import 'package:sales_employee_application/screens/submit_sales_request_screen.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/screens/warehouse_screen.dart';
 import 'package:sales_employee_application/services/session.dart';
@@ -43,6 +44,7 @@ class SalesEmployeeApp extends StatelessWidget {
         '/search': (_) => const SearchScreen(),
         '/sale': (_) => const SaleScreen(),
         '/warehouse': (_) => const WarehouseScreen(),
+        '/submit-request': (_) => const SubmitSalesRequestScreen(),
         '/sales': (_) => const PendingSalesScreen(),
         '/sale-details': (context) {
           final id = ModalRoute.of(context)?.settings.arguments;

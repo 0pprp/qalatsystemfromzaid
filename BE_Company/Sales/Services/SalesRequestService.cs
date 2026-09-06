@@ -35,6 +35,11 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اسم الزبون مطلوب.");
             }
 
+            SalesIraqPhone.RequireIfPresent(request.Customer?.Phone);
+            var phone = string.IsNullOrWhiteSpace(request.Customer?.Phone)
+                ? request.Customer?.Phone
+                : SalesIraqPhone.Normalize(request.Customer.Phone);
+
             await _repo.EnsureSchemaAsync(ct);
             var row = new SalesRequestDTO
             {
@@ -49,7 +54,7 @@ namespace BE_Company.Sales.Services
                 ExistingCustomerId = request.ExistingCustomerId is > 0 ? request.ExistingCustomerId : null,
                 CustomerSourceCityValue = request.CustomerSourceCityValue,
                 CustomerName = name ?? string.Empty,
-                CustomerPhone = request.Customer?.Phone,
+                CustomerPhone = phone,
                 CustomerProvince = request.Customer?.Province,
                 CustomerAddress = request.Customer?.Address,
                 Notes = request.Notes,
@@ -64,6 +69,150 @@ namespace BE_Company.Sales.Services
             var saved = await _repo.InsertAsync(row, ct);
             await AppendHistoryAsync(saved, SalesRequestEvents.Created, actor, saved.Notes, ct);
             return await HydrateAsync(saved, ct);
+        }
+
+        public async Task<SalesRequestDTO> SubmitByEmployeeAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct)
+        {
+            if (!SalesRoles.IsSalesEmployee(actor.UserType)
+                && !string.Equals(actor.Role, SalesRoles.SalesEmployee, StringComparison.Ordinal))
+            {
+                throw new SalesCompleteException(StatusCodes.Status403Forbidden, "غير مصرح.");
+            }
+
+            var name = request.Customer?.FullName?.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اسم الزبون مطلوب.");
+            }
+
+            var phone = request.Customer?.Phone;
+            if (string.IsNullOrWhiteSpace(phone) || !SalesIraqPhone.IsValid(phone))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, SalesIraqPhone.Message);
+            }
+
+            var address = request.Customer?.Address?.Trim();
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "العنوان مطلوب.");
+            }
+
+            var province = request.Customer?.Province?.Trim();
+            if (string.IsNullOrWhiteSpace(province))
+            {
+                province = actor.BranchName;
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+            var row = new SalesRequestDTO
+            {
+                CreatedByUserId = actor.EmployeeId,
+                CreatedByName = string.IsNullOrWhiteSpace(actor.EmployeeName) ? "موظف مبيعات" : actor.EmployeeName,
+                CreatedByUserType = actor.UserType ?? SalesRoles.UserTypeSalesEmployee,
+                TargetEmployeeId = 0,
+                TargetEmployeeName = null,
+                CityValue = actor.BranchId,
+                CityName = actor.BranchName,
+                CustomerSourceType = SalesRequestSources.EmployeeSubmitted,
+                ExistingCustomerId = null,
+                CustomerSourceCityValue = null,
+                CustomerName = name,
+                CustomerPhone = SalesIraqPhone.Normalize(phone),
+                CustomerProvince = province,
+                CustomerAddress = address,
+                Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(),
+                Status = SalesRequestStatuses.New,
+                CreatedAtUtc = _clock.UtcNow
+            };
+            var saved = await _repo.InsertAsync(row, ct);
+            await AppendHistoryAsync(saved, SalesRequestEvents.EmployeeSubmitted, actor, saved.Notes, ct);
+            return await HydrateAsync(saved, ct);
+        }
+
+        public async Task<IReadOnlyList<SalesRequestDTO>> ListEmployeeSubmittedAsync(CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            var rows = await _repo.ListAsync(null, null, null, null, ct);
+            var result = new List<SalesRequestDTO>();
+            foreach (var row in rows.Where(r => SalesRequestSources.IsEmployeeSubmitted(r.CustomerSourceType)))
+            {
+                result.Add(await HydrateAsync(row, ct));
+            }
+
+            return result;
+        }
+
+        public async Task<int> CountUnreadEmployeeSubmittedAsync(CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            var rows = await _repo.ListAsync(null, null, null, null, ct);
+            return rows.Count(r => SalesRequestSources.IsEmployeeSubmitted(r.CustomerSourceType) && r.ManagerReadAtUtc == null);
+        }
+
+        public async Task<SalesRequestDTO> MarkReadAsync(SalesIdentity manager, int id, CancellationToken ct)
+        {
+            EnsureManager(manager);
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
+            if (!SalesRequestSources.IsEmployeeSubmitted(row.CustomerSourceType) || row.ManagerReadAtUtc != null)
+            {
+                return await HydrateAsync(row, ct);
+            }
+
+            row.ManagerReadAtUtc = _clock.UtcNow;
+            await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.ManagerViewed, manager, null, ct);
+            return await HydrateAsync(row, ct);
+        }
+
+        public async Task<int> MarkAllReadAsync(SalesIdentity manager, CancellationToken ct)
+        {
+            EnsureManager(manager);
+            await _repo.EnsureSchemaAsync(ct);
+            var rows = await _repo.ListAsync(null, null, null, null, ct);
+            var unread = rows.Where(r => SalesRequestSources.IsEmployeeSubmitted(r.CustomerSourceType) && r.ManagerReadAtUtc == null).ToList();
+            foreach (var row in unread)
+            {
+                row.ManagerReadAtUtc = _clock.UtcNow;
+                await _repo.UpdateAsync(row, ct);
+                await AppendHistoryAsync(row, SalesRequestEvents.ManagerViewed, manager, null, ct);
+            }
+
+            return unread.Count;
+        }
+
+        public async Task<SalesRequestDTO> ManagerRejectAsync(SalesIdentity manager, int id, string reason, CancellationToken ct)
+        {
+            EnsureManager(manager);
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "سبب الرفض مطلوب.");
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
+            EnsureNotSold(row);
+            if (row.Status == SalesRequestStatuses.Rejected)
+            {
+                return await HydrateAsync(row, ct);
+            }
+
+            if (!SalesRequestStatuses.CanReject(row.Status))
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن رفض هذا الطلب.");
+            }
+
+            var trimmed = reason.Trim();
+            var previous = row.Status;
+            row.Status = SalesRequestStatuses.Rejected;
+            row.RejectedAtUtc = _clock.UtcNow;
+            row.RejectionReason = trimmed;
+            await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.Rejected, manager, trimmed, ct, previous);
+            await AppendHistoryAsync(row, SalesRequestEvents.RejectionReason, manager, trimmed, ct, previous);
+            return await HydrateAsync(row, ct);
         }
 
         public async Task<IReadOnlyList<SalesRequestDTO>> ListForManagerAsync(string? status, int? employeeId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct)
@@ -248,13 +397,16 @@ namespace BE_Company.Sales.Services
 
             if (request.KeepNewCustomer)
             {
-                row.ExistingCustomerId = null;
-                row.CustomerSourceType = "NewCustomer";
+                if (!SalesRequestSources.IsEmployeeSubmitted(row.CustomerSourceType))
+                {
+                    row.ExistingCustomerId = null;
+                    row.CustomerSourceType = SalesRequestSources.NewCustomer;
+                }
             }
-            else if (request.ExistingCustomerId is > 0)
+            else if (request.ExistingCustomerId is > 0 && !SalesRequestSources.IsEmployeeSubmitted(row.CustomerSourceType))
             {
                 row.ExistingCustomerId = request.ExistingCustomerId;
-                row.CustomerSourceType = "ExistingCustomer";
+                row.CustomerSourceType = SalesRequestSources.ExistingCustomer;
                 row.CustomerSourceCityValue = request.CustomerSourceCityValue;
             }
 
@@ -269,7 +421,10 @@ namespace BE_Company.Sales.Services
 
             if (request.CustomerPhone != null)
             {
-                row.CustomerPhone = request.CustomerPhone.Trim();
+                SalesIraqPhone.RequireIfPresent(request.CustomerPhone);
+                row.CustomerPhone = string.IsNullOrWhiteSpace(request.CustomerPhone)
+                    ? request.CustomerPhone.Trim()
+                    : SalesIraqPhone.Normalize(request.CustomerPhone);
             }
 
             if (request.CustomerProvince != null)

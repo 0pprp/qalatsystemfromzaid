@@ -69,4 +69,10 @@ class GpsQueue {
     }
     await _save();
   }
+
+  Future<void> clear() async {
+    await _load();
+    _rows = [];
+    await LocalStore.instance.remove(_key);
+  }
 }

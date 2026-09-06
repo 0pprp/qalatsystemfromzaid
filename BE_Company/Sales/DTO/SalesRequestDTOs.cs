@@ -121,6 +121,8 @@ namespace BE_Company.Sales.DTO
         public string? AssignedByName { get; set; }
         public string? PendingNote { get; set; }
         public string? ReturnNote { get; set; }
+        public DateTime? ManagerReadAtUtc { get; set; }
+        public bool IsManagerRead => ManagerReadAtUtc != null;
         public List<SalesRequestTimelineItemDTO> Timeline { get; set; } = [];
         public List<SalesRequestHistoryDTO> History { get; set; } = [];
     }

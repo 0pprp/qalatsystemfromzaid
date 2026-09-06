@@ -62,6 +62,18 @@ namespace BE_Company.Sales.Services
         public const string Completed = "Completed";
         public const string ConvertedToSale = "ConvertedToSale";
         public const string Viewed = "Viewed";
+        public const string EmployeeSubmitted = "EmployeeSubmitted";
+        public const string ManagerViewed = "ManagerViewed";
+    }
+
+    public static class SalesRequestSources
+    {
+        public const string NewCustomer = "NewCustomer";
+        public const string ExistingCustomer = "ExistingCustomer";
+        public const string EmployeeSubmitted = "EmployeeSubmitted";
+
+        public static bool IsEmployeeSubmitted(string? source) =>
+            string.Equals(source, EmployeeSubmitted, StringComparison.OrdinalIgnoreCase);
     }
 
     public static class SalesLocationStatuses
@@ -152,7 +164,13 @@ namespace BE_Company.Sales.Services
     public interface ISalesRequestService
     {
         Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct);
+        Task<SalesRequestDTO> SubmitByEmployeeAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForManagerAsync(string? status, int? employeeId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct);
+        Task<IReadOnlyList<SalesRequestDTO>> ListEmployeeSubmittedAsync(CancellationToken ct);
+        Task<int> CountUnreadEmployeeSubmittedAsync(CancellationToken ct);
+        Task<SalesRequestDTO> MarkReadAsync(SalesIdentity manager, int id, CancellationToken ct);
+        Task<int> MarkAllReadAsync(SalesIdentity manager, CancellationToken ct);
+        Task<SalesRequestDTO> ManagerRejectAsync(SalesIdentity manager, int id, string reason, CancellationToken ct);
         Task<SalesRequestDTO?> GetForManagerAsync(int id, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForEmployeeAsync(int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> GetForEmployeeAsync(int id, int employeeId, CancellationToken ct);

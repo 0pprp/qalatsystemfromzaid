@@ -4,6 +4,7 @@ import { themeConfig } from '@themeConfig'
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUserRole } from '@/composables/useUserRole'
+import { useSalesRequestUnread, withRequestsUnreadBadge } from '@/composables/useSalesRequestUnread'
 
 // Components
 import Footer from '@/layouts/components/Footer.vue'
@@ -43,9 +44,10 @@ function findByRouteName(items, name) {
 }
 
 const { canManageUsers, canBackup, canViewDecisions, isSalesManager } = useUserRole()
+useSalesRequestUnread()
 
 const navItems = computed(() => {
-  return allNavItems.filter(item => {
+  const items = allNavItems.filter(item => {
     if (isSalesManager.value)
       return item.title === 'إدارة المبيعات'
 
@@ -58,6 +60,8 @@ const navItems = computed(() => {
 
     return true
   })
+
+  return withRequestsUnreadBadge(items)
 })
 
 const activeNavItem = computed(() => findByRouteName(navItems.value, route.name) ?? null)

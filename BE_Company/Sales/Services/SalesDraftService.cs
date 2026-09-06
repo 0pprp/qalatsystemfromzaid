@@ -147,6 +147,16 @@ namespace BE_Company.Sales.Services
                 throw new ArgumentException("اسم الزبون مطلوب");
             }
 
+            if (!string.IsNullOrWhiteSpace(phone) && !SalesIraqPhone.IsValid(phone))
+            {
+                throw new ArgumentException(SalesIraqPhone.Message);
+            }
+
+            if (!string.IsNullOrWhiteSpace(phone))
+            {
+                phone = SalesIraqPhone.Normalize(phone);
+            }
+
             var draft = new SalesDraftDTO
             {
                 EmployeeId = employeeId,

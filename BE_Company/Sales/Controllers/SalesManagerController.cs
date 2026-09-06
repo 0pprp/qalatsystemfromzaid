@@ -401,13 +401,104 @@ namespace BE_Company.Sales.Controllers
             return Ok(rows);
         }
 
+        [HttpGet("sales-requests/employee-submitted")]
+        public async Task<IActionResult> EmployeeSubmittedRequests([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var rows = await _requests.ListEmployeeSubmittedAsync(ct);
+            if (!string.IsNullOrWhiteSpace(cityValue))
+            {
+                rows = rows.Where(r => string.Equals(r.CityValue, cityValue, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+            return Ok(rows);
+        }
+
+        [HttpGet("sales-requests/unread-count")]
+        public async Task<IActionResult> UnreadCount([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var rows = await _requests.ListEmployeeSubmittedAsync(ct);
+            if (!string.IsNullOrWhiteSpace(cityValue))
+            {
+                rows = rows.Where(r => string.Equals(r.CityValue, cityValue, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+            return Ok(new { count = rows.Count(r => r.ManagerReadAtUtc == null) });
+        }
+
+        [HttpPost("sales-requests/{id:int}/mark-read")]
+        public async Task<IActionResult> MarkRead(int id, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _requests.MarkReadAsync(identity!, id, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("sales-requests/mark-all-read")]
+        public async Task<IActionResult> MarkAllRead(CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                var marked = await _requests.MarkAllReadAsync(identity!, ct);
+                return Ok(new { marked });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("sales-requests/{id:int}/reject")]
+        public async Task<IActionResult> RejectRequest(int id, [FromBody] SalesRequestRejectDTO body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _requests.ManagerRejectAsync(identity!, id, body?.Reason ?? string.Empty, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
         [HttpGet("sales-requests/{id:int}")]
         public async Task<IActionResult> RequestDetails(int id, CancellationToken ct)
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
             var row = await _requests.GetForManagerAsync(id, ct);
-            return row == null ? NotFound() : Ok(row);
+            if (row == null) return NotFound();
+            if (SalesRequestSources.IsEmployeeSubmitted(row.CustomerSourceType) && row.ManagerReadAtUtc == null)
+            {
+                try
+                {
+                    row = await _requests.MarkReadAsync(identity!, id, ct);
+                }
+                catch (SalesCompleteException)
+                {
+                    // listing still works if mark-read is denied
+                }
+            }
+
+            return Ok(row);
         }
 
         [HttpPost("sales-requests")]

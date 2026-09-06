@@ -10,6 +10,7 @@ import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/sale_document_storage.dart';
 import 'package:sales_employee_application/services/shop_gps.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
+import 'package:sales_employee_application/utils/iraq_phone.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
 import 'package:sales_employee_application/widgets/customer_document_slot.dart';
 import 'package:sales_employee_application/widgets/inventory_item_info.dart';
@@ -128,7 +129,7 @@ class _SaleScreenState extends State<SaleScreen> {
       _preferList(arg.delegateId);
       _applyPreferredList();
       _fillIfPresent(_name, arg.customerName);
-      _fillIfPresent(_phone, arg.customerPhone);
+      _fillIfPresent(_phone, IraqPhone.normalize(arg.customerPhone));
       _fillIfPresent(_province, arg.customerProvince);
       _fillIfPresent(_address, arg.customerAddress);
       if (_province.text.trim().isEmpty) {
@@ -157,7 +158,9 @@ class _SaleScreenState extends State<SaleScreen> {
     _created = draft;
     _previewDocs = const [];
     if (draft.fullName.trim().isNotEmpty) _name.text = draft.fullName.trim();
-    if ((draft.phone ?? '').trim().isNotEmpty) _phone.text = draft.phone!.trim();
+    if ((draft.phone ?? '').trim().isNotEmpty) {
+      _phone.text = IraqPhone.normalize(draft.phone);
+    }
     if ((draft.province ?? '').trim().isNotEmpty) _province.text = draft.province!.trim();
     if ((draft.address ?? '').trim().isNotEmpty) _address.text = draft.address!.trim();
     if (draft.nationalCardNumber != null && draft.nationalCardNumber!.trim().isNotEmpty) {
@@ -470,7 +473,7 @@ class _SaleScreenState extends State<SaleScreen> {
               : null,
           customer: {
             'fullName': _name.text.trim(),
-            'phone': _phone.text.trim(),
+            'phone': IraqPhone.normalize(_phone.text),
             'province': _province.text.trim(),
             'nationalCardNumber': _card.text.trim(),
             'address': _address.text.trim(),
@@ -883,7 +886,16 @@ class _SaleScreenState extends State<SaleScreen> {
             ),
           const SizedBox(height: AppSpacing.sm),
           _field(_name, 'الاسم الكامل *', validator: _req),
-          _field(_phone, 'رقم الهاتف *', keyboard: TextInputType.phone, validator: _req),
+          _field(
+            _phone,
+            'رقم الهاتف *',
+            keyboard: TextInputType.phone,
+            validator: IraqPhone.validator,
+            formatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(11),
+            ],
+          ),
           _field(_province, 'المحافظة *', validator: _req),
           _field(_card, 'رقم البطاقة الوطنية *', keyboard: TextInputType.number, validator: _req),
           _field(_address, 'العنوان *', validator: _req),

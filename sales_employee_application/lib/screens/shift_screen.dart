@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sales_employee_application/config/app_env.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/screens/home_screen.dart';
+import 'package:sales_employee_application/services/device_handover.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/tracking/shift_start_debug.dart';
 import 'package:sales_employee_application/tracking/shift_tracking_controller.dart';
@@ -104,6 +105,17 @@ class _ShiftScreenState extends State<ShiftScreen> {
               ElevatedButton(
                 onPressed: _loading ? null : _start,
                 child: Text(_loading ? '...' : 'بدء الدوام'),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              TextButton(
+                onPressed: _loading
+                    ? null
+                    : () async {
+                        await DeviceHandover.kickPreviousUser(endServerShift: false);
+                        if (!mounted) return;
+                        Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
+                      },
+                child: const Text('حساب آخر'),
               ),
             ],
           ),

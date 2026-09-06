@@ -357,4 +357,28 @@ class ApiSalesRepository implements SalesRepository {
       _throw(e);
     }
   }
+
+  @override
+  Future<SalesWorkRequest> submitSalesRequest({
+    required String fullName,
+    required String phone,
+    required String province,
+    required String address,
+    String? notes,
+  }) async {
+    try {
+      final raw = await ApiClient.post('sales/requests/submit', body: {
+        'customer': {
+          'fullName': fullName,
+          'phone': phone,
+          'province': province,
+          'address': address,
+        },
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+      });
+      return SalesWorkRequest.fromJson(Map<String, dynamic>.from(raw as Map));
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
 }

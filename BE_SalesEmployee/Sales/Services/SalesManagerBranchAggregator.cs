@@ -9,6 +9,8 @@ namespace BE_SalesEmployee.Sales.Services
         Task<IReadOnlyList<AdminCity>> BranchesAsync(CancellationToken ct);
         Task<(int Status, object? Body)> GetAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> GetOneAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
+        Task<(int Status, object? Body)> SumCountAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct);
+        Task<(int Status, object? Body)> PostFanoutAsync(GatewayUser user, string? cityValue, string companyPath, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> GetFileAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct);
@@ -56,6 +58,89 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             return (200, merged);
+        }
+
+        public async Task<(int Status, object? Body)> SumCountAsync(
+            GatewayUser user,
+            string? cityValue,
+            string companyPath,
+            CancellationToken ct)
+        {
+            var targets = await GetTargetsAsync(cityValue, ct);
+            var total = 0;
+            await Task.WhenAll(targets.Select(async city =>
+            {
+                try
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(BranchTimeout);
+                    using var response = await _proxy.SendManagerAsync(
+                        city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        return;
+                    }
+
+                    var raw = await response.Content.ReadAsStringAsync(ct);
+                    using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
+                    var n = 0;
+                    if (doc.RootElement.TryGetProperty("count", out var countProp)
+                        || doc.RootElement.TryGetProperty("Count", out countProp))
+                    {
+                        n = countProp.ValueKind == JsonValueKind.Number ? countProp.GetInt32() : 0;
+                    }
+
+                    Interlocked.Add(ref total, n);
+                }
+                catch
+                {
+                    // skip unreachable branch
+                }
+            }));
+
+            return (200, new { count = total });
+        }
+
+        public async Task<(int Status, object? Body)> PostFanoutAsync(
+            GatewayUser user,
+            string? cityValue,
+            string companyPath,
+            string jsonBody,
+            CancellationToken ct)
+        {
+            var targets = await GetTargetsAsync(cityValue, ct);
+            if (targets.Count == 0)
+            {
+                return (400, new { message = "لا توجد محافظة للإرسال." });
+            }
+
+            var marked = 0;
+            foreach (var city in targets)
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(BranchTimeout);
+                using var response = await _proxy.SendManagerAsync(
+                    city.Link, companyPath, HttpMethod.Post, jsonBody, user.UserName, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    continue;
+                }
+
+                var raw = await response.Content.ReadAsStringAsync(ct);
+                if (string.IsNullOrWhiteSpace(raw))
+                {
+                    continue;
+                }
+
+                using var doc = JsonDocument.Parse(raw);
+                if (doc.RootElement.TryGetProperty("marked", out var markedProp)
+                    || doc.RootElement.TryGetProperty("Marked", out markedProp))
+                {
+                    marked += markedProp.ValueKind == JsonValueKind.Number ? markedProp.GetInt32() : 0;
+                }
+            }
+
+            return (200, new { marked });
         }
 
         public async Task<(int Status, object? Body)> GetOneAsync(

@@ -720,6 +720,24 @@ namespace BE_Company.Sales.Controllers
             }
         }
 
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/submit")]
+        public async Task<IActionResult> SubmitRequest([FromBody] SalesRequestCreateDTO body, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null) return blocked;
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null) return Unauthorized();
+            try
+            {
+                return Ok(await _requests.SubmitByEmployeeAsync(identity, body ?? new SalesRequestCreateDTO(), ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
         [HttpPost("requests")]
         public async Task<IActionResult> CreateIntakeRequest([FromBody] SalesRequestCreateDTO body, CancellationToken ct)
         {

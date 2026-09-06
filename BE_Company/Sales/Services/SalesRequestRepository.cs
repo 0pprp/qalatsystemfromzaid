@@ -81,7 +81,7 @@ UPDATE dbo.SalesRequests SET
  ConvertedToSaleId = @ConvertedToSaleId, CompletedAtUtc = @CompletedAtUtc,
  RejectedAtUtc = @RejectedAtUtc, RejectionReason = @RejectionReason,
  AssignedAtUtc = @AssignedAtUtc, AssignedByUserId = @AssignedByUserId, AssignedByName = @AssignedByName,
- PendingNote = @PendingNote, ReturnNote = @ReturnNote
+ PendingNote = @PendingNote, ReturnNote = @ReturnNote, ManagerReadAtUtc = @ManagerReadAtUtc
 WHERE Id = @Id", row, cancellationToken: ct));
         }
 
@@ -130,7 +130,7 @@ SELECT Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, 
  CityValue, CityName, CustomerSourceType, ExistingCustomerId, CustomerSourceCityValue,
  CustomerName, CustomerPhone, CustomerProvince, CustomerAddress, Notes, Status,
  CreatedAtUtc, ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
- AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, ReturnNote
+ AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, ReturnNote, ManagerReadAtUtc
 FROM dbo.SalesRequests";
 
         private const string SchemaSql = @"
@@ -177,6 +177,8 @@ IF COL_LENGTH(N'dbo.SalesRequests', N'PendingNote') IS NULL
     ALTER TABLE dbo.SalesRequests ADD PendingNote NVARCHAR(1000) NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'ReturnNote') IS NULL
     ALTER TABLE dbo.SalesRequests ADD ReturnNote NVARCHAR(1000) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'ManagerReadAtUtc') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD ManagerReadAtUtc DATETIME NULL;
 IF OBJECT_ID(N'dbo.SalesRequestHistory', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SalesRequestHistory (

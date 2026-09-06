@@ -27,7 +27,29 @@ class Session {
 
   static String get userName => '${user['userName'] ?? user['UserName'] ?? ''}';
   static String get cityName => '${user['cityName'] ?? user['CityName'] ?? branchName ?? ''}';
-  static String get userId => '${user['userId'] ?? user['UserID'] ?? ''}';
+  static String get userId => '${user['userId'] ?? user['UserID'] ?? user['userID'] ?? ''}';
+
+  static String incomingUserId(Map<String, dynamic> data) =>
+      '${data['userId'] ?? data['UserID'] ?? data['userID'] ?? ''}'.trim();
+
+  static String incomingUserName(Map<String, dynamic> data) =>
+      '${data['userName'] ?? data['UserName'] ?? ''}'.trim();
+
+  static bool isSameLoggedInUser(Map<String, dynamic> incoming) {
+    if (!isLoggedIn) return false;
+    final incomingName = incomingUserName(incoming);
+    if (userName.isNotEmpty &&
+        incomingName.isNotEmpty &&
+        userName.toLowerCase() != incomingName.toLowerCase()) {
+      return false;
+    }
+    final incomingId = incomingUserId(incoming);
+    if (userId.isNotEmpty && incomingId.isNotEmpty && userId != incomingId) {
+      return false;
+    }
+    return (userName.isNotEmpty && incomingName.isNotEmpty) ||
+        (userId.isNotEmpty && incomingId.isNotEmpty);
+  }
 
   static Map<String, dynamic>? get branch {
     final raw = LocalStore.instance.getString(_branchKey);
@@ -60,6 +82,12 @@ class Session {
   }
 
   static Future<void> saveLogin(Map<String, dynamic> data) async {
+    if (isLoggedIn && !isSameLoggedInUser(data)) {
+      await LocalStore.instance.remove(_shiftKey);
+      await LocalStore.instance.remove(_shiftJsonKey);
+      await LocalStore.instance.remove(_gpsStoppedKey);
+      await LocalStore.instance.remove(_lastSaleKey);
+    }
     final token = '${data['token'] ?? data['Token'] ?? ''}';
     await LocalStore.instance.setString(_tokenKey, token);
     await LocalStore.instance.setString(_userKey, jsonEncode({
@@ -74,6 +102,7 @@ class Session {
     await LocalStore.instance.remove(_shiftKey);
     await LocalStore.instance.remove(_shiftJsonKey);
     await LocalStore.instance.remove(_gpsStoppedKey);
+    await LocalStore.instance.remove(_lastSaleKey);
   }
 
   static String? get shiftDateKey => LocalStore.instance.getString(_shiftKey);

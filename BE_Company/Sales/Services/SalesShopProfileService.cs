@@ -460,6 +460,11 @@ VALUES
             }
 
             var phone = EmptyToNull(request.Phone);
+            SalesIraqPhone.RequireIfPresent(phone);
+            if (phone != null)
+            {
+                phone = SalesIraqPhone.Normalize(phone);
+            }
             var province = EmptyToNull(request.Province);
             var address = EmptyToNull(request.Address);
             var originalName = EmptyToNull(request.OriginalName);

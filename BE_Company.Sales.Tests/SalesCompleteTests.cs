@@ -29,7 +29,7 @@ namespace BE_Company.Sales.Tests
             CityValue = "najaf-demo",
             Status = status,
             FullName = "أحمد علي",
-            Phone = "0770",
+            Phone = "07701234567",
             Province = "النجف",
             NationalCardNumber = "N1",
             Address = "حي الأنصار",

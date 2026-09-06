@@ -19,6 +19,8 @@ import {
 import { isDemo } from '@/composables/useCities'
 import { useSalesBranches } from '@/composables/useSalesBranches'
 import { useToast } from '@/composables/useToast'
+import { markAllSalesRequestsRead, refreshSalesRequestUnread, salesRequestUnreadCount } from '@/composables/useSalesRequestUnread'
+import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone } from '@core/utils/validators'
 
 const toast = useToast()
 const router = useRouter()
@@ -39,6 +41,8 @@ const assignEmployeeId = ref(null)
 const assignCityValue = ref('')
 const returnOpen = ref(false)
 const returnNote = ref('')
+const rejectOpen = ref(false)
+const rejectReason = ref('')
 const busy = ref(false)
 const excelInput = ref(null)
 const importOpen = ref(false)
@@ -58,6 +62,7 @@ const intakeForm = ref({
 const tabs = [
   { value: 'all', title: 'الكل' },
   { value: 'unassigned', title: 'غير مسند' },
+  { value: 'sent', title: 'الطلبات المرسلة' },
   { value: 'incoming', title: 'طلبات البيع' },
   { value: 'prepared', title: 'جاهز للبيع' },
   { value: 'pending', title: 'معلقة' },
@@ -74,11 +79,30 @@ function isUnassigned(row) {
   return s === 'New' || employeeIdOf(row) <= 0
 }
 
+function isEmployeeSubmitted(row) {
+  return pick(row, 'customerSourceType', 'CustomerSourceType') === 'EmployeeSubmitted'
+}
+
+function isUnreadSent(row) {
+  if (!isEmployeeSubmitted(row))
+    return false
+  if (pick(row, 'isManagerRead', 'IsManagerRead') === true)
+    return false
+
+  return !pick(row, 'managerReadAtUtc', 'ManagerReadAtUtc')
+}
+
+function submittedBy(row) {
+  return pick(row, 'createdByName', 'CreatedByName') || 'موظف مبيعات'
+}
+
 function matchesTab(row) {
   const s = String(row?.status || '')
   switch (tab.value) {
     case 'unassigned':
       return isUnassigned(row)
+    case 'sent':
+      return isEmployeeSubmitted(row)
     case 'incoming':
       return s === 'Assigned' || s === 'Viewed' || s === 'Returned'
     case 'prepared':
@@ -156,6 +180,7 @@ const visibleRows = computed(() => rows.value.filter(row => matchesTab(row)))
 
 async function load() {
   rows.value = await smGet(withCityQuery('sales-requests', cityValue.value)) || []
+  await refreshSalesRequestUnread(cityValue.value)
   if (selected.value)
     await openDetails(selected.value, false)
 }
@@ -169,6 +194,14 @@ async function openDetails(row, resetAssign = true) {
   catch {
     detail.value = row
   }
+  const updated = detail.value
+  if (updated?.id) {
+    rows.value = rows.value.map(r => (
+      r.id === updated.id && (r.cityValue || '') === (updated.cityValue || city || '')
+        ? { ...r, ...updated }
+        : r
+    ))
+  }
   if (resetAssign) {
     assignCityValue.value = detail.value?.cityValue || city || ''
     assignEmployeeId.value = null
@@ -178,6 +211,7 @@ async function openDetails(row, resetAssign = true) {
     resetIntake(detail.value)
   }
   await loadEmployees()
+  await refreshSalesRequestUnread(cityValue.value)
 }
 
 function resetIntake(d) {
@@ -542,15 +576,22 @@ async function assign() {
 
     return
   }
+  intakeForm.value.phone = normalizeIraqPhone(intakeForm.value.phone)
+  if (!isIraqMobile(intakeForm.value.phone)) {
+    toast.error(IRAQ_MOBILE_ERROR)
+
+    return
+  }
   const employee = employees.value.find(e => Number(e.employeeId) === employeeId)
   const selectedCustomer = intakeSelected.value
   const sourceCity = selectedCustomer
     ? String(selectedCustomer.cityValue || selectedCustomer.CityValue || selectedCustomer.sourceCityValue || selectedCustomer.SourceCityValue || city)
     : ''
   const sameBranch = !!selectedCustomer && String(sourceCity) === String(city)
-  const existingId = sameBranch
-    ? Number(selectedCustomer.customerId || selectedCustomer.CustomerId || 0)
-    : 0
+  const submitted = isEmployeeSubmitted(d)
+  const existingId = submitted
+    ? 0
+    : (sameBranch ? Number(selectedCustomer.customerId || selectedCustomer.CustomerId || 0) : 0)
   const path = requestActionPath(d, 'assign')
   const payload = {
     employeeId,
@@ -558,7 +599,7 @@ async function assign() {
     cityValue: city,
     cityName: employee?.cityName || employee?.branchName || d.cityName,
     existingCustomerId: existingId > 0 ? existingId : null,
-    customerSourceCityValue: sameBranch ? sourceCity : null,
+    customerSourceCityValue: submitted ? null : (sameBranch ? sourceCity : null),
     customerName: name,
     customerPhone: intakeForm.value.phone,
     customerProvince: intakeForm.value.province,
@@ -627,6 +668,53 @@ async function sendReturn() {
   finally {
     busy.value = false
   }
+}
+
+async function rejectSubmitted() {
+  const reason = rejectReason.value.trim()
+  if (!reason) {
+    toast.error('سبب الرفض مطلوب')
+
+    return
+  }
+  const d = detail.value
+  if (!d)
+    return
+  busy.value = true
+  try {
+    detail.value = await smPost(requestActionPath(d, 'reject'), { reason })
+    rejectOpen.value = false
+    rejectReason.value = ''
+    toast.success('تم رفض الطلب')
+    await load()
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || err?.message || 'تعذر رفض الطلب')
+  }
+  finally {
+    busy.value = false
+  }
+}
+
+async function markAllRead() {
+  busy.value = true
+  try {
+    await markAllSalesRequestsRead(cityValue.value)
+    toast.success('تم جعل الطلبات المرسلة مقروءة')
+    await load()
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || 'تعذر تحديث حالة القراءة')
+  }
+  finally {
+    busy.value = false
+  }
+}
+
+function canManagerReject(row) {
+  const s = String(row?.status || '')
+
+  return isEmployeeSubmitted(row) && s !== 'Completed' && s !== 'Rejected'
 }
 
 function foldAr(value) {
@@ -751,6 +839,11 @@ function parseExcel(buffer) {
       errors.push({ rowNumber: excelRow, message: 'اسم الزبون مطلوب' })
       continue
     }
+    const normalizedPhone = normalizeIraqPhone(phone)
+    if (!isIraqMobile(normalizedPhone)) {
+      errors.push({ rowNumber: excelRow, message: IRAQ_MOBILE_ERROR })
+      continue
+    }
     const city = resolveCity(province)
     if (!city) {
       errors.push({
@@ -762,7 +855,7 @@ function parseExcel(buffer) {
     valid.push({
       rowNumber: excelRow,
       customerName: name,
-      phone,
+      phone: normalizedPhone,
       province: province || city.cityName,
       address,
       saleType,
@@ -854,6 +947,13 @@ onUnmounted(() => {
           استيراد Excel
         </VBtn>
         <VBtn
+          variant="tonal"
+          :loading="busy"
+          @click="markAllRead"
+        >
+          جعل الجميع مقروءة
+        </VBtn>
+        <VBtn
           color="primary"
           :to="{ name: 'sales-manager-request-create' }"
         >
@@ -890,6 +990,13 @@ onUnmounted(() => {
         filter
       >
         {{ item.title }}
+        <VBadge
+          v-if="item.value === 'sent' && salesRequestUnreadCount > 0"
+          :content="salesRequestUnreadCount"
+          color="error"
+          inline
+          class="ms-1"
+        />
       </VChip>
     </VChipGroup>
     <VRow class="mt-4">
@@ -900,12 +1007,25 @@ onUnmounted(() => {
         md="6"
       >
         <VCard
-          :class="{ 'border-primary': selected?.id === row.id && selected?.cityValue === row.cityValue }"
+          :class="{
+            'border-primary': selected?.id === row.id && selected?.cityValue === row.cityValue,
+            'unread-request': isUnreadSent(row),
+          }"
           @click="openDetails(row)"
         >
           <VCardText>
             <div class="d-flex align-center justify-space-between gap-2 mb-2">
-              <div>طلب #{{ row.id }} — {{ row.branchName || row.cityName }}</div>
+              <div :class="{ 'font-weight-bold': isUnreadSent(row) }">
+                طلب #{{ row.id }} — {{ row.branchName || row.cityName }}
+                <VChip
+                  v-if="isUnreadSent(row)"
+                  size="x-small"
+                  color="error"
+                  class="ms-1"
+                >
+                  غير مقروء
+                </VChip>
+              </div>
               <VChip
                 size="small"
                 :color="statusColor(row.status)"
@@ -914,8 +1034,11 @@ onUnmounted(() => {
               </VChip>
             </div>
             <strong>{{ row.customerName }}</strong>
+            <div>الهاتف: {{ row.customerPhone || row.CustomerPhone || '—' }}</div>
             <div>المحافظة: {{ row.customerProvince || row.CustomerProvince || row.branchName || row.cityName }}</div>
-            <div>الموظف: {{ row.targetEmployeeName || 'غير مسند' }}</div>
+            <div>العنوان: {{ row.customerAddress || row.CustomerAddress || '—' }}</div>
+            <div>الموظف: {{ isEmployeeSubmitted(row) ? submittedBy(row) : (row.targetEmployeeName || 'غير مسند') }}</div>
+            <div>التاريخ: {{ formatIraqDate(row.createdAtUtc || row.CreatedAtUtc) }}</div>
             <div>الحالة: {{ statusText(row.status) }}</div>
             <div v-if="lastNote(row)">
               آخر ملاحظة/سبب: {{ lastNote(row) }}
@@ -962,8 +1085,8 @@ onUnmounted(() => {
           <div>الزبون: {{ detail.customerName }}</div>
           <div>الهاتف: {{ detail.customerPhone || '—' }}</div>
           <div>العنوان: {{ detail.customerAddress || '—' }}</div>
-          <div>الموظف: {{ detail.targetEmployeeName || 'غير مسند' }}</div>
-          <div>المحافظة: {{ detail.cityName || detail.branchName || detail.cityValue }}</div>
+          <div>الموظف: {{ isEmployeeSubmitted(detail) ? submittedBy(detail) : (detail.targetEmployeeName || 'غير مسند') }}</div>
+          <div>المحافظة: {{ detail.customerProvince || detail.cityName || detail.branchName || detail.cityValue }}</div>
           <div class="d-flex align-center gap-2 mt-1">
             <span>الحالة:</span>
             <VChip
@@ -1099,6 +1222,12 @@ onUnmounted(() => {
               variant="outlined"
               hide-details="auto"
               density="comfortable"
+              maxlength="11"
+              inputmode="numeric"
+              hint="11 رقم ويبدأ بـ 07"
+              persistent-hint
+              :rules="[iraqPhoneValidator]"
+              @update:model-value="v => intakeForm.phone = normalizeIraqPhone(v)"
             />
             <VTextField
               v-model="intakeForm.province"
@@ -1148,12 +1277,30 @@ onUnmounted(() => {
             >
               إرسال للموظف
             </VBtn>
+            <VBtn
+              v-if="canManagerReject(detail)"
+              class="mt-2 ms-2"
+              color="error"
+              variant="tonal"
+              @click="rejectOpen = true"
+            >
+              رفض الطلب
+            </VBtn>
           </template>
 
           <template v-if="detail.status === 'Assigned' || detail.status === 'Viewed'">
             <VDivider class="my-4" />
             <div>الموظف الحالي: {{ detail.targetEmployeeName || 'غير مسند' }}</div>
             <div>الحالة: {{ statusText(detail.status) }}</div>
+            <VBtn
+              v-if="canManagerReject(detail)"
+              class="mt-3"
+              color="error"
+              variant="tonal"
+              @click="rejectOpen = true"
+            >
+              رفض الطلب
+            </VBtn>
           </template>
 
           <template v-if="detail.status === 'Rejected'">
@@ -1461,6 +1608,38 @@ onUnmounted(() => {
     </VDialog>
 
     <VDialog
+      v-model="rejectOpen"
+      max-width="420"
+    >
+      <VCard>
+        <VCardTitle>رفض الطلب</VCardTitle>
+        <VCardText>
+          <VTextarea
+            v-model="rejectReason"
+            label="سبب الرفض *"
+            auto-grow
+          />
+        </VCardText>
+        <VCardActions>
+          <VBtn
+            variant="text"
+            @click="rejectOpen = false"
+          >
+            رجوع
+          </VBtn>
+          <VBtn
+            color="error"
+            :loading="busy"
+            :disabled="!rejectReason.trim()"
+            @click="rejectSubmitted"
+          >
+            رفض
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+
+    <VDialog
       v-model="importOpen"
       max-width="720"
     >
@@ -1519,5 +1698,9 @@ onUnmounted(() => {
 }
 .intake-result.border-primary {
   border-width: 2px;
+}
+.unread-request {
+  border: 2px solid rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.08);
 }
 </style>

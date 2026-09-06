@@ -478,6 +478,26 @@ class MockSalesRepository implements SalesRepository {
     return row;
   }
 
+  @override
+  Future<SalesWorkRequest> submitSalesRequest({
+    required String fullName,
+    required String phone,
+    required String province,
+    required String address,
+    String? notes,
+  }) async {
+    return SalesWorkRequest(
+      id: DateTime.now().millisecondsSinceEpoch,
+      customerName: fullName,
+      customerPhone: phone,
+      customerProvince: province,
+      customerAddress: address,
+      notes: notes,
+      status: 'New',
+      createdAtUtc: DateTime.now().toUtc(),
+    );
+  }
+
   void seedRequest(SalesWorkRequest row) => _requests.add(row);
 
   void _replace(SalesWorkRequest row) {

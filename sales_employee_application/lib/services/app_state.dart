@@ -83,4 +83,18 @@ class AppState extends ChangeNotifier {
     isNewSale = true;
     notifyListeners();
   }
+
+  void resetForUserSwitch() {
+    selectedCustomer = null;
+    ratingLevel = null;
+    ratingNotes = '';
+    rejectionReason = '';
+    isNewSale = true;
+    homeIndex = 0;
+    storeId = null;
+    storeName = '';
+    warehouseItems = [];
+    delegates = [];
+    notifyListeners();
+  }
 }
