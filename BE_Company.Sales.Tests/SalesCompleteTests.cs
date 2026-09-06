@@ -166,6 +166,7 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(SalesStatuses.Pending, repo.Sales[10].Status);
             Assert.Equal(100000, preview.DefaultDownPayment);
             Assert.Equal(100000, preview.DownPayment);
+            Assert.Empty(repo.Payments);
         }
 
         [Fact]
@@ -211,6 +212,129 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(1, repo.Stock[5]);
             Assert.Equal(1, repo.DeductionCount);
             Assert.Equal(2, repo.CompleteCalls);
+        }
+
+        [Fact]
+        public async Task Complete_WithDownPayment_RecordsReceiptOnce()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            repo.Sales[10].CustomerId = 42;
+            repo.Sales[10].OverrideTotalSalePrice = 1000000;
+            repo.Sales[10].OverrideDailyInstallment = 25000;
+            repo.Sales[10].OverrideDownPayment = 200000;
+            repo.Sales[10].FinalSalePrice = 1000000;
+            repo.Sales[10].DownPayment = 200000;
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+
+            var result = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
+
+            Assert.Equal(SalesStatuses.Completed, result.Status);
+            Assert.Equal(1000000, result.FinalSalePrice);
+            Assert.Equal(200000, result.DownPayment);
+            var payment = Assert.Single(repo.Payments);
+            Assert.Equal(10, payment.SaleId);
+            Assert.Equal(42, payment.CustomerId);
+            Assert.Equal(200000, payment.AmountDenar);
+            Assert.Equal(payment.CustomerPaymentId, repo.Sales[10].DownPaymentCustomerPaymentId);
+            Assert.Equal(800000, SalesDownPaymentReceipt.Remaining(result.FinalSalePrice, repo.ReceiptsTotal));
+        }
+
+        [Fact]
+        public async Task Complete_SameRequestTwice_DoesNotRecordSecondReceipt()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            repo.Sales[10].CustomerId = 42;
+            repo.Sales[10].DownPayment = 200000;
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+
+            await svc.CompleteAsync(10, Identity(), CancellationToken.None);
+            var second = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
+
+            Assert.Equal(SalesStatuses.Completed, second.Status);
+            Assert.Single(repo.Payments);
+            Assert.Equal(1, repo.DeductionCount);
+        }
+
+        [Fact]
+        public async Task Complete_ZeroOrMissingDownPayment_DoesNotRecordReceipt()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            repo.Sales[10].CustomerId = 42;
+            repo.Sales[10].OverrideDownPayment = 0;
+            repo.Sales[10].DownPayment = 0;
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+
+            await svc.CompleteAsync(10, Identity(), CancellationToken.None);
+
+            Assert.Empty(repo.Payments);
+            Assert.Null(repo.Sales[10].DownPaymentCustomerPaymentId);
+            Assert.Equal(2000000, repo.Sales[10].FinalSalePrice);
+        }
+
+        [Fact]
+        public async Task Complete_SaleTotalUnchanged_RemainingReducedByReceipt()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            repo.Sales[10].CustomerId = 42;
+            repo.Sales[10].OverrideTotalSalePrice = 1000000;
+            repo.Sales[10].OverrideDailyInstallment = 25000;
+            repo.Sales[10].OverrideDownPayment = 200000;
+            repo.Sales[10].FinalSalePrice = 1000000;
+            repo.Sales[10].DownPayment = 200000;
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+
+            var result = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
+
+            Assert.Equal(1000000, result.FinalSalePrice);
+            Assert.Equal(1000000, repo.Sales[10].FinalSalePrice);
+            Assert.Equal(200000, repo.ReceiptsTotal);
+            Assert.Equal(800000, SalesDownPaymentReceipt.Remaining(repo.Sales[10].FinalSalePrice, repo.ReceiptsTotal));
+        }
+
+        [Fact]
+        public async Task Complete_PaymentFailure_RollsBackSaleAndReceipt()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            repo.Sales[10].CustomerId = 42;
+            repo.Sales[10].DownPayment = 200000;
+            repo.FailPayment = true;
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+                svc.CompleteAsync(10, Identity(), CancellationToken.None));
+
+            Assert.Equal(500, ex.StatusCode);
+            Assert.Equal(SalesStatuses.Pending, repo.Sales[10].Status);
+            Assert.Equal(3, repo.Stock[5]);
+            Assert.Equal(0, repo.DeductionCount);
+            Assert.Empty(repo.Payments);
+            Assert.Null(repo.Sales[10].DownPaymentCustomerPaymentId);
+            Assert.Null(repo.Sales[10].CompletedAt);
+        }
+
+        [Fact]
+        public async Task AlreadyCompletedOldSale_DoesNotRecordDownPaymentRetrospectively()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good, SalesStatuses.Completed);
+            repo.Sales[10].CustomerId = 42;
+            repo.Sales[10].DownPayment = 200000;
+            repo.Sales[10].DownPaymentCustomerPaymentId = null;
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+
+            await svc.CompleteAsync(10, Identity(), CancellationToken.None);
+
+            Assert.Empty(repo.Payments);
+            Assert.Null(repo.Sales[10].DownPaymentCustomerPaymentId);
+        }
+
+        [Fact]
+        public void DownPaymentReceipt_ShouldRecord_OnlyWhenPositiveAndNotYetLinked()
+        {
+            Assert.False(SalesDownPaymentReceipt.ShouldRecord(0, null));
+            Assert.False(SalesDownPaymentReceipt.ShouldRecord(0, 7));
+            Assert.True(SalesDownPaymentReceipt.ShouldRecord(200000, null));
+            Assert.True(SalesDownPaymentReceipt.ShouldRecord(200000, 0));
+            Assert.False(SalesDownPaymentReceipt.ShouldRecord(200000, 15));
         }
 
         [Fact]

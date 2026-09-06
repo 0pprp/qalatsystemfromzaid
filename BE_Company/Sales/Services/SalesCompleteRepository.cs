@@ -1,3 +1,5 @@
+using BE_Company.DTO;
+using BE_Company.IRepository;
 using BE_Company.Sales.Authorization;
 using BE_Company.Sales.DTO;
 using Dapper;
@@ -10,11 +12,16 @@ namespace BE_Company.Sales.Services
     {
         private readonly SalesDevelopmentGuard _guard;
         private readonly ISalesDraftRepository _drafts;
+        private readonly ICustomersPaymentsRepository _payments;
 
-        public SalesCompleteRepository(SalesDevelopmentGuard guard, ISalesDraftRepository drafts)
+        public SalesCompleteRepository(
+            SalesDevelopmentGuard guard,
+            ISalesDraftRepository drafts,
+            ICustomersPaymentsRepository payments)
         {
             _guard = guard;
             _drafts = drafts;
+            _payments = payments;
         }
 
         public async Task<SalesCompleteTxResult> CompleteInTransactionAsync(
@@ -93,10 +100,14 @@ namespace BE_Company.Sales.Services
                     lockedItems.Add((line, stock.StoreID ?? 0));
                 }
 
-                var deducted = await RecordFinalSaleAndDeductAsync(
-                    connection, tx, header, employeeId, lockedItems, ct);
-
                 var completedAt = DateTime.Now;
+                var posting = await RecordFinalSaleAndDeductAsync(
+                    connection, tx, header, employeeId, lockedItems, completedAt, ct);
+                var deducted = posting.Deducted;
+
+                await RecordDownPaymentIfNeededAsync(
+                    connection, tx, header, employeeId, posting, completedAt, ct);
+
                 await connection.ExecuteAsync(new CommandDefinition(
                     @"UPDATE dbo.SalesDrafts
                       SET Status = @Status,
@@ -223,12 +234,13 @@ END;",
                 new { SaleId = saleId }, cancellationToken: ct));
         }
 
-        private async Task<bool> RecordFinalSaleAndDeductAsync(
+        private async Task<FinalSalePosting> RecordFinalSaleAndDeductAsync(
             SqlConnection connection,
             SqlTransaction tx,
             SalesDraftDTO sale,
             int employeeId,
             List<(SalesDraftItemDTO Line, int StoreId)> lockedItems,
+            DateTime now,
             CancellationToken ct)
         {
             var storeId = lockedItems.Select(x => x.StoreId).FirstOrDefault(id => id > 0);
@@ -258,7 +270,7 @@ END;",
                         cancellationToken: ct));
                 }
 
-                var now = DateTime.Now;
+                int? postedCustomerId = sale.CustomerId;
                 if (sale.CustomerId is > 0 && await ProcedureExistsAsync(connection, tx, "InsertCustomerSale", ct))
                 {
                     await connection.ExecuteAsync(new CommandDefinition(
@@ -279,7 +291,7 @@ END;",
                 }
                 else
                 {
-                    await connection.ExecuteAsync(new CommandDefinition(
+                    var created = await connection.QueryFirstOrDefaultAsync<PostedCustomerSaleRow>(new CommandDefinition(
                         "CustomersSales_Create",
                         new
                         {
@@ -301,9 +313,25 @@ END;",
                         tx,
                         commandType: CommandType.StoredProcedure,
                         cancellationToken: ct));
+                    if (created?.CustomerID > 0)
+                    {
+                        postedCustomerId = created.CustomerID;
+                    }
+                    else
+                    {
+                        postedCustomerId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
+                            "SELECT CAST(IDENT_CURRENT(N'dbo.Customers') AS INT)",
+                            transaction: tx,
+                            cancellationToken: ct)) ?? sale.CustomerId;
+                    }
                 }
 
-                return true;
+                return new FinalSalePosting
+                {
+                    Deducted = true,
+                    OfficialSalePosted = true,
+                    CustomerId = postedCustomerId
+                };
             }
 
             foreach (var (line, _) in lockedItems)
@@ -329,7 +357,101 @@ END;",
                     cancellationToken: ct));
             }
 
-            return true;
+            return new FinalSalePosting
+            {
+                Deducted = true,
+                OfficialSalePosted = false,
+                CustomerId = sale.CustomerId
+            };
+        }
+
+        private async Task RecordDownPaymentIfNeededAsync(
+            SqlConnection connection,
+            SqlTransaction tx,
+            SalesDraftDTO sale,
+            int employeeId,
+            FinalSalePosting posting,
+            DateTime paymentDate,
+            CancellationToken ct)
+        {
+            if (!SalesDownPaymentReceipt.ShouldRecord(sale.DownPayment, sale.DownPaymentCustomerPaymentId))
+            {
+                return;
+            }
+
+            if (!posting.OfficialSalePosted)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status500InternalServerError,
+                    "تعذر تسجيل دفعة المقدمة لأن عملية البيع المحاسبية لم تُسجَّل.");
+            }
+
+            if (!await ProcedureExistsAsync(connection, tx, "CustomersPayments_Create", ct))
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status500InternalServerError,
+                    "تعذر تسجيل دفعة المقدمة لأن إجراء الوصولات غير متوفر.");
+            }
+
+            var customerId = posting.CustomerId is > 0 ? posting.CustomerId : sale.CustomerId;
+            if (customerId is not > 0)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status409Conflict,
+                    "تعذر تسجيل دفعة المقدمة لأن حساب الزبون غير مرتبط بهذه العملية.");
+            }
+
+            CustomersPaymentsGetDTO? created;
+            try
+            {
+                created = await _payments.CustomersPayments_Create(
+                    new CustomersPaymentsPostDTO
+                    {
+                        UserCreateID = employeeId,
+                        CustomerID = customerId,
+                        PaymentDate = paymentDate,
+                        PaymentAmount = (double)sale.DownPayment
+                    },
+                    connection,
+                    tx,
+                    ct);
+            }
+            catch (SalesCompleteException)
+            {
+                throw;
+            }
+            catch
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status500InternalServerError,
+                    "فشل تسجيل دفعة المقدمة.");
+            }
+
+            if (created?.CustomerPaymentID is not > 0)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status500InternalServerError,
+                    "فشل تسجيل دفعة المقدمة.");
+            }
+
+            await connection.ExecuteAsync(new CommandDefinition(
+                @"UPDATE dbo.SalesDrafts
+                  SET DownPaymentCustomerPaymentId = @PaymentId,
+                      CustomerId = COALESCE(@CustomerId, CustomerId)
+                  WHERE SaleId = @SaleId
+                    AND DownPaymentCustomerPaymentId IS NULL",
+                new
+                {
+                    SaleId = sale.SaleId,
+                    PaymentId = created.CustomerPaymentID,
+                    CustomerId = customerId
+                }, tx, cancellationToken: ct));
+
+            sale.DownPaymentCustomerPaymentId = created.CustomerPaymentID;
+            if (sale.CustomerId is not > 0)
+            {
+                sale.CustomerId = customerId;
+            }
         }
 
         private static async Task<IReadOnlyList<SalesDocumentDTO>> LoadDocumentsAsync(
@@ -377,7 +499,8 @@ SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, Cust
        FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
        EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment,
        DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
-       OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment, CreatedAt,
+       OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
+       DownPaymentCustomerPaymentId, CreatedAt,
        CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
 FROM dbo.SalesDrafts WITH (UPDLOCK, ROWLOCK)
 WHERE SaleId = @SaleId";
@@ -394,6 +517,19 @@ WHERE SaleId = @SaleId";
             public int? Quantity { get; set; }
             public int? StoreID { get; set; }
             public bool? ItemState { get; set; }
+        }
+
+        private sealed class FinalSalePosting
+        {
+            public bool Deducted { get; init; }
+            public bool OfficialSalePosted { get; init; }
+            public int? CustomerId { get; init; }
+        }
+
+        private sealed class PostedCustomerSaleRow
+        {
+            public int CustomerID { get; set; }
+            public int CustomerSaleID { get; set; }
         }
     }
 

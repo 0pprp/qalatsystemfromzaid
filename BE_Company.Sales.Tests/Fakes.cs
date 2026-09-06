@@ -19,13 +19,26 @@ namespace BE_Company.Sales.Tests
         public Task UpdateCheckoutAsync(SalesDraftDTO draft, CancellationToken ct) => Task.CompletedTask;
     }
 
+    public sealed class RecordedCustomerPayment
+    {
+        public int CustomerPaymentId { get; set; }
+        public int SaleId { get; set; }
+        public int? CustomerId { get; set; }
+        public int? UserId { get; set; }
+        public decimal AmountDenar { get; set; }
+        public DateTime? PaymentDate { get; set; }
+    }
+
     public sealed class FakeCompleteRepository : ISalesCompleteRepository
     {
         public readonly Dictionary<int, SalesDraftDTO> Sales = new();
         public readonly Dictionary<int, int> Stock = new();
         public readonly List<SalesDocumentRecord> Documents = [];
+        public readonly List<RecordedCustomerPayment> Payments = [];
         public int DeductionCount { get; private set; }
         public int CompleteCalls { get; private set; }
+        public bool FailPayment { get; set; }
+        public decimal ReceiptsTotal => Payments.Sum(p => p.AmountDenar);
 
         public Task<SalesCompleteTxResult> CompleteInTransactionAsync(int saleId, int employeeId, string cityValue, CancellationToken ct)
         {
@@ -75,23 +88,84 @@ namespace BE_Company.Sales.Tests
                 }
             }
 
-            foreach (var item in sale.Items)
+            var stockSnapshot = sale.Items
+                .GroupBy(i => i.ProductId)
+                .ToDictionary(g => g.Key, g => Stock[g.Key]);
+            var previousDeduction = DeductionCount;
+            var previousPayments = Payments.Count;
+            var previousPaymentId = sale.DownPaymentCustomerPaymentId;
+            var previousStatus = sale.Status;
+            var previousCompletedAt = sale.CompletedAt;
+            var previousCompletedBy = sale.CompletedBy;
+            var previousDocStatus = sale.DocumentsStatus;
+
+            try
             {
-                Stock[item.ProductId] -= item.Quantity;
+                foreach (var item in sale.Items)
+                {
+                    Stock[item.ProductId] -= item.Quantity;
+                }
+
+                DeductionCount++;
+                RecordDownPayment(sale, employeeId);
+
+                sale.Status = SalesStatuses.Completed;
+                sale.CompletedAt = DateTime.Now;
+                sale.CompletedBy = employeeId;
+                sale.DocumentsStatus = SalesStatuses.DocumentsPending;
+                return Task.FromResult(new SalesCompleteTxResult
+                {
+                    Sale = sale,
+                    AlreadyCompleted = false,
+                    InventoryDeducted = true,
+                    DeductionCount = 1
+                });
+            }
+            catch
+            {
+                foreach (var kv in stockSnapshot)
+                {
+                    Stock[kv.Key] = kv.Value;
+                }
+
+                DeductionCount = previousDeduction;
+                if (Payments.Count > previousPayments)
+                {
+                    Payments.RemoveRange(previousPayments, Payments.Count - previousPayments);
+                }
+
+                sale.DownPaymentCustomerPaymentId = previousPaymentId;
+                sale.Status = previousStatus;
+                sale.CompletedAt = previousCompletedAt;
+                sale.CompletedBy = previousCompletedBy;
+                sale.DocumentsStatus = previousDocStatus;
+                throw;
+            }
+        }
+
+        private void RecordDownPayment(SalesDraftDTO sale, int employeeId)
+        {
+            if (!SalesDownPaymentReceipt.ShouldRecord(sale.DownPayment, sale.DownPaymentCustomerPaymentId))
+            {
+                return;
             }
 
-            DeductionCount++;
-            sale.Status = SalesStatuses.Completed;
-            sale.CompletedAt = DateTime.Now;
-            sale.CompletedBy = employeeId;
-            sale.DocumentsStatus = SalesStatuses.DocumentsPending;
-            return Task.FromResult(new SalesCompleteTxResult
+            if (FailPayment)
             {
-                Sale = sale,
-                AlreadyCompleted = false,
-                InventoryDeducted = true,
-                DeductionCount = 1
-            });
+                throw new SalesCompleteException(500, "فشل تسجيل دفعة المقدمة.");
+            }
+
+            var payment = new RecordedCustomerPayment
+            {
+                CustomerPaymentId = Payments.Count + 1,
+                SaleId = sale.SaleId,
+                CustomerId = sale.CustomerId,
+                UserId = employeeId,
+                AmountDenar = sale.DownPayment,
+                PaymentDate = DateTime.Now
+            };
+            Payments.Add(payment);
+            sale.DownPaymentCustomerPaymentId = payment.CustomerPaymentId;
         }
 
         public Task<IReadOnlyList<SalesDocumentRecord>> GetDocumentsAsync(int saleId, int employeeId, CancellationToken ct)

@@ -142,7 +142,7 @@ VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSaleP
                          EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment,
                          DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
                          OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
-                         CreatedAt,
+                         DownPaymentCustomerPaymentId, CreatedAt,
                          CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
                   FROM dbo.SalesDrafts
                   WHERE EmployeeId = @EmployeeId
@@ -200,7 +200,7 @@ WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId",
                          EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment,
                          DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
                          OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
-                         CreatedAt,
+                         DownPaymentCustomerPaymentId, CreatedAt,
                          CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
                   FROM dbo.SalesDrafts
                   WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId",
@@ -302,6 +302,8 @@ IF COL_LENGTH(N'dbo.SalesDrafts', N'OverrideDownPayment') IS NULL
     ALTER TABLE dbo.SalesDrafts ADD OverrideDownPayment DECIMAL(18, 0) NULL;
 IF COL_LENGTH(N'dbo.SalesDrafts', N'DownPayment') IS NULL
     ALTER TABLE dbo.SalesDrafts ADD DownPayment DECIMAL(18, 0) NOT NULL CONSTRAINT DF_SalesDrafts_DownPayment DEFAULT (0);
+IF COL_LENGTH(N'dbo.SalesDrafts', N'DownPaymentCustomerPaymentId') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD DownPaymentCustomerPaymentId INT NULL;
 IF OBJECT_ID(N'dbo.SalesDraftItems', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SalesDraftItems (

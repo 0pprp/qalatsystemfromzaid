@@ -1,10 +1,16 @@
-﻿using BE_Company.DTO;
+﻿using System.Data;
+using BE_Company.DTO;
 
 namespace BE_Company.IRepository
 {
     public interface ICustomersPaymentsRepository
     {
         Task<CustomersPaymentsGetDTO?> CustomersPayments_Create(CustomersPaymentsPostDTO customersPaymentsPostDTO);
+        Task<CustomersPaymentsGetDTO?> CustomersPayments_Create(
+            CustomersPaymentsPostDTO customersPaymentsPostDTO,
+            IDbConnection connection,
+            IDbTransaction? transaction,
+            CancellationToken cancellationToken = default);
         Task<bool?> CustomersPayments_Delete(int? customerPaymentID, int? userID);
         Task<IEnumerable<CustomersPaymentsGetDTO>?> CustomersPayments_GetAll(DateTime? fromDate, DateTime? toDate, int? delegateID, string? textSearch);
         Task<IEnumerable<CustomersPaymentsGetDTO>?> CustomersPayments_GetByCustomerID(int? customerID);

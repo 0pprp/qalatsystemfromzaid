@@ -66,7 +66,18 @@ namespace BE_Company.Repository
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.QuerySingleOrDefaultAsync<CustomersPaymentsGetDTO>("CustomersPayments_Create",
+                return await CustomersPayments_Create(customersPaymentsPostDTO, connection, null);
+            }
+        }
+
+        public Task<CustomersPaymentsGetDTO?> CustomersPayments_Create(
+            CustomersPaymentsPostDTO customersPaymentsPostDTO,
+            IDbConnection connection,
+            IDbTransaction? transaction,
+            CancellationToken cancellationToken = default)
+        {
+            return connection.QuerySingleOrDefaultAsync<CustomersPaymentsGetDTO>(new CommandDefinition(
+                "CustomersPayments_Create",
                 new
                 {
                     UserID = customersPaymentsPostDTO.UserCreateID,
@@ -74,9 +85,9 @@ namespace BE_Company.Repository
                     DateCreate = customersPaymentsPostDTO.PaymentDate,
                     Amount = customersPaymentsPostDTO.PaymentAmount / 1448,
                 },
-                commandType: CommandType.StoredProcedure);
-                return result;
-            }
+                transaction,
+                commandType: CommandType.StoredProcedure,
+                cancellationToken: cancellationToken));
         }
 
         public async Task<bool?> CustomersPayments_ChangePaymentDate(string? paymentlist, DateTime? newDate, int? userID)

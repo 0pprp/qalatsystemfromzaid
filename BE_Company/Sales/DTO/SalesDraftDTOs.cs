@@ -104,6 +104,7 @@ namespace BE_Company.Sales.DTO
         public decimal? OverrideDailyInstallment { get; set; }
         public decimal? OverrideDownPayment { get; set; }
         public decimal DownPayment { get; set; }
+        public int? DownPaymentCustomerPaymentId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? CompletedAt { get; set; }
         public int? CompletedBy { get; set; }
