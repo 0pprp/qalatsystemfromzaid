@@ -631,8 +631,11 @@ async function sendReturn() {
 
 function foldAr(value) {
   return String(value || '')
+    .normalize('NFC')
+    .replace(/[\u0640\u200B\u200C\u200D\uFEFF]/g, '')
+    .replace(/[\u00A0\u202F\u2007]/g, ' ')
     .trim()
-    .replace(/[أإآ]/g, 'ا')
+    .replace(/[أإآٱ]/g, 'ا')
     .replace(/ة/g, 'ه')
     .replace(/ى/g, 'ي')
     .replace(/\s+/g, ' ')
@@ -667,6 +670,8 @@ function resolveCity(provinceText) {
     const match = branches.value.find(p => foldAr(p.name) === text || foldAr(p.value) === text)
     if (match)
       return { cityValue: String(match.value), cityName: match.name }
+
+    return null
   }
   if (cityValue.value) {
     const selected = branches.value.find(p => String(p.value) === String(cityValue.value))
@@ -750,7 +755,7 @@ function parseExcel(buffer) {
     if (!city) {
       errors.push({
         rowNumber: excelRow,
-        message: province ? `المحافظة غير معروفة: ${province}` : 'المحافظة مطلوبة أو حددها من الفلتر',
+        message: province ? `المحافظة غير معروفة بعد التطبيع: ${province}` : 'المحافظة مطلوبة أو حددها من الفلتر',
       })
       continue
     }

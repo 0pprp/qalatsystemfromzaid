@@ -15,6 +15,8 @@ namespace BE_Company.Sales.DTO
         public decimal? OverrideTotalSalePrice { get; set; }
         public decimal? OverrideDailyInstallment { get; set; }
         public decimal? OverrideDownPayment { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
     }
 
     public sealed class SalesShopProfileDTO
@@ -33,6 +35,8 @@ namespace BE_Company.Sales.DTO
         public decimal ShopArea { get; set; }
         public string ShopImageKey { get; set; } = string.Empty;
         public string? ShopImageUrl { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
         public DateTime CreatedAtUtc { get; set; }
     }
 
@@ -55,6 +59,17 @@ namespace BE_Company.Sales.DTO
         public string? CustomerName { get; set; }
         public string? CustomerPhone { get; set; }
         public string? Note { get; set; }
+    }
+
+    public sealed class SalesCustomerUpdateDTO
+    {
+        public int? CustomerId { get; set; }
+        public string? OriginalName { get; set; }
+        public string? OriginalPhone { get; set; }
+        public string? CustomerName { get; set; }
+        public string? Phone { get; set; }
+        public string? Province { get; set; }
+        public string? Address { get; set; }
     }
 
     public sealed class SalesCustomerProfileDTO
@@ -80,6 +95,7 @@ namespace BE_Company.Sales.DTO
         public List<SalesRequestDTO> SalesRequests { get; set; } = [];
         public List<SalesRequestHistoryDTO> History { get; set; } = [];
         public List<SalesCustomerNoteDTO> Notes { get; set; } = [];
+        public List<SalesCustomerDocumentDTO> CustomerDocuments { get; set; } = [];
     }
 
     public sealed class SalesPaymentSummaryDTO

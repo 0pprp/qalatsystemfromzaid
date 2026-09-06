@@ -114,9 +114,17 @@ namespace BE_Company.Sales.Services
             {
                 var existing = await _customers.GetCustomerAsync(customerId.Value, ct)
                                ?? throw new ArgumentException("الزبون غير موجود");
-                fullName = existing.CustomerName ?? request.Customer?.FullName ?? string.Empty;
-                phone = existing.PhoneNumber ?? request.Customer?.Phone;
-                province = string.IsNullOrWhiteSpace(existing.CityName) ? cityName : existing.CityName;
+                var submittedName = request.Customer?.FullName?.Trim();
+                fullName = !string.IsNullOrWhiteSpace(submittedName)
+                    ? submittedName
+                    : existing.CustomerName ?? string.Empty;
+                var submittedPhone = request.Customer?.Phone?.Trim();
+                phone = !string.IsNullOrWhiteSpace(submittedPhone)
+                    ? submittedPhone
+                    : existing.PhoneNumber ?? request.Customer?.Phone;
+                province = !string.IsNullOrWhiteSpace(request.Customer?.Province)
+                    ? request.Customer!.Province.Trim()
+                    : (string.IsNullOrWhiteSpace(existing.CityName) ? cityName : existing.CityName);
                 sourceCity = cityValue;
                 if (string.IsNullOrWhiteSpace(address))
                 {

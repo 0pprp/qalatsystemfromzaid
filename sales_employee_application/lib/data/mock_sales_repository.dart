@@ -237,6 +237,41 @@ class MockSalesRepository implements SalesRepository {
     return 'sales/$saleId/shop.jpg';
   }
 
+  final List<SalesCustomerKycDocument> _kyc = [];
+  int _kycId = 1;
+
+  @override
+  Future<List<SalesCustomerKycDocument>> listCustomerDocuments(int saleId) async {
+    return _kyc.where((d) => d.saleId == saleId).toList();
+  }
+
+  @override
+  Future<SalesCustomerKycDocument> uploadCustomerDocument(
+    int saleId,
+    String type,
+    List<int> bytes,
+    String fileName,
+  ) async {
+    _kyc.removeWhere((d) => d.saleId == saleId && d.documentType == type);
+    final row = SalesCustomerKycDocument(
+      id: _kycId++,
+      documentType: type,
+      typeLabel: type,
+      saleId: saleId,
+      fileName: fileName,
+    );
+    _kyc.add(row);
+    return row;
+  }
+
+  @override
+  Future<void> deleteCustomerDocument(int documentId) async {
+    _kyc.removeWhere((d) => d.id == documentId);
+  }
+
+  @override
+  Future<List<int>> customerDocumentBytes(int documentId) async => [255, 216, 255, 217];
+
   @override
   Future<SalesCompleteResult> completeSale(int id, [SalesShopComplete? shop]) async {
     completeCalls++;

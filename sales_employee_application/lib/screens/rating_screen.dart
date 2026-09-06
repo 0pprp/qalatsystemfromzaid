@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/app_state.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
+import 'package:sales_employee_application/widgets/tappable_phone.dart';
 
 class RatingScreen extends StatefulWidget {
   const RatingScreen({super.key});
@@ -97,7 +98,14 @@ class _RatingScreenState extends State<RatingScreen> {
           Card(
             child: ListTile(
               title: Text('${customer['customerName'] ?? ''}'),
-              subtitle: Text('${customer['phoneNumber'] ?? ''} — ${customer['cityName'] ?? ''}'),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TappablePhone('${customer['phoneNumber'] ?? ''}'),
+                  if ('${customer['cityName'] ?? ''}'.trim().isNotEmpty)
+                    Text('${customer['cityName']}'),
+                ],
+              ),
             ),
           )
         else

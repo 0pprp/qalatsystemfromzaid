@@ -6,6 +6,7 @@ import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
+import 'package:sales_employee_application/widgets/tappable_phone.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -110,17 +111,27 @@ class _SearchScreenState extends State<SearchScreen> {
       itemBuilder: (context, i) {
         final c = _rows[i];
         return Card(
-          child: ListTile(
-            title: Text(c.fullName, style: const TextStyle(fontWeight: FontWeight.w700)),
-            subtitle: Text('${c.phone ?? '-'}\n${c.province ?? '-'}\nسعر البيع: ${MoneyFormat.iqd(c.salePrice)}'),
-            isThreeLine: true,
-            onTap: () {
-              if (ModalRoute.of(context)?.settings.arguments == 'pick') {
-                Navigator.pop(context, c);
-              } else {
-                Navigator.pushNamed(context, '/sale', arguments: c);
-              }
-            },
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                InkWell(
+                  onTap: () {
+                    if (ModalRoute.of(context)?.settings.arguments == 'pick') {
+                      Navigator.pop(context, c);
+                    } else {
+                      Navigator.pushNamed(context, '/sale', arguments: c);
+                    }
+                  },
+                  child: Text(c.fullName, style: const TextStyle(fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(height: 4),
+                TappablePhone(c.phone),
+                Text(c.province ?? '-', style: const TextStyle(color: AppColors.muted)),
+                Text('سعر البيع: ${MoneyFormat.iqd(c.salePrice)}'),
+              ],
+            ),
           ),
         );
       },

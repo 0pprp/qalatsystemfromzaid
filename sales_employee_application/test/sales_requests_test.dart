@@ -35,7 +35,7 @@ void main() {
     expect(find.text('ستتوفر طلبات المبيعات لاحقاً'), findsNothing);
     expect(find.text('سعد كاظم'), findsOneWidget);
     expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsOneWidget);
-    expect(find.widgetWithText(ElevatedButton, 'تم البيع'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'إنشاء بيع'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, 'معلقة'), findsOneWidget);
     expect(find.widgetWithText(TextButton, 'مرفوض'), findsOneWidget);
     expect(find.text('طلبات معلقة'), findsNothing);
@@ -229,10 +229,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('ليث محمد'), findsWidgets);
-    expect(find.text('الاسم الكامل *'), findsNothing);
-    expect(find.text('رقم الهاتف *'), findsNothing);
-    expect(find.text('المحافظة *'), findsNothing);
-    expect(find.text('العنوان *'), findsNothing);
+    expect(find.text('الاسم الكامل *'), findsOneWidget);
+    expect(find.text('رقم الهاتف *'), findsOneWidget);
+    expect(find.text('المحافظة *'), findsOneWidget);
+    expect(find.text('العنوان *'), findsOneWidget);
     expect(find.text('زبون موجود'), findsNothing);
     expect(find.text('رقم البطاقة الوطنية *'), findsOneWidget);
     expect(find.text('أقرب نقطة دالة *'), findsOneWidget);

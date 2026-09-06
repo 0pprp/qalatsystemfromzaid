@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { getAuthHeaders } from '@/services/tokenService'
+import { getAuthHeaders, getToken } from '@/services/tokenService'
 import { DEMO_API, DEMO_BRANCH_VALUE, isDemo } from '@/composables/useCities'
 import { isCentralSalesManager, salesGatewayBase } from '@/composables/useSalesBranches'
 
@@ -140,6 +140,26 @@ export async function smPost(path, body) {
   return data
 }
 
+export async function smPut(path, body) {
+  const { data } = await axios.put(`${salesManagerBase()}${path}`, body, { headers: getAuthHeaders() })
+
+  return data
+}
+
+export async function smPostForm(path, formData) {
+  const token = getToken()
+  const headers = token ? { Authorization: `Bearer ${token}` } : {}
+  const { data } = await axios.post(`${salesManagerBase()}${path}`, formData, { headers })
+
+  return data
+}
+
+export async function smDelete(path) {
+  const { data } = await axios.delete(`${salesManagerBase()}${path}`, { headers: getAuthHeaders() })
+
+  return data
+}
+
 export async function smGetBlob(path) {
   const { data } = await axios.get(`${salesManagerBase()}${path}`, {
     headers: getAuthHeaders(),
@@ -216,11 +236,51 @@ export function customerProfileApiPath(city, { customerId, name, phone } = {}) {
     : `customers/${encodeURIComponent(city)}/profile?${params}`
 }
 
+export function managerCustomerUpdatePath(city) {
+  if (isDemo() || !isCentralSalesManager())
+    return 'customers/profile'
+
+  return `customers/${encodeURIComponent(city)}/profile`
+}
+
 export function managerSalePath(city, saleId, suffix = '') {
   if (isDemo() || !isCentralSalesManager())
     return `sales/${saleId}${suffix}`
 
   return `sales/${encodeURIComponent(city)}/${saleId}${suffix}`
+}
+
+export function managerCustomerDocumentFilePath(city, documentId) {
+  if (isDemo() || !isCentralSalesManager())
+    return `customer-documents/${documentId}/file`
+
+  return `customer-documents/${encodeURIComponent(city)}/${documentId}/file`
+}
+
+export function managerCustomerDocumentUploadPath(city, { type, customerId, name, phone } = {}) {
+  const params = new URLSearchParams()
+  if (type)
+    params.set('type', type)
+  if (customerId)
+    params.set('customerId', String(customerId))
+  if (name)
+    params.set('name', name)
+  if (phone)
+    params.set('phone', phone)
+  const q = params.toString()
+  if (isDemo() || !isCentralSalesManager())
+    return q ? `customers/documents?${q}` : 'customers/documents'
+
+  return q
+    ? `customers/${encodeURIComponent(city)}/documents?${q}`
+    : `customers/${encodeURIComponent(city)}/documents`
+}
+
+export function managerCustomerDocumentDeletePath(city, documentId) {
+  if (isDemo() || !isCentralSalesManager())
+    return `customer-documents/${documentId}`
+
+  return `customer-documents/${encodeURIComponent(city)}/${documentId}`
 }
 
 export function overrideLabel(value) {

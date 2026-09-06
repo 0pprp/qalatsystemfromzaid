@@ -13,6 +13,10 @@ abstract class SalesRepository {
   Future<SalesCompleteResult> completeSale(int id, [SalesShopComplete? shop]);
   Future<SalesPreviewDocuments> previewDocuments(int id, [SalesShopComplete? shop]);
   Future<String> uploadShopImage(int saleId, List<int> bytes, String fileName);
+  Future<List<SalesCustomerKycDocument>> listCustomerDocuments(int saleId);
+  Future<SalesCustomerKycDocument> uploadCustomerDocument(int saleId, String type, List<int> bytes, String fileName);
+  Future<void> deleteCustomerDocument(int documentId);
+  Future<List<int>> customerDocumentBytes(int documentId);
   Future<List<SalesDocument>> documents(int saleId);
   Future<List<int>> downloadDocument(int saleId, SalesDocument document);
   Future<WorkShift> startShift();

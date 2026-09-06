@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sales_employee_application/services/sale_documents.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
+import 'package:sales_employee_application/widgets/tappable_phone.dart';
 
 class DocumentsScreen extends StatelessWidget {
   const DocumentsScreen({super.key});
@@ -36,7 +37,14 @@ class DocumentsScreen extends StatelessWidget {
         Card(
           child: ListTile(
             title: Text('${sale['customerName'] ?? ''}'),
-            subtitle: Text('${sale['phoneNumber'] ?? ''} — ${sale['ratingLabel'] ?? ''}'),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TappablePhone('${sale['phoneNumber'] ?? ''}'),
+                if ('${sale['ratingLabel'] ?? ''}'.trim().isNotEmpty)
+                  Text('${sale['ratingLabel']}'),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 12),

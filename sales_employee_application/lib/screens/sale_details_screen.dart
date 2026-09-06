@@ -8,8 +8,11 @@ import 'package:sales_employee_application/screens/sale_complete_success_screen.
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/sale_document_storage.dart';
 import 'package:sales_employee_application/services/sale_documents.dart';
+import 'package:sales_employee_application/services/shop_gps.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
+import 'package:sales_employee_application/widgets/shop_location_button.dart';
+import 'package:sales_employee_application/widgets/tappable_phone.dart';
 
 class SaleDetailsScreen extends StatefulWidget {
   const SaleDetailsScreen({super.key, this.saleId});
@@ -87,6 +90,8 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
         width: 5,
         imageBytes: List<int>.from(debugBytes),
         imageName: 'shop.jpg',
+        latitude: ShopGps.debugFix?.latitude ?? 32.0289,
+        longitude: ShopGps.debugFix?.longitude ?? 44.3325,
       );
       await _runPreview(_shopDraft!);
       return;
@@ -152,6 +157,8 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
         shopWidth: shopForm.width,
         shopImageKey: shopForm.imageKey ?? '',
         employeeNote: shopForm.employeeNote,
+        latitude: shopForm.latitude,
+        longitude: shopForm.longitude,
       );
 
   Future<void> _confirmComplete() async {
@@ -230,26 +237,6 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
     String? contract;
     String? receipt;
     var failed = false;
-    try {
-      final draft = _draft;
-      if (draft != null && docs.isNotEmpty) {
-        final contractFile = await SaleDocumentStorage.savePdf(
-          'Sale_${draft.saleId}_Contract.pdf',
-          await SaleDocuments.contractBytesFromDraft(draft),
-        );
-        final receiptFile = await SaleDocumentStorage.savePdf(
-          'Sale_${draft.saleId}_PromissoryNote.pdf',
-          await SaleDocuments.receiptBytesFromDraft(draft),
-        );
-        contract = contractFile.path;
-        receipt = receiptFile.path;
-      }
-    } catch (_) {
-      failed = true;
-    }
-    if (contract != null && receipt != null) {
-      return _DownloadBundle(contractPath: contract, receiptPath: receipt, failed: false);
-    }
     for (final doc in docs) {
       try {
         final bytes = await SalesRepositoryFactory.instance.downloadDocument(_draft?.saleId ?? doc.documentId ?? 0, doc);
@@ -257,6 +244,27 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
         if (doc.isContract) {
           contract = file.path;
         } else if (doc.isPromissoryNote) {
+          receipt = file.path;
+        }
+      } catch (_) {
+        failed = true;
+      }
+    }
+    if ((contract == null || receipt == null) && _draft != null && docs.isNotEmpty) {
+      try {
+        final draft = _draft!;
+        if (contract == null) {
+          final file = await SaleDocumentStorage.savePdf(
+            'Sale_${draft.saleId}_Contract.pdf',
+            await SaleDocuments.contractBytesFromDraft(draft),
+          );
+          contract = file.path;
+        }
+        if (receipt == null) {
+          final file = await SaleDocumentStorage.savePdf(
+            'Sale_${draft.saleId}_PromissoryNote.pdf',
+            await SaleDocuments.receiptBytesFromDraft(draft),
+          );
           receipt = file.path;
         }
       } catch (_) {
@@ -272,11 +280,13 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
   Future<void> _openOrDownload(SalesDocument doc) async {
     try {
       final draft = _draft;
-      if (doc.documentId != null && (doc.downloadUrl.isNotEmpty || draft != null)) {
-        final bytes = await SalesRepositoryFactory.instance.downloadDocument(draft?.saleId ?? 0, doc);
-        final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
-        await OpenFilex.open(file.path);
-        return;
+      if (doc.documentId != null || doc.downloadUrl.isNotEmpty) {
+        try {
+          final bytes = await SalesRepositoryFactory.instance.downloadDocument(draft?.saleId ?? 0, doc);
+          final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
+          await OpenFilex.open(file.path);
+          return;
+        } catch (_) {}
       }
       if (draft != null) {
         final bytes = doc.isContract
@@ -310,7 +320,7 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
                       padding: const EdgeInsets.all(AppSpacing.md),
                       children: [
                         Text(d.fullName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                        Text(d.phone ?? ''),
+                        TappablePhone(d.phone),
                         Text(d.province ?? ''),
                         const SizedBox(height: AppSpacing.md),
                         Text('الحالة: ${SalesStatusLabels.of(d.status)}'),
@@ -404,6 +414,8 @@ class _ShopFormResult {
     required this.imageName,
     this.imageKey,
     this.employeeNote,
+    this.latitude,
+    this.longitude,
   });
 
   final String shopName;
@@ -416,6 +428,8 @@ class _ShopFormResult {
   final String imageName;
   final String? imageKey;
   final String? employeeNote;
+  final double? latitude;
+  final double? longitude;
 
   _ShopFormResult copyWith({String? imageKey}) => _ShopFormResult(
         shopName: shopName,
@@ -428,6 +442,8 @@ class _ShopFormResult {
         imageName: imageName,
         imageKey: imageKey ?? this.imageKey,
         employeeNote: employeeNote,
+        latitude: latitude,
+        longitude: longitude,
       );
 }
 
@@ -452,6 +468,9 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
   String _imageName = '';
   String? _imageKey;
   String? _error;
+  double? _latitude;
+  double? _longitude;
+  bool _locating = false;
 
   @override
   void initState() {
@@ -459,14 +478,16 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
     final initial = widget.initial;
     _name = TextEditingController(text: initial?.shopName ?? '');
     _type = TextEditingController(text: initial?.shopBusinessType ?? '');
-    _stock = TextEditingController(text: initial == null ? '' : '${initial.stockValue}');
-    _daily = TextEditingController(text: initial == null ? '' : '${initial.dailyRevenue}');
+    _stock = TextEditingController(text: initial == null ? '' : MoneyFormat.grouped(initial.stockValue));
+    _daily = TextEditingController(text: initial == null ? '' : MoneyFormat.grouped(initial.dailyRevenue));
     _length = TextEditingController(text: initial == null ? '' : '${initial.length}');
     _width = TextEditingController(text: initial == null ? '' : '${initial.width}');
     _note = TextEditingController(text: initial?.employeeNote ?? '');
     _imageBytes = initial?.imageBytes;
     _imageName = initial?.imageName ?? '';
     _imageKey = initial?.imageKey;
+    _latitude = initial?.latitude;
+    _longitude = initial?.longitude;
     final debugBytes = SaleDetailsScreen.debugShopImageBytes;
     if ((_imageBytes == null || _imageBytes!.isEmpty) && debugBytes != null && debugBytes.isNotEmpty) {
       _imageBytes = List<int>.from(debugBytes);
@@ -488,7 +509,11 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
     super.dispose();
   }
 
-  num? _num(TextEditingController c) => num.tryParse(c.text.trim().replaceAll(',', ''));
+  num? _num(TextEditingController c) {
+    final text = c.text.trim().replaceAll(',', '');
+    if (text.isEmpty) return null;
+    return num.tryParse(text);
+  }
 
   num get _area {
     final length = _num(_length) ?? 0;
@@ -510,9 +535,10 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
 
     try {
       final picked = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
+        source: ImageSource.camera,
         imageQuality: 85,
         maxWidth: 1600,
+        preferredCameraDevice: CameraDevice.rear,
       );
       if (picked == null) return;
       final bytes = await picked.readAsBytes();
@@ -525,7 +551,31 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = 'تعذر اختيار صورة المحل');
+      setState(() => _error = 'تعذر التقاط صورة المحل');
+    }
+  }
+
+  Future<void> _captureLocation() async {
+    if (_locating) return;
+    setState(() {
+      _locating = true;
+      _error = null;
+    });
+    try {
+      final fix = await ShopGps.capture();
+      if (!mounted) return;
+      setState(() {
+        _latitude = fix.latitude;
+        _longitude = fix.longitude;
+        _locating = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _locating = false;
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
     }
   }
 
@@ -548,6 +598,17 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
       setState(() => _error = 'صورة المحل مطلوبة.');
       return;
     }
+    if (!ShopGps.isValid(_latitude, _longitude)) {
+      final debug = ShopGps.debugFix;
+      if (debug != null && ShopGps.isValid(debug.latitude, debug.longitude)) {
+        _latitude = debug.latitude;
+        _longitude = debug.longitude;
+      }
+    }
+    if (!ShopGps.isValid(_latitude, _longitude)) {
+      setState(() => _error = 'يجب تحديد موقع المحل.');
+      return;
+    }
     Navigator.pop(
       context,
       _ShopFormResult(
@@ -561,6 +622,8 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
         imageName: _imageName.isEmpty ? 'shop.jpg' : _imageName,
         imageKey: _imageKey,
         employeeNote: _note.text.trim(),
+        latitude: _latitude,
+        longitude: _longitude,
       ),
     );
   }
@@ -589,12 +652,14 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
                 key: const Key('shopStockEstimatedValue'),
                 controller: _stock,
                 keyboardType: TextInputType.number,
+                inputFormatters: MoneyFormat.inputFormatters,
                 decoration: const InputDecoration(labelText: 'تقدير قيمة بضاعة المحل *'),
               ),
               TextField(
                 key: const Key('estimatedDailyRevenue'),
                 controller: _daily,
                 keyboardType: TextInputType.number,
+                inputFormatters: MoneyFormat.inputFormatters,
                 decoration: const InputDecoration(labelText: 'تقدير الوارد اليومي *'),
               ),
               TextField(
@@ -624,9 +689,15 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
                 decoration: const InputDecoration(labelText: 'ملاحظة الموظف (اختياري)'),
               ),
               const SizedBox(height: 8),
+              ShopLocationButton(
+                loading: _locating,
+                captured: ShopGps.isValid(_latitude, _longitude),
+                onPressed: _captureLocation,
+              ),
+              const SizedBox(height: 8),
               OutlinedButton(
                 onPressed: _pickImage,
-                child: const Text('اختيار صورة المحل'),
+                child: const Text('التقاط صورة المحل'),
               ),
               if (_imageBytes != null && _imageBytes!.isNotEmpty) ...[
                 const SizedBox(height: 8),

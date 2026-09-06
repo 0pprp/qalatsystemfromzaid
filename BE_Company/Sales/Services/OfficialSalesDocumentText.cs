@@ -212,7 +212,7 @@ namespace BE_Company.Sales.Services
         private static Paragraph Labeled(string label, string value)
         {
             var b = new Builder();
-            b.Text(label);
+            b.Text(label.EndsWith(' ') ? label : label + " ");
             b.Field(value);
             return b.Build();
         }
@@ -248,7 +248,7 @@ namespace BE_Company.Sales.Services
                     return;
                 }
 
-                _parts.Add(new Part($"( {trimmed} )", true));
+                _parts.Add(new Part("( " + trimmed + " )", true));
             }
 
             public Paragraph Build() => new(_parts);

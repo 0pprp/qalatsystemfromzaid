@@ -26,6 +26,7 @@ namespace BE_Company.Sales.Controllers
         private readonly CustomerDirectoryService _directory;
         private readonly IConfiguration _configuration;
         private readonly ISalesShopProfileService _shops;
+        private readonly ISalesCustomerDocumentService _customerDocs;
 
         public SalesController(
             SalesDevelopmentGuard guard,
@@ -41,7 +42,8 @@ namespace BE_Company.Sales.Controllers
             IIraqClock clock,
             CustomerDirectoryService directory,
             IConfiguration configuration,
-            ISalesShopProfileService shops)
+            ISalesShopProfileService shops,
+            ISalesCustomerDocumentService customerDocs)
         {
             _guard = guard;
             _identity = identity;
@@ -57,6 +59,7 @@ namespace BE_Company.Sales.Controllers
             _directory = directory;
             _configuration = configuration;
             _shops = shops;
+            _customerDocs = customerDocs;
         }
 
         [Authorize(Policy = SalesPolicies.AnySales)]
@@ -351,6 +354,129 @@ namespace BE_Company.Sales.Controllers
             }
 
             return File(image.Value.Bytes, GuessImageType(image.Value.FileName), image.Value.FileName);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("{id:int}/customer-documents")]
+        public async Task<IActionResult> CustomerDocuments(int id, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            var sale = await _drafts.GetByIdAsync(id, identity.EmployeeId, ct);
+            if (sale == null)
+            {
+                return NotFound();
+            }
+
+            return Ok(await _customerDocs.ListForSaleAsync(id, false, ct));
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("{id:int}/customer-documents")]
+        public async Task<IActionResult> UploadCustomerDocument(
+            int id,
+            [FromQuery] string? type,
+            [FromForm] IFormFile? file,
+            CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            if (file == null || file.Length <= 0)
+            {
+                return BadRequest(new { message = "الصورة مطلوبة." });
+            }
+
+            try
+            {
+                var saved = await _customerDocs.SaveAsync(
+                    type ?? "",
+                    file,
+                    id,
+                    identity.EmployeeId,
+                    null,
+                    null,
+                    null,
+                    replaceSameType: true,
+                    managerUrls: false,
+                    ct);
+                return Ok(saved);
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("customer-documents/{documentId:int}/file")]
+        public async Task<IActionResult> CustomerDocumentFile(int documentId, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            var image = await _customerDocs.ReadFileAsync(documentId, ct);
+            if (image == null)
+            {
+                return NotFound();
+            }
+
+            return File(image.Value.Bytes, image.Value.ContentType, image.Value.FileName);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpDelete("customer-documents/{documentId:int}")]
+        public async Task<IActionResult> DeleteCustomerDocument(int documentId, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                await _customerDocs.DeleteAsync(documentId, identity.EmployeeId, ct);
+                return Ok(new { ok = true });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]

@@ -13,6 +13,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="PdfPig" Version="0.1.15" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -22,6 +23,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BE_Company\BE_Company.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\sales_employee_application\assets\fonts\Cairo-Regular.ttf" Link="Sales\Fonts\Cairo-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\sales_employee_application\assets\fonts\Cairo-Bold.ttf" Link="Sales\Fonts\Cairo-Bold.ttf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

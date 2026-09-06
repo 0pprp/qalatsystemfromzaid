@@ -11,6 +11,7 @@ namespace BE_SalesEmployee.Sales.Services
         Task<(int Status, object? Body)> GetOneAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> GetFileAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct);
+        Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct);
         Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, string? cityValue, CancellationToken ct);
         Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct);
     }
@@ -141,6 +142,41 @@ namespace BE_SalesEmployee.Sales.Services
             cts.CancelAfter(BranchTimeout);
             using var response = await _proxy.SendManagerAsync(
                 city.Link, companyPath, HttpMethod.Post, jsonBody, user.UserName, cts.Token);
+            var raw = await response.Content.ReadAsStringAsync(ct);
+            return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : Stamp(raw, city) ?? BranchProxyService.TryParseJson(raw));
+        }
+
+        public async Task<(int Status, object? Body)> SendContentAsync(
+            GatewayUser user,
+            string cityValue,
+            string companyPath,
+            HttpMethod method,
+            HttpContent? content,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return (400, new { message = "يجب تحديد المحافظة." });
+            }
+
+            var city = await FindAsync(cityValue, ct);
+            if (city == null)
+            {
+                return (404, new { message = "المحافظة غير موجودة." });
+            }
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(30));
+            using var response = await _proxy.SendManagerContentAsync(
+                city.Link, companyPath, method, content, user.UserName, cts.Token);
+            if (method == HttpMethod.Get && response.IsSuccessStatusCode
+                && response.Content.Headers.ContentType?.MediaType is string media
+                && media.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                return (200, (bytes, media));
+            }
+
             var raw = await response.Content.ReadAsStringAsync(ct);
             return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : Stamp(raw, city) ?? BranchProxyService.TryParseJson(raw));
         }

@@ -1,6 +1,15 @@
 package com.qalaat.sales_employee_application
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -39,8 +48,64 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                     "isRunning" -> result.success(LocationForegroundService.running)
+                    "currentFix" -> currentFix(result)
+                    "dial" -> dial(call.argument<String>("number"), result)
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun currentFix(result: MethodChannel.Result) {
+        val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) {
+            result.error("PERMISSION", "location permission denied", null)
+            return
+        }
+        val client = LocationServices.getFusedLocationProviderClient(this)
+        val cts = CancellationTokenSource()
+        Handler(Looper.getMainLooper()).postDelayed({ cts.cancel() }, 15_000)
+        client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
+            .addOnSuccessListener { loc ->
+                if (loc != null) {
+                    result.success(
+                        hashMapOf(
+                            "latitude" to loc.latitude,
+                            "longitude" to loc.longitude,
+                            "accuracy" to loc.accuracy.toDouble(),
+                        ),
+                    )
+                    return@addOnSuccessListener
+                }
+                client.lastLocation
+                    .addOnSuccessListener { last ->
+                        if (last == null) {
+                            result.error("GPS", "no location", null)
+                        } else {
+                            result.success(
+                                hashMapOf(
+                                    "latitude" to last.latitude,
+                                    "longitude" to last.longitude,
+                                    "accuracy" to last.accuracy.toDouble(),
+                                ),
+                            )
+                        }
+                    }
+                    .addOnFailureListener { e -> result.error("GPS", e.message, null) }
+            }
+            .addOnFailureListener { e -> result.error("GPS", e.message, null) }
+    }
+
+    private fun dial(number: String?, result: MethodChannel.Result) {
+        if (number.isNullOrBlank()) {
+            result.error("PHONE", "missing number", null)
+            return
+        }
+        try {
+            startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")))
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("PHONE", e.message, null)
+        }
     }
 }

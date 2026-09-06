@@ -4,10 +4,17 @@ import { useRoute, useRouter } from 'vue-router'
 import { formatIraqTime } from '@/composables/gpsTrack'
 import {
   customerProfileApiPath,
+  managerCustomerDocumentDeletePath,
+  managerCustomerDocumentFilePath,
+  managerCustomerDocumentUploadPath,
+  managerCustomerUpdatePath,
   managerSalePath,
   overrideLabel,
+  smDelete,
   smGet,
   smGetBlob,
+  smPostForm,
+  smPut,
 } from '@/composables/salesManagerApi'
 import { useToast } from '@/composables/useToast'
 
@@ -17,6 +24,28 @@ const router = useRouter()
 const loading = ref(false)
 const profile = ref(null)
 const shopUrls = ref({})
+const kycUrls = ref({})
+const kycOpen = ref(false)
+const kycOpenUrl = ref('')
+const kycBusy = ref(false)
+const kycAddType = ref('NationalIdFront')
+const kycAddInput = ref(null)
+const kycReplaceInput = ref(null)
+const kycReplaceDoc = ref(null)
+const editOpen = ref(false)
+const editBusy = ref(false)
+const editForm = ref({
+  name: '',
+  phone: '',
+  province: '',
+  address: '',
+})
+const kycTypes = [
+  { value: 'NationalIdFront', label: 'البطاقة الوطنية - أمامية' },
+  { value: 'NationalIdBack', label: 'البطاقة الوطنية - خلفية' },
+  { value: 'ResidenceCard', label: 'بطاقة السكن' },
+  { value: 'ResidenceCertificate', label: 'تأييد السكن' },
+]
 
 function pick(obj, ...keys) {
   if (!obj)
@@ -55,6 +84,11 @@ const officialSales = computed(() => {
 })
 const sales = computed(() => {
   const rows = pick(profile.value, 'sales', 'Sales') || []
+
+  return Array.isArray(rows) ? rows : []
+})
+const customerDocuments = computed(() => {
+  const rows = pick(profile.value, 'customerDocuments', 'CustomerDocuments') || []
 
   return Array.isArray(rows) ? rows : []
 })
@@ -101,6 +135,7 @@ async function load() {
       phone: customerPhone.value,
     }))
     await loadShopImages()
+    await loadCustomerDocuments()
   }
   catch (err) {
     profile.value = null
@@ -130,6 +165,170 @@ async function loadShopImages() {
   }
 }
 
+async function loadCustomerDocuments() {
+  Object.values(kycUrls.value).forEach(url => URL.revokeObjectURL(url))
+  kycUrls.value = {}
+  const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
+  for (const doc of customerDocuments.value) {
+    const id = pick(doc, 'id', 'Id')
+    if (!id || !city)
+      continue
+    try {
+      const blob = await smGetBlob(managerCustomerDocumentFilePath(city, id))
+      if (blob && blob.size)
+        kycUrls.value[id] = URL.createObjectURL(blob)
+    }
+    catch {
+      // image missing
+    }
+  }
+}
+
+function docLabel(doc) {
+  return pick(doc, 'typeLabel', 'TypeLabel')
+    || kycTypes.find(t => t.value === pick(doc, 'documentType', 'DocumentType'))?.label
+    || pick(doc, 'documentType', 'DocumentType')
+    || 'مستند'
+}
+
+function openKyc(doc) {
+  const url = kycUrls.value[pick(doc, 'id', 'Id')]
+  if (!url)
+    return
+  kycOpenUrl.value = url
+  kycOpen.value = true
+}
+
+function openEdit() {
+  editForm.value = {
+    name: pick(profile.value, 'customerName', 'CustomerName') || '',
+    phone: pick(profile.value, 'phone', 'Phone') || '',
+    province: pick(profile.value, 'province', 'Province', 'cityName', 'CityName') || '',
+    address: pick(profile.value, 'address', 'Address') || '',
+  }
+  editOpen.value = true
+}
+
+async function saveCustomer() {
+  const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
+  if (!city) {
+    toast.error('حدد المحافظة أولاً')
+    return
+  }
+  const name = String(editForm.value.name || '').trim()
+  if (!name) {
+    toast.error('اسم الزبون مطلوب')
+    return
+  }
+  editBusy.value = true
+  try {
+    const payload = {
+      customerId: pick(profile.value, 'customerId', 'CustomerId') || customerId.value || null,
+      originalName: pick(profile.value, 'customerName', 'CustomerName') || customerName.value || '',
+      originalPhone: pick(profile.value, 'phone', 'Phone') || customerPhone.value || '',
+      customerName: name,
+      phone: String(editForm.value.phone || '').trim(),
+      province: String(editForm.value.province || '').trim(),
+      address: String(editForm.value.address || '').trim(),
+    }
+    profile.value = await smPut(managerCustomerUpdatePath(city), payload)
+    await router.replace({
+      query: {
+        ...route.query,
+        customerId: payload.customerId || route.query.customerId,
+        name: payload.customerName,
+        phone: payload.phone,
+      },
+    })
+    editOpen.value = false
+    toast.success('تم حفظ بيانات الزبون')
+    await loadShopImages()
+    await loadCustomerDocuments()
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || 'تعذر حفظ بيانات الزبون')
+  }
+  finally {
+    editBusy.value = false
+  }
+}
+
+async function addCustomerDocument(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file)
+    return
+  await uploadCustomerDocument(kycAddType.value, file)
+}
+
+function startReplace(doc) {
+  kycReplaceDoc.value = doc
+  kycReplaceInput.value?.click()
+}
+
+async function onReplaceFile(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  const doc = kycReplaceDoc.value
+  kycReplaceDoc.value = null
+  if (!file || !doc)
+    return
+  const type = pick(doc, 'documentType', 'DocumentType') || kycAddType.value
+  const uploaded = await uploadCustomerDocument(type, file)
+  if (uploaded)
+    await deleteCustomerDocument(doc, true)
+}
+
+async function uploadCustomerDocument(type, file) {
+  const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
+  if (!city) {
+    toast.error('حدد المحافظة')
+
+    return false
+  }
+  kycBusy.value = true
+  try {
+    const form = new FormData()
+    form.append('file', file)
+    await smPostForm(managerCustomerDocumentUploadPath(city, {
+      type,
+      customerId: pick(profile.value, 'customerId', 'CustomerId') || customerId.value,
+      name: pick(profile.value, 'customerName', 'CustomerName') || customerName.value,
+      phone: pick(profile.value, 'phone', 'Phone') || customerPhone.value,
+    }), form)
+    await load()
+
+    return true
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || 'تعذر رفع المستند')
+
+    return false
+  }
+  finally {
+    kycBusy.value = false
+  }
+}
+
+async function deleteCustomerDocument(doc, silent = false) {
+  const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
+  const id = pick(doc, 'id', 'Id')
+  if (!city || !id)
+    return
+  kycBusy.value = true
+  try {
+    await smDelete(managerCustomerDocumentDeletePath(city, id))
+    await load()
+  }
+  catch (err) {
+    if (!silent)
+      toast.error(err?.response?.data?.message || 'تعذر حذف المستند')
+  }
+  finally {
+    kycBusy.value = false
+  }
+}
+
 async function openDocument(sale, doc) {
   const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
   const saleId = pick(sale, 'saleId', 'SaleId')
@@ -153,6 +352,9 @@ watch(() => route.query, load, { deep: true })
 onMounted(load)
 onUnmounted(() => {
   Object.values(shopUrls.value).forEach(url => URL.revokeObjectURL(url))
+  Object.values(kycUrls.value).forEach(url => URL.revokeObjectURL(url))
+  if (kycOpenUrl.value)
+    URL.revokeObjectURL(kycOpenUrl.value)
 })
 </script>
 
@@ -183,9 +385,17 @@ onUnmounted(() => {
 
     <template v-else-if="profile">
       <VCard class="mb-6 pa-6">
-        <h5 class="mb-4">
-          معلومات الزبون
-        </h5>
+        <div class="d-flex align-center justify-space-between mb-4">
+          <h5 class="mb-0">
+            معلومات الزبون
+          </h5>
+          <VBtn
+            prepend-icon="tabler-edit"
+            @click="openEdit"
+          >
+            تعديل
+          </VBtn>
+        </div>
         <VRow>
           <VCol md="4">
             الاسم: {{ pick(profile, 'customerName', 'CustomerName') || '—' }}
@@ -201,6 +411,103 @@ onUnmounted(() => {
           </VCol>
           <VCol md="4">
             القائمة/المندوب: {{ pick(profile, 'delegateName', 'DelegateName', 'customerListName', 'CustomerListName') || '—' }}
+          </VCol>
+        </VRow>
+      </VCard>
+
+      <VCard class="mb-6 pa-6">
+        <h5 class="mb-4">
+          مستندات الزبون
+        </h5>
+        <div class="d-flex flex-wrap align-center ga-3 mb-4">
+          <VSelect
+            v-model="kycAddType"
+            :items="kycTypes"
+            item-title="label"
+            item-value="value"
+            density="compact"
+            hide-details
+            style="max-width: 280px"
+          />
+          <VBtn
+            :disabled="kycBusy"
+            prepend-icon="tabler-upload"
+            @click="kycAddInput?.click()"
+          >
+            إضافة صورة
+          </VBtn>
+          <input
+            ref="kycAddInput"
+            type="file"
+            accept="image/*"
+            class="d-none"
+            @change="addCustomerDocument"
+          >
+          <input
+            ref="kycReplaceInput"
+            type="file"
+            accept="image/*"
+            class="d-none"
+            @change="onReplaceFile"
+          >
+        </div>
+        <div
+          v-if="!customerDocuments.length"
+          class="text-medium-emphasis"
+        >
+          لا توجد مستندات مرفوعة.
+        </div>
+        <VRow>
+          <VCol
+            v-for="doc in customerDocuments"
+            :key="pick(doc, 'id', 'Id')"
+            cols="12"
+            md="6"
+            lg="3"
+          >
+            <div class="text-subtitle-2 mb-2">
+              {{ docLabel(doc) }}
+            </div>
+            <VImg
+              v-if="kycUrls[pick(doc, 'id', 'Id')]"
+              :src="kycUrls[pick(doc, 'id', 'Id')]"
+              height="180"
+              cover
+              class="rounded cursor-pointer"
+              @click="openKyc(doc)"
+            />
+            <div
+              v-else
+              class="text-medium-emphasis"
+            >
+              تعذر عرض الصورة.
+            </div>
+            <div class="d-flex flex-wrap ga-2 mt-2">
+              <VBtn
+                size="small"
+                variant="text"
+                @click="openKyc(doc)"
+              >
+                فتح
+              </VBtn>
+              <VBtn
+                size="small"
+                variant="text"
+                :disabled="kycBusy"
+                @click="startReplace(doc)"
+              >
+                استبدال
+              </VBtn>
+              <VBtn
+                size="small"
+                variant="text"
+                color="error"
+                :disabled="kycBusy"
+                @click="deleteCustomerDocument(doc)"
+              >
+                حذف
+              </VBtn>
+            </div>
           </VCol>
         </VRow>
       </VCard>
@@ -448,5 +755,81 @@ onUnmounted(() => {
     >
       لا توجد بيانات لهذا الزبون في فرع البحث الحالي.
     </div>
+    <VDialog
+      v-model="editOpen"
+      max-width="640"
+    >
+      <VCard>
+        <VCardTitle>تعديل بيانات الزبون</VCardTitle>
+        <VCardText>
+          <VRow>
+            <VCol cols="12">
+              <VTextField
+                v-model="editForm.name"
+                label="اسم الزبون"
+              />
+            </VCol>
+            <VCol
+              cols="12"
+              md="6"
+            >
+              <VTextField
+                v-model="editForm.phone"
+                label="رقم الهاتف"
+              />
+            </VCol>
+            <VCol
+              cols="12"
+              md="6"
+            >
+              <VTextField
+                v-model="editForm.province"
+                label="المحافظة"
+              />
+            </VCol>
+            <VCol cols="12">
+              <VTextField
+                v-model="editForm.address"
+                label="العنوان"
+              />
+            </VCol>
+          </VRow>
+        </VCardText>
+        <VCardActions>
+          <VSpacer />
+          <VBtn
+            variant="text"
+            :disabled="editBusy"
+            @click="editOpen = false"
+          >
+            إلغاء
+          </VBtn>
+          <VBtn
+            color="primary"
+            :loading="editBusy"
+            @click="saveCustomer"
+          >
+            حفظ
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+    <VDialog
+      v-model="kycOpen"
+      max-width="900"
+    >
+      <VCard v-if="kycOpenUrl">
+        <VImg :src="kycOpenUrl" />
+        <VCardActions>
+          <VSpacer />
+          <VBtn
+            variant="text"
+            @click="kycOpen = false"
+          >
+            إغلاق
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
   </VContainer>
 </template>

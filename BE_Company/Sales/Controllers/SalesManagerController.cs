@@ -19,6 +19,7 @@ namespace BE_Company.Sales.Controllers
         private readonly IIraqClock _clock;
         private readonly ISalesShopProfileService _shops;
         private readonly ISalesCompleteService _complete;
+        private readonly ISalesCustomerDocumentService _customerDocs;
 
         public SalesManagerController(
             SalesDevelopmentGuard guard,
@@ -28,7 +29,8 @@ namespace BE_Company.Sales.Controllers
             IGlobalCustomerSearchService search,
             IIraqClock clock,
             ISalesShopProfileService shops,
-            ISalesCompleteService complete)
+            ISalesCompleteService complete,
+            ISalesCustomerDocumentService customerDocs)
         {
             _guard = guard;
             _identity = identity;
@@ -38,6 +40,7 @@ namespace BE_Company.Sales.Controllers
             _clock = clock;
             _shops = shops;
             _complete = complete;
+            _customerDocs = customerDocs;
         }
 
         [HttpGet("dashboard")]
@@ -192,6 +195,7 @@ namespace BE_Company.Sales.Controllers
             }
 
             var profile = await _shops.GetCustomerProfileAsync(customerId, name, phone, ct);
+            profile.CustomerDocuments = await _customerDocs.ListForCustomerAsync(customerId, name, phone, true, ct);
             var identity = _identity.FromAuthenticatedUser();
             if (identity != null)
             {
@@ -213,6 +217,7 @@ namespace BE_Company.Sales.Controllers
             }
 
             var profile = await _shops.GetCustomerProfileAsync(customerId, null, null, ct);
+            profile.CustomerDocuments = await _customerDocs.ListForCustomerAsync(customerId, profile.CustomerName, profile.Phone, true, ct);
             var identity = _identity.FromAuthenticatedUser();
             if (identity != null)
             {
@@ -221,6 +226,41 @@ namespace BE_Company.Sales.Controllers
             }
 
             return Ok(profile);
+        }
+
+        [HttpPut("customers/profile")]
+        public async Task<IActionResult> UpdateCustomerProfile([FromBody] SalesCustomerUpdateDTO? body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            if (body == null
+                || (body.CustomerId is null or <= 0
+                && string.IsNullOrWhiteSpace(body.OriginalName)
+                && string.IsNullOrWhiteSpace(body.OriginalPhone)
+                && string.IsNullOrWhiteSpace(body.CustomerName)
+                && string.IsNullOrWhiteSpace(body.Phone)))
+            {
+                return BadRequest(new { message = "حدد الزبون." });
+            }
+
+            try
+            {
+                var identity = _identity.FromAuthenticatedUser();
+                var profile = await _shops.UpdateCustomerProfileAsync(body, identity?.EmployeeId, ct);
+                profile.CustomerDocuments = await _customerDocs.ListForCustomerAsync(
+                    profile.CustomerId, profile.CustomerName, profile.Phone, true, ct);
+                if (identity != null)
+                {
+                    profile.CityValue ??= identity.BranchId;
+                    profile.CityName ??= identity.BranchName;
+                }
+
+                return Ok(profile);
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
         }
 
         [HttpPost("customers/notes")]
@@ -253,6 +293,78 @@ namespace BE_Company.Sales.Controllers
             var ext = Path.GetExtension(image.Value.FileName).ToLowerInvariant();
             var type = ext == ".png" ? "image/png" : "image/jpeg";
             return File(image.Value.Bytes, type, image.Value.FileName);
+        }
+
+        [HttpGet("customer-documents/{documentId:int}/file")]
+        public async Task<IActionResult> CustomerDocumentFile(int documentId, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var image = await _customerDocs.ReadFileAsync(documentId, ct);
+            if (image == null)
+            {
+                return NotFound();
+            }
+
+            return File(image.Value.Bytes, image.Value.ContentType, image.Value.FileName);
+        }
+
+        [HttpPost("customers/documents")]
+        public async Task<IActionResult> UploadCustomerDocument(
+            [FromQuery] string? type,
+            [FromQuery] int? customerId,
+            [FromQuery] string? name,
+            [FromQuery] string? phone,
+            [FromQuery] int? saleId,
+            [FromForm] IFormFile? file,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            if (file == null || file.Length <= 0)
+            {
+                return BadRequest(new { message = "الصورة مطلوبة." });
+            }
+
+            if (customerId is null or <= 0 && string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(phone))
+            {
+                return BadRequest(new { message = "حدد الزبون." });
+            }
+
+            try
+            {
+                return Ok(await _customerDocs.SaveAsync(
+                    type ?? "",
+                    file,
+                    saleId,
+                    null,
+                    customerId,
+                    name,
+                    phone,
+                    replaceSameType: false,
+                    managerUrls: true,
+                    ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpDelete("customer-documents/{documentId:int}")]
+        public async Task<IActionResult> DeleteCustomerDocument(int documentId, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            try
+            {
+                await _customerDocs.DeleteAsync(documentId, null, ct);
+                return Ok(new { ok = true });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
         }
 
         [HttpGet("customers/search")]

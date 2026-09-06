@@ -104,6 +104,19 @@ class ApiClient {
     return _decode(response);
   }
 
+  static Future<dynamic> delete(String path) async {
+    final headers = Map<String, String>.from(_headers)..remove('Content-Type');
+    final response = await http.delete(_uri(path), headers: headers).timeout(const Duration(seconds: 25));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(
+        _errorMessage(response),
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+    return _decode(response);
+  }
+
   static Future<dynamic> postMultipart(
     String path, {
     required List<int> bytes,

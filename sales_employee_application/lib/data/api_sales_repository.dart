@@ -142,6 +142,56 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   @override
+  Future<List<SalesCustomerKycDocument>> listCustomerDocuments(int saleId) async {
+    try {
+      final raw = await ApiClient.get('sales/$saleId/customer-documents');
+      return _maps(raw).map(SalesCustomerKycDocument.fromJson).toList();
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
+  Future<SalesCustomerKycDocument> uploadCustomerDocument(
+    int saleId,
+    String type,
+    List<int> bytes,
+    String fileName,
+  ) async {
+    try {
+      final raw = await ApiClient.postMultipart(
+        'sales/$saleId/customer-documents?type=${Uri.encodeQueryComponent(type)}',
+        bytes: bytes,
+        fileName: fileName,
+      );
+      if (raw is Map) {
+        return SalesCustomerKycDocument.fromJson(Map<String, dynamic>.from(raw));
+      }
+      throw ApiException('تعذر رفع مستند الزبون');
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
+  Future<void> deleteCustomerDocument(int documentId) async {
+    try {
+      await ApiClient.delete('sales/customer-documents/$documentId');
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
+  Future<List<int>> customerDocumentBytes(int documentId) async {
+    try {
+      return await ApiClient.getBytes('sales/customer-documents/$documentId/file');
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
   Future<SalesCompleteResult> completeSale(int id, [SalesShopComplete? shop]) async {
     try {
       final raw = await ApiClient.post('sales/$id/complete', body: shop?.toJson() ?? {});

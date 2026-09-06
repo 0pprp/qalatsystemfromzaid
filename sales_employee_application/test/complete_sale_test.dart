@@ -75,6 +75,21 @@ class _MemRepo implements SalesRepository {
   }
 
   @override
+  Future<List<SalesCustomerKycDocument>> listCustomerDocuments(int saleId) async => [];
+  @override
+  Future<SalesCustomerKycDocument> uploadCustomerDocument(
+    int saleId,
+    String type,
+    List<int> bytes,
+    String fileName,
+  ) async =>
+      SalesCustomerKycDocument(id: 1, documentType: type, typeLabel: type, saleId: saleId, fileName: fileName);
+  @override
+  Future<void> deleteCustomerDocument(int documentId) async {}
+  @override
+  Future<List<int>> customerDocumentBytes(int documentId) async => [255, 216, 255, 217];
+
+  @override
   Future<List<SalesDocument>> documents(int saleId) async => draft.documents;
 
   @override

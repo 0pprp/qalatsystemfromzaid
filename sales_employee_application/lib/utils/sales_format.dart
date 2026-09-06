@@ -1,9 +1,90 @@
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 class MoneyFormat {
-  static final NumberFormat _iqd = NumberFormat.decimalPattern('en');
+  static final NumberFormat _grouped = NumberFormat('#,##0', 'en_US');
+  static const MoneyInputFormatter formatter = MoneyInputFormatter();
 
-  static String iqd(num value) => '${_iqd.format(value.round())} د.ع';
+  static List<TextInputFormatter> get inputFormatters => [formatter];
+
+  static String iqd(num value) => '${grouped(value)} د.ع';
+
+  static String grouped(num value) => _grouped.format(value.round());
+
+  static num? parse(String? text) {
+    final raw = digitsOnly(text);
+    if (raw.isEmpty) return null;
+    return num.tryParse(raw);
+  }
+
+  static String digitsOnly(String? text) {
+    if (text == null || text.isEmpty) return '';
+    final buffer = StringBuffer();
+    for (final unit in text.codeUnits) {
+      if (unit >= 48 && unit <= 57) {
+        buffer.writeCharCode(unit);
+      } else if (unit >= 0x0660 && unit <= 0x0669) {
+        buffer.writeCharCode(unit - 0x0660 + 48);
+      } else if (unit >= 0x06F0 && unit <= 0x06F9) {
+        buffer.writeCharCode(unit - 0x06F0 + 48);
+      }
+    }
+    return buffer.toString();
+  }
+}
+
+class MoneyInputFormatter extends TextInputFormatter {
+  const MoneyInputFormatter();
+
+  static const int maxDigits = 18;
+
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final digits = MoneyFormat.digitsOnly(newValue.text);
+    if (digits.isEmpty) {
+      return const TextEditingValue(text: '', selection: TextSelection.collapsed(offset: 0));
+    }
+
+    var trimmed = digits;
+    if (trimmed.length > maxDigits) {
+      trimmed = trimmed.substring(0, maxDigits);
+    }
+    trimmed = trimmed.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+    final formatted = MoneyFormat.grouped(int.parse(trimmed));
+    final digitsBefore = _digitCount(newValue.text, newValue.selection.baseOffset);
+    final clampedBefore = digitsBefore > trimmed.length ? trimmed.length : digitsBefore;
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: _offsetForDigits(formatted, clampedBefore)),
+    );
+  }
+
+  static int _digitCount(String text, int cursor) {
+    final end = cursor.clamp(0, text.length);
+    var count = 0;
+    for (var i = 0; i < end; i++) {
+      final unit = text.codeUnitAt(i);
+      if ((unit >= 48 && unit <= 57) ||
+          (unit >= 0x0660 && unit <= 0x0669) ||
+          (unit >= 0x06F0 && unit <= 0x06F9)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  static int _offsetForDigits(String formatted, int digits) {
+    if (digits <= 0) return 0;
+    var seen = 0;
+    for (var i = 0; i < formatted.length; i++) {
+      final unit = formatted.codeUnitAt(i);
+      if (unit >= 48 && unit <= 57) {
+        seen++;
+        if (seen >= digits) return i + 1;
+      }
+    }
+    return formatted.length;
+  }
 }
 
 class EvaluationLabels {

@@ -68,6 +68,8 @@ void main() {
     expect(text, contains('موظف تجريبي'));
     expect(text, contains('أمين صندوق الفرع اشهد بان مندوب المبيعات قد وقع امامي.'));
     expect(text, isNot(contains('الطرف الأول:')));
+    expect(text, contains('الطرف الثاني ( أحمد علي محمد ) والذي يحمل'));
+    expect(text, contains('رقم الهاتف ( 07701234567 ) واتساب'));
   });
 
   test('receipt paragraphs keep official labels and sale values', () {

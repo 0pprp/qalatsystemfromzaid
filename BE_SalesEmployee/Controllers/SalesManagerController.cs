@@ -122,6 +122,16 @@ namespace BE_SalesEmployee.Controllers
         public Task<IActionResult> CustomerProfileById(string cityValue, int customerId, CancellationToken ct) =>
             OneAsync(cityValue, $"sales-manager/customers/{customerId}/profile", ct);
 
+        [HttpPut("customers/{cityValue}/profile")]
+        public async Task<IActionResult> UpdateCustomerProfile(string cityValue, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.SendContentAsync(
+                user, cityValue, "sales-manager/customers/profile", HttpMethod.Put,
+                new StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"), ct);
+            return StatusCode(status, payload);
+        }
+
         [HttpPost("customers/{cityValue}/notes")]
         public async Task<IActionResult> AddCustomerNote(string cityValue, [FromBody] JsonElement body, CancellationToken ct)
         {
@@ -142,6 +152,60 @@ namespace BE_SalesEmployee.Controllers
                 return File(file.Item1, file.Item2);
             }
 
+            return StatusCode(status, payload);
+        }
+
+        [HttpGet("customer-documents/{cityValue}/{documentId:int}/file")]
+        public async Task<IActionResult> CustomerDocumentFile(string cityValue, int documentId, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetFileAsync(
+                user, cityValue, $"sales-manager/customer-documents/{documentId}/file", ct);
+            if (payload is ValueTuple<byte[], string> file)
+            {
+                return File(file.Item1, file.Item2);
+            }
+
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("customers/{cityValue}/documents")]
+        public async Task<IActionResult> UploadCustomerDocument(
+            string cityValue,
+            [FromQuery] string? type,
+            [FromQuery] int? customerId,
+            [FromQuery] string? name,
+            [FromQuery] string? phone,
+            [FromForm] IFormFile? file,
+            CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            if (file == null || file.Length <= 0)
+            {
+                return BadRequest(new { message = "الصورة مطلوبة." });
+            }
+
+            using var form = new MultipartFormDataContent();
+            await using var stream = file.OpenReadStream();
+            var part = new StreamContent(stream);
+            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
+            form.Add(part, "file", file.FileName);
+            var q = Query(
+                ("type", type),
+                ("customerId", customerId?.ToString()),
+                ("name", name),
+                ("phone", phone));
+            var (status, payload) = await _aggregator.SendContentAsync(
+                user, cityValue, "sales-manager/customers/documents" + q, HttpMethod.Post, form, ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpDelete("customer-documents/{cityValue}/{documentId:int}")]
+        public async Task<IActionResult> DeleteCustomerDocument(string cityValue, int documentId, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.SendContentAsync(
+                user, cityValue, $"sales-manager/customer-documents/{documentId}", HttpMethod.Delete, null, ct);
             return StatusCode(status, payload);
         }
 

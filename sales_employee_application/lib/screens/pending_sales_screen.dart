@@ -9,6 +9,7 @@ import 'package:sales_employee_application/tracking/shift_tracking_controller.da
 import 'package:sales_employee_application/tracking/work_shift.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
+import 'package:sales_employee_application/widgets/tappable_phone.dart';
 
 class PendingSalesScreen extends StatefulWidget {
   const PendingSalesScreen({super.key, this.binIndex});
@@ -355,10 +356,11 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(r.customerName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                  Text(
-                    '${r.customerPhone ?? ''} · ${r.customerProvince ?? ''}',
-                    style: const TextStyle(color: AppColors.muted),
-                  ),
+                  if ((r.customerProvince ?? '').trim().isNotEmpty)
+                    Text(
+                      r.customerProvince!,
+                      style: const TextStyle(color: AppColors.muted),
+                    ),
                   if ((r.notes ?? '').trim().isNotEmpty)
                     Text(r.notes!, style: const TextStyle(color: AppColors.muted)),
                   const SizedBox(height: 6),
@@ -372,6 +374,10 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
                 ],
               ),
             ),
+            if ((r.customerPhone ?? '').trim().isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Align(alignment: Alignment.centerRight, child: TappablePhone(r.customerPhone)),
+            ],
             if (r.isReturned && (r.returnNote ?? '').trim().isNotEmpty) ...[
               const SizedBox(height: AppSpacing.sm),
               Container(
@@ -406,7 +412,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
                 if (r.canPrepare) const SizedBox(height: AppSpacing.sm),
                 ElevatedButton(
                   onPressed: () => _openCheckout(r),
-                  child: const Text('تم البيع'),
+                  child: const Text('إنشاء بيع'),
                 ),
               ],
               if (r.canPend) ...[
@@ -596,7 +602,7 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
               padding: const EdgeInsets.all(AppSpacing.md),
               children: [
                 Text(row.customerName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                Text(row.customerPhone ?? ''),
+                TappablePhone(row.customerPhone),
                 Text(row.customerProvince ?? ''),
                 const SizedBox(height: AppSpacing.md),
                 Text(row.notes ?? '', style: const TextStyle(color: AppColors.muted)),
@@ -619,7 +625,7 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
                     const SizedBox(height: AppSpacing.sm),
                   ],
                   if (row.canConvert || row.canContinueSale) ...[
-                    ElevatedButton(onPressed: _busy ? null : _openCheckout, child: const Text('تم البيع')),
+                    ElevatedButton(onPressed: _busy ? null : _openCheckout, child: const Text('إنشاء بيع')),
                     const SizedBox(height: AppSpacing.sm),
                   ],
                   if (row.canPend) ...[

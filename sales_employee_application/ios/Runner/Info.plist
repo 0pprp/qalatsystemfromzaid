@@ -72,5 +72,11 @@
 	<string>التطبيق يحتاج الموقع في الخلفية لتسجيل مسار الدوام</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>التطبيق يحتاج الموقع في الخلفية لتسجيل مسار الدوام</string>
+	<key>NSCameraUsageDescription</key>
+	<string>التطبيق يحتاج الكاميرا لالتقاط صورة المحل أثناء إنشاء البيع</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>tel</string>
+	</array>
 </dict>
 </plist>

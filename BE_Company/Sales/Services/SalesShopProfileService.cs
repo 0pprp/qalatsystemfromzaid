@@ -16,6 +16,7 @@ namespace BE_Company.Sales.Services
         Task<SalesShopProfileDTO?> GetBySaleIdAsync(int saleId, CancellationToken ct);
         Task<(string FileName, byte[] Bytes)?> ReadImageAsync(int saleId, CancellationToken ct);
         Task<SalesCustomerProfileDTO> GetCustomerProfileAsync(int? customerId, string? customerName, string? phone, CancellationToken ct);
+        Task<SalesCustomerProfileDTO> UpdateCustomerProfileAsync(SalesCustomerUpdateDTO request, int? userUpdateId, CancellationToken ct);
         Task<SalesCustomerNoteDTO> AddNoteAsync(SalesCustomerNoteCreateDTO note, string authorRole, string? authorName, CancellationToken ct);
     }
 
@@ -28,6 +29,8 @@ namespace BE_Company.Sales.Services
         private readonly ISalesRequestService _requests;
         private readonly ICustomersPaymentsRepository _payments;
         private readonly ICustomersSalesRepository _customerSales;
+        private readonly ICustomersRepository _customers;
+        private readonly ISalesRequestRepository _requestRows;
 
         public SalesShopProfileService(
             SalesDevelopmentGuard guard,
@@ -36,7 +39,9 @@ namespace BE_Company.Sales.Services
             ISalesManagerReadRepository sales,
             ISalesRequestService requests,
             ICustomersPaymentsRepository payments,
-            ICustomersSalesRepository customerSales)
+            ICustomersSalesRepository customerSales,
+            ICustomersRepository customers,
+            ISalesRequestRepository requestRows)
         {
             _guard = guard;
             _env = env;
@@ -45,6 +50,8 @@ namespace BE_Company.Sales.Services
             _requests = requests;
             _payments = payments;
             _customerSales = customerSales;
+            _customers = customers;
+            _requestRows = requestRows;
         }
 
         public async Task EnsureSchemaAsync(CancellationToken ct)
@@ -80,6 +87,11 @@ namespace BE_Company.Sales.Services
             }
 
             shop.ShopArea = Math.Round(shop.ShopLength * shop.ShopWidth, 2, MidpointRounding.AwayFromZero);
+
+            if (shop.Latitude is null or < -90 or > 90 || shop.Longitude is null or < -180 or > 180)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "يجب تحديد موقع المحل.");
+            }
 
             var path = ResolveImagePath(shop.ShopImageKey);
             if (!File.Exists(path))
@@ -143,7 +155,7 @@ UPDATE dbo.SalesShopProfiles SET
  ShopName = @ShopName, ShopBusinessType = @ShopBusinessType,
  ShopStockEstimatedValue = @ShopStockEstimatedValue, EstimatedDailyRevenue = @EstimatedDailyRevenue,
  ShopLength = @ShopLength, ShopWidth = @ShopWidth, ShopArea = @ShopArea,
- ShopImageKey = @ShopImageKey, UpdatedAtUtc = SYSUTCDATETIME()
+ ShopImageKey = @ShopImageKey, Latitude = @Latitude, Longitude = @Longitude, UpdatedAtUtc = SYSUTCDATETIME()
 WHERE SaleId = @SaleId",
                     Params(sale, shop, area), cancellationToken: ct));
             }
@@ -152,10 +164,10 @@ WHERE SaleId = @SaleId",
                 await connection.ExecuteAsync(new CommandDefinition(@"
 INSERT INTO dbo.SalesShopProfiles
 (SaleId, CustomerId, CustomerName, CustomerPhone, ShopName, ShopBusinessType,
- ShopStockEstimatedValue, EstimatedDailyRevenue, ShopLength, ShopWidth, ShopArea, ShopImageKey, CreatedAtUtc)
+ ShopStockEstimatedValue, EstimatedDailyRevenue, ShopLength, ShopWidth, ShopArea, ShopImageKey, Latitude, Longitude, CreatedAtUtc)
 VALUES
 (@SaleId, @CustomerId, @CustomerName, @CustomerPhone, @ShopName, @ShopBusinessType,
- @ShopStockEstimatedValue, @EstimatedDailyRevenue, @ShopLength, @ShopWidth, @ShopArea, @ShopImageKey, SYSUTCDATETIME())",
+ @ShopStockEstimatedValue, @EstimatedDailyRevenue, @ShopLength, @ShopWidth, @ShopArea, @ShopImageKey, @Latitude, @Longitude, SYSUTCDATETIME())",
                     Params(sale, shop, area), cancellationToken: ct));
             }
 
@@ -349,14 +361,20 @@ VALUES
             var history = matchedRequests.SelectMany(r => r.History ?? []).OrderBy(h => h.CreatedAtUtc).ToList();
             var latestShop = shops.OrderByDescending(s => s.CreatedAtUtc).FirstOrDefault();
             var firstRequest = matchedRequests.FirstOrDefault();
+            var openRequest = matchedRequests.FirstOrDefault(r => !IsFrozenRequest(r.Status));
 
             return new SalesCustomerProfileDTO
             {
                 CustomerId = resolvedCustomerId,
-                CustomerName = account?.CustomerName ?? sampleFull.FullName,
-                Phone = account?.PhoneNumber ?? sampleFull.Phone,
-                Address = account?.Address ?? sampleFull.Address ?? firstRequest?.CustomerAddress,
-                Province = account?.CityName ?? sampleFull.Province ?? firstRequest?.CustomerProvince ?? sample.CityName,
+                CustomerName = account?.CustomerName ?? openRequest?.CustomerName ?? sampleFull.FullName,
+                Phone = account?.PhoneNumber ?? openRequest?.CustomerPhone ?? sampleFull.Phone,
+                Address = account?.Address ?? openRequest?.CustomerAddress ?? sampleFull.Address ?? firstRequest?.CustomerAddress,
+                Province = FirstNonEmpty(
+                    openRequest?.CustomerProvince,
+                    account?.CityName,
+                    sampleFull.Province,
+                    firstRequest?.CustomerProvince,
+                    sample.CityName),
                 NationalCardNumber = sampleFull.NationalCardNumber,
                 DelegateName = account?.DelegateName,
                 DelegateId = account?.DelegateID,
@@ -411,6 +429,66 @@ VALUES
                 History = history,
                 Notes = notes.OrderBy(n => n.CreatedAtUtc).ToList()
             };
+        }
+
+        public async Task<SalesCustomerProfileDTO> UpdateCustomerProfileAsync(
+            SalesCustomerUpdateDTO request,
+            int? userUpdateId,
+            CancellationToken ct)
+        {
+            var name = request.CustomerName?.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اسم الزبون مطلوب.");
+            }
+
+            var phone = EmptyToNull(request.Phone);
+            var province = EmptyToNull(request.Province);
+            var address = EmptyToNull(request.Address);
+            var originalName = EmptyToNull(request.OriginalName);
+            var originalPhone = EmptyToNull(request.OriginalPhone);
+            var customerId = request.CustomerId is > 0 ? request.CustomerId : null;
+
+            await EnsureSchemaAsync(ct);
+
+            if (customerId is > 0)
+            {
+                await UpdateOfficialCustomerAsync(customerId.Value, name, phone, address, userUpdateId, ct);
+            }
+
+            var requests = await _requests.ListForManagerAsync(null, null, null, null, ct);
+            var matchedOpen = requests
+                .Where(r => MatchesForUpdate(r.ExistingCustomerId, r.CustomerName, r.CustomerPhone, customerId, originalName, originalPhone)
+                            && !IsFrozenRequest(r.Status))
+                .ToList();
+            foreach (var row in matchedOpen)
+            {
+                row.CustomerName = name;
+                row.CustomerPhone = phone;
+                if (province != null)
+                {
+                    row.CustomerProvince = province;
+                }
+
+                if (address != null)
+                {
+                    row.CustomerAddress = address;
+                }
+
+                await _requestRows.UpdateAsync(row, ct);
+            }
+
+            if (customerId is null or <= 0 && matchedOpen.Count == 0)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status409Conflict,
+                    "لا يمكن تعديل هذا الزبون من طلبات مكتملة فقط. أنشئ التعديل على حساب الزبون أو على طلب بيع ما زال مفتوحاً حتى لا يتغير التاريخ السابق.");
+            }
+
+            await RelinkIdentityKeysAsync(customerId, originalName, originalPhone, name, phone, ct);
+            await UpdatePendingDraftIdentityAsync(customerId, originalName, originalPhone, name, phone, province, address, ct);
+
+            return await GetCustomerProfileAsync(customerId, name, phone, ct);
         }
 
         public async Task<SalesCustomerNoteDTO> AddNoteAsync(
@@ -502,6 +580,203 @@ ORDER BY CreatedAtUtc", cancellationToken: ct));
             return nameOk || phoneOk;
         }
 
+        private static bool MatchesForUpdate(
+            int? rowCustomerId,
+            string? rowName,
+            string? rowPhone,
+            int? customerId,
+            string? originalName,
+            string? originalPhone)
+        {
+            if (customerId is > 0 && rowCustomerId == customerId)
+            {
+                return true;
+            }
+
+            if (rowCustomerId is > 0 && customerId is > 0 && rowCustomerId != customerId)
+            {
+                return false;
+            }
+
+            return MatchesCustomer(null, rowName, rowPhone, null, originalName, originalPhone);
+        }
+
+        private static bool IsFrozenRequest(string? status) =>
+            SalesRequestStatuses.IsSold(status)
+            || string.Equals(status, SalesRequestStatuses.Rejected, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, SalesRequestStatuses.ConvertedToSale, StringComparison.OrdinalIgnoreCase);
+
+        private static string? FirstNonEmpty(params string?[] values) =>
+            values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+
+        private static string? EmptyToNull(string? value)
+        {
+            var text = value?.Trim();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+
+        private async Task UpdateOfficialCustomerAsync(
+            int customerId,
+            string name,
+            string? phone,
+            string? address,
+            int? userUpdateId,
+            CancellationToken ct)
+        {
+            CustomersGetDTO? account = null;
+            try
+            {
+                account = await _customerSales.Customers_GetByCustomerID(customerId);
+            }
+            catch
+            {
+                account = null;
+            }
+
+            if (account == null)
+            {
+                await TrySqlUpdateCustomersAsync(customerId, name, phone, address, ct);
+                return;
+            }
+
+            var put = new CustomersPutDTO
+            {
+                CustomerID = customerId,
+                UserUpdateID = userUpdateId is > 0 ? userUpdateId : account.UserID,
+                CustomerName = name,
+                PhoneNumber = phone ?? account.PhoneNumber,
+                Address = address ?? account.Address,
+                ShopName = account.ShopName,
+                SaleName = account.SaleName,
+                Notes = account.Notes
+            };
+
+            try
+            {
+                await _customers.Customers_Update(customerId, put);
+            }
+            catch
+            {
+                await TrySqlUpdateCustomersAsync(customerId, name, phone ?? account.PhoneNumber, address ?? account.Address, ct);
+            }
+        }
+
+        private async Task TrySqlUpdateCustomersAsync(
+            int customerId,
+            string name,
+            string? phone,
+            string? address,
+            CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+UPDATE dbo.Customers SET
+ CustomerName = @CustomerName,
+ PhoneNumber = COALESCE(@PhoneNumber, PhoneNumber),
+ Address = COALESCE(@Address, Address)
+WHERE CustomerID = @CustomerID",
+                new { CustomerID = customerId, CustomerName = name, PhoneNumber = phone, Address = address },
+                cancellationToken: ct));
+        }
+
+        private async Task RelinkIdentityKeysAsync(
+            int? customerId,
+            string? originalName,
+            string? originalPhone,
+            string name,
+            string? phone,
+            CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            var notes = await connection.QueryAsync<(int Id, int? CustomerId, string? CustomerName, string? CustomerPhone)>(
+                new CommandDefinition(
+                    "SELECT Id, CustomerId, CustomerName, CustomerPhone FROM dbo.SalesCustomerNotes",
+                    cancellationToken: ct));
+            foreach (var row in notes.Where(n =>
+                         MatchesForUpdate(n.CustomerId, n.CustomerName, n.CustomerPhone, customerId, originalName, originalPhone)))
+            {
+                await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.SalesCustomerNotes SET CustomerName = @CustomerName, CustomerPhone = @CustomerPhone WHERE Id = @Id",
+                    new { row.Id, CustomerName = name, CustomerPhone = phone }, cancellationToken: ct));
+            }
+
+            var docsExist = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                "SELECT CASE WHEN OBJECT_ID(N'dbo.SalesCustomerDocuments', N'U') IS NULL THEN 0 ELSE 1 END",
+                cancellationToken: ct));
+            if (docsExist == 1)
+            {
+                var docs = await connection.QueryAsync<(int Id, int? CustomerId, string? CustomerName, string? CustomerPhone)>(
+                    new CommandDefinition(
+                        "SELECT Id, CustomerId, CustomerName, CustomerPhone FROM dbo.SalesCustomerDocuments",
+                        cancellationToken: ct));
+                foreach (var row in docs.Where(n =>
+                             MatchesForUpdate(n.CustomerId, n.CustomerName, n.CustomerPhone, customerId, originalName, originalPhone)))
+                {
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.SalesCustomerDocuments SET CustomerName = @CustomerName, CustomerPhone = @CustomerPhone WHERE Id = @Id",
+                        new { row.Id, CustomerName = name, CustomerPhone = phone }, cancellationToken: ct));
+                }
+            }
+
+            var shops = await connection.QueryAsync<(int Id, int? CustomerId, string? CustomerName, string? CustomerPhone)>(
+                new CommandDefinition(
+                    "SELECT Id, CustomerId, CustomerName, CustomerPhone FROM dbo.SalesShopProfiles",
+                    cancellationToken: ct));
+            foreach (var row in shops.Where(n =>
+                         n.CustomerId is null or <= 0
+                         && MatchesForUpdate(n.CustomerId, n.CustomerName, n.CustomerPhone, customerId, originalName, originalPhone)))
+            {
+                await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.SalesShopProfiles SET CustomerName = @CustomerName, CustomerPhone = @CustomerPhone WHERE Id = @Id",
+                    new { row.Id, CustomerName = name, CustomerPhone = phone }, cancellationToken: ct));
+            }
+        }
+
+        private async Task UpdatePendingDraftIdentityAsync(
+            int? customerId,
+            string? originalName,
+            string? originalPhone,
+            string name,
+            string? phone,
+            string? province,
+            string? address,
+            CancellationToken ct)
+        {
+            var drafts = await _sales.ListSalesAsync(null, null, null, null, ct);
+            var pending = drafts.Where(s =>
+                string.Equals(s.Status, SalesStatuses.Pending, StringComparison.OrdinalIgnoreCase)
+                && MatchesForUpdate(s.CustomerId, s.FullName, s.Phone, customerId, originalName, originalPhone)).ToList();
+            if (pending.Count == 0)
+            {
+                return;
+            }
+
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            foreach (var draft in pending)
+            {
+                await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.SalesDrafts SET
+ FullName = @FullName,
+ Phone = COALESCE(@Phone, Phone),
+ Province = COALESCE(@Province, Province),
+ Address = COALESCE(@Address, Address)
+WHERE SaleId = @SaleId AND Status = N'Pending'",
+                    new
+                    {
+                        draft.SaleId,
+                        FullName = name,
+                        Phone = phone,
+                        Province = province,
+                        Address = address
+                    },
+                    cancellationToken: ct));
+            }
+        }
+
         private static List<SalesDocumentDTO> PreferFinalDocuments(List<SalesDocumentDTO> documents)
         {
             var finals = documents
@@ -550,12 +825,14 @@ ORDER BY CreatedAtUtc", cancellationToken: ct));
             shop.ShopLength,
             shop.ShopWidth,
             ShopArea = area,
-            ShopImageKey = shop.ShopImageKey!.Trim()
+            ShopImageKey = shop.ShopImageKey!.Trim(),
+            shop.Latitude,
+            shop.Longitude
         };
 
         private const string ShopSelect = @"
 SELECT Id, SaleId, CustomerId, CustomerName, CustomerPhone, ShopName, ShopBusinessType,
- ShopStockEstimatedValue, EstimatedDailyRevenue, ShopLength, ShopWidth, ShopArea, ShopImageKey, CreatedAtUtc
+ ShopStockEstimatedValue, EstimatedDailyRevenue, ShopLength, ShopWidth, ShopArea, ShopImageKey, Latitude, Longitude, CreatedAtUtc
 FROM dbo.SalesShopProfiles";
 
         private const string SchemaSql = @"
@@ -575,6 +852,8 @@ BEGIN
         ShopWidth DECIMAL(18,2) NOT NULL,
         ShopArea DECIMAL(18,2) NOT NULL,
         ShopImageKey NVARCHAR(500) NOT NULL,
+        Latitude DECIMAL(9,6) NULL,
+        Longitude DECIMAL(9,6) NULL,
         CreatedAtUtc DATETIME NOT NULL CONSTRAINT DF_SalesShopProfiles_CreatedAt DEFAULT (SYSUTCDATETIME()),
         UpdatedAtUtc DATETIME NULL
     );
@@ -591,6 +870,13 @@ BEGIN
         Note NVARCHAR(MAX) NOT NULL,
         CreatedAtUtc DATETIME NOT NULL CONSTRAINT DF_SalesCustomerNotes_CreatedAt DEFAULT (SYSUTCDATETIME())
     );
+END;
+IF OBJECT_ID(N'dbo.SalesShopProfiles', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.SalesShopProfiles', N'Latitude') IS NULL
+        ALTER TABLE dbo.SalesShopProfiles ADD Latitude DECIMAL(9,6) NULL;
+    IF COL_LENGTH(N'dbo.SalesShopProfiles', N'Longitude') IS NULL
+        ALTER TABLE dbo.SalesShopProfiles ADD Longitude DECIMAL(9,6) NULL;
 END;";
     }
 }

@@ -400,6 +400,8 @@ class SalesShopProfile {
     this.shopArea,
     this.shopImageKey,
     this.shopImageUrl,
+    this.latitude,
+    this.longitude,
   });
 
   final String shopName;
@@ -411,6 +413,8 @@ class SalesShopProfile {
   final num? shopArea;
   final String? shopImageKey;
   final String? shopImageUrl;
+  final double? latitude;
+  final double? longitude;
 
   factory SalesShopProfile.fromJson(Map<String, dynamic> json) => SalesShopProfile(
         shopName: '${json['shopName'] ?? json['ShopName'] ?? ''}',
@@ -424,6 +428,35 @@ class SalesShopProfile {
         shopArea: num.tryParse('${json['shopArea'] ?? json['ShopArea'] ?? ''}'),
         shopImageKey: json['shopImageKey']?.toString() ?? json['ShopImageKey']?.toString(),
         shopImageUrl: json['shopImageUrl']?.toString() ?? json['ShopImageUrl']?.toString(),
+        latitude: double.tryParse('${json['latitude'] ?? json['Latitude'] ?? ''}'),
+        longitude: double.tryParse('${json['longitude'] ?? json['Longitude'] ?? ''}'),
+      );
+}
+
+class SalesCustomerKycDocument {
+  SalesCustomerKycDocument({
+    required this.id,
+    required this.documentType,
+    required this.typeLabel,
+    this.saleId,
+    this.fileName,
+    this.fileUrl,
+  });
+
+  final int id;
+  final String documentType;
+  final String typeLabel;
+  final int? saleId;
+  final String? fileName;
+  final String? fileUrl;
+
+  factory SalesCustomerKycDocument.fromJson(Map<String, dynamic> json) => SalesCustomerKycDocument(
+        id: int.tryParse('${json['id'] ?? json['Id'] ?? 0}') ?? 0,
+        documentType: '${json['documentType'] ?? json['DocumentType'] ?? ''}',
+        typeLabel: '${json['typeLabel'] ?? json['TypeLabel'] ?? ''}',
+        saleId: int.tryParse('${json['saleId'] ?? json['SaleId'] ?? ''}'),
+        fileName: json['fileName']?.toString() ?? json['FileName']?.toString(),
+        fileUrl: json['fileUrl']?.toString() ?? json['FileUrl']?.toString(),
       );
 }
 
@@ -639,6 +672,8 @@ class SalesShopComplete {
     this.overrideTotalSalePrice,
     this.overrideDailyInstallment,
     this.overrideDownPayment,
+    this.latitude,
+    this.longitude,
   });
 
   final String shopName;
@@ -652,6 +687,8 @@ class SalesShopComplete {
   final num? overrideTotalSalePrice;
   final num? overrideDailyInstallment;
   final num? overrideDownPayment;
+  final double? latitude;
+  final double? longitude;
 
   num get shopArea => shopLength * shopWidth;
 
@@ -668,6 +705,8 @@ class SalesShopComplete {
         if (overrideTotalSalePrice != null) 'overrideTotalSalePrice': overrideTotalSalePrice,
         if (overrideDailyInstallment != null) 'overrideDailyInstallment': overrideDailyInstallment,
         if (overrideDownPayment != null) 'overrideDownPayment': overrideDownPayment,
+        if (latitude != null) 'latitude': latitude,
+        if (longitude != null) 'longitude': longitude,
       };
 }
 

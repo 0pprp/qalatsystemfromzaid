@@ -157,6 +157,69 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("{id:int}/customer-documents")]
+        public Task<IActionResult> CustomerDocuments(int id, CancellationToken ct) =>
+            ProxyAssigned($"sales/{id}/customer-documents", HttpMethod.Get, null, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("{id:int}/customer-documents")]
+        public async Task<IActionResult> UploadCustomerDocument(int id, [FromQuery] string? type, [FromForm] IFormFile? file, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            if (file == null || file.Length <= 0)
+            {
+                return BadRequest(new { message = "الصورة مطلوبة." });
+            }
+
+            using var form = new MultipartFormDataContent();
+            await using var stream = file.OpenReadStream();
+            var part = new StreamContent(stream);
+            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
+            form.Add(part, "file", file.FileName);
+            var path = $"sales/{id}/customer-documents";
+            if (!string.IsNullOrWhiteSpace(type))
+            {
+                path += $"?type={Uri.EscapeDataString(type)}";
+            }
+
+            return await ProxyAssigned(path, HttpMethod.Post, form, ct);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("customer-documents/{documentId:int}/file")]
+        public async Task<IActionResult> CustomerDocumentFile(int documentId, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var user = TokenService.FromPrincipal(User);
+            using var response = await _proxy.SendAuthorizedAsync(
+                user.CityLink, $"sales/customer-documents/{documentId}/file", HttpMethod.Get, user.BranchToken, null, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(ct);
+                return StatusCode((int)response.StatusCode, string.IsNullOrWhiteSpace(error) ? null : BranchProxyService.TryParseJson(error));
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+            return File(bytes, contentType);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpDelete("customer-documents/{documentId:int}")]
+        public Task<IActionResult> DeleteCustomerDocument(int documentId, CancellationToken ct) =>
+            ProxyAssigned($"sales/customer-documents/{documentId}", HttpMethod.Delete, null, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("{id:int}/complete")]
         public async Task<IActionResult> Complete(int id, [FromBody] JsonElement body, CancellationToken ct)
         {

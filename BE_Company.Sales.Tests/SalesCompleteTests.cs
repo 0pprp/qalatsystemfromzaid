@@ -301,7 +301,9 @@ namespace BE_Company.Sales.Tests
             EstimatedDailyRevenue = 80000,
             ShopLength = 8,
             ShopWidth = 5,
-            ShopImageKey = "sales/10/shop.jpg"
+            ShopImageKey = "sales/10/shop.jpg",
+            Latitude = 32.0289,
+            Longitude = 44.3325
         };
     }
 
@@ -325,6 +327,11 @@ namespace BE_Company.Sales.Tests
             {
                 throw new SalesCompleteException(400, "بيانات المحل مطلوبة قبل إتمام البيع.");
             }
+
+            if (shop.Latitude is null or < -90 or > 90 || shop.Longitude is null or < -180 or > 180)
+            {
+                throw new SalesCompleteException(400, "يجب تحديد موقع المحل.");
+            }
         }
 
         public Task<SalesShopProfileDTO> SaveImageAsync(int saleId, int employeeId, IFormFile file, CancellationToken ct) =>
@@ -344,6 +351,16 @@ namespace BE_Company.Sales.Tests
 
         public Task<SalesCustomerProfileDTO> GetCustomerProfileAsync(int? customerId, string? customerName, string? phone, CancellationToken ct) =>
             Task.FromResult(new SalesCustomerProfileDTO());
+
+        public Task<SalesCustomerProfileDTO> UpdateCustomerProfileAsync(SalesCustomerUpdateDTO request, int? userUpdateId, CancellationToken ct) =>
+            Task.FromResult(new SalesCustomerProfileDTO
+            {
+                CustomerId = request.CustomerId,
+                CustomerName = request.CustomerName ?? string.Empty,
+                Phone = request.Phone,
+                Province = request.Province,
+                Address = request.Address
+            });
 
         public Task<SalesCustomerNoteDTO> AddNoteAsync(SalesCustomerNoteCreateDTO note, string authorRole, string? authorName, CancellationToken ct) =>
             Task.FromResult(new SalesCustomerNoteDTO { Note = note.Note ?? "", AuthorRole = authorRole });

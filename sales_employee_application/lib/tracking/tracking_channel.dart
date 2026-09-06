@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:sales_employee_application/config/app_env.dart';
+import 'package:sales_employee_application/services/geo_fix.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/tracking/shift_start_debug.dart';
 import 'package:sales_employee_application/tracking/tracking_config.dart';
@@ -47,6 +48,33 @@ class TrackingChannel {
     try {
       return await _channel.invokeMethod<bool>('isRunning') ?? false;
     } on MissingPluginException {
+      return false;
+    }
+  }
+
+  static Future<GeoFix?> currentFix() async {
+    try {
+      final raw = await _channel.invokeMethod<dynamic>('currentFix');
+      if (raw is! Map) return null;
+      final map = Map<Object?, Object?>.from(raw);
+      final lat = (map['latitude'] as num?)?.toDouble();
+      final lng = (map['longitude'] as num?)?.toDouble();
+      if (lat == null || lng == null) return null;
+      return GeoFix(lat, lng, (map['accuracy'] as num?)?.toDouble());
+    } on MissingPluginException {
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> dial(String number) async {
+    try {
+      await _channel.invokeMethod<bool>('dial', {'number': number});
+      return true;
+    } on MissingPluginException {
+      return false;
+    } catch (_) {
       return false;
     }
   }

@@ -123,6 +123,33 @@ namespace BE_SalesEmployee.Services
             return await _http.SendAsync(request, ct);
         }
 
+        public async Task<HttpResponseMessage> SendManagerContentAsync(
+            string cityLink,
+            string relativePath,
+            HttpMethod method,
+            HttpContent? content,
+            string? managerName,
+            CancellationToken ct)
+        {
+            var url = $"{AdminCitiesService.NormalizeLink(cityLink)}{relativePath.TrimStart('/')}";
+            var request = new HttpRequestMessage(method, url);
+            var key = _configuration["InternalApiKey"] ?? "";
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                request.Headers.TryAddWithoutValidation("X-Sales-Gateway-Key", key);
+            }
+            if (!string.IsNullOrWhiteSpace(managerName))
+            {
+                var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(managerName));
+                request.Headers.TryAddWithoutValidation("X-Sales-Manager-Name-B64", b64);
+            }
+            if (content != null)
+            {
+                request.Content = content;
+            }
+            return await _http.SendAsync(request, ct);
+        }
+
         public async Task<HttpResponseMessage> SendGatewayKeyAsync(
             string cityLink,
             string relativePath,

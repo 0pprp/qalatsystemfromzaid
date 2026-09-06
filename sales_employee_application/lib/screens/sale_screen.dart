@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:sales_employee_application/data/sales_models.dart';
@@ -8,9 +9,13 @@ import 'package:sales_employee_application/screens/sale_complete_success_screen.
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/sale_document_storage.dart';
 import 'package:sales_employee_application/services/sale_documents.dart';
+import 'package:sales_employee_application/services/shop_gps.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
+import 'package:sales_employee_application/widgets/customer_document_slot.dart';
 import 'package:sales_employee_application/widgets/inventory_item_info.dart';
+import 'package:sales_employee_application/widgets/shop_location_button.dart';
+import 'package:sales_employee_application/widgets/tappable_phone.dart';
 
 class SaleScreen extends StatefulWidget {
   const SaleScreen({super.key});
@@ -65,16 +70,21 @@ class _SaleScreenState extends State<SaleScreen> {
   List<SalesCustomerList> _customerLists = [];
   int? _customerListId;
   int? _preferredListId;
-  bool _lockName = false;
-  bool _lockPhone = false;
-  bool _lockProvince = false;
-  bool _lockAddress = false;
   SalesDraft? _created;
   List<SalesDocument> _previewDocs = const [];
   List<int>? _shopImageBytes;
   String _shopImageName = 'shop.jpg';
   String? _shopImageKey;
   String? _shopError;
+  double? _shopLat;
+  double? _shopLng;
+  bool _locating = false;
+  final List<_KycSlot> _kycSlots = [
+    _KycSlot('NationalIdFront', 'البطاقة الوطنية - الوجه الأمامي'),
+    _KycSlot('NationalIdBack', 'البطاقة الوطنية - الوجه الخلفي'),
+    _KycSlot('ResidenceCard', 'بطاقة السكن'),
+    _KycSlot('ResidenceCertificate', 'تأييد السكن'),
+  ];
 
   @override
   void initState() {
@@ -118,11 +128,11 @@ class _SaleScreenState extends State<SaleScreen> {
       }
       _preferList(arg.delegateId);
       _applyPreferredList();
-      _fillIfPresent(_name, arg.customerName, lock: (v) => _lockName = v);
-      _fillIfPresent(_phone, arg.customerPhone, lock: (v) => _lockPhone = v);
-      _fillIfPresent(_province, arg.customerProvince, lock: (v) => _lockProvince = v);
-      _fillIfPresent(_address, arg.customerAddress, lock: (v) => _lockAddress = v);
-      if (!_lockProvince && _province.text.trim().isEmpty) {
+      _fillIfPresent(_name, arg.customerName);
+      _fillIfPresent(_phone, arg.customerPhone);
+      _fillIfPresent(_province, arg.customerProvince);
+      _fillIfPresent(_address, arg.customerAddress);
+      if (_province.text.trim().isEmpty) {
         _province.text = 'النجف';
       }
       _resumeDraftIfAny();
@@ -147,6 +157,10 @@ class _SaleScreenState extends State<SaleScreen> {
   void _applyDraft(SalesDraft draft) {
     _created = draft;
     _previewDocs = const [];
+    if (draft.fullName.trim().isNotEmpty) _name.text = draft.fullName.trim();
+    if ((draft.phone ?? '').trim().isNotEmpty) _phone.text = draft.phone!.trim();
+    if ((draft.province ?? '').trim().isNotEmpty) _province.text = draft.province!.trim();
+    if ((draft.address ?? '').trim().isNotEmpty) _address.text = draft.address!.trim();
     if (draft.nationalCardNumber != null && draft.nationalCardNumber!.trim().isNotEmpty) {
       _card.text = draft.nationalCardNumber!.trim();
     }
@@ -180,18 +194,26 @@ class _SaleScreenState extends State<SaleScreen> {
       if (shop.shopName.trim().isNotEmpty) _shopName.text = shop.shopName.trim();
       if (shop.shopBusinessType.trim().isNotEmpty) _shopType.text = shop.shopBusinessType.trim();
       if (shop.shopStockEstimatedValue > 0) {
-        _shopStock.text = shop.shopStockEstimatedValue.round().toString();
+        _shopStock.text = MoneyFormat.grouped(shop.shopStockEstimatedValue);
       }
       if (shop.estimatedDailyRevenue > 0) {
-        _shopDaily.text = shop.estimatedDailyRevenue.round().toString();
+        _shopDaily.text = MoneyFormat.grouped(shop.estimatedDailyRevenue);
       }
       if (shop.shopLength > 0) _shopLength.text = _numText(shop.shopLength);
       if (shop.shopWidth > 0) _shopWidth.text = _numText(shop.shopWidth);
       if (shop.shopImageKey != null && shop.shopImageKey!.trim().isNotEmpty) {
         _shopImageKey = shop.shopImageKey!.trim();
       }
+      if (ShopGps.isValid(shop.latitude, shop.longitude)) {
+        _shopLat = shop.latitude;
+        _shopLng = shop.longitude;
+      }
     }
     setState(() {});
+    final id = draft.saleId;
+    if (id > 0) {
+      _hydrateCustomerDocs(id);
+    }
   }
 
   void _fillOverride(TextEditingController c, num? value) {
@@ -199,19 +221,15 @@ class _SaleScreenState extends State<SaleScreen> {
       c.clear();
       return;
     }
-    c.text = value.round().toString();
+    c.text = MoneyFormat.grouped(value);
   }
 
   String _numText(num value) => value % 1 == 0 ? value.round().toString() : value.toString();
 
-  void _fillIfPresent(TextEditingController c, String? value, {required void Function(bool) lock}) {
+  void _fillIfPresent(TextEditingController c, String? value) {
     final text = value?.trim() ?? '';
-    if (text.isEmpty) {
-      lock(false);
-      return;
-    }
+    if (text.isEmpty) return;
     c.text = text;
-    lock(true);
   }
 
   void _preferList(int? id) {
@@ -408,6 +426,17 @@ class _SaleScreenState extends State<SaleScreen> {
       setState(() => _shopError = 'صورة المحل مطلوبة.');
       return false;
     }
+    if (!ShopGps.isValid(_shopLat, _shopLng)) {
+      final debug = ShopGps.debugFix;
+      if (debug != null && ShopGps.isValid(debug.latitude, debug.longitude)) {
+        _shopLat = debug.latitude;
+        _shopLng = debug.longitude;
+      }
+    }
+    if (!ShopGps.isValid(_shopLat, _shopLng)) {
+      setState(() => _shopError = 'يجب تحديد موقع المحل.');
+      return false;
+    }
     setState(() => _shopError = null);
     return true;
   }
@@ -427,6 +456,8 @@ class _SaleScreenState extends State<SaleScreen> {
       overrideTotalSalePrice: _parsedOrNull(_totalPrice),
       overrideDailyInstallment: _parsedOrNull(_installment),
       overrideDownPayment: _parsedOrNull(_downPayment),
+      latitude: _shopLat,
+      longitude: _shopLng,
     );
   }
 
@@ -461,6 +492,7 @@ class _SaleScreenState extends State<SaleScreen> {
         ),
       );
       _created = created;
+      await _flushCustomerDocs(created.saleId);
       if (_shopImageKey == null || _shopImageKey!.isEmpty) {
         final bytes = _shopImageBytes ?? const <int>[];
         _shopImageKey = await SalesRepositoryFactory.instance.uploadShopImage(
@@ -529,26 +561,6 @@ class _SaleScreenState extends State<SaleScreen> {
     String? contract;
     String? receipt;
     var failed = false;
-    try {
-      final draft = _created;
-      if (draft != null && docs.isNotEmpty) {
-        final contractFile = await SaleDocumentStorage.savePdf(
-          'Sale_${draft.saleId}_Contract.pdf',
-          await SaleDocuments.contractBytesFromDraft(draft),
-        );
-        final receiptFile = await SaleDocumentStorage.savePdf(
-          'Sale_${draft.saleId}_PromissoryNote.pdf',
-          await SaleDocuments.receiptBytesFromDraft(draft),
-        );
-        contract = contractFile.path;
-        receipt = receiptFile.path;
-      }
-    } catch (_) {
-      failed = true;
-    }
-    if (contract != null && receipt != null) {
-      return _SaleDownloadBundle(contractPath: contract, receiptPath: receipt, failed: false);
-    }
     for (final doc in docs) {
       try {
         final bytes = await SalesRepositoryFactory.instance.downloadDocument(_created?.saleId ?? 0, doc);
@@ -556,6 +568,27 @@ class _SaleScreenState extends State<SaleScreen> {
         if (doc.isContract) {
           contract = file.path;
         } else if (doc.isPromissoryNote) {
+          receipt = file.path;
+        }
+      } catch (_) {
+        failed = true;
+      }
+    }
+    if ((contract == null || receipt == null) && _created != null && docs.isNotEmpty) {
+      try {
+        final draft = _created!;
+        if (contract == null) {
+          final file = await SaleDocumentStorage.savePdf(
+            'Sale_${draft.saleId}_Contract.pdf',
+            await SaleDocuments.contractBytesFromDraft(draft),
+          );
+          contract = file.path;
+        }
+        if (receipt == null) {
+          final file = await SaleDocumentStorage.savePdf(
+            'Sale_${draft.saleId}_PromissoryNote.pdf',
+            await SaleDocuments.receiptBytesFromDraft(draft),
+          );
           receipt = file.path;
         }
       } catch (_) {
@@ -573,6 +606,14 @@ class _SaleScreenState extends State<SaleScreen> {
   Future<void> _openOrDownload(SalesDocument doc) async {
     try {
       final draft = _created;
+      if (doc.documentId != null || doc.downloadUrl.isNotEmpty) {
+        try {
+          final bytes = await SalesRepositoryFactory.instance.downloadDocument(draft?.saleId ?? 0, doc);
+          final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
+          await OpenFilex.open(file.path);
+          return;
+        } catch (_) {}
+      }
       if (draft != null) {
         final bytes = doc.isContract
             ? await SaleDocuments.contractBytesFromDraft(draft)
@@ -603,9 +644,10 @@ class _SaleScreenState extends State<SaleScreen> {
     }
     try {
       final picked = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
+        source: ImageSource.camera,
         imageQuality: 85,
         maxWidth: 1600,
+        preferredCameraDevice: CameraDevice.rear,
       );
       if (picked == null) return;
       final bytes = await picked.readAsBytes();
@@ -618,7 +660,113 @@ class _SaleScreenState extends State<SaleScreen> {
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _shopError = 'تعذر اختيار صورة المحل');
+      setState(() => _shopError = 'تعذر التقاط صورة المحل');
+    }
+  }
+
+  Future<void> _hydrateCustomerDocs(int saleId) async {
+    try {
+      final rows = await SalesRepositoryFactory.instance.listCustomerDocuments(saleId);
+      for (final slot in _kycSlots) {
+        final matches = rows.where((r) => r.documentType == slot.type).toList();
+        if (matches.isEmpty) continue;
+        final match = matches.last;
+        slot.documentId = match.id;
+        slot.pendingUpload = false;
+        try {
+          slot.bytes = await SalesRepositoryFactory.instance.customerDocumentBytes(match.id);
+        } catch (_) {}
+      }
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  Future<void> _flushCustomerDocs(int saleId) async {
+    for (final slot in _kycSlots) {
+      if (!slot.pendingUpload || slot.bytes == null || slot.bytes!.isEmpty) continue;
+      slot.busy = true;
+      if (mounted) setState(() {});
+      try {
+        final saved = await SalesRepositoryFactory.instance.uploadCustomerDocument(
+          saleId,
+          slot.type,
+          slot.bytes!,
+          slot.fileName,
+        );
+        slot.documentId = saved.id;
+        slot.pendingUpload = false;
+      } catch (_) {
+        // Optional documents must not block the sale.
+      } finally {
+        slot.busy = false;
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _pickKyc(_KycSlot slot, ImageSource source) async {
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: 1600,
+        preferredCameraDevice: CameraDevice.rear,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        slot.bytes = bytes;
+        slot.fileName = picked.name.isEmpty ? 'doc.jpg' : picked.name;
+        slot.pendingUpload = true;
+      });
+      final saleId = _created?.saleId;
+      if (saleId != null && saleId > 0) {
+        await _flushCustomerDocs(saleId);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _toast('تعذر اختيار صورة المستند');
+    }
+  }
+
+  Future<void> _deleteKyc(_KycSlot slot) async {
+    final id = slot.documentId;
+    if (id != null && id > 0) {
+      try {
+        await SalesRepositoryFactory.instance.deleteCustomerDocument(id);
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    setState(() {
+      slot.bytes = null;
+      slot.documentId = null;
+      slot.pendingUpload = false;
+      slot.fileName = 'doc.jpg';
+    });
+  }
+
+  Future<void> _captureShopLocation() async {
+    if (_locating) return;
+    setState(() {
+      _locating = true;
+      _shopError = null;
+    });
+    try {
+      final fix = await ShopGps.capture();
+      if (!mounted) return;
+      setState(() {
+        _shopLat = fix.latitude;
+        _shopLng = fix.longitude;
+        _locating = false;
+        _shopError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _locating = false;
+        _shopError = e.toString().replaceFirst('Exception: ', '');
+      });
     }
   }
 
@@ -744,16 +892,6 @@ class _SaleScreenState extends State<SaleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_knownSummary().isNotEmpty) ...[
-            const Text('بيانات الزبون الموجودة', style: TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 6),
-            for (final line in _knownSummary())
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(line, style: const TextStyle(color: AppColors.muted)),
-              ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
           const Text('قائمة الزبون *', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           Padding(
@@ -783,38 +921,45 @@ class _SaleScreenState extends State<SaleScreen> {
                   style: TextStyle(color: AppColors.muted, fontSize: 12)),
             ),
           const SizedBox(height: AppSpacing.sm),
-          if (!_lockName) _field(_name, 'الاسم الكامل *', validator: _req),
-          if (!_lockPhone) _field(_phone, 'رقم الهاتف *', keyboard: TextInputType.phone, validator: _req),
-          if (!_lockProvince) _field(_province, 'المحافظة *', validator: _req),
+          _field(_name, 'الاسم الكامل *', validator: _req),
+          _field(_phone, 'رقم الهاتف *', keyboard: TextInputType.phone, validator: _req),
+          _field(_province, 'المحافظة *', validator: _req),
           _field(_card, 'رقم البطاقة الوطنية *', keyboard: TextInputType.number, validator: _req),
-          if (!_lockAddress) _field(_address, 'العنوان *', validator: _req),
+          _field(_address, 'العنوان *', validator: _req),
           _field(_landmark, 'أقرب نقطة دالة *', validator: _req),
           _field(_mukhtar, 'اسم المختار *', validator: _req),
           if (!_fromKnownSource) _field(_ration, 'رقم مركز التموين (اختياري)', keyboard: TextInputType.number, last: true),
+          const SizedBox(height: AppSpacing.md),
+          const Text('مستندات الزبون', style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          const Text(
+            'اختيارية. يمكن التصوير أو الاختيار من المعرض.',
+            style: TextStyle(color: AppColors.muted, fontSize: 12),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          for (final slot in _kycSlots)
+            CustomerDocumentSlot(
+              label: slot.label,
+              busy: slot.busy,
+              bytes: slot.bytes,
+              onCamera: () => _pickKyc(slot, ImageSource.camera),
+              onGallery: () => _pickKyc(slot, ImageSource.gallery),
+              onDelete: () => _deleteKyc(slot),
+            ),
         ],
       ),
     );
   }
 
-  List<String> _knownSummary() {
-    final lines = <String>[];
-    if (_lockName && _filled(_name)) lines.add(_name.text.trim());
-    if (_lockPhone && _filled(_phone)) lines.add(_phone.text.trim());
-    if (_lockProvince && _filled(_province)) lines.add(_province.text.trim());
-    if (_lockAddress && _filled(_address)) lines.add(_address.text.trim());
-    if (_ration.text.trim().isNotEmpty && _fromKnownSource) {
-      lines.add('التموين: ${_ration.text.trim()}');
-    }
-    return lines;
-  }
-
   Widget _field(TextEditingController c, String label,
-      {TextInputType? keyboard, String? Function(String?)? validator, bool last = false}) {
+      {TextInputType? keyboard, String? Function(String?)? validator, bool last = false,
+      List<TextInputFormatter>? formatters}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: TextFormField(
         controller: c,
         keyboardType: keyboard,
+        inputFormatters: formatters,
         validator: validator,
         textInputAction: last ? TextInputAction.done : TextInputAction.next,
         enableSuggestions: false,
@@ -921,6 +1066,7 @@ class _SaleScreenState extends State<SaleScreen> {
       child: TextField(
         controller: c,
         keyboardType: const TextInputType.numberWithOptions(decimal: false),
+        inputFormatters: MoneyFormat.inputFormatters,
         textInputAction: last ? TextInputAction.done : TextInputAction.next,
         enableSuggestions: false,
         autocorrect: false,
@@ -943,8 +1089,10 @@ class _SaleScreenState extends State<SaleScreen> {
         const SizedBox(height: AppSpacing.sm),
         _field(_shopName, 'اسم المحل *', validator: _req),
         _field(_shopType, 'طبيعة عمل المحل *', validator: _req),
-        _field(_shopStock, 'تقدير قيمة بضاعة المحل *', keyboard: TextInputType.number, validator: _req),
-        _field(_shopDaily, 'تقدير الوارد اليومي *', keyboard: TextInputType.number, validator: _req),
+        _field(_shopStock, 'تقدير قيمة بضاعة المحل *',
+            keyboard: TextInputType.number, validator: _req, formatters: MoneyFormat.inputFormatters),
+        _field(_shopDaily, 'تقدير الوارد اليومي *',
+            keyboard: TextInputType.number, validator: _req, formatters: MoneyFormat.inputFormatters),
         _field(_shopLength, 'طول المحل بالمتر *', keyboard: TextInputType.number, validator: _req),
         _field(_shopWidth, 'عرض المحل بالمتر *', keyboard: TextInputType.number, validator: _req),
         Align(
@@ -957,11 +1105,17 @@ class _SaleScreenState extends State<SaleScreen> {
           ),
         ),
         _field(_shopNote, 'ملاحظة الموظف (اختياري)', last: true),
+        ShopLocationButton(
+          loading: _locating,
+          captured: ShopGps.isValid(_shopLat, _shopLng),
+          onPressed: _captureShopLocation,
+        ),
+        const SizedBox(height: AppSpacing.sm),
         OutlinedButton(
           onPressed: _pickShopImage,
           child: const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
-            child: Text('اختيار صورة المحل'),
+            child: Text('التقاط صورة المحل'),
           ),
         ),
         if (_shopImageBytes != null && _shopImageBytes!.isNotEmpty) ...[
@@ -1003,7 +1157,7 @@ class _SaleScreenState extends State<SaleScreen> {
         const SizedBox(height: AppSpacing.sm),
         Text(_name.text),
         const SizedBox(height: 6),
-        Text(_phone.text),
+        TappablePhone(_phone.text),
         const SizedBox(height: 6),
         Text(_province.text),
         const SizedBox(height: 6),
@@ -1030,6 +1184,8 @@ class _SaleScreenState extends State<SaleScreen> {
         Text('قيمة البضاعة: ${MoneyFormat.iqd(_parsedOrNull(_shopStock) ?? 0)}'),
         Text('الوارد اليومي: ${MoneyFormat.iqd(_parsedOrNull(_shopDaily) ?? 0)}'),
         Text('المساحة: ${_shopArea.toStringAsFixed(_shopArea % 1 == 0 ? 0 : 2)} م²'),
+        if (ShopGps.isValid(_shopLat, _shopLng))
+          Text('الموقع: ${_shopLat!.toStringAsFixed(6)}, ${_shopLng!.toStringAsFixed(6)}'),
         if (_shopNote.text.trim().isNotEmpty) Text(_shopNote.text.trim()),
         const SizedBox(height: AppSpacing.md),
         const Text('العقد', style: TextStyle(fontWeight: FontWeight.w700)),
@@ -1056,6 +1212,17 @@ class _SaleScreenState extends State<SaleScreen> {
       ),
     );
   }
+}
+
+class _KycSlot {
+  _KycSlot(this.type, this.label);
+  final String type;
+  final String label;
+  List<int>? bytes;
+  String fileName = 'doc.jpg';
+  int? documentId;
+  bool pendingUpload = false;
+  bool busy = false;
 }
 
 class _SaleDownloadBundle {
