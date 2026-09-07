@@ -92,12 +92,12 @@ void main() {
     expect(find.text('سعد كاظم'), findsOneWidget);
     expect(find.text('ahmed'), findsNothing);
     expect(find.text('متابعة البيع'), findsOneWidget);
-    expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsOneWidget);
-    expect(find.widgetWithText(OutlinedButton, 'معلّق'), findsOneWidget);
     expect(find.widgetWithText(TextButton, 'مرفوض'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, 'معلّق'), findsNothing);
   });
 
-  test('Inspected available actions are continue prepared pending rejected', () {
+  test('Inspected available actions are continue and reject only', () {
     final row = SalesWorkRequest(
       id: 9,
       customerName: 'سعد كاظم',
@@ -105,15 +105,14 @@ void main() {
       createdAtUtc: DateTime.utc(2026, 9, 2),
       convertedToSaleId: 101,
     );
-    expect(row.availableActions, ['continue', 'prepared', 'pending', 'rejected']);
-    expect(row.availableActions, isNot(equals(['continue', 'rejected'])));
-    expect(row.canPrepare, isTrue);
-    expect(row.canPend, isTrue);
+    expect(row.availableActions, ['continue', 'rejected']);
+    expect(row.availableActions, isNot(contains('prepared')));
+    expect(row.availableActions, isNot(contains('pending')));
     expect(row.canReject, isTrue);
     expect(row.canContinueSale, isTrue);
   });
 
-  testWidgets('Inspected details screen shows four actions not two', (tester) async {
+  testWidgets('Inspected details screen shows continue and reject only', (tester) async {
     final repo = MockSalesRepository()
       ..seedRequest(SalesWorkRequest(
         id: 9,
@@ -130,9 +129,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.widgetWithText(ElevatedButton, 'متابعة البيع'), findsOneWidget);
-    expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsOneWidget);
-    expect(find.widgetWithText(OutlinedButton, 'معلّق'), findsOneWidget);
     expect(find.widgetWithText(TextButton, 'مرفوض'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, 'معلّق'), findsNothing);
     expect(find.widgetWithText(ElevatedButton, 'إنشاء بيع'), findsNothing);
   });
 

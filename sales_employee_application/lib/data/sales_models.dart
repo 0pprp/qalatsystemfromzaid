@@ -680,11 +680,11 @@ class SalesWorkRequest {
       normalizedStatus == 'InProgress' ||
       normalizedStatus == 'ConvertedToSale';
 
-  /// Actions drawn for this request. Inspected is never continue+rejected only.
+  /// Inspected employee UI: continue sale + reject only.
   List<String> get availableActions {
     if (!canAct) return const [];
     if (isInspected) {
-      return const ['continue', 'prepared', 'pending', 'rejected'];
+      return const ['continue', 'rejected'];
     }
     final actions = <String>[];
     if (canPrepare) actions.add('prepared');

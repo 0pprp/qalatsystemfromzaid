@@ -107,7 +107,7 @@ namespace BE_Company.Sales.Tests
         {
             Assert.Equal(80f, OfficialSalesPdfRenderer.DebtorFingerprintHeight);
             Assert.Equal(56f, OfficialSalesPdfRenderer.FirstPartySignatureHeight);
-            Assert.Equal(42f, OfficialSalesPdfRenderer.SignatureWriteHeight);
+            Assert.Equal(50f, OfficialSalesPdfRenderer.SignatureWriteHeight);
             using var stream = new MemoryStream(OfficialSalesPdfRenderer.BuildSaleDocuments(Draft()));
             using var document = PdfDocument.Open(stream);
             Assert.Equal(2, document.NumberOfPages);
@@ -165,10 +165,13 @@ namespace BE_Company.Sales.Tests
         public void ContractSignatures_HaveWritableWhitespaceWithoutThirdPage()
         {
             var source = File.ReadAllText(FindRendererSource());
-            Assert.Contains("col.Item().Height(firstHeight);", source);
-            Assert.Contains("col.Item().Height(secondHeight);", source);
-            Assert.Contains("FirstPartySignatureHeight", source);
-            Assert.DoesNotContain("Signature(row, \"الطرف الأول\")", source);
+            Assert.Contains("SignatureLabel(row, \"الطرف الأول\")", source);
+            Assert.Contains("SignatureLabel(row, \"أمين الصندوق\")", source);
+            Assert.Contains("SignatureLabel(row, \"الطرف الثاني\")", source);
+            Assert.Contains("SignatureLabel(row, \"مندوب المبيعات\")", source);
+            Assert.Contains("col.Item().Height(FirstPartySignatureHeight);", source);
+            Assert.Contains("col.Item().Height(SignatureWriteHeight);", source);
+            Assert.DoesNotContain("أمين الصندوق\", SignatureWriteHeight", source);
 
             using var stream = new MemoryStream(OfficialSalesPdfRenderer.BuildSaleDocuments(LongDraft()));
             using var document = PdfDocument.Open(stream);
