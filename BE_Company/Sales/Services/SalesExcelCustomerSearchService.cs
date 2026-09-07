@@ -55,8 +55,11 @@ namespace BE_Company.Sales.Services
                     continue;
                 }
 
+                row.UsedFamilySearch = SalesCustomerNameMatch.UsesFamilySearch(normalized);
+                row.SearchKey = SalesCustomerNameMatch.FamilySearchKey(normalized);
+
                 var hits = customers
-                    .Where(c => SalesCustomerNameMatch.IsLogicalMatch(c.FullName, normalized))
+                    .Where(c => SalesCustomerNameMatch.IsMatch(c.FullName, normalized))
                     .GroupBy(c => c.CustomerId)
                     .Select(g => g.First())
                     .ToList();
@@ -104,7 +107,7 @@ namespace BE_Company.Sales.Services
             List<SalesExcelSearchSaleRow>? sales)
         {
             var cityValue = _catalog.CityValue;
-            var cityName = SalesCityDisplay.HumanName(customer.Province, _catalog.CityName, cityValue);
+            var cityName = DisplayBranch(customer.Province, _catalog.CityName, cityValue);
             var accountReceipts = customer.ReceiptsTotal;
             var accountRemaining = customer.AmountRemaining;
             return new SalesExcelSearchMatchDTO
@@ -134,6 +137,17 @@ namespace BE_Company.Sales.Services
                     })
                     .ToList()
             };
+        }
+
+        private static string DisplayBranch(string? province, string catalogName, string cityValue)
+        {
+            var name = SalesCityDisplay.HumanName(province, catalogName, cityValue);
+            if (SalesCityDisplay.IsInternalKey(name, cityValue))
+            {
+                name = SalesCityDisplay.HumanName(catalogName, null, cityValue);
+            }
+
+            return SalesCityDisplay.IsInternalKey(name, cityValue) ? string.Empty : name;
         }
     }
 }

@@ -19,6 +19,8 @@ namespace BE_Company.Sales.DTO
     {
         public int RowNumber { get; set; }
         public string RequestedName { get; set; } = string.Empty;
+        public string SearchKey { get; set; } = string.Empty;
+        public bool UsedFamilySearch { get; set; }
         public bool Found { get; set; }
         public int MatchCount { get; set; }
         public bool Truncated { get; set; }

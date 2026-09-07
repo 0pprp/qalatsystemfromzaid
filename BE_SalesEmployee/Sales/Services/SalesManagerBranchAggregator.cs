@@ -513,15 +513,26 @@ namespace BE_SalesEmployee.Sales.Services
                     }
 
                     match["cityValue"] = city.Value;
-                    match["cityName"] = city.Name;
                     var customerId = match["customerId"]?.GetValue<int>()
                                      ?? match["CustomerId"]?.GetValue<int>()
                                      ?? 0;
                     match["resultKey"] = city.Value + ":" + customerId;
-                    if (string.IsNullOrWhiteSpace(match["province"]?.GetValue<string>())
-                        || string.Equals(match["province"]?.GetValue<string>(), city.Value, StringComparison.OrdinalIgnoreCase))
+                    var display = FirstHumanCity(city.Name, match["province"]?.GetValue<string>() ?? match["Province"]?.GetValue<string>(), city.Value);
+                    if (string.IsNullOrWhiteSpace(display))
                     {
-                        match["province"] = city.Name;
+                        display = FirstHumanCity(city.Name, null, city.Value);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(display))
+                    {
+                        match["cityName"] = display;
+                        var province = match["province"]?.GetValue<string>();
+                        if (string.IsNullOrWhiteSpace(province)
+                            || StartsWithDatabase(province)
+                            || string.Equals(province, city.Value, StringComparison.OrdinalIgnoreCase))
+                        {
+                            match["province"] = display;
+                        }
                     }
                 }
             }
@@ -746,6 +757,9 @@ namespace BE_SalesEmployee.Sales.Services
 
             return string.Empty;
         }
+
+        private static bool StartsWithDatabase(string? value) =>
+            (value ?? string.Empty).StartsWith("Database", StringComparison.OrdinalIgnoreCase);
 
         private static bool CustomerMatches(JsonObject obj, string normalizedQuery)
         {

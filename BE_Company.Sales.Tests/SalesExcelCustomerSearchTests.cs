@@ -28,6 +28,29 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
+        public void FamilySearchKey_DropsFirstWordOnlyForThreeOrMore()
+        {
+            Assert.Equal("محمد علي", SalesCustomerNameMatch.FamilySearchKey("حسين محمد علي"));
+            Assert.Equal("محمد علي حسن", SalesCustomerNameMatch.FamilySearchKey("حسين محمد علي حسن"));
+            Assert.Equal("حسين محمد", SalesCustomerNameMatch.FamilySearchKey("حسين محمد"));
+            Assert.False(SalesCustomerNameMatch.UsesFamilySearch("حسين محمد"));
+            Assert.True(SalesCustomerNameMatch.UsesFamilySearch("حسين محمد علي"));
+        }
+
+        [Fact]
+        public void FamilyMatch_FindsBrothersByFatherName_NotContains()
+        {
+            var key = SalesCustomerNameMatch.FamilySearchKey("حسين محمد علي");
+            Assert.True(SalesCustomerNameMatch.IsMatch("حسين محمد علي", "حسين محمد علي"));
+            Assert.True(SalesCustomerNameMatch.IsFamilyMatch("علي محمد علي", key));
+            Assert.True(SalesCustomerNameMatch.IsFamilyMatch("أحمد محمد علي حسن", key));
+            Assert.True(SalesCustomerNameMatch.IsFamilyMatch("كرار محمد علي", key));
+            Assert.False(SalesCustomerNameMatch.IsFamilyMatch("محمد حسين علي", key));
+            Assert.False(SalesCustomerNameMatch.IsFamilyMatch("كرار حسن جاسم", key));
+            Assert.False(SalesCustomerNameMatch.IsMatch("علي محمد علي", "حسين محمد"));
+        }
+
+        [Fact]
         public void LogicalMatch_ExactAndLongerSamePerson_NotContains()
         {
             Assert.True(SalesCustomerNameMatch.IsLogicalMatch("حسين محمد", "حسين محمد"));
@@ -75,7 +98,8 @@ namespace BE_Company.Sales.Tests
         public async Task CustomerWithMultipleSales_ReturnsEverySale()
         {
             var result = await Search("حسين محمد علي");
-            var match = Assert.Single(Assert.Single(result.Queries).Matches);
+            var query = Assert.Single(result.Queries);
+            var match = Assert.Single(query.Matches, m => m.FullName == "حسين محمد علي");
             Assert.Equal(2, match.Sales.Count);
             Assert.Equal(new[] { 101, 102 }, match.Sales.Select(s => s.SaleId).OrderBy(id => id));
             Assert.All(match.Sales, s => Assert.Equal(400000, s.AmountRemaining));
@@ -127,6 +151,58 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
+        public async Task ThreeWordName_FindsFamilyByFatherName_AndKeepsOriginalExcelText()
+        {
+            var result = await Search("حسين محمد علي");
+            var query = Assert.Single(result.Queries);
+            Assert.Equal("حسين محمد علي", query.RequestedName);
+            Assert.Equal("محمد علي", query.SearchKey);
+            Assert.True(query.UsedFamilySearch);
+            var names = query.Matches.Select(m => m.FullName).OrderBy(n => n).ToList();
+            Assert.Contains("حسين محمد علي", names);
+            Assert.Contains("علي محمد علي", names);
+            Assert.Contains("أحمد محمد علي حسن", names);
+            Assert.Contains("كرار محمد علي", names);
+            Assert.DoesNotContain("محمد حسين علي", names);
+            Assert.DoesNotContain("كرار حسن جاسم", names);
+            Assert.All(query.Matches, m => Assert.NotEqual("محمد علي", m.FullName));
+        }
+
+        [Fact]
+        public async Task TwoWordName_DoesNotDropFirstWordIntoSingleTokenSearch()
+        {
+            var result = await Search("حسين محمد");
+            var query = Assert.Single(result.Queries);
+            Assert.False(query.UsedFamilySearch);
+            Assert.Equal("حسين محمد", query.SearchKey);
+            var names = query.Matches.Select(m => m.FullName).ToList();
+            Assert.Contains("حسين محمد", names);
+            Assert.Contains("حسين محمد علي", names);
+            Assert.DoesNotContain("علي محمد علي", names);
+        }
+
+        [Fact]
+        public async Task DisplayCityName_IsHuman_NotDatabaseCatalog()
+        {
+            var catalog = SeedNajaf();
+            catalog.Customers[0].Province = "DatabaseCompanyNajaf_DEMO";
+            var result = await SearchWith(catalog, "حسين محمد");
+            var match = result.Queries[0].Matches.First(m => m.CustomerId == 1);
+            Assert.Equal("النجف", match.CityName);
+            Assert.Equal("النجف", match.Province);
+            Assert.DoesNotContain("Database", match.CityName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void ExcelSearchPage_DoesNotShowCustomerIdSaleIdOrDatabaseName()
+        {
+            var vue = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "FePages", "sales-manager-excel-search.vue"));
+            Assert.DoesNotContain("CustomerId", vue);
+            Assert.DoesNotContain("SaleId", vue);
+            Assert.DoesNotContain("DatabaseCompany", vue);
+        }
+
+        [Fact]
         public async Task TooManyNames_IsRejected()
         {
             var names = Enumerable.Range(1, SalesCustomerNameMatch.MaxNames + 1).Select(i => "اسم " + i).ToList();
@@ -152,7 +228,12 @@ namespace BE_Company.Sales.Tests
                 Row(2, "حسين محمد علي", 1000000, 600000, 400000),
                 Row(3, "حسين محمد حسن", 0, 0, 0),
                 Row(4, "حسين محمد 2", 300000, 0, 300000),
-                Row(5, "علي حسين محمد", 0, 0, 0)
+                Row(5, "علي حسين محمد", 0, 0, 0),
+                Row(6, "علي محمد علي", 0, 0, 0),
+                Row(7, "أحمد محمد علي حسن", 0, 0, 0),
+                Row(8, "محمد حسين علي", 0, 0, 0),
+                Row(9, "كرار حسن جاسم", 0, 0, 0),
+                Row(10, "كرار محمد علي", 0, 0, 0)
             ]);
             catalog.Sales.AddRange(
             [

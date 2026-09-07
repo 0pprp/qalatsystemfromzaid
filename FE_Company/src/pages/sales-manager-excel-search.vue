@@ -138,15 +138,13 @@ function flattenReportRows() {
     const matches = queryMatches(query)
     if (!matches.length) {
       rows.push({
-        'الاسم المطلوب من Excel': requested,
-        'الاسم المطابق في النظام': '',
-        CustomerId: '',
+        'الاسم المطلوب': requested,
+        'الاسم المطابق': '',
         'الفرع': '',
         'الهاتف': '',
         'المحافظة': '',
         'العنوان': '',
-        'القائمة': '',
-        SaleId: '',
+        'القائمة/المندوب': '',
         'تاريخ البيع': '',
         'قيمة البيع': '',
         'المستلم': '',
@@ -157,19 +155,17 @@ function flattenReportRows() {
     for (const match of matches) {
       const sales = pick(match, 'sales', 'Sales') || []
       const base = {
-        'الاسم المطلوب من Excel': requested,
-        'الاسم المطابق في النظام': pick(match, 'fullName', 'FullName') || '',
-        CustomerId: pick(match, 'customerId', 'CustomerId') ?? '',
-        'الفرع': pick(match, 'cityName', 'CityName') || pick(match, 'cityValue', 'CityValue') || '',
+        'الاسم المطلوب': requested,
+        'الاسم المطابق': pick(match, 'fullName', 'FullName') || '',
+        'الفرع': humanBranch(match),
         'الهاتف': pick(match, 'phone', 'Phone') || '',
-        'المحافظة': pick(match, 'province', 'Province') || '',
+        'المحافظة': pick(match, 'province', 'Province') || humanBranch(match),
         'العنوان': pick(match, 'address', 'Address') || '',
-        'القائمة': pick(match, 'delegateName', 'DelegateName') || '',
+        'القائمة/المندوب': pick(match, 'delegateName', 'DelegateName') || '',
       }
       if (!sales.length) {
         rows.push({
           ...base,
-          SaleId: '',
           'تاريخ البيع': '',
           'قيمة البيع': '',
           'المستلم': pick(match, 'receiptsTotal', 'ReceiptsTotal') ?? '',
@@ -180,7 +176,6 @@ function flattenReportRows() {
       for (const sale of sales) {
         rows.push({
           ...base,
-          SaleId: pick(sale, 'saleId', 'SaleId') ?? '',
           'تاريخ البيع': ymd(pick(sale, 'saleDate', 'SaleDate')),
           'قيمة البيع': pick(sale, 'saleAmount', 'SaleAmount') ?? '',
           'المستلم': pick(sale, 'receiptsTotal', 'ReceiptsTotal') ?? pick(match, 'receiptsTotal', 'ReceiptsTotal') ?? '',
@@ -190,6 +185,27 @@ function flattenReportRows() {
     }
   }
   return rows
+}
+
+function humanBranch(match) {
+  const name = pick(match, 'cityName', 'CityName', 'province', 'Province') || ''
+  if (!name || /^database/i.test(name) || !name.includes(' ') && /_/i.test(name) && /demo/i.test(name))
+    return ''
+  return name
+}
+
+function searchKey(query) {
+  return pick(query, 'searchKey', 'SearchKey') || ''
+}
+
+function usedFamilySearch(query) {
+  return !!pick(query, 'usedFamilySearch', 'UsedFamilySearch')
+}
+
+function matchTitle(match) {
+  const name = pick(match, 'fullName', 'FullName') || ''
+  const branch = humanBranch(match)
+  return branch ? `${name} — ${branch}` : name
 }
 
 function downloadReport() {
@@ -278,6 +294,7 @@ function statusLabel(query) {
       <thead>
         <tr>
           <th>الاسم الموجود في Excel</th>
+          <th>مفتاح البحث</th>
           <th>الحالة</th>
           <th>عدد النتائج</th>
         </tr>
@@ -287,7 +304,16 @@ function statusLabel(query) {
           v-for="(query, index) in queries"
           :key="index"
         >
-          <td>{{ pick(query, 'requestedName', 'RequestedName') }}</td>
+          <td>
+            <div>{{ pick(query, 'requestedName', 'RequestedName') }}</div>
+          </td>
+          <td>
+            <span v-if="usedFamilySearch(query)">{{ searchKey(query) }}</span>
+            <span
+              v-else
+              class="text-medium-emphasis"
+            >—</span>
+          </td>
           <td>
             <VChip
               size="small"
@@ -323,8 +349,16 @@ function statusLabel(query) {
       @update:model-value="val => { if (!val) openedQuery = null }"
     >
       <VCard v-if="openedQuery">
-        <VCardTitle class="d-flex justify-space-between">
-          <span>نتائج: {{ pick(openedQuery, 'requestedName', 'RequestedName') }}</span>
+        <VCardTitle class="d-flex justify-space-between align-start">
+          <div>
+            <div>نتائج: {{ pick(openedQuery, 'requestedName', 'RequestedName') }}</div>
+            <div
+              v-if="usedFamilySearch(openedQuery)"
+              class="text-body-2 text-medium-emphasis mt-1"
+            >
+              مفتاح البحث: {{ searchKey(openedQuery) }}
+            </div>
+          </div>
           <VBtn
             icon
             variant="text"
@@ -335,32 +369,22 @@ function statusLabel(query) {
         </VCardTitle>
         <VCardText>
           <div
-            v-for="match in queryMatches(openedQuery)"
-            :key="pick(match, 'resultKey', 'ResultKey')"
+            v-for="(match, matchIdx) in queryMatches(openedQuery)"
+            :key="matchIdx"
             class="mb-6 pa-4 rounded border"
           >
-            <div class="font-weight-bold mb-1">
-              {{ pick(match, 'fullName', 'FullName') }}
-              <span class="text-medium-emphasis">
-                — {{ pick(match, 'cityName', 'CityName') }} / {{ pick(match, 'cityValue', 'CityValue') }}
-              </span>
+            <div class="text-h6 font-weight-bold mb-3">
+              {{ matchTitle(match) }}
             </div>
-            <div class="text-body-2 mb-2">
-              CustomerId: {{ pick(match, 'customerId', 'CustomerId') }}
-              — الهاتف: {{ pick(match, 'phone', 'Phone') || '—' }}
-              — المحافظة: {{ pick(match, 'province', 'Province') || '—' }}
-              — العنوان: {{ pick(match, 'address', 'Address') || '—' }}
-              — القائمة: {{ pick(match, 'delegateName', 'DelegateName') || '—' }}
-            </div>
-            <div class="text-caption mb-2">
-              حساب الزبون: بيع {{ money(pick(match, 'amountTotalSales', 'AmountTotalSales')) }}
-              / مستلم {{ money(pick(match, 'receiptsTotal', 'ReceiptsTotal')) }}
-              / متبقي {{ money(pick(match, 'amountRemaining', 'AmountRemaining')) }}
+            <div class="customer-facts mb-4">
+              <div>الهاتف: {{ pick(match, 'phone', 'Phone') || '—' }}</div>
+              <div>المحافظة: {{ pick(match, 'province', 'Province') || humanBranch(match) || '—' }}</div>
+              <div>العنوان: {{ pick(match, 'address', 'Address') || '—' }}</div>
+              <div>القائمة/المندوب: {{ pick(match, 'delegateName', 'DelegateName') || '—' }}</div>
             </div>
             <VTable>
               <thead>
                 <tr>
-                  <th>SaleId</th>
                   <th>تاريخ البيع</th>
                   <th>قيمة البيع</th>
                   <th>المستلم</th>
@@ -369,10 +393,9 @@ function statusLabel(query) {
               </thead>
               <tbody>
                 <tr
-                  v-for="sale in (pick(match, 'sales', 'Sales') || [])"
-                  :key="pick(sale, 'saleId', 'SaleId')"
+                  v-for="(sale, sIdx) in (pick(match, 'sales', 'Sales') || [])"
+                  :key="sIdx"
                 >
-                  <td>{{ pick(sale, 'saleId', 'SaleId') }}</td>
                   <td>{{ ymd(pick(sale, 'saleDate', 'SaleDate')) }}</td>
                   <td>{{ money(pick(sale, 'saleAmount', 'SaleAmount')) }}</td>
                   <td>{{ money(pick(sale, 'receiptsTotal', 'ReceiptsTotal')) }}</td>
@@ -380,7 +403,7 @@ function statusLabel(query) {
                 </tr>
                 <tr v-if="!(pick(match, 'sales', 'Sales') || []).length">
                   <td
-                    colspan="5"
+                    colspan="4"
                     class="text-medium-emphasis"
                   >
                     لا توجد مبيعات رسمية مرتبطة بهذا الزبون.
@@ -394,3 +417,13 @@ function statusLabel(query) {
     </VDialog>
   </div>
 </template>
+
+<style scoped>
+.customer-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1.75rem;
+  font-size: 1.05rem;
+  line-height: 1.75;
+}
+</style>

@@ -26,7 +26,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\sales_employee_application\assets\fonts\Cairo-Regular.ttf" Link="Sales\Fonts\Cairo-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\sales_employee_application\assets\fonts\Cairo-Bold.ttf" Link="Sales\Fonts\Cairo-Bold.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\FE_Company\src\pages\sales-manager-excel-search.vue" Link="FePages\sales-manager-excel-search.vue" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
