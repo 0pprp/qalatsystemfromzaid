@@ -20,6 +20,8 @@ namespace BE_Company.Sales.Controllers
         private readonly ISalesShopProfileService _shops;
         private readonly ISalesCompleteService _complete;
         private readonly ISalesCustomerDocumentService _customerDocs;
+        private readonly ISalesPurchaseService _purchases;
+        private readonly ISalesExcelCustomerSearchService _excelSearch;
 
         public SalesManagerController(
             SalesDevelopmentGuard guard,
@@ -30,7 +32,9 @@ namespace BE_Company.Sales.Controllers
             IIraqClock clock,
             ISalesShopProfileService shops,
             ISalesCompleteService complete,
-            ISalesCustomerDocumentService customerDocs)
+            ISalesCustomerDocumentService customerDocs,
+            ISalesPurchaseService purchases,
+            ISalesExcelCustomerSearchService excelSearch)
         {
             _guard = guard;
             _identity = identity;
@@ -41,6 +45,8 @@ namespace BE_Company.Sales.Controllers
             _shops = shops;
             _complete = complete;
             _customerDocs = customerDocs;
+            _purchases = purchases;
+            _excelSearch = excelSearch;
         }
 
         [HttpGet("dashboard")]
@@ -385,6 +391,21 @@ namespace BE_Company.Sales.Controllers
             return Ok(await _search.SearchAsync(query, ct));
         }
 
+        [HttpPost("customers/excel-search")]
+        public async Task<IActionResult> ExcelSearchCustomers([FromBody] SalesExcelSearchRequestDTO body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            try
+            {
+                return Ok(await _excelSearch.SearchAsync(body?.Names ?? [], ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
         [HttpGet("sales-requests")]
         public async Task<IActionResult> Requests([FromQuery] string? cityValue, [FromQuery] int? employeeId, [FromQuery] string? status, [FromQuery] DateTime? date, CancellationToken ct)
         {
@@ -591,6 +612,71 @@ namespace BE_Company.Sales.Controllers
             try
             {
                 return Ok(await _requests.ReturnAsync(identity!, id, body.Note ?? body.Reason ?? string.Empty, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("purchases")]
+        public async Task<IActionResult> Purchases(
+            [FromQuery] DateTime? fromDate,
+            [FromQuery] DateTime? toDate,
+            [FromQuery] string? textSearch,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            try
+            {
+                return Ok(await _purchases.ListAsync(fromDate, toDate, textSearch, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("purchases/lookups")]
+        public async Task<IActionResult> PurchaseLookups(CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            try
+            {
+                return Ok(await _purchases.GetLookupsAsync(ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("purchases/items")]
+        public async Task<IActionResult> PurchaseItems([FromQuery] int storeId, [FromQuery] string? q, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            try
+            {
+                return Ok(await _purchases.GetItemsAsync(storeId, q, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("purchases")]
+        public async Task<IActionResult> CreatePurchase([FromBody] SalesPurchaseCreateDTO body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _purchases.CreateAsync(identity!, body, ct));
             }
             catch (SalesCompleteException ex)
             {

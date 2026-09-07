@@ -42,6 +42,7 @@ namespace BE_Company.Sales.Tests
             FinalSalePrice = SalesEvaluationLevels.BlocksSale(eval) ? 0 : 2000000,
             DailyInstallment = 25000,
             DownPayment = 100000,
+            PostingStatus = status == "Pending" ? SalesPostingStatuses.Pending : SalesPostingStatuses.Posted,
             Items =
             [
                 new SalesDraftItemDTO { ProductId = 5, ProductName = "ثلاجة سامسونج", Quantity = qty, UnitSalePrice = 2000000, LineSalePrice = 2000000 }
@@ -103,6 +104,9 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(SalesStatuses.Completed, result.Status);
             Assert.Equal(2000000, result.FinalSalePrice);
             Assert.Equal(1, repo.DeductionCount);
+            Assert.Equal(SalesPostingStatuses.Pending, repo.Sales[10].PostingStatus);
+            Assert.Empty(repo.Payments);
+            Assert.Equal(3, repo.MainStock[5]);
         }
 
         [Fact]
@@ -197,7 +201,10 @@ namespace BE_Company.Sales.Tests
             var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
             await svc.CompleteAsync(10, Identity(), CancellationToken.None);
             Assert.Equal(2, repo.Stock[5]);
+            Assert.Equal(3, repo.MainStock[5]);
             Assert.Equal(1, repo.DeductionCount);
+            Assert.Equal(0, repo.MainPostingCount);
+            Assert.Equal(SalesPostingStatuses.Pending, repo.Sales[10].PostingStatus);
         }
 
         [Fact]
@@ -215,7 +222,7 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task Complete_WithDownPayment_RecordsReceiptOnce()
+        public async Task Complete_WithDownPayment_DoesNotRecordReceiptUntilPosting()
         {
             var repo = Seed(SalesEvaluationLevels.Good);
             repo.Sales[10].CustomerId = 42;
@@ -231,12 +238,9 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(SalesStatuses.Completed, result.Status);
             Assert.Equal(1000000, result.FinalSalePrice);
             Assert.Equal(200000, result.DownPayment);
-            var payment = Assert.Single(repo.Payments);
-            Assert.Equal(10, payment.SaleId);
-            Assert.Equal(42, payment.CustomerId);
-            Assert.Equal(200000, payment.AmountDenar);
-            Assert.Equal(payment.CustomerPaymentId, repo.Sales[10].DownPaymentCustomerPaymentId);
-            Assert.Equal(800000, SalesDownPaymentReceipt.Remaining(result.FinalSalePrice, repo.ReceiptsTotal));
+            Assert.Equal(SalesPostingStatuses.Pending, repo.Sales[10].PostingStatus);
+            Assert.Empty(repo.Payments);
+            Assert.Null(repo.Sales[10].DownPaymentCustomerPaymentId);
         }
 
         [Fact]
@@ -251,8 +255,9 @@ namespace BE_Company.Sales.Tests
             var second = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
 
             Assert.Equal(SalesStatuses.Completed, second.Status);
-            Assert.Single(repo.Payments);
+            Assert.Empty(repo.Payments);
             Assert.Equal(1, repo.DeductionCount);
+            Assert.Equal(0, repo.MainPostingCount);
         }
 
         [Fact]
@@ -272,7 +277,7 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task Complete_SaleTotalUnchanged_RemainingReducedByReceipt()
+        public async Task Complete_SaleTotalUnchanged_ReceiptNotAppliedBeforePosting()
         {
             var repo = Seed(SalesEvaluationLevels.Good);
             repo.Sales[10].CustomerId = 42;
@@ -287,12 +292,12 @@ namespace BE_Company.Sales.Tests
 
             Assert.Equal(1000000, result.FinalSalePrice);
             Assert.Equal(1000000, repo.Sales[10].FinalSalePrice);
-            Assert.Equal(200000, repo.ReceiptsTotal);
-            Assert.Equal(800000, SalesDownPaymentReceipt.Remaining(repo.Sales[10].FinalSalePrice, repo.ReceiptsTotal));
+            Assert.Equal(0, repo.ReceiptsTotal);
+            Assert.Equal(1000000, SalesDownPaymentReceipt.Remaining(repo.Sales[10].FinalSalePrice, repo.ReceiptsTotal));
         }
 
         [Fact]
-        public async Task Complete_PaymentFailure_RollsBackSaleAndReceipt()
+        public async Task Complete_DoesNotFail_WhenMainPostingWouldFail()
         {
             var repo = Seed(SalesEvaluationLevels.Good);
             repo.Sales[10].CustomerId = 42;
@@ -300,16 +305,14 @@ namespace BE_Company.Sales.Tests
             repo.FailPayment = true;
             var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
 
-            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
-                svc.CompleteAsync(10, Identity(), CancellationToken.None));
+            var result = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
 
-            Assert.Equal(500, ex.StatusCode);
-            Assert.Equal(SalesStatuses.Pending, repo.Sales[10].Status);
-            Assert.Equal(3, repo.Stock[5]);
-            Assert.Equal(0, repo.DeductionCount);
+            Assert.Equal(SalesStatuses.Completed, result.Status);
+            Assert.Equal(2, repo.Stock[5]);
+            Assert.Equal(3, repo.MainStock[5]);
+            Assert.Equal(1, repo.DeductionCount);
             Assert.Empty(repo.Payments);
-            Assert.Null(repo.Sales[10].DownPaymentCustomerPaymentId);
-            Assert.Null(repo.Sales[10].CompletedAt);
+            Assert.Equal(SalesPostingStatuses.Pending, repo.Sales[10].PostingStatus);
         }
 
         [Fact]
@@ -369,18 +372,12 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(SalesStatuses.Completed, result.Status);
             Assert.Equal(42, repo.Sales[10].CustomerId);
             Assert.Equal("كرار كاظم حسن", repo.Sales[10].FullName);
-            Assert.Equal("كرار كاظم حسن", repo.OfficialCustomers[42]);
+            Assert.Equal("كرار كاظم", repo.OfficialCustomers[42]);
             Assert.Single(repo.OfficialCustomers);
-            Assert.Equal(
-                "كرار كاظم حسن",
-                SalesCustomerIdentity.PreferName(
-                    repo.Sales[10].FullName,
-                    repo.OfficialCustomers[42],
-                    repo.RequestNames[8]));
         }
 
         [Fact]
-        public async Task Complete_PaymentFailure_DoesNotChangeOfficialCustomerName()
+        public async Task Complete_DoesNotChangeOfficialCustomerName_UntilPosting()
         {
             var repo = Seed(SalesEvaluationLevels.Good);
             repo.Sales[10].CustomerId = 42;
@@ -388,14 +385,12 @@ namespace BE_Company.Sales.Tests
             repo.Sales[10].SalesRequestId = 8;
             repo.RequestNames[8] = "كرار كاظم حسن";
             repo.OfficialCustomers[42] = "كرار كاظم";
-            repo.FailPayment = true;
             var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
 
-            await Assert.ThrowsAsync<SalesCompleteException>(() =>
-                svc.CompleteAsync(10, Identity(), CancellationToken.None));
+            await svc.CompleteAsync(10, Identity(), CancellationToken.None);
 
-            Assert.Equal(SalesStatuses.Pending, repo.Sales[10].Status);
-            Assert.Equal("كرار كاظم", repo.Sales[10].FullName);
+            Assert.Equal(SalesStatuses.Completed, repo.Sales[10].Status);
+            Assert.Equal("كرار كاظم حسن", repo.Sales[10].FullName);
             Assert.Equal("كرار كاظم", repo.OfficialCustomers[42]);
             Assert.Equal(42, repo.Sales[10].CustomerId);
         }
@@ -490,6 +485,7 @@ namespace BE_Company.Sales.Tests
             var draft = Draft(eval, status, employeeId, qty);
             repo.Sales[draft.SaleId] = draft;
             repo.Stock[5] = 3;
+            repo.MainStock[5] = 3;
             return repo;
         }
 

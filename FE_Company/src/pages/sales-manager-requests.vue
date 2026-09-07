@@ -993,6 +993,12 @@ onUnmounted(() => {
         </VBtn>
         <VBtn
           variant="tonal"
+          :to="{ name: 'sales-manager-excel-search' }"
+        >
+          بحث الزبائن من Excel
+        </VBtn>
+        <VBtn
+          variant="tonal"
           :loading="busy"
           @click="markAllRead"
         >

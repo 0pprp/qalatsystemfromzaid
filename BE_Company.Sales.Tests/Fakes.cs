@@ -37,9 +37,13 @@ namespace BE_Company.Sales.Tests
         public readonly List<RecordedCustomerPayment> Payments = [];
         public readonly Dictionary<int, string> OfficialCustomers = new();
         public readonly Dictionary<int, string> RequestNames = new();
+        public readonly Dictionary<int, int> MainStock = new();
         public int DeductionCount { get; private set; }
+        public int MainPostingCount { get; private set; }
         public int CompleteCalls { get; private set; }
+        public int PostingCalls { get; private set; }
         public bool FailPayment { get; set; }
+        public bool FailMainPosting { get; set; }
         public decimal ReceiptsTotal => Payments.Sum(p => p.AmountDenar);
 
         public Task<SalesCompleteTxResult> CompleteInTransactionAsync(int saleId, int employeeId, string cityValue, CancellationToken ct)
@@ -103,13 +107,10 @@ namespace BE_Company.Sales.Tests
             var previousFullName = sale.FullName;
             var previousPhone = sale.Phone;
             var previousAddress = sale.Address;
-            var previousOfficialName = sale.CustomerId is > 0
-                ? OfficialCustomers.GetValueOrDefault(sale.CustomerId.Value)
-                : null;
 
             try
             {
-                ApplyCanonicalIdentity(sale);
+                ApplyDraftIdentity(sale);
 
                 foreach (var item in sale.Items)
                 {
@@ -117,12 +118,13 @@ namespace BE_Company.Sales.Tests
                 }
 
                 DeductionCount++;
-                RecordDownPayment(sale, employeeId);
-
                 sale.Status = SalesStatuses.Completed;
                 sale.CompletedAt = DateTime.Now;
                 sale.CompletedBy = employeeId;
                 sale.DocumentsStatus = SalesStatuses.DocumentsPending;
+                sale.PostingStatus = SalesPostingStatuses.Pending;
+                sale.PostedAtUtc = null;
+                sale.LastPostingError = null;
                 return Task.FromResult(new SalesCompleteTxResult
                 {
                     Sale = sale,
@@ -152,31 +154,82 @@ namespace BE_Company.Sales.Tests
                 sale.FullName = previousFullName;
                 sale.Phone = previousPhone;
                 sale.Address = previousAddress;
-                if (sale.CustomerId is > 0)
-                {
-                    if (previousOfficialName == null)
-                    {
-                        OfficialCustomers.Remove(sale.CustomerId.Value);
-                    }
-                    else
-                    {
-                        OfficialCustomers[sale.CustomerId.Value] = previousOfficialName;
-                    }
-                }
                 throw;
             }
         }
 
-        private void ApplyCanonicalIdentity(SalesDraftDTO sale)
+        public Task<IReadOnlyList<int>> ListUnpostedCompletedSaleIdsAsync(CancellationToken ct)
+        {
+            var ids = Sales.Values
+                .Where(s => SalesCompleteRules.AlreadyCompleted(s.Status)
+                            && SalesPostingStatuses.IsUnposted(s.PostingStatus))
+                .OrderBy(s => s.CompletedAt)
+                .Select(s => s.SaleId)
+                .ToList();
+            return Task.FromResult<IReadOnlyList<int>>(ids);
+        }
+
+        public Task PostToMainSystemAsync(int saleId, CancellationToken ct)
+        {
+            PostingCalls++;
+            if (!Sales.TryGetValue(saleId, out var sale))
+            {
+                return Task.CompletedTask;
+            }
+
+            if (SalesPostingStatuses.IsPosted(sale.PostingStatus))
+            {
+                return Task.CompletedTask;
+            }
+
+            if (!SalesCompleteRules.AlreadyCompleted(sale.Status))
+            {
+                return Task.CompletedTask;
+            }
+
+            sale.PostingAttempts++;
+            if (FailMainPosting || FailPayment)
+            {
+                sale.PostingStatus = SalesPostingStatuses.Failed;
+                sale.LastPostingError = "فشل ترحيل البيع.";
+                throw new SalesCompleteException(500, "فشل تسجيل دفعة المقدمة.");
+            }
+
+            foreach (var item in sale.Items)
+            {
+                if (!MainStock.ContainsKey(item.ProductId) || MainStock[item.ProductId] < item.Quantity)
+                {
+                    sale.PostingStatus = SalesPostingStatuses.Failed;
+                    sale.LastPostingError = "الكمية المطلوبة غير متوفرة حالياً.";
+                    throw new SalesCompleteException(409, "الكمية المطلوبة غير متوفرة حالياً.");
+                }
+            }
+
+            foreach (var item in sale.Items)
+            {
+                MainStock[item.ProductId] -= item.Quantity;
+            }
+
+            MainPostingCount++;
+            ApplyDraftIdentity(sale);
+            if (sale.CustomerId is > 0 && OfficialCustomers.ContainsKey(sale.CustomerId.Value))
+            {
+                OfficialCustomers[sale.CustomerId.Value] = sale.FullName;
+            }
+
+            RecordDownPayment(sale, sale.EmployeeId);
+            sale.PostingStatus = SalesPostingStatuses.Posted;
+            sale.PostedAtUtc = DateTime.UtcNow;
+            sale.LastPostingError = null;
+            return Task.CompletedTask;
+        }
+
+        private void ApplyDraftIdentity(SalesDraftDTO sale)
         {
             string? requestName = sale.SalesRequestId is > 0
                 ? RequestNames.GetValueOrDefault(sale.SalesRequestId.Value)
                 : null;
             sale.FullName = SalesCustomerIdentity.PreferName(sale.FullName, requestName);
-            if (sale.CustomerId is > 0 && OfficialCustomers.ContainsKey(sale.CustomerId.Value))
-            {
-                OfficialCustomers[sale.CustomerId.Value] = sale.FullName;
-            }
         }
 
         private void RecordDownPayment(SalesDraftDTO sale, int employeeId)

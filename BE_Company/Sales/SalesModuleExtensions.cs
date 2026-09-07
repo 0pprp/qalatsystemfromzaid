@@ -20,6 +20,11 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesShopProfileService, SalesShopProfileService>();
             services.AddScoped<ISalesCustomerDocumentService, SalesCustomerDocumentService>();
             services.AddScoped<ISalesCompleteService, SalesCompleteService>();
+            services.AddScoped<ISalesPostingService, SalesPostingService>();
+            services.AddScoped<ISalesPurchaseRepository, SalesPurchaseRepository>();
+            services.AddScoped<ISalesPurchaseService, SalesPurchaseService>();
+            services.AddScoped<ISalesExcelCustomerSearchCatalog, SalesExcelCustomerSearchCatalog>();
+            services.AddScoped<ISalesExcelCustomerSearchService, SalesExcelCustomerSearchService>();
             services.AddScoped<SalesDraftService>();
             services.AddSingleton<IIraqClock, SystemIraqClock>();
             services.AddScoped<ISalesTrackingRepository, SalesTrackingRepository>();
@@ -38,6 +43,7 @@ namespace BE_Company.Sales
             services.AddSignalR();
             services.AddScoped<ISalesLocationBroadcaster, SignalRSalesLocationBroadcaster>();
             services.AddHostedService<SalesShiftCutoffHostedService>();
+            services.AddHostedService<SalesPostingHostedService>();
             services.AddSingleton<IAuthorizationHandler, SalesRoleHandler>();
             services.AddAuthorization(options =>
             {

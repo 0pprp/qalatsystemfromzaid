@@ -76,7 +76,7 @@ router.beforeEach((to, from, next) => {
     return next(homePath())
   }
 
-  const salesManagerPaths = ['/sales-manager-dashboard', '/sales-manager-employees', '/sales-manager-map', '/sales-manager-routes', '/sales-manager-sales', '/sales-manager-requests', '/sales-manager-request-create']
+  const salesManagerPaths = ['/sales-manager-dashboard', '/sales-manager-employees', '/sales-manager-map', '/sales-manager-routes', '/sales-manager-sales', '/sales-manager-requests', '/sales-manager-request-create', '/sales-manager-purchases', '/sales-manager-excel-search']
   if (salesManagerPaths.includes(to.path) && userType !== 'مدير مبيعات') {
     return next(homePath())
   }

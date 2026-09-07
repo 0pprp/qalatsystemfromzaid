@@ -236,6 +236,15 @@ namespace BE_SalesEmployee.Controllers
             return StatusCode(status, payload);
         }
 
+        [HttpPost("customers/excel-search")]
+        public async Task<IActionResult> ExcelSearchCustomers([FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var city = Read(body, "cityValue", "CityValue");
+            var (status, payload) = await _aggregator.ExcelSearchAsync(user, city, body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
         [HttpPost("sales-requests/import")]
         public async Task<IActionResult> Import([FromBody] JsonElement body, CancellationToken ct)
         {
@@ -340,6 +349,67 @@ namespace BE_SalesEmployee.Controllers
             var user = TokenService.FromPrincipal(User);
             var (status, payload) = await _aggregator.PostAsync(
                 user, cityValue, $"sales-manager/sales-requests/{id}/return", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpGet("purchases")]
+        public Task<IActionResult> Purchases(
+            [FromQuery] string? cityValue,
+            [FromQuery] DateTime? fromDate,
+            [FromQuery] DateTime? toDate,
+            [FromQuery] string? textSearch,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return Task.FromResult<IActionResult>(BadRequest(new { message = "يجب تحديد المحافظة المستهدفة لفاتورة الشراء." }));
+            }
+
+            var q = Query(
+                ("fromDate", fromDate?.ToString("yyyy-MM-dd")),
+                ("toDate", toDate?.ToString("yyyy-MM-dd")),
+                ("textSearch", textSearch));
+            return OneAsync(cityValue, "sales-manager/purchases" + q, ct);
+        }
+
+        [HttpGet("purchases/lookups")]
+        public Task<IActionResult> PurchaseLookups([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return Task.FromResult<IActionResult>(BadRequest(new { message = "يجب تحديد المحافظة المستهدفة لفاتورة الشراء." }));
+            }
+
+            return OneAsync(cityValue, "sales-manager/purchases/lookups", ct);
+        }
+
+        [HttpGet("purchases/items")]
+        public Task<IActionResult> PurchaseItems(
+            [FromQuery] string? cityValue,
+            [FromQuery] int storeId,
+            [FromQuery] string? q,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return Task.FromResult<IActionResult>(BadRequest(new { message = "يجب تحديد المحافظة المستهدفة لفاتورة الشراء." }));
+            }
+
+            return OneAsync(cityValue, "sales-manager/purchases/items" + Query(("storeId", storeId.ToString()), ("q", q)), ct);
+        }
+
+        [HttpPost("purchases")]
+        public async Task<IActionResult> CreatePurchase([FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var city = Read(body, "cityValue", "CityValue");
+            if (string.IsNullOrWhiteSpace(city))
+            {
+                return BadRequest(new { message = "يجب تحديد المحافظة المستهدفة لفاتورة الشراء." });
+            }
+
+            var (status, payload) = await _aggregator.PostAsync(
+                user, city, "sales-manager/purchases", body.GetRawText(), ct);
             return StatusCode(status, payload);
         }
 

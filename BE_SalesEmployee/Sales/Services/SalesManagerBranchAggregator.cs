@@ -15,6 +15,7 @@ namespace BE_SalesEmployee.Sales.Services
         Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct);
         Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, string? cityValue, CancellationToken ct);
+        Task<(int Status, object? Body)> ExcelSearchAsync(GatewayUser user, string? cityValue, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct);
     }
 
@@ -313,6 +314,97 @@ namespace BE_SalesEmployee.Sales.Services
             return (200, merged);
         }
 
+        public async Task<(int Status, object? Body)> ExcelSearchAsync(
+            GatewayUser user,
+            string? cityValue,
+            string jsonBody,
+            CancellationToken ct)
+        {
+            var targets = await GetTargetsAsync(cityValue, ct);
+            if (targets.Count == 0)
+            {
+                return (400, new { message = string.IsNullOrWhiteSpace(cityValue) ? "لا توجد محافظات للبحث." : "المحافظة غير موجودة." });
+            }
+
+            var chunks = await Task.WhenAll(targets.Select(city => FetchExcelSearchAsync(user, city, jsonBody, ct)));
+            JsonArray? mergedQueries = null;
+            var ok = 0;
+            foreach (var (city, node) in chunks)
+            {
+                if (node is not JsonObject root || root["queries"] is not JsonArray queries)
+                {
+                    continue;
+                }
+
+                ok++;
+                StampExcelMatches(queries, city);
+                if (mergedQueries == null)
+                {
+                    mergedQueries = queries.DeepClone() as JsonArray ?? [];
+                    continue;
+                }
+
+                for (var i = 0; i < queries.Count && i < mergedQueries.Count; i++)
+                {
+                    if (mergedQueries[i] is not JsonObject dest || queries[i] is not JsonObject src)
+                    {
+                        continue;
+                    }
+
+                    var destMatches = dest["matches"] as JsonArray ?? [];
+                    if (src["matches"] is JsonArray srcMatches)
+                    {
+                        foreach (var match in srcMatches)
+                        {
+                            destMatches.Add(match is null ? null : match.DeepClone());
+                        }
+                    }
+
+                    dest["matches"] = destMatches;
+                    var destCount = dest["matchCount"]?.GetValue<int>() ?? 0;
+                    var srcCount = src["matchCount"]?.GetValue<int>() ?? 0;
+                    dest["matchCount"] = destCount + srcCount;
+                    dest["found"] = destCount + srcCount > 0;
+                    dest["truncated"] = (dest["truncated"]?.GetValue<bool>() ?? false)
+                                        || (src["truncated"]?.GetValue<bool>() ?? false);
+                    var warning = dest["warning"]?.GetValue<string>();
+                    if (string.IsNullOrWhiteSpace(warning))
+                    {
+                        dest["warning"] = src["warning"]?.GetValue<string>();
+                    }
+                }
+            }
+
+            if (ok == 0)
+            {
+                return (502, new { message = "تعذر البحث في قواعد الفروع." });
+            }
+
+            var queriesOut = mergedQueries ?? [];
+            var found = 0;
+            var missing = 0;
+            foreach (var item in queriesOut)
+            {
+                if (item is JsonObject q && (q["found"]?.GetValue<bool>() ?? false))
+                {
+                    found++;
+                }
+                else
+                {
+                    missing++;
+                }
+            }
+
+            return (200, new JsonObject
+            {
+                ["readOnly"] = true,
+                ["nameCount"] = queriesOut.Count,
+                ["foundCount"] = found,
+                ["missingCount"] = missing,
+                ["queries"] = queriesOut
+            });
+        }
+
         public async Task<(int Status, object? Body)> DashboardAsync(
             GatewayUser user,
             string? cityValue,
@@ -374,6 +466,65 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             return (200, totals);
+        }
+
+        private static readonly TimeSpan ExcelSearchTimeout = TimeSpan.FromSeconds(90);
+
+        private async Task<(AdminCity City, JsonNode? Node)> FetchExcelSearchAsync(
+            GatewayUser user,
+            AdminCity city,
+            string jsonBody,
+            CancellationToken ct)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(ExcelSearchTimeout);
+                using var response = await _proxy.SendManagerAsync(
+                    city.Link, "sales-manager/customers/excel-search", HttpMethod.Post, jsonBody, user.UserName, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return (city, null);
+                }
+
+                var raw = await response.Content.ReadAsStringAsync(ct);
+                return (city, JsonNode.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw));
+            }
+            catch
+            {
+                return (city, null);
+            }
+        }
+
+        private static void StampExcelMatches(JsonArray queries, AdminCity city)
+        {
+            foreach (var item in queries)
+            {
+                if (item is not JsonObject query || query["matches"] is not JsonArray matches)
+                {
+                    continue;
+                }
+
+                foreach (var matchNode in matches)
+                {
+                    if (matchNode is not JsonObject match)
+                    {
+                        continue;
+                    }
+
+                    match["cityValue"] = city.Value;
+                    match["cityName"] = city.Name;
+                    var customerId = match["customerId"]?.GetValue<int>()
+                                     ?? match["CustomerId"]?.GetValue<int>()
+                                     ?? 0;
+                    match["resultKey"] = city.Value + ":" + customerId;
+                    if (string.IsNullOrWhiteSpace(match["province"]?.GetValue<string>())
+                        || string.Equals(match["province"]?.GetValue<string>(), city.Value, StringComparison.OrdinalIgnoreCase))
+                    {
+                        match["province"] = city.Name;
+                    }
+                }
+            }
         }
 
         private async Task<List<JsonNode>> FetchArrayAsync(

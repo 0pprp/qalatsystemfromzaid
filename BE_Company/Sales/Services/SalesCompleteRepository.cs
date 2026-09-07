@@ -79,6 +79,7 @@ namespace BE_Company.Sales.Services
                     throw new SalesCompleteException(StatusCodes.Status400BadRequest, validation);
                 }
 
+                var reserved = await SalesInventoryService.LoadReservedQuantitiesAsync(connection, tx, saleId, ct);
                 var lockedItems = new List<(SalesDraftItemDTO Line, int StoreId)>();
                 foreach (var line in header.Items)
                 {
@@ -92,7 +93,8 @@ namespace BE_Company.Sales.Services
                         throw new SalesCompleteException(StatusCodes.Status409Conflict, "أحد المنتجات لم يعد موجوداً في المخزن.");
                     }
 
-                    if ((stock.Quantity ?? 0) < line.Quantity)
+                    var available = (stock.Quantity ?? 0) - reserved.GetValueOrDefault(line.ProductId);
+                    if (available < line.Quantity)
                     {
                         throw new SalesCompleteException(StatusCodes.Status409Conflict, "الكمية المطلوبة غير متوفرة حالياً.");
                     }
@@ -101,25 +103,18 @@ namespace BE_Company.Sales.Services
                 }
 
                 var completedAt = DateTime.Now;
-                var posting = await RecordFinalSaleAndDeductAsync(
-                    connection, tx, header, employeeId, lockedItems, completedAt, ct);
-                var deducted = posting.Deducted;
-                if (posting.CustomerId is > 0 && header.CustomerId is not > 0)
-                {
-                    header.CustomerId = posting.CustomerId;
-                }
-
-                await SyncCanonicalCustomerIdentityAsync(connection, tx, header, posting.CustomerId, ct);
-
-                await RecordDownPaymentIfNeededAsync(
-                    connection, tx, header, employeeId, posting, completedAt, ct);
+                await SyncCanonicalCustomerIdentityAsync(
+                    connection, tx, header, header.CustomerId, updateOfficialCustomer: false, ct);
 
                 await connection.ExecuteAsync(new CommandDefinition(
                     @"UPDATE dbo.SalesDrafts
                       SET Status = @Status,
                           CompletedAt = @CompletedAt,
                           CompletedBy = @CompletedBy,
-                          DocumentsStatus = @DocumentsStatus
+                          DocumentsStatus = @DocumentsStatus,
+                          PostingStatus = @PostingStatus,
+                          PostedAtUtc = NULL,
+                          LastPostingError = NULL
                       WHERE SaleId = @SaleId AND Status = @Pending",
                     new
                     {
@@ -128,6 +123,7 @@ namespace BE_Company.Sales.Services
                         CompletedAt = completedAt,
                         CompletedBy = employeeId,
                         DocumentsStatus = SalesStatuses.DocumentsPending,
+                        PostingStatus = SalesPostingStatuses.Pending,
                         Pending = SalesStatuses.Pending
                     }, tx, cancellationToken: ct));
 
@@ -137,12 +133,13 @@ namespace BE_Company.Sales.Services
                 header.CompletedAt = completedAt;
                 header.CompletedBy = employeeId;
                 header.DocumentsStatus = SalesStatuses.DocumentsPending;
+                header.PostingStatus = SalesPostingStatuses.Pending;
                 return new SalesCompleteTxResult
                 {
                     Sale = header,
                     AlreadyCompleted = false,
-                    InventoryDeducted = deducted,
-                    DeductionCount = deducted ? 1 : 0
+                    InventoryDeducted = true,
+                    DeductionCount = 1
                 };
             }
             catch
@@ -235,9 +232,173 @@ END;",
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
             return await connection.QueryFirstOrDefaultAsync<SalesDraftDTO>(new CommandDefinition(
-                @"SELECT SaleId, EmployeeId, CityValue, Status, EvaluationLevel
+                @"SELECT SaleId, EmployeeId, CityValue, Status, EvaluationLevel, PostingStatus
                   FROM dbo.SalesDrafts WHERE SaleId = @SaleId",
                 new { SaleId = saleId }, cancellationToken: ct));
+        }
+
+        public async Task<IReadOnlyList<int>> ListUnpostedCompletedSaleIdsAsync(CancellationToken ct)
+        {
+            await _drafts.EnsureSchemaAsync(ct);
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            var ids = await connection.QueryAsync<int>(new CommandDefinition(
+                @"SELECT SaleId
+                  FROM dbo.SalesDrafts
+                  WHERE Status = @Completed
+                    AND ISNULL(PostingStatus, @Pending) IN (@Pending, @Failed, @Processing)
+                  ORDER BY CompletedAt, SaleId",
+                new
+                {
+                    Completed = SalesStatuses.Completed,
+                    Pending = SalesPostingStatuses.Pending,
+                    Failed = SalesPostingStatuses.Failed,
+                    Processing = SalesPostingStatuses.Processing
+                }, cancellationToken: ct));
+            return ids.ToList();
+        }
+
+        public async Task PostToMainSystemAsync(int saleId, CancellationToken ct)
+        {
+            await _drafts.EnsureSchemaAsync(ct);
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            await connection.OpenAsync(ct);
+            await using var tx = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+            try
+            {
+                var header = await connection.QueryFirstOrDefaultAsync<SalesDraftDTO>(new CommandDefinition(
+                    HeaderLockSql, new { SaleId = saleId }, tx, cancellationToken: ct));
+                if (header == null)
+                {
+                    await tx.CommitAsync(ct);
+                    return;
+                }
+
+                if (!string.Equals(header.Status, SalesStatuses.Completed, StringComparison.OrdinalIgnoreCase)
+                    && !SalesCompleteRules.AlreadyCompleted(header.Status))
+                {
+                    await tx.CommitAsync(ct);
+                    return;
+                }
+
+                if (SalesPostingStatuses.IsPosted(header.PostingStatus))
+                {
+                    await tx.CommitAsync(ct);
+                    return;
+                }
+
+                await connection.ExecuteAsync(new CommandDefinition(
+                    @"UPDATE dbo.SalesDrafts
+                      SET PostingStatus = @Processing
+                      WHERE SaleId = @SaleId
+                        AND Status = @Completed
+                        AND ISNULL(PostingStatus, @Pending) <> @Posted",
+                    new
+                    {
+                        SaleId = saleId,
+                        Processing = SalesPostingStatuses.Processing,
+                        Completed = SalesStatuses.Completed,
+                        Pending = SalesPostingStatuses.Pending,
+                        Posted = SalesPostingStatuses.Posted
+                    }, tx, cancellationToken: ct));
+                header.PostingStatus = SalesPostingStatuses.Processing;
+
+                header.Items = (await connection.QueryAsync<SalesDraftItemDTO>(new CommandDefinition(
+                    @"SELECT SaleItemId, ProductId, ProductName, Quantity, UnitSalePrice, LineSalePrice
+                      FROM dbo.SalesDraftItems WHERE SaleId = @SaleId",
+                    new { SaleId = saleId }, tx, cancellationToken: ct))).ToList();
+
+                var lockedItems = new List<(SalesDraftItemDTO Line, int StoreId)>();
+                foreach (var line in header.Items)
+                {
+                    var stock = await connection.QueryFirstOrDefaultAsync<ItemLockRow>(new CommandDefinition(
+                        @"SELECT ItemID, ItemName, Quantity, StoreID, ItemState
+                          FROM dbo.Items WITH (UPDLOCK, ROWLOCK)
+                          WHERE ItemID = @ProductId",
+                        new { line.ProductId }, tx, cancellationToken: ct));
+                    if (stock == null || stock.ItemState == false)
+                    {
+                        throw new SalesCompleteException(StatusCodes.Status409Conflict, "أحد المنتجات لم يعد موجوداً في المخزن.");
+                    }
+
+                    if ((stock.Quantity ?? 0) < line.Quantity)
+                    {
+                        throw new SalesCompleteException(StatusCodes.Status409Conflict, "الكمية المطلوبة غير متوفرة حالياً.");
+                    }
+
+                    lockedItems.Add((line, stock.StoreID ?? 0));
+                }
+
+                var postedAt = DateTime.UtcNow;
+                var posting = await RecordFinalSaleAndDeductAsync(
+                    connection, tx, header, header.EmployeeId, lockedItems, DateTime.Now, ct);
+                if (posting.CustomerId is > 0 && header.CustomerId is not > 0)
+                {
+                    header.CustomerId = posting.CustomerId;
+                }
+
+                await SyncCanonicalCustomerIdentityAsync(
+                    connection, tx, header, posting.CustomerId, updateOfficialCustomer: true, ct);
+                await RecordDownPaymentIfNeededAsync(
+                    connection, tx, header, header.EmployeeId, posting, DateTime.Now, ct);
+
+                await connection.ExecuteAsync(new CommandDefinition(
+                    @"UPDATE dbo.SalesDrafts
+                      SET PostingStatus = @Posted,
+                          PostedAtUtc = @PostedAtUtc,
+                          PostingAttempts = ISNULL(PostingAttempts, 0) + 1,
+                          LastPostingError = NULL,
+                          CustomerId = COALESCE(@CustomerId, CustomerId)
+                      WHERE SaleId = @SaleId",
+                    new
+                    {
+                        SaleId = saleId,
+                        Posted = SalesPostingStatuses.Posted,
+                        PostedAtUtc = postedAt,
+                        CustomerId = header.CustomerId
+                    }, tx, cancellationToken: ct));
+
+                await tx.CommitAsync(ct);
+                header.PostingStatus = SalesPostingStatuses.Posted;
+                header.PostedAtUtc = postedAt;
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync(ct);
+                await MarkPostingFailedAsync(saleId, ex.Message, ct);
+                throw;
+            }
+        }
+
+        private async Task MarkPostingFailedAsync(int saleId, string? error, CancellationToken ct)
+        {
+            try
+            {
+                var cs = RequireConnection();
+                await using var connection = new SqlConnection(cs);
+                await connection.ExecuteAsync(new CommandDefinition(
+                    @"UPDATE dbo.SalesDrafts
+                      SET PostingStatus = @Failed,
+                          PostingAttempts = ISNULL(PostingAttempts, 0) + 1,
+                          LastPostingError = @Error
+                      WHERE SaleId = @SaleId
+                        AND Status = @Completed
+                        AND ISNULL(PostingStatus, @Pending) <> @Posted",
+                    new
+                    {
+                        SaleId = saleId,
+                        Failed = SalesPostingStatuses.Failed,
+                        Error = string.IsNullOrWhiteSpace(error) ? "فشل ترحيل البيع." : error.Length > 2000 ? error[..2000] : error,
+                        Completed = SalesStatuses.Completed,
+                        Pending = SalesPostingStatuses.Pending,
+                        Posted = SalesPostingStatuses.Posted
+                    }, cancellationToken: ct));
+            }
+            catch
+            {
+                // The sale stays retryable as Pending/Failed.
+            }
         }
 
         private async Task<FinalSalePosting> RecordFinalSaleAndDeductAsync(
@@ -376,6 +537,7 @@ END;",
             SqlTransaction tx,
             SalesDraftDTO sale,
             int? postedCustomerId,
+            bool updateOfficialCustomer,
             CancellationToken ct)
         {
             string? requestName = null;
@@ -439,7 +601,7 @@ END;",
                 }, tx, cancellationToken: ct));
 
             var customerId = postedCustomerId is > 0 ? postedCustomerId : sale.CustomerId;
-            if (customerId is not > 0 || !await TableExistsAsync(connection, tx, "Customers", ct))
+            if (!updateOfficialCustomer || customerId is not > 0 || !await TableExistsAsync(connection, tx, "Customers", ct))
             {
                 return;
             }
@@ -595,7 +757,8 @@ SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, Cust
        DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
        OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
        DownPaymentCustomerPaymentId, CreatedAt,
-       CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
+       CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId,
+       PostingStatus, PostedAtUtc, PostingAttempts, LastPostingError
 FROM dbo.SalesDrafts WITH (UPDLOCK, ROWLOCK)
 WHERE SaleId = @SaleId";
 

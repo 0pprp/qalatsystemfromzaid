@@ -39,5 +39,9 @@ namespace BE_Company.Sales.Services
         Task<SalesDraftDTO?> GetOwnedSaleAsync(int saleId, int employeeId, CancellationToken ct);
 
         Task<SalesDraftDTO?> GetSaleHeaderAsync(int saleId, CancellationToken ct);
+
+        Task<IReadOnlyList<int>> ListUnpostedCompletedSaleIdsAsync(CancellationToken ct);
+
+        Task PostToMainSystemAsync(int saleId, CancellationToken ct);
     }
 }

@@ -16,14 +16,17 @@ namespace BE_Company.Sales.Services
     public sealed class SalesInventoryService : ISalesInventoryService
     {
         private readonly SalesDevelopmentGuard _guard;
+        private readonly ISalesDraftRepository _drafts;
 
-        public SalesInventoryService(SalesDevelopmentGuard guard)
+        public SalesInventoryService(SalesDevelopmentGuard guard, ISalesDraftRepository drafts)
         {
             _guard = guard;
+            _drafts = drafts;
         }
 
         public async Task<IReadOnlyList<SalesInventoryItemDTO>> GetBranchInventoryAsync(CancellationToken ct)
         {
+            await _drafts.EnsureSchemaAsync(ct);
             var cs = _guard.GetSalesConnectionString()
                      ?? throw new InvalidOperationException("Sales module has no usable branch connection.");
             await using var connection = new SqlConnection(cs);
@@ -38,7 +41,11 @@ namespace BE_Company.Sales.Services
                 commandType: CommandType.StoredProcedure,
                 cancellationToken: ct));
 
-            return rows.Where(i => i.ItemID.HasValue && !IsHiddenFromSalesStaff(i.ItemName)).Select(Map).ToList();
+            var reserved = await LoadReservedQuantitiesAsync(connection, null, null, ct);
+            return rows
+                .Where(i => i.ItemID.HasValue && !IsHiddenFromSalesStaff(i.ItemName))
+                .Select(item => Map(item, reserved.GetValueOrDefault(item.ItemID!.Value)))
+                .ToList();
         }
 
         public async Task<SalesInventoryItemDTO?> GetProductAsync(int productId, CancellationToken ct)
@@ -160,13 +167,41 @@ namespace BE_Company.Sales.Services
                 .Trim();
         }
 
-        private static SalesInventoryItemDTO Map(ItemsGetDTO item)
+        public static async Task<Dictionary<int, int>> LoadReservedQuantitiesAsync(
+            SqlConnection connection,
+            IDbTransaction? tx,
+            int? excludeSaleId,
+            CancellationToken ct)
         {
+            try
+            {
+                var rows = await connection.QueryAsync<(int ProductId, int Quantity)>(new CommandDefinition(
+                    @"SELECT i.ProductId, SUM(i.Quantity) AS Quantity
+                      FROM dbo.SalesDraftItems i
+                      INNER JOIN dbo.SalesDrafts d ON d.SaleId = i.SaleId
+                      WHERE d.Status = N'Completed'
+                        AND ISNULL(d.PostingStatus, N'Pending') <> N'Posted'
+                        AND (@ExcludeSaleId IS NULL OR i.SaleId <> @ExcludeSaleId)
+                      GROUP BY i.ProductId",
+                    new { ExcludeSaleId = excludeSaleId },
+                    tx,
+                    cancellationToken: ct));
+                return rows.ToDictionary(r => r.ProductId, r => r.Quantity);
+            }
+            catch
+            {
+                return [];
+            }
+        }
+
+        private static SalesInventoryItemDTO Map(ItemsGetDTO item, int reserved)
+        {
+            var onHand = item.Quantity ?? 0;
             return new SalesInventoryItemDTO
             {
                 ProductId = item.ItemID!.Value,
                 ProductName = item.ItemName ?? string.Empty,
-                AvailableQuantity = item.Quantity ?? 0,
+                AvailableQuantity = Math.Max(0, onHand - reserved),
                 SalePrice = Math.Round((decimal)(item.ItemPriceDenar ?? 0), 0, MidpointRounding.AwayFromZero),
                 DailyInstallment = item.AmountDayDenar is double amountDay
                     ? Math.Round((decimal)amountDay, 0, MidpointRounding.AwayFromZero)

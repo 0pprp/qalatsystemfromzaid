@@ -62,6 +62,46 @@ namespace BE_Company.Repository
             }
         }
 
+        public async Task<BuysGetDTO?> Buys_Create(
+            BuysPostDTO buysPostDTO,
+            IDbConnection connection,
+            IDbTransaction? transaction,
+            CancellationToken cancellationToken = default)
+        {
+            foreach (var item in buysPostDTO.Contents.Where(c => c.ItemID != null))
+            {
+                await connection.ExecuteAsync(new CommandDefinition(
+                    "SelectItemBuyTemporaryPost_Create",
+                    new
+                    {
+                        ItemID = item.ItemID,
+                        Quantity = item.Quantity,
+                        UserCreateID = buysPostDTO.UserCreateID
+                    },
+                    transaction,
+                    commandType: CommandType.StoredProcedure,
+                    cancellationToken: cancellationToken));
+            }
+
+            return await connection.QueryFirstOrDefaultAsync<BuysGetDTO>(new CommandDefinition(
+                "Buys_Create",
+                new
+                {
+                    SupplierID = buysPostDTO.SupplierID,
+                    StoreID = buysPostDTO.StoreID,
+                    BoxID = buysPostDTO.BoxID,
+                    UserID = buysPostDTO.UserCreateID,
+                    DateCreate = buysPostDTO.Date,
+                    AmountPaidDenar = buysPostDTO.TotalAmountSpent / 1448,
+                    FinalAmountTotalDenar = buysPostDTO.FinalTotalItemCostDenar / 1448,
+                    AmountTotalDenar = buysPostDTO.AmountTotalDenar / 1448,
+                    RemainingAmountDenar = buysPostDTO.RemainingAmountDenar / 1448,
+                },
+                transaction,
+                commandType: CommandType.StoredProcedure,
+                cancellationToken: cancellationToken));
+        }
+
         public async Task<bool?> SelectItemBuyTemporaryPost_Create(SelectItemBuyTemporaryPostDTO selectItemBuyTemporaryPostDTO)
         {
             using (var connection = new SqlConnection(_connectionString))

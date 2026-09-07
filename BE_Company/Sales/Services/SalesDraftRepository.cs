@@ -304,6 +304,18 @@ IF COL_LENGTH(N'dbo.SalesDrafts', N'DownPayment') IS NULL
     ALTER TABLE dbo.SalesDrafts ADD DownPayment DECIMAL(18, 0) NOT NULL CONSTRAINT DF_SalesDrafts_DownPayment DEFAULT (0);
 IF COL_LENGTH(N'dbo.SalesDrafts', N'DownPaymentCustomerPaymentId') IS NULL
     ALTER TABLE dbo.SalesDrafts ADD DownPaymentCustomerPaymentId INT NULL;
+IF COL_LENGTH(N'dbo.SalesDrafts', N'PostingStatus') IS NULL
+BEGIN
+    ALTER TABLE dbo.SalesDrafts ADD PostingStatus NVARCHAR(20) NULL;
+    UPDATE dbo.SalesDrafts SET PostingStatus = N'Posted' WHERE Status = N'Completed';
+    UPDATE dbo.SalesDrafts SET PostingStatus = N'Pending' WHERE PostingStatus IS NULL;
+END;
+IF COL_LENGTH(N'dbo.SalesDrafts', N'PostedAtUtc') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD PostedAtUtc DATETIME NULL;
+IF COL_LENGTH(N'dbo.SalesDrafts', N'PostingAttempts') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD PostingAttempts INT NOT NULL CONSTRAINT DF_SalesDrafts_PostingAttempts DEFAULT (0);
+IF COL_LENGTH(N'dbo.SalesDrafts', N'LastPostingError') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD LastPostingError NVARCHAR(MAX) NULL;
 IF OBJECT_ID(N'dbo.SalesDraftItems', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SalesDraftItems (

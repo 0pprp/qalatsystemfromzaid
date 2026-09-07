@@ -105,6 +105,18 @@ namespace BE_Company.Sales.DTO
         public decimal? OverrideDownPayment { get; set; }
         public decimal DownPayment { get; set; }
         public int? DownPaymentCustomerPaymentId { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public string PostingStatus { get; set; } = "Pending";
+        [System.Text.Json.Serialization.JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public DateTime? PostedAtUtc { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public int PostingAttempts { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public string? LastPostingError { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? CompletedAt { get; set; }
         public int? CompletedBy { get; set; }

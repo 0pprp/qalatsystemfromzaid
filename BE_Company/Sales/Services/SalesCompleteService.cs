@@ -30,6 +30,8 @@ namespace BE_Company.Sales.Services
         private readonly ISalesShopProfileService? _shops;
         private readonly ISalesInventoryService? _inventory;
         private readonly ISalesPricingService _pricing;
+        private readonly ISalesPostingService? _posting;
+        private readonly IIraqClock? _clock;
 
         public SalesCompleteService(
             ISalesCompleteRepository complete,
@@ -38,7 +40,9 @@ namespace BE_Company.Sales.Services
             ISalesRequestService? requests = null,
             ISalesShopProfileService? shops = null,
             ISalesInventoryService? inventory = null,
-            ISalesPricingService? pricing = null)
+            ISalesPricingService? pricing = null,
+            ISalesPostingService? posting = null,
+            IIraqClock? clock = null)
         {
             _complete = complete;
             _drafts = drafts;
@@ -47,6 +51,8 @@ namespace BE_Company.Sales.Services
             _shops = shops;
             _inventory = inventory;
             _pricing = pricing ?? new SalesPricingService();
+            _posting = posting;
+            _clock = clock;
         }
 
         public Task<SalesCompleteResponseDTO> CompleteAsync(int saleId, SalesIdentity identity, CancellationToken ct) =>
@@ -127,6 +133,18 @@ namespace BE_Company.Sales.Services
             catch
             {
                 // Completing the sale must not roll back because request status failed.
+            }
+
+            if (_posting != null && _clock != null && SalesPostingRules.IsPostingWindow(_clock))
+            {
+                try
+                {
+                    await _posting.PostSaleAsync(saleId, ct);
+                }
+                catch
+                {
+                    // Completed stays visible; the worker retries Failed/Pending rows.
+                }
             }
 
             return new SalesCompleteResponseDTO
