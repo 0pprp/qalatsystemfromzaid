@@ -7,8 +7,8 @@ import { MAPBOX_TOKEN } from '@/composables/mapboxToken'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import {
   formatIraqClock,
+  formatIraqTime,
   normalizePoints,
-  officialTenMinutePoints,
 } from '@/composables/gpsTrack'
 import { useToast } from '@/composables/useToast'
 
@@ -18,6 +18,7 @@ const cityValue = ref('')
 const employeeId = ref(null)
 const date = ref(new Date().toISOString().slice(0, 10))
 const points = ref([])
+const shiftSummary = ref(null)
 const selectedIndex = ref(-1)
 const loading = ref(false)
 const emptyMessage = ref('')
@@ -121,6 +122,26 @@ function paintPoints(list) {
     map.removeSource('stops')
 
   clearMarkers()
+  if (list.length >= 2) {
+    map.addSource('route', {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: list.map(point => [point.lng, point.lat]),
+        },
+      },
+    })
+    map.addLayer({
+      id: 'route-line',
+      type: 'line',
+      source: 'route',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#16a34a', 'line-width': 4, 'line-opacity': 0.85 },
+    })
+  }
   for (const [index, point] of list.entries()) {
     const marker = new mapboxgl.Marker({ color: '#16a34a', anchor: 'bottom' })
       .setLngLat([point.lng, point.lat])
@@ -182,16 +203,26 @@ async function ensureMap() {
   return true
 }
 
-function extractPoints(payload) {
-  const body = payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+function extractBody(payload) {
+  return payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
     ? payload.data
     : payload
+}
+
+function extractPoints(payload) {
+  const body = extractBody(payload)
   if (Array.isArray(body?.points))
     return body.points
   if (Array.isArray(body?.Points))
     return body.Points
 
   return []
+}
+
+function extractShift(payload) {
+  const body = extractBody(payload)
+
+  return body?.shift || body?.Shift || null
 }
 
 function isHttpError(err) {
@@ -212,10 +243,22 @@ async function loadLocations() {
   loading.value = true
   selectedIndex.value = -1
   emptyMessage.value = ''
+  shiftSummary.value = null
   try {
     const payload = await smGet(`${employeeApiPath(cityValue.value, employeeId.value, `/route?date=${date.value}`)}`)
     const raw = extractPoints(payload)
-    const usable = officialTenMinutePoints(normalizePoints(raw))
+    const usable = normalizePoints(raw)
+    const shift = extractShift(payload)
+    const first = usable[0]
+    const last = usable[usable.length - 1]
+    shiftSummary.value = {
+      startedAt: formatIraqTime(shift?.startedAt ?? shift?.StartedAt),
+      endedAt: formatIraqTime(shift?.closedAt ?? shift?.ClosedAt)
+        || (shift ? 'ما زال الدوام فعالاً' : '—'),
+      count: usable.length,
+      firstAt: first ? formatIraqClock(first.t) : '—',
+      lastAt: last ? formatIraqClock(last.t) : '—',
+    }
 
     points.value = usable.map(point => ({
       ...point,
@@ -242,6 +285,7 @@ async function loadLocations() {
   catch (err) {
     console.error(err)
     points.value = []
+    shiftSummary.value = null
     emptyMessage.value = ''
     if (isHttpError(err))
       toast.error('تعذر تحميل نقاط الموقع')
@@ -256,7 +300,7 @@ async function loadLocations() {
   <div class="sales-route-page">
     <div class="sales-route-toolbar">
       <h4 class="mb-3">
-        سجل المواقع
+        المسارات
       </h4>
       <VRow dense>
         <VCol
@@ -309,6 +353,16 @@ async function loadLocations() {
         </VCol>
       </VRow>
       <div
+        v-if="shiftSummary"
+        class="sales-route-summary mt-3"
+      >
+        <div>بدء الدوام: {{ shiftSummary.startedAt || '—' }}</div>
+        <div>إنهاء الدوام: {{ shiftSummary.endedAt }}</div>
+        <div>عدد النقاط: {{ shiftSummary.count }}</div>
+        <div>أول نقطة: {{ shiftSummary.firstAt }}</div>
+        <div>آخر نقطة: {{ shiftSummary.lastAt }}</div>
+      </div>
+      <div
         v-if="!token"
         class="mt-2 text-error"
       >
@@ -332,7 +386,7 @@ async function loadLocations() {
       </div>
       <template v-else-if="points.length">
         <div class="sales-route-times-title">
-          سجل المواقع
+          نقاط المسار
         </div>
         <div class="sales-route-times-list">
           <button
@@ -365,6 +419,13 @@ async function loadLocations() {
 .sales-route-toolbar {
   flex: 0 0 auto;
   padding: 1rem 1.25rem 0.75rem;
+}
+
+.sales-route-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  font-size: 0.875rem;
 }
 
 .sales-route-map-wrap {

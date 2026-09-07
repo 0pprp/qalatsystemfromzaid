@@ -152,7 +152,22 @@ namespace BE_Company.Sales.Services
         {
             var list = docs.ToList();
             var combined = list.Where(d => IsCombined(d.Type)).ToList();
-            return combined.Count > 0 ? combined : list;
+            if (combined.Count > 0)
+            {
+                return combined;
+            }
+
+            var finals = list.Where(d =>
+                string.Equals(d.Type, Contract, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(d.Type, PromissoryNote, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (finals.Count > 0)
+            {
+                return finals;
+            }
+
+            return list.Where(d =>
+                string.Equals(d.Type, PreviewContract, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(d.Type, PreviewPromissoryNote, StringComparison.OrdinalIgnoreCase)).ToList();
         }
 
         public static bool IsContract(string? type) =>

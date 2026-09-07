@@ -1,6 +1,6 @@
 class TrackingConfig {
   /// Internal GPS refresh only. Official points are persisted natively every [officialInterval].
-  static const Duration movingInterval = Duration(seconds: 30);
+  static const Duration movingInterval = Duration(seconds: 20);
   static const Duration _productionOfficialInterval = Duration(minutes: 10);
   static const Duration stationaryInterval = Duration(seconds: 45);
   static const double minimumDistanceMeters = 0;

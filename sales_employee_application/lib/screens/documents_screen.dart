@@ -17,7 +17,7 @@ class DocumentsScreen extends StatelessWidget {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(24),
-          child: Text('احفظ مبيعاً أولاً ثم اطبع أو شارك عقد البيع ووصل الأمانة.'),
+          child: Text('احفظ مبيعاً أولاً ثم اطبع أو شارك عقد البيع + وصل الأمانة.'),
         ),
       );
     }

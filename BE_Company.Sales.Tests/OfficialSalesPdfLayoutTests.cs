@@ -118,6 +118,40 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
+        public void Receipt_FingerprintAreaKeepsWhitespaceWithoutBorder()
+        {
+            var rendererPath = FindRendererSource();
+            var source = File.ReadAllText(rendererPath);
+            Assert.Contains("print.Item().PaddingTop(6).Height(DebtorFingerprintHeight);", source);
+            Assert.DoesNotContain("Height(DebtorFingerprintHeight).Border", source);
+            Assert.Contains("col.Item().PaddingTop(28).Element(c => WitnessBlock(c, \"الشاهد الأول\"", source);
+
+            using var stream = new MemoryStream(OfficialSalesPdfRenderer.BuildSaleDocuments(Draft()));
+            using var document = PdfDocument.Open(stream);
+            Assert.Equal(2, document.NumberOfPages);
+            using var receiptStream = new MemoryStream(OfficialSalesPdfRenderer.BuildPromissoryNote(Draft()));
+            using var receipt = PdfDocument.Open(receiptStream);
+            Assert.Equal(1, receipt.NumberOfPages);
+        }
+
+        private static string FindRendererSource()
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null)
+            {
+                var candidate = Path.Combine(dir.FullName, "BE_Company", "Sales", "Services", "OfficialSalesPdfRenderer.cs");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+
+                dir = dir.Parent;
+            }
+
+            throw new FileNotFoundException("OfficialSalesPdfRenderer.cs");
+        }
+
+        [Fact]
         public void CombinedSaleDocuments_LongData_StayOnTwoA4Pages()
         {
             using var stream = new MemoryStream(OfficialSalesPdfRenderer.BuildSaleDocuments(LongDraft()));

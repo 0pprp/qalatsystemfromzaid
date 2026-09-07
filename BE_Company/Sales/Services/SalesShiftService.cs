@@ -199,25 +199,67 @@ namespace BE_Company.Sales.Services
                 }
             }
 
-            if (newestAccepted != null)
+            return result;
+        }
+
+        public async Task<SalesLiveLocationDTO> IngestLiveAsync(
+            SalesIdentity identity,
+            SalesLiveLocationRequestDTO request,
+            CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            var utc = _clock.UtcNow;
+            var shift = await _repo.GetByIdAsync(request.ShiftId, ct)
+                        ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "الدوام غير موجود.");
+            if (shift.EmployeeId != identity.EmployeeId)
             {
-                var live = new SalesLiveLocationDTO
-                {
-                    EmployeeId = identity.EmployeeId,
-                    EmployeeName = identity.EmployeeName,
-                    CityValue = identity.BranchId,
-                    CityName = identity.BranchName,
-                    ShiftId = shift.ShiftId,
-                    Latitude = newestAccepted.Latitude,
-                    Longitude = newestAccepted.Longitude,
-                    Accuracy = newestAccepted.Accuracy,
-                    CapturedAt = DateTime.SpecifyKind(newestAccepted.CapturedAtUtc, DateTimeKind.Utc)
-                };
-                result.LiveUpdate = live;
-                await _broadcaster.PublishAsync(live, ct);
+                throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكنك إرسال موقع لدوام موظف آخر.");
             }
 
-            return result;
+            if (shift.Status == SalesShiftStatuses.Active && IraqTimeService.IsExpired(shift.CutoffAtUtc, utc))
+            {
+                await _repo.CloseAsync(shift.ShiftId, utc, SalesShiftCloseReasons.AutomaticCutoff, ct);
+                shift.Status = SalesShiftStatuses.Closed;
+                await _repo.InsertEventAsync(identity.EmployeeId, shift.ShiftId, SalesTrackingEventTypes.ShiftAutoClosed, utc, null, ct);
+            }
+
+            if (shift.Status != SalesShiftStatuses.Active)
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "الدوام مغلق.");
+            }
+
+            if (!IsValidLivePoint(request))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "إحداثيات الموقع غير صالحة.");
+            }
+
+            request.CapturedAtUtc = DateTime.SpecifyKind(request.CapturedAtUtc, DateTimeKind.Utc);
+            if (request.CapturedAtUtc == default)
+            {
+                request.CapturedAtUtc = utc;
+            }
+
+            await _repo.UpsertLiveLocationAsync(identity.EmployeeId, shift.ShiftId, request, utc, ct);
+            var live = new SalesLiveLocationDTO
+            {
+                EmployeeId = identity.EmployeeId,
+                EmployeeName = identity.EmployeeName,
+                CityValue = identity.BranchId,
+                CityName = identity.BranchName,
+                ShiftId = shift.ShiftId,
+                Latitude = request.Latitude,
+                Longitude = request.Longitude,
+                Accuracy = request.Accuracy,
+                Speed = request.Speed,
+                Heading = request.Heading,
+                CapturedAt = request.CapturedAtUtc,
+                DeviceTimestampUtc = request.CapturedAtUtc,
+                UpdatedAtUtc = utc,
+                LocationStatus = SalesLocationStatuses.Live,
+                ShiftStatus = SalesShiftStatuses.Active
+            };
+            await _broadcaster.PublishAsync(live, ct);
+            return live;
         }
 
         public async Task RecordEventAsync(SalesIdentity identity, SalesTrackingEventRequestDTO request, CancellationToken ct)
@@ -270,6 +312,26 @@ namespace BE_Company.Sales.Services
             }
 
             if (captured >= shift.CutoffAtUtc)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        internal static bool IsValidLivePoint(SalesLiveLocationRequestDTO point)
+        {
+            if (point.Latitude is < -90 or > 90 || point.Longitude is < -180 or > 180)
+            {
+                return false;
+            }
+
+            if (Math.Abs(point.Latitude) < 0.000001 && Math.Abs(point.Longitude) < 0.000001)
+            {
+                return false;
+            }
+
+            if (point.Accuracy is < 0 or > 5000)
             {
                 return false;
             }

@@ -24,6 +24,13 @@ abstract class SalesRepository {
   Future<void> endShift();
   Future<WorkShift?> currentShift();
   Future<LocationBatchResult> uploadLocationBatch(int shiftId, List<LocalLocationPoint> points);
+  Future<void> uploadLiveLocation({
+    required int shiftId,
+    required double latitude,
+    required double longitude,
+    double? accuracy,
+    DateTime? capturedAtUtc,
+  });
   Future<void> recordTrackingEvent(int? shiftId, String eventType);
   Future<List<SalesWorkRequest>> salesRequests();
   Future<SalesWorkRequest> salesRequest(int id);

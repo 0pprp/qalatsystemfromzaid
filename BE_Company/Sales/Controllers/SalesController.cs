@@ -732,6 +732,33 @@ namespace BE_Company.Sales.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("location/live")]
+        public async Task<IActionResult> LocationLive([FromBody] SalesLiveLocationRequestDTO request, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                var live = await _locations.IngestLiveAsync(identity, request, ct);
+                return Ok(new { liveUpdate = live });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("tracking/events")]
         public async Task<IActionResult> TrackingEvent([FromBody] SalesTrackingEventRequestDTO request, CancellationToken ct)
         {

@@ -350,7 +350,7 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
         : (d.documents.isNotEmpty
             ? d.documents
             : [
-                SalesDocument(type: 'SaleDocuments', fileName: 'عقد البيع ووصل الأمانة', downloadUrl: ''),
+                SalesDocument(type: 'SaleDocuments', fileName: 'عقد البيع + وصل الأمانة', downloadUrl: ''),
               ]));
     return [
       for (final doc in list)

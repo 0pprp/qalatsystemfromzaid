@@ -18,6 +18,8 @@ import {
   smPut,
 } from '@/composables/salesManagerApi'
 import { formatIraqDate } from '@/composables/iraqDate'
+import { saleDisplayDocuments, saleDocumentTitle } from '@/composables/saleDocuments'
+import ShopLocationLink from '@/components/ShopLocationLink.vue'
 import { useToast } from '@/composables/useToast'
 import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone } from '@core/utils/validators'
 
@@ -46,9 +48,14 @@ const editForm = ref({
 const kycTypes = [
   { value: 'NationalIdFront', label: 'البطاقة الوطنية - أمامية' },
   { value: 'NationalIdBack', label: 'البطاقة الوطنية - خلفية' },
-  { value: 'ResidenceCard', label: 'بطاقة السكن' },
+  { value: 'ResidenceCardFront', label: 'بطاقة السكن - أمامية' },
+  { value: 'ResidenceCardBack', label: 'بطاقة السكن - خلفية' },
   { value: 'ResidenceCertificate', label: 'تأييد السكن' },
 ]
+const kycLabelFallback = {
+  ...Object.fromEntries(kycTypes.map(t => [t.value, t.label])),
+  ResidenceCard: 'بطاقة السكن - قديمة',
+}
 
 function pick(obj, ...keys) {
   if (!obj)
@@ -107,33 +114,11 @@ function saleShop(sale) {
 }
 
 function saleDocs(sale) {
-  const rows = pick(sale, 'documents', 'Documents') || []
-  const list = Array.isArray(rows) ? rows : []
-  const combined = list.filter(doc => {
-    const type = String(pick(doc, 'type', 'Type') || '')
-    return type === 'SaleDocuments' || type === 'PreviewSaleDocuments'
-  })
-  if (combined.length)
-    return combined
-
-  return list.filter(doc => {
-    const type = String(pick(doc, 'type', 'Type') || '')
-
-    return type === 'Contract' || type === 'PromissoryNote' || type === 'PreviewContract' || type === 'PreviewPromissoryNote'
-  })
-}
-
-function isContract(doc) {
-  const type = String(pick(doc, 'type', 'Type') || '')
-
-  return type === 'SaleDocuments' || type === 'PreviewSaleDocuments' || type === 'Contract' || type === 'PreviewContract'
+  return saleDisplayDocuments(sale)
 }
 
 function documentTitle(doc) {
-  const type = String(pick(doc, 'type', 'Type') || '')
-  if (type === 'SaleDocuments' || type === 'PreviewSaleDocuments')
-    return 'عقد البيع ووصل الأمانة'
-  return isContract(doc) ? 'عقد البيع' : 'وصل الأمانة'
+  return saleDocumentTitle(doc)
 }
 
 async function load() {
@@ -201,9 +186,12 @@ async function loadCustomerDocuments() {
 }
 
 function docLabel(doc) {
+  const type = pick(doc, 'documentType', 'DocumentType')
+
   return pick(doc, 'typeLabel', 'TypeLabel')
-    || kycTypes.find(t => t.value === pick(doc, 'documentType', 'DocumentType'))?.label
-    || pick(doc, 'documentType', 'DocumentType')
+    || kycLabelFallback[type]
+    || kycTypes.find(t => t.value === type)?.label
+    || type
     || 'مستند'
 }
 
@@ -696,6 +684,7 @@ onUnmounted(() => {
               المساحة: {{ pick(saleShop(sale), 'shopArea', 'ShopArea') }} م²
             </VCol>
           </VRow>
+          <ShopLocationLink :shop="saleShop(sale)" />
           <VImg
             v-if="shopUrls[pick(sale, 'saleId', 'SaleId')]"
             :src="shopUrls[pick(sale, 'saleId', 'SaleId')]"
@@ -725,24 +714,13 @@ onUnmounted(() => {
           :key="pick(doc, 'documentId', 'DocumentId')"
           class="d-flex align-center justify-space-between mb-3"
         >
-          <span>{{ documentTitle(doc) }}</span>
-          <div>
-            <VBtn
-              size="small"
-              variant="text"
-              class="me-2"
-              @click="openDocument(sale, doc)"
-            >
-              فتح
-            </VBtn>
-            <VBtn
-              size="small"
-              variant="text"
-              @click="openDocument(sale, doc)"
-            >
-              تنزيل
-            </VBtn>
-          </div>
+          <VBtn
+            color="primary"
+            variant="tonal"
+            @click="openDocument(sale, doc)"
+          >
+            {{ documentTitle(doc) }}
+          </VBtn>
         </div>
       </VCard>
 

@@ -301,6 +301,50 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("location/live")]
+        public async Task<IActionResult> LocationLive([FromBody] JsonElement body, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var user = TokenService.FromPrincipal(User);
+            using var response = await _proxy.SendAuthorizedAsync(
+                user.CityLink,
+                "sales/location/live",
+                HttpMethod.Post,
+                user.BranchToken,
+                new StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
+                ct);
+            var raw = await response.Content.ReadAsStringAsync(ct);
+            var parsed = string.IsNullOrWhiteSpace(raw) ? (JsonElement?)null : BranchProxyService.TryParseJson(raw);
+            if (response.IsSuccessStatusCode && parsed is JsonElement root)
+            {
+                JsonElement live = default;
+                var hasLive = false;
+                foreach (var prop in root.EnumerateObject())
+                {
+                    if (string.Equals(prop.Name, "liveUpdate", StringComparison.OrdinalIgnoreCase))
+                    {
+                        live = prop.Value.Clone();
+                        hasLive = live.ValueKind == JsonValueKind.Object;
+                        break;
+                    }
+                }
+
+                if (hasLive)
+                {
+                    await _hub.Clients.Group(BE_SalesEmployee.Hubs.SalesTrackingHub.ManagersGroup)
+                        .SendAsync(BE_SalesEmployee.Hubs.SalesTrackingHub.LocationUpdated, live, ct);
+                }
+            }
+
+            return StatusCode((int)response.StatusCode, parsed);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("location/batch")]
         public async Task<IActionResult> LocationBatch([FromBody] JsonElement body, CancellationToken ct)
         {

@@ -293,6 +293,27 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   @override
+  Future<void> uploadLiveLocation({
+    required int shiftId,
+    required double latitude,
+    required double longitude,
+    double? accuracy,
+    DateTime? capturedAtUtc,
+  }) async {
+    try {
+      await ApiClient.post('sales/location/live', body: {
+        'shiftId': shiftId,
+        'latitude': latitude,
+        'longitude': longitude,
+        if (accuracy != null) 'accuracy': accuracy,
+        'capturedAtUtc': (capturedAtUtc ?? DateTime.now().toUtc()).toIso8601String(),
+      });
+    } on ApiException {
+      return;
+    }
+  }
+
+  @override
   Future<void> recordTrackingEvent(int? shiftId, String eventType) async {
     try {
       await ApiClient.post('sales/tracking/events', body: {

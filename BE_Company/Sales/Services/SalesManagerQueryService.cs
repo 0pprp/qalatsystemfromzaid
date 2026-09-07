@@ -129,6 +129,30 @@ namespace BE_Company.Sales.Services
         public Task<IReadOnlyList<SalesDraftDTO>> ListSalesAsync(int? employeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct) =>
             _read.ListSalesAsync(employeeId, status, fromUtc, toUtc, ct);
 
+        public async Task<IReadOnlyList<SalesLiveLocationDTO>> ListLiveLocationsAsync(CancellationToken ct)
+        {
+            var employees = await ListEmployeesAsync(SalesShiftStatuses.Active, null, ct);
+            return employees
+                .Where(e => e.LastLatitude != null && e.LastLongitude != null)
+                .Select(e => new SalesLiveLocationDTO
+                {
+                    EmployeeId = e.EmployeeId,
+                    EmployeeName = e.EmployeeName,
+                    CityValue = e.CityValue,
+                    CityName = e.CityName,
+                    ShiftId = e.CurrentShiftId ?? 0,
+                    Latitude = e.LastLatitude!.Value,
+                    Longitude = e.LastLongitude!.Value,
+                    Accuracy = e.LastAccuracy,
+                    CapturedAt = e.LastLocationAt ?? default,
+                    DeviceTimestampUtc = e.LastLocationAt ?? default,
+                    UpdatedAtUtc = e.LastLocationAt ?? default,
+                    LocationStatus = e.LocationStatus,
+                    ShiftStatus = e.ShiftStatus
+                })
+                .ToList();
+        }
+
         public Task<SalesDraftDTO?> GetSaleAsync(int saleId, CancellationToken ct) =>
             _read.GetSaleAsync(saleId, ct);
 

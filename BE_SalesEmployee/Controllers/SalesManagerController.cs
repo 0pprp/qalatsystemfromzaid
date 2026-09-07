@@ -50,6 +50,10 @@ namespace BE_SalesEmployee.Controllers
             return ListAsync(cityValue, "sales-manager/employees" + q, ct);
         }
 
+        [HttpGet("live-locations")]
+        public Task<IActionResult> LiveLocations([FromQuery] string? cityValue, CancellationToken ct) =>
+            ListAsync(cityValue, "sales-manager/live-locations", ct);
+
         [HttpGet("employees/{cityValue}/{employeeId:int}")]
         public Task<IActionResult> Employee(string cityValue, int employeeId, CancellationToken ct) =>
             OneAsync(cityValue, $"sales-manager/employees/{employeeId}", ct);

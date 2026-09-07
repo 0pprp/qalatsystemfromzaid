@@ -7,6 +7,7 @@ import { formatIraqDate, formatIraqTime } from '@/composables/iraqDate'
 import {
   branchRowKey,
   evaluationLabel,
+  managerSalePath,
   requestHistoryLabel,
   requestStatusLabel,
   salesManagerBase,
@@ -17,6 +18,8 @@ import {
   withCityQuery,
   displayCityName,
 } from '@/composables/salesManagerApi'
+import { saleDisplayDocuments, saleDocumentTitle } from '@/composables/saleDocuments'
+import ShopLocationLink from '@/components/ShopLocationLink.vue'
 import { isDemo } from '@/composables/useCities'
 import { useSalesBranches } from '@/composables/useSalesBranches'
 import { useToast } from '@/composables/useToast'
@@ -335,6 +338,46 @@ function areaText(shop) {
   const area = Number(pick(shop, 'shopArea', 'ShopArea') ?? 0)
 
   return `${area} م²`
+}
+
+function saleDocs(sale) {
+  return saleDisplayDocuments(sale)
+}
+
+function currentCity(row, d) {
+  return cityValue.value
+    || pick(d, 'cityValue', 'CityValue')
+    || pick(row, 'cityValue', 'CityValue')
+    || pick(profile.value, 'cityValue', 'CityValue')
+    || pick(saleDetail.value, 'cityValue', 'CityValue')
+    || ''
+}
+
+async function openSaleDocument(sale, doc) {
+  const city = currentCity(selected.value, detail.value)
+  const saleId = pick(sale, 'saleId', 'SaleId')
+  const documentId = pick(doc, 'documentId', 'DocumentId')
+  if ((!city && !isDemo()) || !saleId || !documentId) {
+    toast.error('المستند غير متوفر')
+
+    return
+  }
+  try {
+    const blob = await smGetBlob(managerSalePath(city, saleId, `/documents/${documentId}/download`))
+    const buffer = await blob.arrayBuffer()
+    const header = new TextDecoder('latin1').decode(buffer.slice(0, 5))
+    if (header !== '%PDF-') {
+      toast.error('تعذر فتح المستند')
+
+      return
+    }
+    const pdf = new Blob([buffer], { type: 'application/pdf' })
+    const url = URL.createObjectURL(pdf)
+    window.open(url, '_blank')
+  }
+  catch {
+    toast.error('تعذر فتح المستند')
+  }
 }
 
 const latestShop = computed(() =>
@@ -1192,6 +1235,30 @@ onUnmounted(() => {
             <div>العنوان: {{ pick(saleDetail, 'address', 'Address') || '—' }}</div>
             <div v-if="pick(saleDetail, 'shop', 'Shop')">
               المحل: {{ pick(pick(saleDetail, 'shop', 'Shop'), 'shopName', 'ShopName') || '—' }}
+              <ShopLocationLink :shop="pick(saleDetail, 'shop', 'Shop')" />
+            </div>
+            <div
+              v-if="saleDocs(saleDetail).length"
+              class="mt-2"
+            >
+              <div class="font-weight-bold mb-1">
+                المستندات
+              </div>
+              <div
+                v-for="doc in saleDocs(saleDetail)"
+                :key="pick(doc, 'documentId', 'DocumentId')"
+                class="d-flex align-center flex-wrap ga-2 mb-2"
+              >
+                <span>{{ saleDocumentTitle(doc) }}</span>
+                <VBtn
+                  size="small"
+                  color="primary"
+                  variant="tonal"
+                  @click="openSaleDocument(saleDetail, doc)"
+                >
+                  فتح
+                </VBtn>
+              </div>
             </div>
           </div>
           <div v-if="requestStatus(detail) === 'Pending' && (detail.pendingNote || detail.PendingNote)">
@@ -1489,6 +1556,7 @@ onUnmounted(() => {
             <div>الطول: {{ pick(latestShop, 'shopLength', 'ShopLength') }} م</div>
             <div>العرض: {{ pick(latestShop, 'shopWidth', 'ShopWidth') }} م</div>
             <div>المساحة: {{ areaText(latestShop) }}</div>
+            <ShopLocationLink :shop="latestShop" />
             <VImg
               v-if="shopImageUrl"
               :src="shopImageUrl"
@@ -1543,6 +1611,21 @@ onUnmounted(() => {
             </div>
             <div class="text-medium-emphasis">
               التاريخ: {{ formatIraqDate(pick(item, 'date', 'Date')) }}
+            </div>
+            <div
+              v-for="doc in saleDocs(item)"
+              :key="pick(doc, 'documentId', 'DocumentId')"
+              class="d-flex align-center flex-wrap ga-2 mt-1"
+            >
+              <span>{{ saleDocumentTitle(doc) }}</span>
+              <VBtn
+                size="small"
+                color="primary"
+                variant="tonal"
+                @click="openSaleDocument(item, doc)"
+              >
+                فتح
+              </VBtn>
             </div>
           </div>
 

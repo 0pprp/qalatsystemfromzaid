@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sales_employee_application/data/sales_models.dart';
@@ -52,6 +53,18 @@ void main() {
     final combined = await (await SaleDocuments.buildSaleDocuments(mapped)).save();
     expect(pdfPageCount(combined), 2);
     expect(SaleDocuments.debtorFingerprintHeight, 80);
+  });
+
+  test('receipt fingerprint space remains without a border box', () {
+    final candidates = [
+      File('lib/services/sale_documents.dart'),
+      File('../lib/services/sale_documents.dart'),
+    ];
+    final srcFile = candidates.firstWhere((f) => f.existsSync());
+    final src = srcFile.readAsStringSync();
+    expect(src.contains('pw.Border.all'), isFalse);
+    expect(src.contains('height: debtorFingerprintHeight'), isTrue);
+    expect(src.contains('pw.SizedBox(height: 28)'), isTrue);
   });
 
   test('contract and receipt PDFs are a single A4 page for long data', () async {

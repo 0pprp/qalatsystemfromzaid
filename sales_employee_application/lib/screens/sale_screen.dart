@@ -85,10 +85,11 @@ class _SaleScreenState extends State<SaleScreen> {
   double? _shopLng;
   bool _locating = false;
   final List<_KycSlot> _kycSlots = [
-    _KycSlot('NationalIdFront', 'البطاقة الوطنية - الوجه الأمامي'),
-    _KycSlot('NationalIdBack', 'البطاقة الوطنية - الوجه الخلفي'),
-    _KycSlot('ResidenceCard', 'بطاقة السكن'),
-    _KycSlot('ResidenceCertificate', 'تأييد السكن'),
+    _KycSlot(SalesCustomerKycDocument.nationalIdFront, SalesCustomerKycDocument.labelFor(SalesCustomerKycDocument.nationalIdFront)),
+    _KycSlot(SalesCustomerKycDocument.nationalIdBack, SalesCustomerKycDocument.labelFor(SalesCustomerKycDocument.nationalIdBack)),
+    _KycSlot(SalesCustomerKycDocument.residenceCardFront, SalesCustomerKycDocument.labelFor(SalesCustomerKycDocument.residenceCardFront)),
+    _KycSlot(SalesCustomerKycDocument.residenceCardBack, SalesCustomerKycDocument.labelFor(SalesCustomerKycDocument.residenceCardBack)),
+    _KycSlot(SalesCustomerKycDocument.residenceCertificate, SalesCustomerKycDocument.labelFor(SalesCustomerKycDocument.residenceCertificate)),
   ];
 
   @override
@@ -813,8 +814,9 @@ class _SaleScreenState extends State<SaleScreen> {
   Future<void> _hydrateCustomerDocs(int saleId) async {
     try {
       final rows = await SalesRepositoryFactory.instance.listCustomerDocuments(saleId);
+      _kycSlots.removeWhere((s) => s.type == SalesCustomerKycDocument.residenceCardLegacy);
       for (final slot in _kycSlots) {
-        final matches = rows.where((r) => r.documentType == slot.type).toList();
+        final matches = rows.where((r) => r.documentType.toLowerCase() == slot.type.toLowerCase()).toList();
         if (matches.isEmpty) continue;
         final match = matches.last;
         slot.documentId = match.id;
@@ -822,6 +824,29 @@ class _SaleScreenState extends State<SaleScreen> {
         try {
           slot.bytes = await SalesRepositoryFactory.instance.customerDocumentBytes(match.id);
         } catch (_) {}
+      }
+      final legacy = rows
+          .where((r) => r.documentType.toLowerCase() == SalesCustomerKycDocument.residenceCardLegacy.toLowerCase())
+          .toList();
+      if (legacy.isNotEmpty) {
+        final match = legacy.last;
+        final slot = _KycSlot(
+          SalesCustomerKycDocument.residenceCardLegacy,
+          match.typeLabel.isNotEmpty
+              ? match.typeLabel
+              : SalesCustomerKycDocument.labelFor(SalesCustomerKycDocument.residenceCardLegacy),
+        );
+        slot.documentId = match.id;
+        slot.pendingUpload = false;
+        try {
+          slot.bytes = await SalesRepositoryFactory.instance.customerDocumentBytes(match.id);
+        } catch (_) {}
+        final certIndex = _kycSlots.indexWhere((s) => s.type == SalesCustomerKycDocument.residenceCertificate);
+        if (certIndex >= 0) {
+          _kycSlots.insert(certIndex, slot);
+        } else {
+          _kycSlots.add(slot);
+        }
       }
       if (mounted) setState(() {});
     } catch (_) {}
@@ -1326,7 +1351,7 @@ class _SaleScreenState extends State<SaleScreen> {
     final docs = _previewDocs.isNotEmpty
         ? SalesDocument.preferDisplay(_previewDocs)
         : [
-            SalesDocument(type: 'PreviewSaleDocuments', fileName: 'عقد البيع ووصل الأمانة', downloadUrl: ''),
+            SalesDocument(type: 'PreviewSaleDocuments', fileName: 'عقد البيع + وصل الأمانة', downloadUrl: ''),
           ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

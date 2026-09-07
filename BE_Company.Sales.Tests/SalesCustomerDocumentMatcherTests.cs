@@ -54,13 +54,22 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public void KnownDocumentTypes_AreTheFourOptionalKycTypes()
+        public void KnownDocumentTypes_IncludeResidenceCardFrontAndBack_AndKeepLegacy()
         {
-            Assert.Equal(4, SalesCustomerDocumentTypes.All.Length);
+            Assert.Equal(5, SalesCustomerDocumentTypes.All.Length);
+            Assert.DoesNotContain(SalesCustomerDocumentTypes.ResidenceCard, SalesCustomerDocumentTypes.All);
             Assert.True(SalesCustomerDocumentTypes.IsKnown("NationalIdFront"));
             Assert.True(SalesCustomerDocumentTypes.IsKnown("nationalidback"));
+            Assert.True(SalesCustomerDocumentTypes.IsKnown(SalesCustomerDocumentTypes.ResidenceCardFront));
+            Assert.True(SalesCustomerDocumentTypes.IsKnown(SalesCustomerDocumentTypes.ResidenceCardBack));
+            Assert.True(SalesCustomerDocumentTypes.IsKnown("ResidenceCard"));
             Assert.Equal("البطاقة الوطنية - أمامية", SalesCustomerDocumentTypes.Label("NationalIdFront"));
+            Assert.Equal("بطاقة السكن - أمامية", SalesCustomerDocumentTypes.Label(SalesCustomerDocumentTypes.ResidenceCardFront));
+            Assert.Equal("بطاقة السكن - خلفية", SalesCustomerDocumentTypes.Label(SalesCustomerDocumentTypes.ResidenceCardBack));
+            Assert.Equal("بطاقة السكن - قديمة", SalesCustomerDocumentTypes.Label(SalesCustomerDocumentTypes.ResidenceCard));
             Assert.Equal("تأييد السكن", SalesCustomerDocumentTypes.Label("ResidenceCertificate"));
+            Assert.Equal(SalesCustomerDocumentTypes.ResidenceCard, SalesCustomerDocumentTypes.Normalize("residencecard"));
+            Assert.Equal(SalesCustomerDocumentTypes.ResidenceCardFront, SalesCustomerDocumentTypes.Normalize("residencecardfront"));
         }
     }
 

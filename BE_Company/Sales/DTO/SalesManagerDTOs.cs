@@ -113,7 +113,13 @@ namespace BE_Company.Sales.DTO
         public double Latitude { get; set; }
         public double Longitude { get; set; }
         public double? Accuracy { get; set; }
+        public double? Speed { get; set; }
+        public double? Heading { get; set; }
         public DateTime CapturedAt { get; set; }
+        public DateTime UpdatedAtUtc { get; set; }
+        public DateTime DeviceTimestampUtc { get; set; }
+        public string LocationStatus { get; set; } = "Live";
+        public string ShiftStatus { get; set; } = "Active";
     }
 
     public sealed class SalesManagerLocationPointDTO

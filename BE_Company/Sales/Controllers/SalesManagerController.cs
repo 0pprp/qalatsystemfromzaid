@@ -71,6 +71,20 @@ namespace BE_Company.Sales.Controllers
             return Ok(rows);
         }
 
+        [HttpGet("live-locations")]
+        public async Task<IActionResult> LiveLocations([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var rows = await _query.ListLiveLocationsAsync(ct);
+            if (!string.IsNullOrWhiteSpace(cityValue))
+            {
+                rows = rows.Where(e => string.Equals(e.CityValue, cityValue, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+            return Ok(rows);
+        }
+
         [HttpGet("employees/{employeeId:int}")]
         public async Task<IActionResult> Employee(int employeeId, CancellationToken ct)
         {
@@ -142,7 +156,32 @@ namespace BE_Company.Sales.Controllers
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
             var sale = await _query.GetSaleAsync(saleId, ct);
-            return sale == null ? NotFound() : Ok(sale);
+            if (sale == null) return NotFound();
+            try
+            {
+                sale.Shop = await _shops.GetBySaleIdAsync(saleId, ct);
+            }
+            catch
+            {
+                sale.Shop = null;
+            }
+
+            try
+            {
+                var docs = await _complete.GetDocumentsAsync(saleId, sale.EmployeeId, ct);
+                foreach (var doc in docs)
+                {
+                    doc.DownloadUrl = $"/api/sales-manager/sales/{saleId}/documents/{doc.DocumentId}/download";
+                }
+
+                sale.Documents = docs.ToList();
+            }
+            catch
+            {
+                sale.Documents = [];
+            }
+
+            return Ok(sale);
         }
 
         [HttpGet("sales/{saleId:int}/documents")]

@@ -814,26 +814,8 @@ WHERE SaleId = @SaleId AND Status = N'Pending'",
             }
         }
 
-        private static List<SalesDocumentDTO> PreferFinalDocuments(List<SalesDocumentDTO> documents)
-        {
-            var combined = documents.Where(d => SalesDocumentService.IsCombined(d.Type)).ToList();
-            if (combined.Count > 0)
-            {
-                return combined;
-            }
-
-            var finals = documents
-                .Where(d => d.Type == SalesDocumentService.Contract || d.Type == SalesDocumentService.PromissoryNote)
-                .ToList();
-            if (finals.Count > 0)
-            {
-                return finals;
-            }
-
-            return documents
-                .Where(d => d.Type == SalesDocumentService.PreviewContract || d.Type == SalesDocumentService.PreviewPromissoryNote)
-                .ToList();
-        }
+        private static List<SalesDocumentDTO> PreferFinalDocuments(List<SalesDocumentDTO> documents) =>
+            SalesDocumentService.PreferDisplayDocuments(documents).ToList();
 
         private string ResolveImagePath(string key)
         {
@@ -875,7 +857,8 @@ WHERE SaleId = @SaleId AND Status = N'Pending'",
 
         private const string ShopSelect = @"
 SELECT Id, SaleId, CustomerId, CustomerName, CustomerPhone, ShopName, ShopBusinessType,
- ShopStockEstimatedValue, EstimatedDailyRevenue, ShopLength, ShopWidth, ShopArea, ShopImageKey, Latitude, Longitude, CreatedAtUtc
+ ShopStockEstimatedValue, EstimatedDailyRevenue, ShopLength, ShopWidth, ShopArea, ShopImageKey,
+ CAST(Latitude AS FLOAT) AS Latitude, CAST(Longitude AS FLOAT) AS Longitude, CreatedAtUtc
 FROM dbo.SalesShopProfiles";
 
         private const string SchemaSql = @"

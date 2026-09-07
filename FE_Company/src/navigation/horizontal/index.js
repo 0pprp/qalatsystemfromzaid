@@ -82,7 +82,7 @@ export default [
     children: [
       { title: 'نظرة عامة', to: { name: 'sales-manager-dashboard' }, icon: { icon: 'tabler-layout-dashboard', size: '22' } },
       { title: 'الموظفون', to: { name: 'sales-manager-employees' }, icon: { icon: 'tabler-users', size: '22' } },
-      { title: 'الخريطة الحية', to: { name: 'sales-manager-map' }, icon: { icon: 'tabler-map', size: '22' } },
+      { title: 'الموقع المباشر', to: { name: 'sales-manager-map' }, icon: { icon: 'tabler-map', size: '22' } },
       { title: 'المسارات', to: { name: 'sales-manager-routes' }, icon: { icon: 'tabler-route', size: '22' } },
       { title: 'المبيعات', to: { name: 'sales-manager-sales' }, icon: { icon: 'tabler-receipt', size: '22' } },
       { title: 'طلبات البيع', to: { name: 'sales-manager-requests' }, icon: { icon: 'tabler-send', size: '22' } },

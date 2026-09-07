@@ -90,6 +90,11 @@ WHERE Id = @Id AND Status = @Active",
                     ClosedAtUtc = closedAtUtc,
                     Reason = reason
                 }, cancellationToken: ct));
+            await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.SalesEmployeeLiveLocations
+SET EndedAtUtc = @ClosedAtUtc
+WHERE ShiftId = @Id AND EndedAtUtc IS NULL",
+                new { Id = shiftId, ClosedAtUtc = closedAtUtc }, cancellationToken: ct));
         }
 
         public async Task CloseExpiredAsync(DateTime utcNow, CancellationToken ct)
@@ -107,6 +112,13 @@ WHERE Status = @Active AND CutoffAtUtc <= @UtcNow",
                     UtcNow = utcNow,
                     Reason = SalesShiftCloseReasons.AutomaticCutoff
                 }, cancellationToken: ct));
+            await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE l
+SET EndedAtUtc = @UtcNow
+FROM dbo.SalesEmployeeLiveLocations l
+INNER JOIN dbo.SalesWorkShifts w ON w.Id = l.ShiftId
+WHERE l.EndedAtUtc IS NULL AND w.Status = @Closed",
+                new { UtcNow = utcNow, Closed = SalesShiftStatuses.Closed }, cancellationToken: ct));
         }
 
         public async Task<int> TryInsertPointAsync(
@@ -149,6 +161,71 @@ VALUES
             {
                 return 0;
             }
+        }
+
+        public async Task UpsertLiveLocationAsync(
+            int employeeId,
+            int shiftId,
+            SalesLiveLocationRequestDTO point,
+            DateTime updatedAtUtc,
+            CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            await connection.ExecuteAsync(new CommandDefinition(@"
+MERGE dbo.SalesEmployeeLiveLocations AS t
+USING (SELECT @EmployeeId AS EmployeeId) AS s
+ON t.EmployeeId = s.EmployeeId
+WHEN MATCHED AND (@DeviceTimestampUtc >= t.DeviceTimestampUtc OR t.EndedAtUtc IS NOT NULL) THEN
+    UPDATE SET
+        ShiftId = @ShiftId,
+        Latitude = @Latitude,
+        Longitude = @Longitude,
+        Accuracy = @Accuracy,
+        Speed = @Speed,
+        Heading = @Heading,
+        UpdatedAtUtc = @UpdatedAtUtc,
+        DeviceTimestampUtc = @DeviceTimestampUtc,
+        EndedAtUtc = NULL
+WHEN NOT MATCHED THEN
+    INSERT (EmployeeId, ShiftId, Latitude, Longitude, Accuracy, Speed, Heading, UpdatedAtUtc, DeviceTimestampUtc, EndedAtUtc)
+    VALUES (@EmployeeId, @ShiftId, @Latitude, @Longitude, @Accuracy, @Speed, @Heading, @UpdatedAtUtc, @DeviceTimestampUtc, NULL);",
+                new
+                {
+                    EmployeeId = employeeId,
+                    ShiftId = shiftId,
+                    point.Latitude,
+                    point.Longitude,
+                    point.Accuracy,
+                    point.Speed,
+                    point.Heading,
+                    UpdatedAtUtc = updatedAtUtc,
+                    DeviceTimestampUtc = point.CapturedAtUtc
+                }, cancellationToken: ct));
+        }
+
+        public async Task EndLiveLocationAsync(int employeeId, int shiftId, DateTime endedAtUtc, CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.SalesEmployeeLiveLocations
+SET EndedAtUtc = @EndedAtUtc
+WHERE EmployeeId = @EmployeeId AND ShiftId = @ShiftId AND EndedAtUtc IS NULL",
+                new { EmployeeId = employeeId, ShiftId = shiftId, EndedAtUtc = endedAtUtc }, cancellationToken: ct));
+        }
+
+        public async Task EndLiveLocationsForClosedShiftsAsync(DateTime endedAtUtc, CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE l
+SET EndedAtUtc = @EndedAtUtc
+FROM dbo.SalesEmployeeLiveLocations l
+INNER JOIN dbo.SalesWorkShifts w ON w.Id = l.ShiftId
+WHERE l.EndedAtUtc IS NULL AND w.Status = @Closed",
+                new { EndedAtUtc = endedAtUtc, Closed = SalesShiftStatuses.Closed }, cancellationToken: ct));
         }
 
         public async Task InsertEventAsync(int employeeId, int? shiftId, string eventType, DateTime occurredAtUtc, string? metadata, CancellationToken ct)
@@ -234,6 +311,23 @@ BEGIN
         OccurredAtUtc DATETIME NOT NULL,
         Metadata NVARCHAR(400) NULL
     );
+END;
+IF OBJECT_ID(N'dbo.SalesEmployeeLiveLocations', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SalesEmployeeLiveLocations (
+        EmployeeId INT NOT NULL PRIMARY KEY,
+        ShiftId INT NOT NULL,
+        Latitude DECIMAL(9,6) NOT NULL,
+        Longitude DECIMAL(9,6) NOT NULL,
+        Accuracy FLOAT NULL,
+        Speed FLOAT NULL,
+        Heading FLOAT NULL,
+        UpdatedAtUtc DATETIME NOT NULL,
+        DeviceTimestampUtc DATETIME NOT NULL,
+        EndedAtUtc DATETIME NULL,
+        CONSTRAINT FK_SalesEmployeeLiveLocations_Shifts FOREIGN KEY (ShiftId) REFERENCES dbo.SalesWorkShifts (Id)
+    );
+    CREATE INDEX IX_SalesEmployeeLiveLocations_Shift ON dbo.SalesEmployeeLiveLocations (ShiftId, EndedAtUtc);
 END;";
     }
 }

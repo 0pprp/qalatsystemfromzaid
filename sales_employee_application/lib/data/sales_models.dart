@@ -451,6 +451,32 @@ class SalesCustomerKycDocument {
     this.fileUrl,
   });
 
+  static const nationalIdFront = 'NationalIdFront';
+  static const nationalIdBack = 'NationalIdBack';
+  static const residenceCardFront = 'ResidenceCardFront';
+  static const residenceCardBack = 'ResidenceCardBack';
+  static const residenceCertificate = 'ResidenceCertificate';
+  static const residenceCardLegacy = 'ResidenceCard';
+
+  static String labelFor(String type) {
+    switch (type) {
+      case nationalIdFront:
+        return 'البطاقة الوطنية - أمامية';
+      case nationalIdBack:
+        return 'البطاقة الوطنية - خلفية';
+      case residenceCardFront:
+        return 'بطاقة السكن - أمامية';
+      case residenceCardBack:
+        return 'بطاقة السكن - خلفية';
+      case residenceCardLegacy:
+        return 'بطاقة السكن - قديمة';
+      case residenceCertificate:
+        return 'تأييد السكن';
+      default:
+        return type;
+    }
+  }
+
   final int id;
   final String documentType;
   final String typeLabel;
@@ -488,7 +514,7 @@ class SalesDocument {
   bool get isPromissoryNote =>
       isCombined || type == 'PromissoryNote' || type == 'PreviewPromissoryNote';
   String get displayTitle {
-    if (isCombined) return 'عقد البيع ووصل الأمانة';
+    if (isCombined) return 'عقد البيع + وصل الأمانة';
     if (type == 'PromissoryNote' || type == 'PreviewPromissoryNote') return 'وصل الأمانة';
     return 'عقد البيع';
   }

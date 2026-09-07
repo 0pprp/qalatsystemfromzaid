@@ -83,3 +83,21 @@ BEGIN
     );
     CREATE INDEX IX_SalesTrackingEvents_Employee ON dbo.SalesTrackingEvents (EmployeeId, OccurredAtUtc);
 END;
+
+IF OBJECT_ID(N'dbo.SalesEmployeeLiveLocations', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SalesEmployeeLiveLocations (
+        EmployeeId INT NOT NULL PRIMARY KEY,
+        ShiftId INT NOT NULL,
+        Latitude DECIMAL(9,6) NOT NULL,
+        Longitude DECIMAL(9,6) NOT NULL,
+        Accuracy FLOAT NULL,
+        Speed FLOAT NULL,
+        Heading FLOAT NULL,
+        UpdatedAtUtc DATETIME NOT NULL,
+        DeviceTimestampUtc DATETIME NOT NULL,
+        EndedAtUtc DATETIME NULL,
+        CONSTRAINT FK_SalesEmployeeLiveLocations_Shifts FOREIGN KEY (ShiftId) REFERENCES dbo.SalesWorkShifts (Id)
+    );
+    CREATE INDEX IX_SalesEmployeeLiveLocations_Shift ON dbo.SalesEmployeeLiveLocations (ShiftId, EndedAtUtc);
+END;

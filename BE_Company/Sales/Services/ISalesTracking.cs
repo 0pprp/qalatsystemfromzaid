@@ -56,6 +56,9 @@ namespace BE_Company.Sales.Services
         Task CloseAsync(int shiftId, DateTime closedAtUtc, string reason, CancellationToken ct);
         Task CloseExpiredAsync(DateTime utcNow, CancellationToken ct);
         Task<int> TryInsertPointAsync(int employeeId, int shiftId, SalesLocationPointRequestDTO point, DateTime receivedAtUtc, CancellationToken ct);
+        Task UpsertLiveLocationAsync(int employeeId, int shiftId, SalesLiveLocationRequestDTO point, DateTime updatedAtUtc, CancellationToken ct);
+        Task EndLiveLocationAsync(int employeeId, int shiftId, DateTime endedAtUtc, CancellationToken ct);
+        Task EndLiveLocationsForClosedShiftsAsync(DateTime endedAtUtc, CancellationToken ct);
         Task InsertEventAsync(int employeeId, int? shiftId, string eventType, DateTime occurredAtUtc, string? metadata, CancellationToken ct);
     }
 
@@ -71,6 +74,7 @@ namespace BE_Company.Sales.Services
     public interface ISalesLocationIngestService
     {
         Task<SalesLocationBatchResultDTO> IngestBatchAsync(SalesIdentity identity, SalesLocationBatchRequestDTO request, CancellationToken ct);
+        Task<SalesLiveLocationDTO> IngestLiveAsync(SalesIdentity identity, SalesLiveLocationRequestDTO request, CancellationToken ct);
         Task RecordEventAsync(SalesIdentity identity, SalesTrackingEventRequestDTO request, CancellationToken ct);
     }
 }

@@ -312,7 +312,7 @@ class MockSalesRepository implements SalesRepository {
     final row = SalesCustomerKycDocument(
       id: _kycId++,
       documentType: type,
-      typeLabel: type,
+      typeLabel: SalesCustomerKycDocument.labelFor(type),
       saleId: saleId,
       fileName: fileName,
     );
@@ -469,6 +469,15 @@ class MockSalesRepository implements SalesRepository {
     }
     return LocationBatchResult(accepted: accepted, duplicates: duplicates);
   }
+
+  @override
+  Future<void> uploadLiveLocation({
+    required int shiftId,
+    required double latitude,
+    required double longitude,
+    double? accuracy,
+    DateTime? capturedAtUtc,
+  }) async {}
 
   @override
   Future<void> recordTrackingEvent(int? shiftId, String eventType) async {}

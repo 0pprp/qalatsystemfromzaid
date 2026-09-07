@@ -49,7 +49,7 @@ class SaleCompleteSuccessScreen extends StatelessWidget {
               )
             else if (contractPath != null && contractPath == receiptPath) ...[
               const Text('تم تنزيل:'),
-              const Text('✓ عقد البيع ووصل الأمانة'),
+              const Text('✓ عقد البيع + وصل الأمانة'),
             ] else ...[
               const Text('تم تنزيل:'),
               Text(contractPath != null ? '✓ عقد البيع' : 'عقد البيع (غير متوفر)'),
@@ -59,7 +59,7 @@ class SaleCompleteSuccessScreen extends StatelessWidget {
             if (contractPath != null && contractPath == receiptPath)
               ElevatedButton(
                 onPressed: () => OpenFilex.open(contractPath!),
-                child: const Text('فتح عقد البيع ووصل الأمانة'),
+                child: const Text('فتح عقد البيع + وصل الأمانة'),
               )
             else ...[
               ElevatedButton(

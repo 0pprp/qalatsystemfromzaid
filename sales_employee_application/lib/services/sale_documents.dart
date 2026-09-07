@@ -163,12 +163,7 @@ class SaleDocuments {
                   children: [
                     pw.Text('بصمة المدين:', style: style, textDirection: pw.TextDirection.rtl),
                     pw.SizedBox(height: 6),
-                    pw.Container(
-                      height: debtorFingerprintHeight,
-                      decoration: pw.BoxDecoration(
-                        border: pw.Border.all(width: 0.8, color: PdfColors.black),
-                      ),
-                    ),
+                    pw.SizedBox(height: debtorFingerprintHeight),
                   ],
                 ),
               ),

@@ -154,7 +154,7 @@ namespace BE_Company.Sales.Services
                     row.RelativeItem(2).AlignRight().Column(print =>
                     {
                         print.Item().Text("بصمة المدين:");
-                        print.Item().PaddingTop(6).Height(DebtorFingerprintHeight).Border(0.8f);
+                        print.Item().PaddingTop(6).Height(DebtorFingerprintHeight);
                     });
                     row.RelativeItem(3).AlignCenter().Column(sign =>
                     {

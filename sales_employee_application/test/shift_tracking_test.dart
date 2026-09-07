@@ -385,6 +385,13 @@ void main() {
     expect(ok, isTrue);
     expect(store.points.where((p) => p.deviceSequence == seq), hasLength(1));
   });
+
+  test('live interval is 20s and official route interval is 10 minutes', () {
+    expect(TrackingConfig.movingInterval, const Duration(seconds: 20));
+    expect(TrackingConfig.officialInterval, const Duration(minutes: 10));
+    expect(TrackingConfig.officialIntervalMs, 600000);
+    expect(TrackingConfig.minimumDistanceMeters, 0);
+  });
 }
 
 class _FailSyncRepo extends MockSalesRepository {

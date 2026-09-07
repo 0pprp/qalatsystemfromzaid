@@ -4,8 +4,9 @@ import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
-import { branchRowKey, locationStatusLabel, shouldMoveMarker, smGetEmployees } from '@/composables/salesManagerApi'
+import { branchRowKey, locationStatusLabel, smGetLiveLocations } from '@/composables/salesManagerApi'
 import { isCentralSalesManager } from '@/composables/useSalesBranches'
+import { formatIraqTime } from '@/composables/gpsTrack'
 import { MAPBOX_TOKEN } from '@/composables/mapboxToken'
 import { getToken } from '@/services/tokenService'
 
@@ -16,7 +17,7 @@ const selected = ref(null)
 const mapEl = ref(null)
 let map
 const markers = new Map()
-const lastCaptured = new Map()
+const markerStatus = new Map()
 let poll
 let connection
 
@@ -27,69 +28,109 @@ function hubUrl() {
   return `${origin}/hubs/sales-tracking`
 }
 
-function liveEmployees(list) {
-  return (list || []).filter(e => e.lastLatitude != null && e.lastLongitude != null)
-}
-
 function markerKey(row) {
   return branchRowKey(row)
 }
 
+function statusColor(status) {
+  if (status === 'Live')
+    return '#16a34a'
+  if (status === 'Stale')
+    return '#ea580c'
+
+  return '#64748b'
+}
+
+function formatAccuracy(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n))
+    return '—'
+
+  return `${Math.round(n)} م`
+}
+
+function formatLastUpdate(value) {
+  return formatIraqTime(value) || '—'
+}
+
 function popupHtml(row) {
+  const status = locationStatusLabel[row.locationStatus] || row.locationStatus || '—'
+
   return `<div dir="rtl">
     <b>${row.employeeName || ''}</b><br>
     الفرع: ${row.branchName || row.cityName || ''}<br>
-    آخر تحديث: ${row.lastLocationAt || '—'}<br>
-    الدوام: ${row.shiftStatus || '—'}<br>
-    التتبع: ${locationStatusLabel[row.locationStatus] || row.locationStatus || '—'}
+    آخر تحديث: ${formatLastUpdate(row.lastLocationAt)}<br>
+    الدقة: ${formatAccuracy(row.lastAccuracy)}<br>
+    الحالة: ${status}
   </div>`
 }
 
 function upsertMarker(row) {
-  if (!map || row.lastLatitude == null)
+  if (!map || row.lastLatitude == null || row.lastLongitude == null)
     return
   const key = markerKey(row)
-  const prev = lastCaptured.get(key)
-  if (!shouldMoveMarker(prev, row.lastLocationAt))
-    return
-  lastCaptured.set(key, row.lastLocationAt)
-
   const lngLat = [row.lastLongitude, row.lastLatitude]
-  if (markers.has(key)) {
-    markers.get(key).setLngLat(lngLat).getPopup()?.setHTML(popupHtml(row))
+  const color = statusColor(row.locationStatus)
+  const existing = markers.get(key)
+  if (existing && markerStatus.get(key) === row.locationStatus) {
+    existing.setLngLat(lngLat).getPopup()?.setHTML(popupHtml(row))
 
     return
   }
 
-  const marker = new mapboxgl.Marker({ anchor: 'bottom' }).setLngLat(lngLat).setPopup(
-    new mapboxgl.Popup().setHTML(popupHtml(row)),
-  ).addTo(map)
-
+  existing?.remove()
+  const marker = new mapboxgl.Marker({ color, anchor: 'bottom' })
+    .setLngLat(lngLat)
+    .setPopup(new mapboxgl.Popup().setHTML(popupHtml(row)))
+    .addTo(map)
   marker.getElement().addEventListener('click', () => { selected.value = row })
   markers.set(key, marker)
+  markerStatus.set(key, row.locationStatus)
+}
+
+function pruneMarkers(list) {
+  const keys = new Set(list.map(markerKey))
+  for (const key of [...markers.keys()]) {
+    if (keys.has(key))
+      continue
+    markers.get(key)?.remove()
+    markers.delete(key)
+    markerStatus.delete(key)
+  }
+}
+
+function syncMarkers(list) {
+  pruneMarkers(list)
+  list.forEach(upsertMarker)
+}
+
+function liveFromHub(body) {
+  return {
+    employeeId: body.employeeId ?? body.EmployeeId,
+    employeeName: body.employeeName || body.EmployeeName || '',
+    cityValue: body.cityValue || body.CityValue || '',
+    cityName: body.cityName || body.CityName || '',
+    branchName: body.cityName || body.CityName || '',
+    shiftId: body.shiftId ?? body.ShiftId,
+    shiftStatus: body.shiftStatus || body.ShiftStatus || 'Active',
+    lastLatitude: body.latitude ?? body.Latitude ?? body.lastLatitude,
+    lastLongitude: body.longitude ?? body.Longitude ?? body.lastLongitude,
+    lastAccuracy: body.accuracy ?? body.Accuracy ?? body.lastAccuracy,
+    lastLocationAt: body.capturedAt ?? body.CapturedAt ?? body.deviceTimestampUtc ?? body.DeviceTimestampUtc,
+    locationStatus: body.locationStatus || body.LocationStatus || 'Live',
+  }
 }
 
 function applyLiveUpdate(body) {
-  if (!body?.employeeId)
+  if (!body)
     return
-
-  const row = {
-    employeeId: body.employeeId,
-    employeeName: body.employeeName,
-    cityName: body.cityName,
-    cityValue: body.cityValue,
-    branchName: body.cityName,
-    shiftStatus: 'Active',
-    lastLatitude: body.latitude,
-    lastLongitude: body.longitude,
-    lastLocationAt: body.capturedAt,
-    locationStatus: 'Live',
-  }
+  const row = liveFromHub(body)
+  if (!row.employeeId || row.lastLatitude == null || row.lastLongitude == null)
+    return
+  if (cityValue.value && row.cityValue && row.cityValue !== cityValue.value)
+    return
 
   const key = markerKey(row)
-  if (!shouldMoveMarker(lastCaptured.get(key), body.capturedAt))
-    return
-
   const idx = employees.value.findIndex(e => branchRowKey(e) === key)
   if (idx >= 0)
     employees.value.splice(idx, 1, { ...employees.value[idx], ...row })
@@ -100,10 +141,15 @@ function applyLiveUpdate(body) {
 }
 
 async function load() {
-  const latest = liveEmployees(await smGetEmployees(cityValue.value))
+  const latest = (await smGetLiveLocations(cityValue.value))
+    .filter(e => e.shiftStatus === 'Active' && e.lastLatitude != null && e.lastLongitude != null)
 
   employees.value = latest
-  latest.forEach(upsertMarker)
+  if (selected.value) {
+    const next = latest.find(e => branchRowKey(e) === branchRowKey(selected.value))
+    selected.value = next || null
+  }
+  syncMarkers(latest)
 }
 
 async function connectSignalR() {
@@ -151,7 +197,7 @@ onMounted(async () => {
   }
 
   await connectSignalR()
-  poll = setInterval(load, 20000)
+  poll = setInterval(load, 15000)
 })
 
 onUnmounted(() => {
@@ -164,7 +210,7 @@ onUnmounted(() => {
 <template>
   <div>
     <h4 class="mb-4">
-      الخريطة الحية
+      الموقع المباشر
     </h4>
     <VRow class="mb-3">
       <VCol
@@ -195,7 +241,8 @@ onUnmounted(() => {
           <th>الموظف</th>
           <th>المحافظة</th>
           <th>آخر تحديث</th>
-          <th>الدوام</th>
+          <th>الدقة</th>
+          <th>الحالة</th>
           <th />
         </tr>
       </thead>
@@ -206,8 +253,9 @@ onUnmounted(() => {
         >
           <td>{{ row.employeeName }}</td>
           <td>{{ row.branchName || row.cityName }}</td>
-          <td>{{ row.lastLocationAt }}</td>
-          <td>{{ row.shiftStatus }} / {{ locationStatusLabel[row.locationStatus] }}</td>
+          <td>{{ formatLastUpdate(row.lastLocationAt) }}</td>
+          <td>{{ formatAccuracy(row.lastAccuracy) }}</td>
+          <td>{{ locationStatusLabel[row.locationStatus] || row.locationStatus }}</td>
           <td>
             <VBtn
               size="small"
@@ -227,8 +275,9 @@ onUnmounted(() => {
       <VCardText>
         <div><strong>{{ selected.employeeName }}</strong></div>
         <div>{{ selected.branchName || selected.cityName }}</div>
-        <div>{{ selected.lastLocationAt }}</div>
-        <div>{{ selected.shiftStatus }} / {{ locationStatusLabel[selected.locationStatus] }}</div>
+        <div>آخر تحديث: {{ formatLastUpdate(selected.lastLocationAt) }}</div>
+        <div>الدقة: {{ formatAccuracy(selected.lastAccuracy) }}</div>
+        <div>{{ locationStatusLabel[selected.locationStatus] }}</div>
       </VCardText>
     </VCard>
   </div>

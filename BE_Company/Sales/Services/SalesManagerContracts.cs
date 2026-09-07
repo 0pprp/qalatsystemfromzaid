@@ -95,8 +95,8 @@ namespace BE_Company.Sales.Services
 
     public sealed class SalesManagerTrackingOptions
     {
-        public int LiveThresholdSeconds { get; set; } = 60;
-        public int StaleThresholdMinutes { get; set; } = 5;
+        public int LiveThresholdSeconds { get; set; } = 150;
+        public int StaleThresholdMinutes { get; set; } = 3;
         public int MaxRoutePoints { get; set; } = 10000;
     }
 

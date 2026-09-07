@@ -113,6 +113,14 @@ class _MemRepo implements SalesRepository {
   Future<LocationBatchResult> uploadLocationBatch(int shiftId, List<LocalLocationPoint> points) async =>
       LocationBatchResult();
   @override
+  Future<void> uploadLiveLocation({
+    required int shiftId,
+    required double latitude,
+    required double longitude,
+    double? accuracy,
+    DateTime? capturedAtUtc,
+  }) async {}
+  @override
   Future<void> recordTrackingEvent(int? shiftId, String eventType) async {}
   @override
   Future<List<SalesWorkRequest>> salesRequests() async => [];

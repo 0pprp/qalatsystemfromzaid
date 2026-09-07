@@ -52,6 +52,10 @@ namespace BE_Company.Sales.Tests
             row.Status = SalesShiftStatuses.Closed;
             row.ClosedAtUtc = closedAtUtc;
             row.CloseReason = reason;
+            foreach (var key in Live.Where(kv => kv.Value.ShiftId == shiftId).Select(kv => kv.Key).ToList())
+            {
+                Live.Remove(key);
+            }
             return Task.CompletedTask;
         }
 
@@ -66,6 +70,8 @@ namespace BE_Company.Sales.Tests
             return Task.CompletedTask;
         }
 
+        public readonly Dictionary<int, SalesLiveLocationRequestDTO> Live = [];
+
         public Task<int> TryInsertPointAsync(int employeeId, int shiftId, SalesLocationPointRequestDTO point, DateTime receivedAtUtc, CancellationToken ct)
         {
             var slot = point.OfficialSlotUtc ?? point.CapturedAtUtc;
@@ -78,6 +84,35 @@ namespace BE_Company.Sales.Tests
             InsertedCapturedAt.Add(point.CapturedAtUtc);
             InsertedReceivedAt.Add(receivedAtUtc);
             return Task.FromResult(1);
+        }
+
+        public Task UpsertLiveLocationAsync(int employeeId, int shiftId, SalesLiveLocationRequestDTO point, DateTime updatedAtUtc, CancellationToken ct)
+        {
+            if (Live.TryGetValue(employeeId, out var existing)
+                && existing.CapturedAtUtc > point.CapturedAtUtc)
+            {
+                return Task.CompletedTask;
+            }
+
+            Live[employeeId] = point;
+            point.ShiftId = shiftId;
+            return Task.CompletedTask;
+        }
+
+        public Task EndLiveLocationAsync(int employeeId, int shiftId, DateTime endedAtUtc, CancellationToken ct)
+        {
+            Live.Remove(employeeId);
+            return Task.CompletedTask;
+        }
+
+        public Task EndLiveLocationsForClosedShiftsAsync(DateTime endedAtUtc, CancellationToken ct)
+        {
+            foreach (var closed in Shifts.Where(s => s.Status == SalesShiftStatuses.Closed).Select(s => s.EmployeeId).ToHashSet())
+            {
+                Live.Remove(closed);
+            }
+
+            return Task.CompletedTask;
         }
 
         public Task InsertEventAsync(int employeeId, int? shiftId, string eventType, DateTime occurredAtUtc, string? metadata, CancellationToken ct)
@@ -396,5 +431,93 @@ namespace BE_Company.Sales.Tests
             CapturedAtUtc = DateTime.SpecifyKind(capturedUtc, DateTimeKind.Utc),
             DeviceSequence = seq
         };
+
+        [Fact]
+        public async Task LiveUpsert_DoesNotInsertRoutePoint()
+        {
+            var (repo, clock, shift, ingest) = await Ready();
+            var live = await ingest.IngestLiveAsync(Id(), new SalesLiveLocationRequestDTO
+            {
+                ShiftId = shift.ShiftId,
+                Latitude = 32.0375,
+                Longitude = 44.4219,
+                Accuracy = 18,
+                CapturedAtUtc = clock.UtcNow
+            }, CancellationToken.None);
+            Assert.Equal(32.0375, live.Latitude);
+            Assert.Equal(SalesLocationStatuses.Live, live.LocationStatus);
+            Assert.Empty(repo.Points);
+            Assert.Single(repo.Live);
+        }
+
+        [Fact]
+        public async Task LiveUpsert_KeepsLatestDeviceTimestampOnly()
+        {
+            var (repo, clock, shift, ingest) = await Ready();
+            await ingest.IngestLiveAsync(Id(), new SalesLiveLocationRequestDTO
+            {
+                ShiftId = shift.ShiftId,
+                Latitude = 32.01,
+                Longitude = 44.41,
+                CapturedAtUtc = clock.UtcNow
+            }, CancellationToken.None);
+            await ingest.IngestLiveAsync(Id(), new SalesLiveLocationRequestDTO
+            {
+                ShiftId = shift.ShiftId,
+                Latitude = 32.02,
+                Longitude = 44.42,
+                CapturedAtUtc = clock.UtcNow.AddSeconds(20)
+            }, CancellationToken.None);
+            await ingest.IngestLiveAsync(Id(), new SalesLiveLocationRequestDTO
+            {
+                ShiftId = shift.ShiftId,
+                Latitude = 31.0,
+                Longitude = 44.0,
+                CapturedAtUtc = clock.UtcNow.AddSeconds(-30)
+            }, CancellationToken.None);
+            Assert.Single(repo.Live);
+            Assert.Equal(32.02, repo.Live[1].Latitude);
+        }
+
+        [Fact]
+        public async Task LiveUpload_RejectedAfterShiftEnd()
+        {
+            var (repo, clock, shift, ingest) = await Ready();
+            var shifts = new SalesShiftService(repo, clock);
+            await shifts.EndAsync(Id(), CancellationToken.None);
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => ingest.IngestLiveAsync(Id(), new SalesLiveLocationRequestDTO
+            {
+                ShiftId = shift.ShiftId,
+                Latitude = 32.0,
+                Longitude = 44.3,
+                CapturedAtUtc = clock.UtcNow
+            }, CancellationToken.None));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Empty(repo.Live);
+        }
+
+        [Fact]
+        public void StaleLiveLocation_AfterTwoToThreeMinutes()
+        {
+            var options = new SalesManagerTrackingOptions();
+            var now = new DateTime(2026, 9, 2, 8, 0, 0, DateTimeKind.Utc);
+            Assert.Equal(SalesLocationStatuses.Live, SalesLocationStatusService.Resolve(true, now.AddSeconds(-30), null, now, options));
+            Assert.Equal(SalesLocationStatuses.Stale, SalesLocationStatusService.Resolve(true, now.AddMinutes(-3), null, now, options));
+            Assert.Equal(150, options.LiveThresholdSeconds);
+        }
+
+        [Fact]
+        public async Task BatchIngest_DoesNotUpsertLiveLocation()
+        {
+            var (repo, clock, shift, ingest) = await Ready();
+            var result = await ingest.IngestBatchAsync(Id(), new SalesLocationBatchRequestDTO
+            {
+                ShiftId = shift.ShiftId,
+                Points = [ValidPoint(clock.UtcNow)]
+            }, CancellationToken.None);
+            Assert.True(result.Accepted >= 1);
+            Assert.Empty(repo.Live);
+            Assert.Single(repo.Points);
+        }
     }
 }

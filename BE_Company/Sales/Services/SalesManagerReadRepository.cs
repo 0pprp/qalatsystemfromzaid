@@ -32,12 +32,13 @@ ORDER BY UserName", cancellationToken: ct));
         {
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
+            await connection.OpenAsync(ct);
+            await EnsureLiveTableAsync(connection, ct);
             return await connection.QueryFirstOrDefaultAsync<SalesManagerLocationPointDTO>(new CommandDefinition(@"
 SELECT TOP 1 EmployeeId, ShiftId, CAST(Latitude AS FLOAT) AS Latitude, CAST(Longitude AS FLOAT) AS Longitude,
- Accuracy, Speed, Heading, CapturedAtUtc
-FROM dbo.SalesLocationPoints
-WHERE EmployeeId = @EmployeeId
-ORDER BY CapturedAtUtc DESC, DeviceSequence DESC",
+ Accuracy, Speed, Heading, DeviceTimestampUtc AS CapturedAtUtc
+FROM dbo.SalesEmployeeLiveLocations
+WHERE EmployeeId = @EmployeeId AND EndedAtUtc IS NULL",
                 new { EmployeeId = employeeId }, cancellationToken: ct));
         }
 
@@ -206,6 +207,30 @@ BEGIN
         ALTER TABLE dbo.SalesLocationPoints ADD ActualCapturedAtUtc DATETIME NULL;
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UX_SalesLocationPoints_ShiftOfficialSlot' AND object_id = OBJECT_ID(N'dbo.SalesLocationPoints'))
         CREATE UNIQUE INDEX UX_SalesLocationPoints_ShiftOfficialSlot ON dbo.SalesLocationPoints (ShiftId, OfficialSlotUtc) WHERE OfficialSlotUtc IS NOT NULL;
+END;",
+                cancellationToken: ct));
+        }
+
+        private static async Task EnsureLiveTableAsync(SqlConnection connection, CancellationToken ct)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.SalesEmployeeLiveLocations', N'U') IS NULL
+AND OBJECT_ID(N'dbo.SalesWorkShifts', N'U') IS NOT NULL
+BEGIN
+    CREATE TABLE dbo.SalesEmployeeLiveLocations (
+        EmployeeId INT NOT NULL PRIMARY KEY,
+        ShiftId INT NOT NULL,
+        Latitude DECIMAL(9,6) NOT NULL,
+        Longitude DECIMAL(9,6) NOT NULL,
+        Accuracy FLOAT NULL,
+        Speed FLOAT NULL,
+        Heading FLOAT NULL,
+        UpdatedAtUtc DATETIME NOT NULL,
+        DeviceTimestampUtc DATETIME NOT NULL,
+        EndedAtUtc DATETIME NULL,
+        CONSTRAINT FK_SalesEmployeeLiveLocations_Shifts FOREIGN KEY (ShiftId) REFERENCES dbo.SalesWorkShifts (Id)
+    );
+    CREATE INDEX IX_SalesEmployeeLiveLocations_Shift ON dbo.SalesEmployeeLiveLocations (ShiftId, EndedAtUtc);
 END;",
                 cancellationToken: ct));
         }

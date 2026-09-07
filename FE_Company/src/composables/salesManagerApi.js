@@ -124,6 +124,25 @@ export async function smGetEmployees(cityValue, extraQuery = '') {
   return last
 }
 
+export async function smGetLiveLocations(cityValue) {
+  const path = withCityQuery('live-locations', cityValue)
+  const rows = await smGet(path) || []
+  return (Array.isArray(rows) ? rows : []).map(row => ({
+    ...row,
+    employeeId: row.employeeId ?? row.EmployeeId,
+    employeeName: row.employeeName || row.EmployeeName || '',
+    cityValue: row.cityValue || row.CityValue || '',
+    cityName: row.cityName || row.CityName || '',
+    lastLatitude: row.latitude ?? row.Latitude ?? row.lastLatitude ?? row.LastLatitude,
+    lastLongitude: row.longitude ?? row.Longitude ?? row.lastLongitude ?? row.LastLongitude,
+    lastAccuracy: row.accuracy ?? row.Accuracy ?? row.lastAccuracy ?? row.LastAccuracy,
+    lastLocationAt: row.capturedAt ?? row.CapturedAt ?? row.deviceTimestampUtc ?? row.DeviceTimestampUtc ?? row.lastLocationAt ?? row.LastLocationAt,
+    locationStatus: row.locationStatus || row.LocationStatus || 'Live',
+    shiftStatus: row.shiftStatus || row.ShiftStatus || 'Active',
+    shiftId: row.shiftId ?? row.ShiftId,
+  }))
+}
+
 export function branchRowKey(row, idField = 'employeeId') {
   return `${row.cityValue || row.branchName || ''}:${row[idField]}`
 }
@@ -209,7 +228,7 @@ export function evaluationLabel(level) {
 
 export const locationStatusLabel = {
   Live: 'مباشر',
-  Stale: 'متأخر',
+  Stale: 'الموقع غير محدث',
   Offline: 'بدون اتصال',
   NoLocation: 'بدون موقع',
   NoShift: 'بدون دوام',

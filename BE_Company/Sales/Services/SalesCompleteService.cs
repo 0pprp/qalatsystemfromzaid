@@ -292,9 +292,8 @@ namespace BE_Company.Sales.Services
         {
             try
             {
-                sale.Documents = (await _complete.GetDocumentsAsync(sale.SaleId, employeeId, ct))
-                    .Select(SalesDocumentMapper.ToDto)
-                    .ToList();
+                sale.Documents = SalesDocumentService.PreferDisplayDocuments(
+                    (await _complete.GetDocumentsAsync(sale.SaleId, employeeId, ct)).Select(SalesDocumentMapper.ToDto)).ToList();
             }
             catch (SalesCompleteException)
             {

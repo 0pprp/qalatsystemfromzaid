@@ -34,6 +34,8 @@ class LocationForegroundService : Service() {
     private val client by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private val handler = Handler(Looper.getMainLooper())
     private val flushing = AtomicBoolean(false)
+    private val liveUploading = AtomicBoolean(false)
+    private var lastLiveUploadMs: Long = 0
     private var db: SQLiteDatabase? = null
     private var shiftId: Int = 0
     private var cutoffAtUtcMs: Long = 0
@@ -81,6 +83,7 @@ class LocationForegroundService : Service() {
             if (!isUsable(loc)) return
             lastLocation = loc
             persistLastFix(loc)
+            maybeUploadLive(loc)
             persistDueOfficialPoints()
         }
 
@@ -119,13 +122,15 @@ class LocationForegroundService : Service() {
                 handler.removeCallbacks(cutoffStop)
                 handler.removeCallbacks(officialTick)
                 handler.removeCallbacks(syncFlush)
-                persistDueOfficialPoints()
+                    persistDueOfficialPoints()
                 Thread {
+                    uploadLiveLocation(lastLocation)
                     flushPendingToServer()
                     handler.post {
                         stopUpdates()
                         stopForegroundCompat()
                         stopSelf()
+                        log("SHIFT_ENDED")
                         log("SERVICE_STOPPED")
                     }
                 }.start()
@@ -145,7 +150,7 @@ class LocationForegroundService : Service() {
             }
             running = true
             log("SERVICE_STARTED shiftId=$shiftId officialIntervalMs=$officialIntervalMs")
-            log("SHIFT_ACTIVE shiftId=$shiftId startedAtUtcMs=$shiftStartedAtUtcMs cutoffAtUtcMs=$cutoffAtUtcMs")
+            log("SHIFT_STARTED shiftId=$shiftId startedAtUtcMs=$shiftStartedAtUtcMs cutoffAtUtcMs=$cutoffAtUtcMs")
             startUpdates()
             seedLastLocation()
             handler.removeCallbacks(cutoffStop)
@@ -196,11 +201,23 @@ class LocationForegroundService : Service() {
         handler.removeCallbacks(syncFlush)
         if (flush) {
             persistDueOfficialPoints()
-            Thread { flushPendingToServer() }.start()
+            Thread {
+                uploadLiveLocation(lastLocation)
+                flushPendingToServer()
+                handler.post {
+                    stopUpdates()
+                    stopForegroundCompat()
+                    stopSelf()
+                    log("SHIFT_ENDED")
+                    log("SERVICE_STOPPED")
+                }
+            }.start()
+            return
         }
         stopUpdates()
         stopForegroundCompat()
         stopSelf()
+        log("SERVICE_STOPPED")
     }
 
     private fun stopForegroundCompat() {
@@ -235,14 +252,14 @@ class LocationForegroundService : Service() {
 
     private fun startUpdates() {
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-            .setMinUpdateIntervalMillis(15_000)
+            .setMinUpdateIntervalMillis(10_000)
             .setMinUpdateDistanceMeters(0f)
             .setWaitForAccurateLocation(false)
             .build()
         try {
             client.requestLocationUpdates(request, callback, Looper.getMainLooper())
         } catch (e: SecurityException) {
-            log("UPLOAD_FAILED status=permission error=${e.message}")
+            log("LIVE_UPLOAD_FAILED status=permission error=${e.message}")
             stopSelf()
         }
     }
@@ -255,6 +272,7 @@ class LocationForegroundService : Service() {
                 if (loc != null && isUsable(loc)) {
                     lastLocation = loc
                     persistLastFix(loc)
+                    maybeUploadLive(loc)
                     persistDueOfficialPoints()
                 }
             }
@@ -275,6 +293,7 @@ class LocationForegroundService : Service() {
                         )
                         lastLocation = loc
                         persistLastFix(loc)
+                        maybeUploadLive(loc)
                         persistDueOfficialPoints()
                     }
                 }
@@ -453,7 +472,7 @@ class LocationForegroundService : Service() {
         ) ?: -1L
         writeMeta("actual_captured_${shiftId}_$seq", actual)
         if (id > 0L) {
-            log("POINT_SAVED localId=$id seq=$seq captured=$captured lat=${loc.latitude} lng=${loc.longitude}")
+            log("ROUTE_POINT_SAVED localId=$id seq=$seq captured=$captured lat=${loc.latitude} lng=${loc.longitude}")
             return true
         }
         return false
@@ -500,6 +519,70 @@ class LocationForegroundService : Service() {
         writeMeta("last_lng", loc.longitude.toString())
         if (loc.hasAccuracy()) writeMeta("last_acc", loc.accuracy.toString())
         writeMeta("last_fix_ms", (loc.time.takeIf { it > 0 } ?: System.currentTimeMillis()).toString())
+    }
+
+    private fun maybeUploadLive(loc: Location) {
+        if (!running || shiftId <= 0) return
+        val now = System.currentTimeMillis()
+        if (now - lastLiveUploadMs < 10_000L) return
+        lastLiveUploadMs = now
+        Thread { uploadLiveLocation(loc) }.start()
+    }
+
+    private fun uploadLiveLocation(loc: Location?) {
+        val point = loc ?: lastLocation ?: return
+        if (!liveUploading.compareAndSet(false, true)) return
+        try {
+            val base = normalizeApiBase(if (apiBase.isNotEmpty()) apiBase else readMeta("api_base") ?: "")
+            val auth = (if (token.isNotEmpty()) token else readMeta("api_token") ?: "").trim()
+            val sid = if (shiftId > 0) shiftId else readMetaInt("active_shift_id")
+            if (base.isEmpty() || auth.isEmpty() || sid <= 0) {
+                log("LIVE_UPLOAD_FAILED status=missing-config")
+                return
+            }
+            val body = JSONObject()
+            body.put("shiftId", sid)
+            body.put("latitude", point.latitude)
+            body.put("longitude", point.longitude)
+            if (point.hasAccuracy()) body.put("accuracy", point.accuracy.toDouble())
+            if (point.hasSpeed()) body.put("speed", point.speed.toDouble())
+            if (point.hasBearing()) body.put("heading", point.bearing.toDouble())
+            body.put("capturedAtUtc", utcIso(point.time.takeIf { it > 0 } ?: System.currentTimeMillis()))
+            val url = java.net.URL(base.trimEnd('/') + "/sales/location/live")
+            log("LIVE_UPLOAD_START url=$url lat=${point.latitude} lng=${point.longitude}")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            try {
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 10000
+                conn.readTimeout = 15000
+                conn.useCaches = false
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Accept", "application/json")
+                conn.setRequestProperty("Authorization", "Bearer $auth")
+                conn.doOutput = true
+                val payload = body.toString().toByteArray(Charsets.UTF_8)
+                conn.setFixedLengthStreamingMode(payload.size)
+                conn.outputStream.use { it.write(payload) }
+                val code = conn.responseCode
+                val text = try {
+                    val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                    stream?.bufferedReader()?.readText() ?: ""
+                } catch (_: Exception) {
+                    ""
+                }
+                if (code in 200..299) {
+                    log("LIVE_UPLOAD_SUCCESS status=$code")
+                } else {
+                    log("LIVE_UPLOAD_FAILED status=$code error=${text.take(240)}")
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            log("LIVE_UPLOAD_FAILED status=exception error=${e.javaClass.simpleName}:${e.message}")
+        } finally {
+            liveUploading.set(false)
+        }
     }
 
     private fun restoreLastFix() {
@@ -562,7 +645,7 @@ class LocationForegroundService : Service() {
             val auth = (if (token.isNotEmpty()) token else readMeta("api_token") ?: "").trim()
             val sid = if (shiftId > 0) shiftId else readMetaInt("active_shift_id")
             if (base.isEmpty() || auth.isEmpty() || sid <= 0 || db == null) {
-                log("UPLOAD_FAILED status=missing-config baseEmpty=${base.isEmpty()} tokenEmpty=${auth.isEmpty()} shiftId=$sid")
+                log("ROUTE_UPLOAD_FAILED status=missing-config baseEmpty=${base.isEmpty()} tokenEmpty=${auth.isEmpty()} shiftId=$sid")
                 return
             }
             val cursor = db?.rawQuery(
@@ -591,7 +674,7 @@ class LocationForegroundService : Service() {
             body.put("shiftId", sid)
             body.put("points", points)
             val url = java.net.URL(base.trimEnd('/') + "/sales/location/batch")
-            log("UPLOAD_START count=${points.length()} url=$url")
+            log("ROUTE_UPLOAD_START count=${points.length()} url=$url")
             val conn = url.openConnection() as java.net.HttpURLConnection
             try {
                 conn.requestMethod = "POST"
@@ -618,20 +701,20 @@ class LocationForegroundService : Service() {
                     val keepPending = parsed != null && parsed.accepted == 0 && parsed.duplicates == 0 && parsed.rejected > 0
                     if (keepPending) {
                         markStatus(sid, seqs, "Failed")
-                        log("UPLOAD_FAILED status=$code error=all-rejected rejected=${parsed.rejected}")
+                        log("ROUTE_UPLOAD_FAILED status=$code error=all-rejected rejected=${parsed.rejected}")
                     } else {
                         markStatus(sid, seqs, "Synced")
-                        log("UPLOAD_SUCCESS accepted=${parsed?.accepted ?: "?"} duplicates=${parsed?.duplicates ?: "?"} rejected=${parsed?.rejected ?: "?"}")
+                        log("ROUTE_UPLOAD_SUCCESS accepted=${parsed?.accepted ?: "?"} duplicates=${parsed?.duplicates ?: "?"} rejected=${parsed?.rejected ?: "?"}")
                     }
                 } else {
                     markStatus(sid, seqs, "Failed", incrementRetry = true)
-                    log("UPLOAD_FAILED status=$code error=${text.take(240)}")
+                    log("ROUTE_UPLOAD_FAILED status=$code error=${text.take(240)}")
                 }
             } finally {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            log("UPLOAD_FAILED status=exception error=${e.javaClass.simpleName}:${e.message}")
+            log("ROUTE_UPLOAD_FAILED status=exception error=${e.javaClass.simpleName}:${e.message}")
         } finally {
             flushing.set(false)
             releaseWakeLock()

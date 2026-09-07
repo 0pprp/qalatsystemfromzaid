@@ -48,6 +48,17 @@ namespace BE_Company.Sales.DTO
         public SalesLiveLocationDTO? LiveUpdate { get; set; }
     }
 
+    public sealed class SalesLiveLocationRequestDTO
+    {
+        public int ShiftId { get; set; }
+        public double Latitude { get; set; }
+        public double Longitude { get; set; }
+        public double? Accuracy { get; set; }
+        public double? Speed { get; set; }
+        public double? Heading { get; set; }
+        public DateTime CapturedAtUtc { get; set; }
+    }
+
     public sealed class SalesTrackingEventRequestDTO
     {
         public int? ShiftId { get; set; }
