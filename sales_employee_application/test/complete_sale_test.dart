@@ -241,6 +241,18 @@ void main() {
     expect(find.text('العودة للمبيعات'), findsOneWidget);
   });
 
+  testWidgets('Success screen combined document', (tester) async {
+    await tester.pumpWidget(_app(const SaleCompleteSuccessScreen(
+      saleId: 1,
+      finalSalePrice: 4000000,
+      contractPath: 'sale.pdf',
+      receiptPath: 'sale.pdf',
+    )));
+    expect(find.text('✓ عقد البيع + وصل الأمانة'), findsOneWidget);
+    expect(find.text('فتح عقد البيع + وصل الأمانة'), findsOneWidget);
+    expect(find.text('فتح عقد البيع'), findsNothing);
+  });
+
   testWidgets('PDF download error state', (tester) async {
     await tester.pumpWidget(_app(SaleCompleteSuccessScreen(
       saleId: 1,

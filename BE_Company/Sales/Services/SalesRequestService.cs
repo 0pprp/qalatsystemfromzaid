@@ -20,7 +20,7 @@ namespace BE_Company.Sales.Services
             _employees = employees;
         }
 
-        public async Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct)
+        public async Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct, bool validateIraqPhone = true)
         {
             if (SalesRoles.IsSalesEmployee(actor.UserType)
                 || (!SalesRoles.CanCreateSalesRequest(actor.UserType)
@@ -35,10 +35,20 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اسم الزبون مطلوب.");
             }
 
-            SalesIraqPhone.RequireIfPresent(request.Customer?.Phone);
-            var phone = string.IsNullOrWhiteSpace(request.Customer?.Phone)
-                ? request.Customer?.Phone
-                : SalesIraqPhone.Normalize(request.Customer.Phone);
+            string? phone;
+            if (validateIraqPhone)
+            {
+                SalesIraqPhone.RequireIfPresent(request.Customer?.Phone);
+                phone = string.IsNullOrWhiteSpace(request.Customer?.Phone)
+                    ? request.Customer?.Phone
+                    : SalesIraqPhone.Normalize(request.Customer.Phone);
+            }
+            else
+            {
+                phone = string.IsNullOrWhiteSpace(request.Customer?.Phone)
+                    ? request.Customer?.Phone
+                    : request.Customer.Phone.Trim();
+            }
 
             await _repo.EnsureSchemaAsync(ct);
             var row = new SalesRequestDTO
@@ -212,6 +222,59 @@ namespace BE_Company.Sales.Services
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(row, SalesRequestEvents.Rejected, manager, trimmed, ct, previous);
             await AppendHistoryAsync(row, SalesRequestEvents.RejectionReason, manager, trimmed, ct, previous);
+            return await HydrateAsync(row, ct);
+        }
+
+        public async Task<SalesRequestDTO> ManagerPrepareForSaleAsync(SalesIdentity manager, int id, CancellationToken ct)
+        {
+            EnsureManager(manager);
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
+            EnsureNotSold(row);
+            if (!SalesRequestStatuses.CanPrepare(row.Status))
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تجهيز هذا الطلب.");
+            }
+
+            if (row.Status != SalesRequestStatuses.PreparedForSale)
+            {
+                var previous = row.Status;
+                row.Status = SalesRequestStatuses.PreparedForSale;
+                row.ProcessingAtUtc = _clock.UtcNow;
+                row.ViewedAtUtc ??= row.ProcessingAtUtc;
+                await _repo.UpdateAsync(row, ct);
+                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSale, manager, null, ct, previous);
+            }
+
+            return await HydrateAsync(row, ct);
+        }
+
+        public async Task<SalesRequestDTO> ManagerPendAsync(SalesIdentity manager, int id, string note, CancellationToken ct)
+        {
+            EnsureManager(manager);
+            if (string.IsNullOrWhiteSpace(note))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "ملاحظة التعليق مطلوبة.");
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
+            EnsureNotSold(row);
+            if (!SalesRequestStatuses.CanPend(row.Status))
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تعليق هذا الطلب.");
+            }
+
+            var trimmed = note.Trim();
+            var previous = row.Status;
+            row.Status = SalesRequestStatuses.Pending;
+            row.PendingNote = trimmed;
+            row.ViewedAtUtc ??= _clock.UtcNow;
+            await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.Pending, manager, trimmed, ct, previous);
+            await AppendHistoryAsync(row, SalesRequestEvents.PendingNote, manager, trimmed, ct, previous);
             return await HydrateAsync(row, ct);
         }
 

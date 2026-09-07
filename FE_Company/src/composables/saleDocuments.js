@@ -9,8 +9,12 @@ function pick(obj, ...keys) {
   return undefined
 }
 
+export function documentTypeOf(doc) {
+  return String(pick(doc, 'type', 'Type', 'documentType', 'DocumentType') || '')
+}
+
 export function isCombinedSaleDocument(doc) {
-  const type = String(pick(doc, 'type', 'Type') || '')
+  const type = documentTypeOf(doc)
 
   return type === 'SaleDocuments' || type === 'PreviewSaleDocuments'
 }
@@ -20,10 +24,10 @@ export function saleDisplayDocuments(sale) {
   const list = Array.isArray(rows) ? rows : []
   const combined = list.filter(isCombinedSaleDocument)
   if (combined.length)
-    return combined
+    return combined.slice(0, 1)
 
   return list.filter(doc => {
-    const type = String(pick(doc, 'type', 'Type') || '')
+    const type = documentTypeOf(doc)
 
     return type === 'Contract' || type === 'PromissoryNote' || type === 'PreviewContract' || type === 'PreviewPromissoryNote'
   })
@@ -33,7 +37,7 @@ export function saleDocumentTitle(doc) {
   if (isCombinedSaleDocument(doc))
     return 'عقد البيع + وصل الأمانة'
 
-  const type = String(pick(doc, 'type', 'Type') || '')
+  const type = documentTypeOf(doc)
 
   return type === 'PromissoryNote' || type === 'PreviewPromissoryNote' ? 'وصل الأمانة' : 'عقد البيع'
 }

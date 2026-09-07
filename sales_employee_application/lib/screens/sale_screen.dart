@@ -769,8 +769,20 @@ class _SaleScreenState extends State<SaleScreen> {
 
   Future<void> _openOrDownload(SalesDocument doc) async {
     try {
-      final bytes = await SalesRepositoryFactory.instance.downloadDocument(_created?.saleId ?? 0, doc);
-      final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
+      final saleId = _created?.saleId ?? 0;
+      var target = doc;
+      if ((target.documentId == null || target.documentId! <= 0) && saleId > 0) {
+        final docs = SalesDocument.preferDisplay(
+          await SalesRepositoryFactory.instance.documents(saleId),
+        );
+        if (docs.isEmpty) throw Exception('لا توجد مستندات');
+        target = docs.firstWhere(
+          (d) => d.isCombined || d.type == doc.type,
+          orElse: () => docs.first,
+        );
+      }
+      final bytes = await SalesRepositoryFactory.instance.downloadDocument(saleId, target);
+      final file = await SaleDocumentStorage.savePdf(target.fileName, bytes);
       await OpenFilex.open(file.path);
     } catch (_) {
       if (!mounted) return;

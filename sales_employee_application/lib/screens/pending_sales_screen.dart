@@ -467,7 +467,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
                 const SizedBox(height: AppSpacing.sm),
                 OutlinedButton(
                   onPressed: () => _pendRequest(r),
-                  child: const Text('معلقة'),
+                  child: const Text('معلّق'),
                 ),
               ],
               if (r.canReject) ...[
@@ -680,7 +680,7 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
                     const SizedBox(height: AppSpacing.sm),
                   ],
                   if (row.canPend) ...[
-                    OutlinedButton(onPressed: _busy ? null : _pend, child: const Text('معلقة')),
+                    OutlinedButton(onPressed: _busy ? null : _pend, child: const Text('معلّق')),
                     const SizedBox(height: AppSpacing.sm),
                   ],
                   if (row.canReject)

@@ -25,6 +25,7 @@ namespace BE_Company.Sales.Services
         private readonly SalesDevelopmentGuard _guard;
         private readonly IWebHostEnvironment _env;
         private readonly ISalesCompleteRepository _complete;
+        private readonly ISalesDocumentService _documents;
         private readonly ISalesManagerReadRepository _sales;
         private readonly ISalesRequestService _requests;
         private readonly ICustomersPaymentsRepository _payments;
@@ -36,6 +37,7 @@ namespace BE_Company.Sales.Services
             SalesDevelopmentGuard guard,
             IWebHostEnvironment env,
             ISalesCompleteRepository complete,
+            ISalesDocumentService documents,
             ISalesManagerReadRepository sales,
             ISalesRequestService requests,
             ICustomersPaymentsRepository payments,
@@ -46,6 +48,7 @@ namespace BE_Company.Sales.Services
             _guard = guard;
             _env = env;
             _complete = complete;
+            _documents = documents;
             _sales = sales;
             _requests = requests;
             _payments = payments;
@@ -252,15 +255,34 @@ VALUES
                 var documents = new List<SalesDocumentDTO>();
                 try
                 {
-                    documents = (await _complete.GetDocumentsAsync(sale.SaleId, sale.EmployeeId, ct))
-                        .Select(SalesDocumentMapper.ToDto)
+                    IReadOnlyList<SalesDocumentDTO> raw;
+                    if (SalesCompleteRules.AlreadyCompleted(sale.Status) || sale.Status == SalesStatuses.Completed)
+                    {
+                        try
+                        {
+                            raw = await _documents.EnsureGeneratedAsync(full, ct);
+                        }
+                        catch
+                        {
+                            raw = (await _complete.GetDocumentsAsync(sale.SaleId, sale.EmployeeId, ct))
+                                .Select(SalesDocumentMapper.ToDto)
+                                .ToList();
+                        }
+                    }
+                    else
+                    {
+                        raw = (await _complete.GetDocumentsAsync(sale.SaleId, sale.EmployeeId, ct))
+                            .Select(SalesDocumentMapper.ToDto)
+                            .ToList();
+                    }
+
+                    documents = PreferFinalDocuments(raw
                         .Select(d =>
                         {
                             d.DownloadUrl = $"/api/sales-manager/sales/{sale.SaleId}/documents/{d.DocumentId}/download";
                             return d;
                         })
-                        .ToList();
-                    documents = PreferFinalDocuments(documents);
+                        .ToList());
                 }
                 catch
                 {

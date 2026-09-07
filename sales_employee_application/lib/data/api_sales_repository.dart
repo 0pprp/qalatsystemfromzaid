@@ -233,14 +233,54 @@ class ApiSalesRepository implements SalesRepository {
 
   @override
   Future<List<int>> downloadDocument(int saleId, SalesDocument document) async {
+    final path = _documentDownloadPath(saleId, document);
     try {
-      final path = document.downloadUrl.contains('/api/')
-          ? document.downloadUrl.substring(document.downloadUrl.indexOf('/api/') + 5)
-          : 'sales/$saleId/documents/${document.documentId}/download';
-      return await ApiClient.getBytes(path);
+      debugPrint('DOCUMENT_DOWNLOAD_START saleId=$saleId type=${document.type} url=$path');
+      final bytes = await ApiClient.getBytes(path);
+      if (bytes.isEmpty) {
+        debugPrint('DOCUMENT_DOWNLOAD_FAILED status=empty url=$path');
+        throw ApiException('المستند غير موجود.', statusCode: 404);
+      }
+      final header = String.fromCharCodes(bytes.take(5));
+      if (header != '%PDF-') {
+        debugPrint('DOCUMENT_DOWNLOAD_FAILED status=not-pdf url=$path');
+        throw ApiException('تعذر تنزيل المستند', statusCode: 502);
+      }
+      debugPrint('DOCUMENT_DOWNLOAD_SUCCESS saleId=$saleId bytes=${bytes.length}');
+      return bytes;
     } on ApiException catch (e) {
+      debugPrint('DOCUMENT_DOWNLOAD_FAILED status=${e.statusCode} url=$path error=${e.message}');
       _throw(e);
     }
+  }
+
+  String _documentDownloadPath(int saleId, SalesDocument document) {
+    final raw = document.downloadUrl.trim();
+    if (raw.isNotEmpty) {
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        final uri = Uri.parse(raw);
+        var path = uri.path;
+        while (path.toLowerCase().startsWith('/api/')) {
+          path = path.substring(4);
+        }
+        if (path.startsWith('/')) path = path.substring(1);
+        return path;
+      }
+      var relative = raw;
+      if (relative.contains('/api/')) {
+        relative = relative.substring(relative.indexOf('/api/') + 5);
+      }
+      while (relative.toLowerCase().startsWith('api/')) {
+        relative = relative.substring(4);
+      }
+      if (relative.startsWith('/')) relative = relative.substring(1);
+      return relative;
+    }
+    final id = document.documentId;
+    if (saleId <= 0 || id == null || id <= 0) {
+      throw ApiException('المستند غير متوفر.', statusCode: 404);
+    }
+    return 'sales/$saleId/documents/$id/download';
   }
 
   @override

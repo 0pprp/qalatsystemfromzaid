@@ -171,7 +171,7 @@ namespace BE_Company.Sales.Services
 
     public interface ISalesRequestService
     {
-        Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct);
+        Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct, bool validateIraqPhone = true);
         Task<SalesRequestDTO> SubmitByEmployeeAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForManagerAsync(string? status, int? employeeId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListEmployeeSubmittedAsync(CancellationToken ct);
@@ -179,6 +179,8 @@ namespace BE_Company.Sales.Services
         Task<SalesRequestDTO> MarkReadAsync(SalesIdentity manager, int id, CancellationToken ct);
         Task<int> MarkAllReadAsync(SalesIdentity manager, CancellationToken ct);
         Task<SalesRequestDTO> ManagerRejectAsync(SalesIdentity manager, int id, string reason, CancellationToken ct);
+        Task<SalesRequestDTO> ManagerPrepareForSaleAsync(SalesIdentity manager, int id, CancellationToken ct);
+        Task<SalesRequestDTO> ManagerPendAsync(SalesIdentity manager, int id, string note, CancellationToken ct);
         Task<SalesRequestDTO?> GetForManagerAsync(int id, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForEmployeeAsync(int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> GetForEmployeeAsync(int id, int employeeId, CancellationToken ct);

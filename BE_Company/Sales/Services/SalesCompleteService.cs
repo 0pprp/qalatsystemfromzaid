@@ -284,16 +284,24 @@ namespace BE_Company.Sales.Services
         {
             _ = await _complete.GetOwnedSaleAsync(saleId, employeeId, ct)
                 ?? throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكنك تنزيل مستندات عملية لا تخصك.");
-            var file = await _documents.ReadOwnedFileAsync(saleId, documentId, employeeId, ct);
-            return (file.Record.FileName, file.Bytes);
+            try
+            {
+                var file = await _documents.ReadOwnedFileAsync(saleId, documentId, employeeId, ct);
+                Console.WriteLine($"SALE_DOCUMENT_DOWNLOAD saleId={saleId} documentId={documentId} type={file.Record.DocumentType} bytes={file.Bytes.Length}");
+                return (file.Record.FileName, file.Bytes);
+            }
+            catch (SalesCompleteException ex) when (ex.StatusCode == StatusCodes.Status404NotFound)
+            {
+                Console.WriteLine($"SALE_DOCUMENT_NOT_FOUND saleId={saleId} documentId={documentId}");
+                throw;
+            }
         }
 
         public async Task AttachDocumentsAsync(SalesDraftDTO sale, int employeeId, CancellationToken ct)
         {
             try
             {
-                sale.Documents = SalesDocumentService.PreferDisplayDocuments(
-                    (await _complete.GetDocumentsAsync(sale.SaleId, employeeId, ct)).Select(SalesDocumentMapper.ToDto)).ToList();
+                sale.Documents = (await GetDocumentsAsync(sale.SaleId, employeeId, ct)).ToList();
             }
             catch (SalesCompleteException)
             {

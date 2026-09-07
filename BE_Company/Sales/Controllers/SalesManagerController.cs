@@ -217,10 +217,15 @@ namespace BE_Company.Sales.Controllers
             try
             {
                 var file = await _complete.DownloadAsync(saleId, documentId, sale.EmployeeId, ct);
+                Console.WriteLine($"SALE_DOCUMENT_DOWNLOAD saleId={saleId} documentId={documentId} bytes={file.Bytes.Length}");
                 return File(file.Bytes, "application/pdf", file.FileName);
             }
             catch (SalesCompleteException ex)
             {
+                if (ex.StatusCode == StatusCodes.Status404NotFound)
+                {
+                    Console.WriteLine($"SALE_DOCUMENT_NOT_FOUND saleId={saleId} documentId={documentId}");
+                }
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
         }
@@ -538,6 +543,38 @@ namespace BE_Company.Sales.Controllers
             }
         }
 
+        [HttpPost("sales-requests/{id:int}/prepare")]
+        public async Task<IActionResult> PrepareRequest(int id, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _requests.ManagerPrepareForSaleAsync(identity!, id, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("sales-requests/{id:int}/pending")]
+        public async Task<IActionResult> PendRequest(int id, [FromBody] SalesRequestNoteDTO body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _requests.ManagerPendAsync(identity!, id, body?.Note ?? body?.Reason ?? string.Empty, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
         [HttpGet("sales-requests/{id:int}")]
         public async Task<IActionResult> RequestDetails(int id, CancellationToken ct)
         {
@@ -609,7 +646,7 @@ namespace BE_Company.Sales.Controllers
                             Address = row.Address
                         },
                         Notes = notes
-                    }, ct);
+                    }, ct, validateIraqPhone: false);
                     result.Saved++;
                 }
                 catch (SalesCompleteException ex)

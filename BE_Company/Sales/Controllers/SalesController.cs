@@ -632,10 +632,15 @@ namespace BE_Company.Sales.Controllers
             try
             {
                 var file = await _complete.DownloadAsync(id, documentId, identity.EmployeeId, ct);
+                Console.WriteLine($"SALE_DOCUMENT_DOWNLOAD saleId={id} documentId={documentId} bytes={file.Bytes.Length}");
                 return File(file.Bytes, "application/pdf", file.FileName);
             }
             catch (SalesCompleteException ex)
             {
+                if (ex.StatusCode == StatusCodes.Status404NotFound)
+                {
+                    Console.WriteLine($"SALE_DOCUMENT_NOT_FOUND saleId={id} documentId={documentId}");
+                }
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
         }

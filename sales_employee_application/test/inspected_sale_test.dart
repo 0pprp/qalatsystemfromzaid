@@ -91,5 +91,19 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('سعد كاظم'), findsOneWidget);
     expect(find.text('ahmed'), findsNothing);
+    expect(find.text('متابعة البيع'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'معلّق'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'مرفوض'), findsOneWidget);
+  });
+
+  test('Inspected preferDisplay keeps combined document only', () {
+    final docs = SalesDocument.preferDisplay([
+      SalesDocument(type: 'SaleDocuments', fileName: 'a.pdf', downloadUrl: 'u1', documentId: 1),
+      SalesDocument(type: 'Contract', fileName: 'b.pdf', downloadUrl: 'u2', documentId: 2),
+      SalesDocument(type: 'PromissoryNote', fileName: 'c.pdf', downloadUrl: 'u3', documentId: 3),
+    ]);
+    expect(docs, hasLength(1));
+    expect(docs.single.type, 'SaleDocuments');
   });
 }

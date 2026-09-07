@@ -536,6 +536,28 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
+        public async Task Manager_CanPreparePendReject_Inspected()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await AssignedAsync(svc, 1);
+            await svc.InspectAsync(created.Id, 1, 88, CancellationToken.None);
+            var prepared = await svc.ManagerPrepareForSaleAsync(Manager(), created.Id, CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.PreparedForSale, prepared.Status);
+            Assert.Contains(prepared.History, h => h.Event == SalesRequestEvents.PreparedForSale);
+
+            var pending = await svc.ManagerPendAsync(Manager(), created.Id, "ملاحظة", CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Pending, pending.Status);
+            Assert.Contains(pending.History, h => h.Event == SalesRequestEvents.Pending);
+
+            var second = await AssignedAsync(svc, 1);
+            await svc.InspectAsync(second.Id, 1, 89, CancellationToken.None);
+            var rejected = await svc.ManagerRejectAsync(Manager(), second.Id, "سبب", CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Rejected, rejected.Status);
+            Assert.Contains(rejected.History, h => h.Event == SalesRequestEvents.Rejected);
+        }
+
+        [Fact]
         public async Task DuplicateConversion_Prevented()
         {
             var repo = new FakeRequestRepository();

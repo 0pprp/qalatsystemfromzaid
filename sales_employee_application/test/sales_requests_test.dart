@@ -61,7 +61,7 @@ void main() {
     expect(find.text('سعد كاظم'), findsOneWidget);
     expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsOneWidget);
     expect(find.widgetWithText(ElevatedButton, 'إنشاء بيع'), findsOneWidget);
-    expect(find.widgetWithText(OutlinedButton, 'معلقة'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'معلّق'), findsOneWidget);
     expect(find.widgetWithText(TextButton, 'مرفوض'), findsOneWidget);
     expect(find.text('طلبات معلقة'), findsNothing);
   });
@@ -90,7 +90,7 @@ void main() {
     await tester.tap(find.text('طلبات البيع'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    final pendBtn = find.widgetWithText(OutlinedButton, 'معلقة');
+    final pendBtn = find.widgetWithText(OutlinedButton, 'معلّق');
     expect(pendBtn, findsOneWidget);
     await tester.tap(pendBtn);
     await tester.pump();

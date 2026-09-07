@@ -47,6 +47,8 @@ const returnOpen = ref(false)
 const returnNote = ref('')
 const rejectOpen = ref(false)
 const rejectReason = ref('')
+const pendOpen = ref(false)
+const pendNote = ref('')
 const busy = ref(false)
 const excelInput = ref(null)
 const importOpen = ref(false)
@@ -825,8 +827,62 @@ async function markAllRead() {
 
 function canManagerReject(row) {
   const s = requestStatus(row)
+  if (s === 'Completed' || s === 'Rejected')
+    return false
+  if (s === 'Inspected')
+    return true
 
-  return isEmployeeSubmitted(row) && s !== 'Completed' && s !== 'Rejected'
+  return isEmployeeSubmitted(row)
+}
+
+function canManagerInspectedActions(row) {
+  return requestStatus(row) === 'Inspected'
+}
+
+async function prepareInspected() {
+  const d = detail.value
+  if (!d)
+    return
+  busy.value = true
+  try {
+    const updated = await smPost(requestActionPath(d, 'prepare'), {})
+    applyRequestRow(updated)
+    toast.success('تم تجهيز الطلب للبيع')
+    await load()
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || err?.message || 'تعذر تجهيز الطلب')
+  }
+  finally {
+    busy.value = false
+  }
+}
+
+async function pendInspected() {
+  const note = pendNote.value.trim()
+  if (!note) {
+    toast.error('ملاحظة التعليق مطلوبة')
+
+    return
+  }
+  const d = detail.value
+  if (!d)
+    return
+  busy.value = true
+  try {
+    const updated = await smPost(requestActionPath(d, 'pending'), { note })
+    applyRequestRow(updated)
+    pendOpen.value = false
+    pendNote.value = ''
+    toast.success('تم تعليق الطلب')
+    await load()
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || err?.message || 'تعذر تعليق الطلب')
+  }
+  finally {
+    busy.value = false
+  }
 }
 
 function foldAr(value) {
@@ -951,11 +1007,6 @@ function parseExcel(buffer) {
       errors.push({ rowNumber: excelRow, message: 'اسم الزبون مطلوب' })
       continue
     }
-    const normalizedPhone = normalizeIraqPhone(phone)
-    if (!isIraqMobile(normalizedPhone)) {
-      errors.push({ rowNumber: excelRow, message: IRAQ_MOBILE_ERROR })
-      continue
-    }
     const city = resolveCity(province)
     if (!city) {
       errors.push({
@@ -967,7 +1018,7 @@ function parseExcel(buffer) {
     valid.push({
       rowNumber: excelRow,
       customerName: name,
-      phone: normalizedPhone,
+      phone,
       province: province || city.cityName,
       address,
       saleType,
@@ -1472,6 +1523,35 @@ onUnmounted(() => {
             </div>
           </template>
 
+          <template v-if="canManagerInspectedActions(detail)">
+            <VDivider class="my-4" />
+            <div class="d-flex flex-wrap ga-2">
+              <VBtn
+                color="primary"
+                :loading="busy"
+                @click="prepareInspected"
+              >
+                جاهز للبيع
+              </VBtn>
+              <VBtn
+                color="warning"
+                variant="tonal"
+                :loading="busy"
+                @click="pendOpen = true"
+              >
+                معلّق
+              </VBtn>
+              <VBtn
+                color="error"
+                variant="tonal"
+                :loading="busy"
+                @click="rejectOpen = true"
+              >
+                مرفوض
+              </VBtn>
+            </div>
+          </template>
+
           <template v-if="requestStatus(detail) === 'Completed'">
             <VDivider class="my-4" />
             <VBtn
@@ -1773,6 +1853,38 @@ onUnmounted(() => {
             @click="sendReturn"
           >
             إرجاع
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+
+    <VDialog
+      v-model="pendOpen"
+      max-width="420"
+    >
+      <VCard>
+        <VCardTitle>تعليق الطلب</VCardTitle>
+        <VCardText>
+          <VTextarea
+            v-model="pendNote"
+            label="الملاحظة *"
+            auto-grow
+          />
+        </VCardText>
+        <VCardActions>
+          <VBtn
+            variant="text"
+            @click="pendOpen = false"
+          >
+            رجوع
+          </VBtn>
+          <VBtn
+            color="warning"
+            :loading="busy"
+            :disabled="!pendNote.trim()"
+            @click="pendInspected"
+          >
+            تعليق
           </VBtn>
         </VCardActions>
       </VCard>

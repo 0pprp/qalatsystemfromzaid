@@ -398,8 +398,8 @@ class MockSalesRepository implements SalesRepository {
   @override
   Future<List<SalesDocument>> documents(int saleId) async {
     final draft = await byId(saleId);
-    if (draft.documents.isNotEmpty) return draft.documents;
-    if (draft.isCompleted) return _docsFor(saleId);
+    if (draft.documents.isNotEmpty) return SalesDocument.preferDisplay(draft.documents);
+    if (draft.isCompleted) return SalesDocument.preferDisplay(_docsFor(saleId));
     return const [];
   }
 

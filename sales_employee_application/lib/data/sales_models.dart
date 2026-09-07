@@ -522,7 +522,14 @@ class SalesDocument {
   static List<SalesDocument> preferDisplay(Iterable<SalesDocument> docs) {
     final list = docs.toList();
     final combined = list.where((d) => d.isCombined).toList();
-    return combined.isEmpty ? list : combined;
+    if (combined.isNotEmpty) return [combined.first];
+    return list
+        .where((d) =>
+            d.type == 'Contract' ||
+            d.type == 'PromissoryNote' ||
+            d.type == 'PreviewContract' ||
+            d.type == 'PreviewPromissoryNote')
+        .toList();
   }
 
   factory SalesDocument.fromJson(Map<String, dynamic> json) => SalesDocument(

@@ -319,6 +319,24 @@ namespace BE_SalesEmployee.Controllers
             return StatusCode(status, payload);
         }
 
+        [HttpPost("sales-requests/{cityValue}/{id:int}/prepare")]
+        public async Task<IActionResult> Prepare(string cityValue, int id, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/prepare", "{}", ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/{cityValue}/{id:int}/pending")]
+        public async Task<IActionResult> Pend(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/pending", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
         [HttpGet("sales-requests/{cityValue}/{id:int}")]
         public Task<IActionResult> RequestDetails(string cityValue, int id, CancellationToken ct) =>
             OneAsync(cityValue, $"sales-manager/sales-requests/{id}", ct);
