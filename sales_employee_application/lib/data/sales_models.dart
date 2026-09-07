@@ -656,21 +656,45 @@ class SalesWorkRequest {
   final int? delegateId;
   final String? delegateName;
 
-  bool get isNew => status == 'New' || status == 'Assigned' || status == 'Viewed';
+  String get normalizedStatus => status.trim();
+
+  bool get isNew =>
+      normalizedStatus == 'New' || normalizedStatus == 'Assigned' || normalizedStatus == 'Viewed';
   bool get isIncoming =>
-      status == 'New' || status == 'Assigned' || status == 'Viewed' || status == 'Returned';
-  bool get isSold => status == 'Completed';
+      normalizedStatus == 'New' ||
+      normalizedStatus == 'Assigned' ||
+      normalizedStatus == 'Viewed' ||
+      normalizedStatus == 'Returned';
+  bool get isSold => normalizedStatus == 'Completed';
   bool get canConvert => !isSold && convertedToSaleId == null;
   bool get canContinueSale => !isSold && convertedToSaleId != null;
   bool get canAct => !isSold;
   bool get canPrepare => !isSold && (isIncoming || isPendingHold || isInspected);
-  bool get canPend => !isSold && status != 'Pending';
-  bool get canReject => !isSold && status != 'Rejected';
-  bool get isReturned => status == 'Returned';
-  bool get isPendingHold => status == 'Pending';
-  bool get isInspected => status == 'Inspected';
+  bool get canPend => !isSold && normalizedStatus != 'Pending';
+  bool get canReject => !isSold && normalizedStatus != 'Rejected';
+  bool get isReturned => normalizedStatus == 'Returned';
+  bool get isPendingHold => normalizedStatus == 'Pending';
+  bool get isInspected => normalizedStatus.toLowerCase() == 'inspected';
   bool get isPreparedForSale =>
-      status == 'PreparedForSale' || status == 'InProgress' || status == 'ConvertedToSale';
+      normalizedStatus == 'PreparedForSale' ||
+      normalizedStatus == 'InProgress' ||
+      normalizedStatus == 'ConvertedToSale';
+
+  /// Actions drawn for this request. Inspected is never continue+rejected only.
+  List<String> get availableActions {
+    if (!canAct) return const [];
+    if (isInspected) {
+      return const ['continue', 'prepared', 'pending', 'rejected'];
+    }
+    final actions = <String>[];
+    if (canPrepare) actions.add('prepared');
+    if (canConvert || canContinueSale) {
+      actions.add(canContinueSale ? 'continue' : 'create');
+    }
+    if (canPend) actions.add('pending');
+    if (canReject) actions.add('rejected');
+    return actions;
+  }
 
   SalesWorkRequest copyWith({
     String? status,
@@ -705,7 +729,7 @@ class SalesWorkRequest {
         customerAddress: json['customerAddress']?.toString(),
         existingCustomerId: int.tryParse('${json['existingCustomerId'] ?? json['ExistingCustomerId'] ?? ''}'),
         notes: json['notes']?.toString() ?? json['Notes']?.toString(),
-        status: '${json['status'] ?? json['Status'] ?? 'New'}',
+        status: '${json['status'] ?? json['Status'] ?? 'New'}'.trim(),
         createdAtUtc: DateTime.tryParse('${json['createdAtUtc'] ?? json['CreatedAtUtc'] ?? ''}')?.toUtc() ??
             DateTime.now().toUtc(),
         convertedToSaleId: int.tryParse('${json['convertedToSaleId'] ?? json['ConvertedToSaleId'] ?? ''}'),

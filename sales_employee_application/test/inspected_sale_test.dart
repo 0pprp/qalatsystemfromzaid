@@ -97,6 +97,45 @@ void main() {
     expect(find.widgetWithText(TextButton, 'مرفوض'), findsOneWidget);
   });
 
+  test('Inspected available actions are continue prepared pending rejected', () {
+    final row = SalesWorkRequest(
+      id: 9,
+      customerName: 'سعد كاظم',
+      status: 'Inspected',
+      createdAtUtc: DateTime.utc(2026, 9, 2),
+      convertedToSaleId: 101,
+    );
+    expect(row.availableActions, ['continue', 'prepared', 'pending', 'rejected']);
+    expect(row.availableActions, isNot(equals(['continue', 'rejected'])));
+    expect(row.canPrepare, isTrue);
+    expect(row.canPend, isTrue);
+    expect(row.canReject, isTrue);
+    expect(row.canContinueSale, isTrue);
+  });
+
+  testWidgets('Inspected details screen shows four actions not two', (tester) async {
+    final repo = MockSalesRepository()
+      ..seedRequest(SalesWorkRequest(
+        id: 9,
+        customerName: 'سعد كاظم',
+        status: 'Inspected',
+        createdAtUtc: DateTime.utc(2026, 9, 2),
+        convertedToSaleId: 101,
+      ));
+    SalesRepositoryFactory.setInstance(repo);
+    await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.themeData,
+      home: const SalesRequestDetailsScreen(requestId: 9),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.widgetWithText(ElevatedButton, 'متابعة البيع'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'جاهز للبيع'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'معلّق'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'مرفوض'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'إنشاء بيع'), findsNothing);
+  });
+
   test('Inspected preferDisplay keeps combined document only', () {
     final docs = SalesDocument.preferDisplay([
       SalesDocument(type: 'SaleDocuments', fileName: 'a.pdf', downloadUrl: 'u1', documentId: 1),

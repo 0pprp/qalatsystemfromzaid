@@ -18,6 +18,8 @@ namespace BE_Company.Sales.Services
         public const float LineHeight = 1.22f;
         public const float ParagraphSpacing = 5.5f;
         public const float DebtorFingerprintHeight = 80f;
+        public const float FirstPartySignatureHeight = 56f;
+        public const float SignatureWriteHeight = 42f;
 
         private static bool _licenseSet;
         private static bool _fontRegistered;
@@ -49,16 +51,7 @@ namespace BE_Company.Sales.Services
                                 body.Item().Element(c => BodyParagraph(c, paragraph.PlainText));
                             }
                         });
-                        col.Item().PaddingTop(12).Row(row =>
-                        {
-                            Signature(row, "الطرف الأول");
-                            Signature(row, "أمين الصندوق");
-                        });
-                        col.Item().PaddingTop(28).Row(row =>
-                        {
-                            Signature(row, "الطرف الثاني");
-                            Signature(row, "مندوب المبيعات");
-                        });
+                        col.Item().PaddingTop(10).Element(ContractSignatures);
                     });
                 });
             }).GeneratePdf();
@@ -103,16 +96,7 @@ namespace BE_Company.Sales.Services
                         body.Item().Element(c => BodyParagraph(c, paragraph.PlainText));
                     }
                 });
-                col.Item().PaddingTop(12).Row(row =>
-                {
-                    Signature(row, "الطرف الأول");
-                    Signature(row, "أمين الصندوق");
-                });
-                col.Item().PaddingTop(28).Row(row =>
-                {
-                    Signature(row, "الطرف الثاني");
-                    Signature(row, "مندوب المبيعات");
-                });
+                col.Item().PaddingTop(10).Element(ContractSignatures);
             });
         }
 
@@ -197,9 +181,29 @@ namespace BE_Company.Sales.Services
             container.AlignRight().Text(PdfSafe(text));
         }
 
-        private static void Signature(RowDescriptor row, string label)
+        private static void ContractSignatures(IContainer container)
         {
-            row.RelativeItem().AlignRight().Text(label).Bold().FontSize(BodyFontSize);
+            container.Row(row =>
+            {
+                SignatureColumn(row, "الطرف الأول", FirstPartySignatureHeight, "أمين الصندوق", SignatureWriteHeight);
+                SignatureColumn(row, "الطرف الثاني", SignatureWriteHeight, "مندوب المبيعات", SignatureWriteHeight);
+            });
+        }
+
+        private static void SignatureColumn(
+            RowDescriptor row,
+            string firstLabel,
+            float firstHeight,
+            string secondLabel,
+            float secondHeight)
+        {
+            row.RelativeItem().AlignRight().Column(col =>
+            {
+                col.Item().Text(firstLabel).Bold().FontSize(BodyFontSize);
+                col.Item().Height(firstHeight);
+                col.Item().PaddingTop(6).Text(secondLabel).Bold().FontSize(BodyFontSize);
+                col.Item().Height(secondHeight);
+            });
         }
 
         private static void WitnessBlock(IContainer container, string title, string boldFamily)

@@ -106,6 +106,8 @@ namespace BE_Company.Sales.Tests
         public void CombinedSaleDocuments_AreTwoIndependentA4Pages()
         {
             Assert.Equal(80f, OfficialSalesPdfRenderer.DebtorFingerprintHeight);
+            Assert.Equal(56f, OfficialSalesPdfRenderer.FirstPartySignatureHeight);
+            Assert.Equal(42f, OfficialSalesPdfRenderer.SignatureWriteHeight);
             using var stream = new MemoryStream(OfficialSalesPdfRenderer.BuildSaleDocuments(Draft()));
             using var document = PdfDocument.Open(stream);
             Assert.Equal(2, document.NumberOfPages);
@@ -154,6 +156,20 @@ namespace BE_Company.Sales.Tests
         [Fact]
         public void CombinedSaleDocuments_LongData_StayOnTwoA4Pages()
         {
+            using var stream = new MemoryStream(OfficialSalesPdfRenderer.BuildSaleDocuments(LongDraft()));
+            using var document = PdfDocument.Open(stream);
+            Assert.Equal(2, document.NumberOfPages);
+        }
+
+        [Fact]
+        public void ContractSignatures_HaveWritableWhitespaceWithoutThirdPage()
+        {
+            var source = File.ReadAllText(FindRendererSource());
+            Assert.Contains("col.Item().Height(firstHeight);", source);
+            Assert.Contains("col.Item().Height(secondHeight);", source);
+            Assert.Contains("FirstPartySignatureHeight", source);
+            Assert.DoesNotContain("Signature(row, \"الطرف الأول\")", source);
+
             using var stream = new MemoryStream(OfficialSalesPdfRenderer.BuildSaleDocuments(LongDraft()));
             using var document = PdfDocument.Open(stream);
             Assert.Equal(2, document.NumberOfPages);

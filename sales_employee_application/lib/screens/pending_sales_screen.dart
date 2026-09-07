@@ -451,32 +451,13 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
               ),
             if (r.canAct) ...[
               const SizedBox(height: AppSpacing.md),
-              if (r.canPrepare)
-                ElevatedButton(
-                  onPressed: () => _prepareRequest(r),
-                  child: const Text('جاهز للبيع'),
-                ),
-              if (r.canConvert || r.canContinueSale) ...[
-                if (r.canPrepare) const SizedBox(height: AppSpacing.sm),
-                ElevatedButton(
-                  onPressed: () => _openCheckout(r),
-                  child: Text(r.isInspected || r.canContinueSale ? 'متابعة البيع' : 'إنشاء بيع'),
-                ),
-              ],
-              if (r.canPend) ...[
-                const SizedBox(height: AppSpacing.sm),
-                OutlinedButton(
-                  onPressed: () => _pendRequest(r),
-                  child: const Text('معلّق'),
-                ),
-              ],
-              if (r.canReject) ...[
-                const SizedBox(height: AppSpacing.sm),
-                TextButton(
-                  onPressed: () => _rejectRequest(r),
-                  child: const Text('مرفوض'),
-                ),
-              ],
+              _SalesRequestActions(
+                request: r,
+                onContinue: () => _openCheckout(r),
+                onPrepare: () => _prepareRequest(r),
+                onPend: () => _pendRequest(r),
+                onReject: () => _rejectRequest(r),
+              ),
             ],
           ],
         ),
@@ -667,25 +648,15 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
                   Text('سبب الرفض: ${row.rejectionReason}',
                       style: const TextStyle(color: AppColors.danger)),
                 const SizedBox(height: AppSpacing.lg),
-                if (row.canAct) ...[
-                  if (row.canPrepare) ...[
-                    ElevatedButton(onPressed: _busy ? null : _prepare, child: const Text('جاهز للبيع')),
-                    const SizedBox(height: AppSpacing.sm),
-                  ],
-                  if (row.canConvert || row.canContinueSale) ...[
-                    ElevatedButton(
-                      onPressed: _busy ? null : _openCheckout,
-                      child: Text(row.isInspected || row.canContinueSale ? 'متابعة البيع' : 'إنشاء بيع'),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                  ],
-                  if (row.canPend) ...[
-                    OutlinedButton(onPressed: _busy ? null : _pend, child: const Text('معلّق')),
-                    const SizedBox(height: AppSpacing.sm),
-                  ],
-                  if (row.canReject)
-                    TextButton(onPressed: _busy ? null : _reject, child: const Text('مرفوض')),
-                ],
+                if (row.canAct)
+                  _SalesRequestActions(
+                    request: row,
+                    enabled: !_busy,
+                    onContinue: _openCheckout,
+                    onPrepare: _prepare,
+                    onPend: _pend,
+                    onReject: _reject,
+                  ),
               ],
             ),
     );
@@ -697,6 +668,72 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
 /// `_dependents.isEmpty` after Navigator.pop).
 /// The route is popped once, only after [onConfirm] succeeds, so the parent
 /// never setStates during overlay teardown.
+class _SalesRequestActions extends StatelessWidget {
+  const _SalesRequestActions({
+    required this.request,
+    required this.onContinue,
+    required this.onPrepare,
+    required this.onPend,
+    required this.onReject,
+    this.enabled = true,
+  });
+
+  final SalesWorkRequest request;
+  final VoidCallback onContinue;
+  final VoidCallback onPrepare;
+  final VoidCallback onPend;
+  final VoidCallback onReject;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final actions = request.availableActions;
+    final children = <Widget>[];
+    for (final action in actions) {
+      if (children.isNotEmpty) {
+        children.add(const SizedBox(height: AppSpacing.sm));
+      }
+      children.add(_button(action));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    );
+  }
+
+  Widget _button(String action) {
+    switch (action) {
+      case 'continue':
+        return ElevatedButton(
+          onPressed: enabled ? onContinue : null,
+          child: const Text('متابعة البيع'),
+        );
+      case 'create':
+        return ElevatedButton(
+          onPressed: enabled ? onContinue : null,
+          child: const Text('إنشاء بيع'),
+        );
+      case 'prepared':
+        return ElevatedButton(
+          onPressed: enabled ? onPrepare : null,
+          child: const Text('جاهز للبيع'),
+        );
+      case 'pending':
+        return OutlinedButton(
+          onPressed: enabled ? onPend : null,
+          child: const Text('معلّق'),
+        );
+      case 'rejected':
+        return TextButton(
+          onPressed: enabled ? onReject : null,
+          child: const Text('مرفوض'),
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+}
+
 class _RequestNoteDialog extends StatefulWidget {
   const _RequestNoteDialog({
     required this.title,
