@@ -104,6 +104,12 @@ namespace BE_Company.Sales.Services
                 var posting = await RecordFinalSaleAndDeductAsync(
                     connection, tx, header, employeeId, lockedItems, completedAt, ct);
                 var deducted = posting.Deducted;
+                if (posting.CustomerId is > 0 && header.CustomerId is not > 0)
+                {
+                    header.CustomerId = posting.CustomerId;
+                }
+
+                await SyncCanonicalCustomerIdentityAsync(connection, tx, header, posting.CustomerId, ct);
 
                 await RecordDownPaymentIfNeededAsync(
                     connection, tx, header, employeeId, posting, completedAt, ct);
@@ -365,6 +371,94 @@ END;",
             };
         }
 
+        private async Task SyncCanonicalCustomerIdentityAsync(
+            SqlConnection connection,
+            SqlTransaction tx,
+            SalesDraftDTO sale,
+            int? postedCustomerId,
+            CancellationToken ct)
+        {
+            string? requestName = null;
+            string? requestPhone = null;
+            string? requestAddress = null;
+            string? requestProvince = null;
+            if (sale.SalesRequestId is > 0 && await TableExistsAsync(connection, tx, "SalesRequests", ct))
+            {
+                var linked = await connection.QueryFirstOrDefaultAsync<LinkedRequestIdentity>(new CommandDefinition(
+                    @"SELECT CustomerName, CustomerPhone, CustomerAddress, CustomerProvince
+                      FROM dbo.SalesRequests
+                      WHERE Id = @Id",
+                    new { Id = sale.SalesRequestId }, tx, cancellationToken: ct));
+                requestName = linked?.CustomerName;
+                requestPhone = linked?.CustomerPhone;
+                requestAddress = linked?.CustomerAddress;
+                requestProvince = linked?.CustomerProvince;
+            }
+
+            var name = SalesCustomerIdentity.PreferName(sale.FullName, requestName);
+            var phone = SalesCustomerIdentity.PreferText(sale.Phone, requestPhone);
+            var address = SalesCustomerIdentity.PreferText(sale.Address, requestAddress);
+            var province = SalesCustomerIdentity.PreferText(sale.Province, requestProvince);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                name = sale.FullName;
+            }
+
+            sale.FullName = name;
+            if (!string.IsNullOrWhiteSpace(phone))
+            {
+                sale.Phone = phone;
+            }
+
+            if (!string.IsNullOrWhiteSpace(address))
+            {
+                sale.Address = address;
+            }
+
+            if (!string.IsNullOrWhiteSpace(province))
+            {
+                sale.Province = province;
+            }
+
+            await connection.ExecuteAsync(new CommandDefinition(
+                @"UPDATE dbo.SalesDrafts
+                  SET FullName = @FullName,
+                      Phone = @Phone,
+                      Address = @Address,
+                      Province = @Province,
+                      CustomerId = COALESCE(@CustomerId, CustomerId)
+                  WHERE SaleId = @SaleId",
+                new
+                {
+                    SaleId = sale.SaleId,
+                    sale.FullName,
+                    sale.Phone,
+                    sale.Address,
+                    sale.Province,
+                    CustomerId = postedCustomerId is > 0 ? postedCustomerId : sale.CustomerId
+                }, tx, cancellationToken: ct));
+
+            var customerId = postedCustomerId is > 0 ? postedCustomerId : sale.CustomerId;
+            if (customerId is not > 0 || !await TableExistsAsync(connection, tx, "Customers", ct))
+            {
+                return;
+            }
+
+            await connection.ExecuteAsync(new CommandDefinition(
+                @"UPDATE dbo.Customers
+                  SET CustomerName = @CustomerName,
+                      PhoneNumber = COALESCE(@PhoneNumber, PhoneNumber),
+                      Address = COALESCE(@Address, Address)
+                  WHERE CustomerID = @CustomerID",
+                new
+                {
+                    CustomerID = customerId,
+                    CustomerName = Trunc(name, 255),
+                    PhoneNumber = Trunc(phone, 255),
+                    Address = Trunc(address, 255)
+                }, tx, cancellationToken: ct));
+        }
+
         private async Task RecordDownPaymentIfNeededAsync(
             SqlConnection connection,
             SqlTransaction tx,
@@ -530,6 +624,14 @@ WHERE SaleId = @SaleId";
         {
             public int CustomerID { get; set; }
             public int CustomerSaleID { get; set; }
+        }
+
+        private sealed class LinkedRequestIdentity
+        {
+            public string? CustomerName { get; set; }
+            public string? CustomerPhone { get; set; }
+            public string? CustomerAddress { get; set; }
+            public string? CustomerProvince { get; set; }
         }
     }
 

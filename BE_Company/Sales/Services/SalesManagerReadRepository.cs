@@ -113,21 +113,29 @@ ORDER BY OccurredAtUtc ASC",
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
             var rows = await connection.QueryAsync<SalesDraftDTO>(new CommandDefinition(@"
-SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
- FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
- EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, DownPayment,
- DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
- OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment,
- CreatedAt, CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
-FROM dbo.SalesDrafts
-WHERE (@EmployeeId IS NULL OR EmployeeId = @EmployeeId)
-AND (@Status IS NULL OR Status = @Status)
-AND (@FromUtc IS NULL OR CreatedAt >= @FromUtc)
-AND (@ToUtc IS NULL OR CreatedAt <= @ToUtc)
-ORDER BY CreatedAt DESC",
+SELECT d.SaleId, d.EmployeeId, d.UserName, d.UserType, d.CityValue, d.CityName, d.Status, d.CustomerId, d.SourceCityValue,
+ d.FullName, d.Phone, d.Province, d.NationalCardNumber, d.Address, d.NearestLandmark, d.MukhtarName, d.RationCenterNumber,
+ d.EvaluationLevel, d.EvaluationNote, d.BaseSalePrice, d.FinalSalePrice, d.DailyInstallment, d.DownPayment,
+ d.DefaultTotalSalePrice, d.DefaultDailyInstallment, d.DefaultDownPayment,
+ d.OverrideTotalSalePrice, d.OverrideDailyInstallment, d.OverrideDownPayment,
+ d.CreatedAt, d.CompletedAt, d.CompletedBy, d.DocumentsStatus, d.SalesRequestId, d.CustomerListId,
+ c.CustomerName AS AccountCustomerName,
+ r.CustomerName AS RequestCustomerName
+FROM dbo.SalesDrafts d
+LEFT JOIN dbo.Customers c ON c.CustomerID = d.CustomerId
+LEFT JOIN dbo.SalesRequests r ON r.Id = d.SalesRequestId
+WHERE (@EmployeeId IS NULL OR d.EmployeeId = @EmployeeId)
+AND (@Status IS NULL OR d.Status = @Status)
+AND (@FromUtc IS NULL OR d.CreatedAt >= @FromUtc)
+AND (@ToUtc IS NULL OR d.CreatedAt <= @ToUtc)
+ORDER BY d.CreatedAt DESC",
                 new { EmployeeId = employeeId, Status = status, FromUtc = fromUtc, ToUtc = toUtc },
                 cancellationToken: ct));
             var list = rows.ToList();
+            foreach (var row in list)
+            {
+                SalesCustomerIdentity.ApplyDisplayName(row);
+            }
             await SalesInventoryService.AttachListNamesAsync(connection, list, ct);
             return list;
         }
@@ -137,18 +145,25 @@ ORDER BY CreatedAt DESC",
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
             var header = await connection.QueryFirstOrDefaultAsync<SalesDraftDTO>(new CommandDefinition(@"
-SELECT SaleId, EmployeeId, UserName, UserType, CityValue, CityName, Status, CustomerId, SourceCityValue,
- FullName, Phone, Province, NationalCardNumber, Address, NearestLandmark, MukhtarName, RationCenterNumber,
- EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment, DownPayment,
- DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
- OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment,
- CreatedAt, CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
-FROM dbo.SalesDrafts WHERE SaleId = @SaleId",
+SELECT d.SaleId, d.EmployeeId, d.UserName, d.UserType, d.CityValue, d.CityName, d.Status, d.CustomerId, d.SourceCityValue,
+ d.FullName, d.Phone, d.Province, d.NationalCardNumber, d.Address, d.NearestLandmark, d.MukhtarName, d.RationCenterNumber,
+ d.EvaluationLevel, d.EvaluationNote, d.BaseSalePrice, d.FinalSalePrice, d.DailyInstallment, d.DownPayment,
+ d.DefaultTotalSalePrice, d.DefaultDailyInstallment, d.DefaultDownPayment,
+ d.OverrideTotalSalePrice, d.OverrideDailyInstallment, d.OverrideDownPayment,
+ d.CreatedAt, d.CompletedAt, d.CompletedBy, d.DocumentsStatus, d.SalesRequestId, d.CustomerListId,
+ c.CustomerName AS AccountCustomerName,
+ r.CustomerName AS RequestCustomerName
+FROM dbo.SalesDrafts d
+LEFT JOIN dbo.Customers c ON c.CustomerID = d.CustomerId
+LEFT JOIN dbo.SalesRequests r ON r.Id = d.SalesRequestId
+WHERE d.SaleId = @SaleId",
                 new { SaleId = saleId }, cancellationToken: ct));
             if (header == null)
             {
                 return null;
             }
+
+            SalesCustomerIdentity.ApplyDisplayName(header);
 
             var items = await connection.QueryAsync<SalesDraftItemDTO>(new CommandDefinition(@"
 SELECT SaleItemId, ProductId, ProductName, Quantity, UnitSalePrice, LineSalePrice

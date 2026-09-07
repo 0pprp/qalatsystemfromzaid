@@ -109,26 +109,46 @@ namespace BE_Company.Sales.Services
             string? ration = request.Customer?.RationCenterNumber;
             int? customerId = request.CustomerId;
             string? sourceCity = null;
+            string? requestName = null;
+            string? requestPhone = null;
+            string? requestAddress = null;
+            string? requestProvince = null;
+
+            if (request.SalesRequestId is > 0)
+            {
+                var linked = await _requests.GetForEmployeeAsync(request.SalesRequestId.Value, employeeId, ct);
+                requestName = linked.CustomerName;
+                requestPhone = linked.CustomerPhone;
+                requestAddress = linked.CustomerAddress;
+                requestProvince = linked.CustomerProvince;
+                if (customerId is not > 0 && linked.ExistingCustomerId is > 0)
+                {
+                    customerId = linked.ExistingCustomerId;
+                }
+            }
 
             if (customerId.HasValue && customerId.Value > 0)
             {
                 var existing = await _customers.GetCustomerAsync(customerId.Value, ct)
                                ?? throw new ArgumentException("الزبون غير موجود");
                 var submittedName = request.Customer?.FullName?.Trim();
-                fullName = !string.IsNullOrWhiteSpace(submittedName)
-                    ? submittedName
-                    : existing.CustomerName ?? string.Empty;
+                fullName = SalesCustomerIdentity.PreferName(
+                    submittedName,
+                    requestName,
+                    existing.CustomerName);
                 var submittedPhone = request.Customer?.Phone?.Trim();
-                phone = !string.IsNullOrWhiteSpace(submittedPhone)
-                    ? submittedPhone
-                    : existing.PhoneNumber ?? request.Customer?.Phone;
-                province = !string.IsNullOrWhiteSpace(request.Customer?.Province)
-                    ? request.Customer!.Province.Trim()
-                    : (string.IsNullOrWhiteSpace(existing.CityName) ? cityName : existing.CityName);
+                phone = SalesCustomerIdentity.PreferText(
+                    submittedPhone,
+                    requestPhone,
+                    existing.PhoneNumber);
+                province = SalesCustomerIdentity.PreferText(
+                    request.Customer?.Province,
+                    requestProvince,
+                    string.IsNullOrWhiteSpace(existing.CityName) ? cityName : existing.CityName);
                 sourceCity = cityValue;
                 if (string.IsNullOrWhiteSpace(address))
                 {
-                    address = existing.Address;
+                    address = SalesCustomerIdentity.PreferText(null, requestAddress, existing.Address);
                 }
                 if (string.IsNullOrWhiteSpace(landmark))
                 {
@@ -137,9 +157,18 @@ namespace BE_Company.Sales.Services
             }
             else
             {
-                fullName = request.Customer?.FullName?.Trim() ?? string.Empty;
-                phone = request.Customer?.Phone;
-                province = string.IsNullOrWhiteSpace(request.Customer?.Province) ? cityName : request.Customer!.Province;
+                fullName = SalesCustomerIdentity.PreferName(
+                    request.Customer?.FullName,
+                    requestName);
+                phone = SalesCustomerIdentity.PreferText(request.Customer?.Phone, requestPhone);
+                province = SalesCustomerIdentity.PreferText(
+                    request.Customer?.Province,
+                    requestProvince,
+                    cityName);
+                if (string.IsNullOrWhiteSpace(address))
+                {
+                    address = requestAddress;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(fullName))

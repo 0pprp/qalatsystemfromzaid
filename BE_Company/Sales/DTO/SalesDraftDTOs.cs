@@ -112,6 +112,12 @@ namespace BE_Company.Sales.DTO
         public int? SalesRequestId { get; set; }
         public int? CustomerListId { get; set; }
         public string? CustomerListName { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public string? AccountCustomerName { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public string? RequestCustomerName { get; set; }
         public List<SalesDraftItemDTO> Items { get; set; } = [];
         public List<SalesDocumentDTO> Documents { get; set; } = [];
         public SalesShopProfileDTO? Shop { get; set; }

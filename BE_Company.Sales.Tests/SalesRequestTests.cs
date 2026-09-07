@@ -567,7 +567,7 @@ namespace BE_Company.Sales.Tests
                 ["SalesManagement:BranchId"] = "najaf-demo",
                 ["SalesManagement:BranchName"] = "النجف"
             }).Build();
-            var svc = new SalesManagerQueryService(read, new FakeRequestRepository(), new FakeClock(), new SalesManagerTrackingOptions(), cfg);
+            var svc = new SalesManagerQueryService(read, new FakeRequestRepository(), new FakeDraftRepository(), new FakeClock(), new SalesManagerTrackingOptions(), cfg);
             var list = await svc.ListEmployeesAsync(null, null, CancellationToken.None);
             Assert.Contains(list, e => e.EmployeeId == 1 && e.LocationStatus == SalesLocationStatuses.Live);
         }
@@ -579,7 +579,7 @@ namespace BE_Company.Sales.Tests
             read.Route.Add(new SalesManagerRoutePointDTO { CapturedAt = new DateTime(2026, 9, 2, 6, 0, 0, DateTimeKind.Utc), Latitude = 1, Longitude = 1 });
             read.Route.Add(new SalesManagerRoutePointDTO { CapturedAt = new DateTime(2026, 9, 2, 5, 0, 0, DateTimeKind.Utc), Latitude = 2, Longitude = 2 });
             var cfg = new ConfigurationBuilder().AddInMemoryCollection().Build();
-            var svc = new SalesManagerQueryService(read, new FakeRequestRepository(), new FakeClock(), new SalesManagerTrackingOptions(), cfg);
+            var svc = new SalesManagerQueryService(read, new FakeRequestRepository(), new FakeDraftRepository(), new FakeClock(), new SalesManagerTrackingOptions(), cfg);
             var route = await svc.GetRouteAsync(1, new DateTime(2026, 9, 2), CancellationToken.None);
             Assert.True(route.Points[0].CapturedAt <= route.Points[1].CapturedAt);
         }

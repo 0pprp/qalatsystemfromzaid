@@ -383,9 +383,21 @@ VALUES
             return new SalesCustomerProfileDTO
             {
                 CustomerId = resolvedCustomerId,
-                CustomerName = account?.CustomerName ?? openRequest?.CustomerName ?? sampleFull.FullName,
-                Phone = account?.PhoneNumber ?? openRequest?.CustomerPhone ?? sampleFull.Phone,
-                Address = account?.Address ?? openRequest?.CustomerAddress ?? sampleFull.Address ?? firstRequest?.CustomerAddress,
+                CustomerName = SalesCustomerIdentity.PreferName(
+                    sampleFull.FullName,
+                    account?.CustomerName,
+                    firstRequest?.CustomerName,
+                    openRequest?.CustomerName),
+                Phone = SalesCustomerIdentity.PreferText(
+                    sampleFull.Phone,
+                    account?.PhoneNumber,
+                    openRequest?.CustomerPhone,
+                    firstRequest?.CustomerPhone),
+                Address = SalesCustomerIdentity.PreferText(
+                    sampleFull.Address,
+                    account?.Address,
+                    openRequest?.CustomerAddress,
+                    firstRequest?.CustomerAddress),
                 Province = FirstNonEmpty(
                     openRequest?.CustomerProvince,
                     sampleFull.Province,

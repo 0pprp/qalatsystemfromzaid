@@ -35,6 +35,8 @@ namespace BE_Company.Sales.Tests
         public readonly Dictionary<int, int> Stock = new();
         public readonly List<SalesDocumentRecord> Documents = [];
         public readonly List<RecordedCustomerPayment> Payments = [];
+        public readonly Dictionary<int, string> OfficialCustomers = new();
+        public readonly Dictionary<int, string> RequestNames = new();
         public int DeductionCount { get; private set; }
         public int CompleteCalls { get; private set; }
         public bool FailPayment { get; set; }
@@ -98,9 +100,17 @@ namespace BE_Company.Sales.Tests
             var previousCompletedAt = sale.CompletedAt;
             var previousCompletedBy = sale.CompletedBy;
             var previousDocStatus = sale.DocumentsStatus;
+            var previousFullName = sale.FullName;
+            var previousPhone = sale.Phone;
+            var previousAddress = sale.Address;
+            var previousOfficialName = sale.CustomerId is > 0
+                ? OfficialCustomers.GetValueOrDefault(sale.CustomerId.Value)
+                : null;
 
             try
             {
+                ApplyCanonicalIdentity(sale);
+
                 foreach (var item in sale.Items)
                 {
                     Stock[item.ProductId] -= item.Quantity;
@@ -139,7 +149,33 @@ namespace BE_Company.Sales.Tests
                 sale.CompletedAt = previousCompletedAt;
                 sale.CompletedBy = previousCompletedBy;
                 sale.DocumentsStatus = previousDocStatus;
+                sale.FullName = previousFullName;
+                sale.Phone = previousPhone;
+                sale.Address = previousAddress;
+                if (sale.CustomerId is > 0)
+                {
+                    if (previousOfficialName == null)
+                    {
+                        OfficialCustomers.Remove(sale.CustomerId.Value);
+                    }
+                    else
+                    {
+                        OfficialCustomers[sale.CustomerId.Value] = previousOfficialName;
+                    }
+                }
                 throw;
+            }
+        }
+
+        private void ApplyCanonicalIdentity(SalesDraftDTO sale)
+        {
+            string? requestName = sale.SalesRequestId is > 0
+                ? RequestNames.GetValueOrDefault(sale.SalesRequestId.Value)
+                : null;
+            sale.FullName = SalesCustomerIdentity.PreferName(sale.FullName, requestName);
+            if (sale.CustomerId is > 0 && OfficialCustomers.ContainsKey(sale.CustomerId.Value))
+            {
+                OfficialCustomers[sale.CustomerId.Value] = sale.FullName;
             }
         }
 

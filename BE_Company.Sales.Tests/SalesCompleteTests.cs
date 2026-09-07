@@ -338,6 +338,82 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
+        public void PreferName_UpgradesTwoPartCustomerToThreePartRequest()
+        {
+            Assert.Equal(
+                "كرار كاظم حسن",
+                SalesCustomerIdentity.PreferName("كرار كاظم", "كرار كاظم حسن"));
+            Assert.Equal(
+                "كرار كاظم حسن",
+                SalesCustomerIdentity.PreferName("كرار كاظم حسن", "كرار كاظم"));
+            Assert.Equal(
+                "أحمد علي محمد",
+                SalesCustomerIdentity.PreferName("أحمد علي محمد", "حسين كاظم"));
+        }
+
+        [Fact]
+        public async Task Complete_ExistingCustomer_UsesFinalThreePartNameEverywhere_WithoutNewCustomer()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            repo.Sales[10].CustomerId = 42;
+            repo.Sales[10].FullName = "كرار كاظم";
+            repo.Sales[10].Phone = "07701234567";
+            repo.Sales[10].Address = "حي الأنصار";
+            repo.Sales[10].SalesRequestId = 8;
+            repo.RequestNames[8] = "كرار كاظم حسن";
+            repo.OfficialCustomers[42] = "كرار كاظم";
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+
+            var result = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
+
+            Assert.Equal(SalesStatuses.Completed, result.Status);
+            Assert.Equal(42, repo.Sales[10].CustomerId);
+            Assert.Equal("كرار كاظم حسن", repo.Sales[10].FullName);
+            Assert.Equal("كرار كاظم حسن", repo.OfficialCustomers[42]);
+            Assert.Single(repo.OfficialCustomers);
+            Assert.Equal(
+                "كرار كاظم حسن",
+                SalesCustomerIdentity.PreferName(
+                    repo.Sales[10].FullName,
+                    repo.OfficialCustomers[42],
+                    repo.RequestNames[8]));
+        }
+
+        [Fact]
+        public async Task Complete_PaymentFailure_DoesNotChangeOfficialCustomerName()
+        {
+            var repo = Seed(SalesEvaluationLevels.Good);
+            repo.Sales[10].CustomerId = 42;
+            repo.Sales[10].FullName = "كرار كاظم";
+            repo.Sales[10].SalesRequestId = 8;
+            repo.RequestNames[8] = "كرار كاظم حسن";
+            repo.OfficialCustomers[42] = "كرار كاظم";
+            repo.FailPayment = true;
+            var svc = new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService());
+
+            await Assert.ThrowsAsync<SalesCompleteException>(() =>
+                svc.CompleteAsync(10, Identity(), CancellationToken.None));
+
+            Assert.Equal(SalesStatuses.Pending, repo.Sales[10].Status);
+            Assert.Equal("كرار كاظم", repo.Sales[10].FullName);
+            Assert.Equal("كرار كاظم", repo.OfficialCustomers[42]);
+            Assert.Equal(42, repo.Sales[10].CustomerId);
+        }
+
+        [Fact]
+        public void CompletedList_DoesNotKeepShortSnapshot_WhenAccountOrRequestHasFinalName()
+        {
+            var sale = Draft(SalesEvaluationLevels.Good);
+            sale.FullName = "كرار كاظم";
+            sale.AccountCustomerName = "كرار كاظم حسن";
+            sale.RequestCustomerName = "كرار كاظم حسن";
+            SalesCustomerIdentity.ApplyDisplayName(sale);
+            Assert.Equal("كرار كاظم حسن", sale.FullName);
+            Assert.Null(sale.AccountCustomerName);
+            Assert.Null(sale.RequestCustomerName);
+        }
+
+        [Fact]
         public async Task PdfGeneratedOnce_AndRegenSafe()
         {
             var repo = Seed(SalesEvaluationLevels.Good);
