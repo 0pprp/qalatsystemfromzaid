@@ -41,7 +41,7 @@ INSERT INTO dbo.SalesDrafts
  EvaluationLevel, EvaluationNote, BaseSalePrice, FinalSalePrice, DailyInstallment,
  DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
  OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
- SalesRequestId, CustomerListId)
+ SalesRequestId, CustomerListId, WizardCurrentStep)
 OUTPUT INSERTED.SaleId
 VALUES
 (@EmployeeId, @UserName, @UserType, @CityValue, @CityName, @Status, @CustomerId, @SourceCityValue,
@@ -49,7 +49,7 @@ VALUES
  @EvaluationLevel, @EvaluationNote, @BaseSalePrice, @FinalSalePrice, @DailyInstallment,
  @DefaultTotalSalePrice, @DefaultDailyInstallment, @DefaultDownPayment,
  @OverrideTotalSalePrice, @OverrideDailyInstallment, @OverrideDownPayment, @DownPayment,
- @SalesRequestId, @CustomerListId);",
+ @SalesRequestId, @CustomerListId, @WizardCurrentStep);",
                     draft, tx, cancellationToken: ct));
 
                 foreach (var item in draft.Items)
@@ -99,7 +99,8 @@ UPDATE dbo.SalesDrafts SET
  BaseSalePrice = @BaseSalePrice, FinalSalePrice = @FinalSalePrice, DailyInstallment = @DailyInstallment,
  DefaultTotalSalePrice = @DefaultTotalSalePrice, DefaultDailyInstallment = @DefaultDailyInstallment, DefaultDownPayment = @DefaultDownPayment,
  OverrideTotalSalePrice = @OverrideTotalSalePrice, OverrideDailyInstallment = @OverrideDailyInstallment, OverrideDownPayment = @OverrideDownPayment,
- DownPayment = @DownPayment, SalesRequestId = @SalesRequestId, CustomerListId = @CustomerListId
+ DownPayment = @DownPayment, SalesRequestId = @SalesRequestId, CustomerListId = @CustomerListId,
+ WizardCurrentStep = @WizardCurrentStep
 WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId;",
                     draft, tx, cancellationToken: ct));
 
@@ -146,7 +147,7 @@ VALUES (@SaleId, @ProductId, @ProductName, @Quantity, @UnitSalePrice, @LineSaleP
                          DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
                          OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
                          DownPaymentCustomerPaymentId, CreatedAt,
-                         CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
+                         CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId, WizardCurrentStep
                   FROM dbo.SalesDrafts
                   WHERE EmployeeId = @EmployeeId
                   ORDER BY CreatedAt DESC",
@@ -204,7 +205,7 @@ WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId",
                          DefaultTotalSalePrice, DefaultDailyInstallment, DefaultDownPayment,
                          OverrideTotalSalePrice, OverrideDailyInstallment, OverrideDownPayment, DownPayment,
                          DownPaymentCustomerPaymentId, CreatedAt,
-                         CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId
+                         CompletedAt, CompletedBy, DocumentsStatus, SalesRequestId, CustomerListId, WizardCurrentStep
                   FROM dbo.SalesDrafts
                   WHERE SaleId = @SaleId AND EmployeeId = @EmployeeId",
                 new { SaleId = saleId, EmployeeId = employeeId }, cancellationToken: ct));

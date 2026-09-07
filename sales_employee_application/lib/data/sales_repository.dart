@@ -7,6 +7,7 @@ abstract class SalesRepository {
   Future<List<SalesInventoryItem>> inventory();
   Future<List<SalesCustomerList>> activeCustomerLists();
   Future<SalesDraft> createSale(SalesDraftCreateRequest request);
+  Future<SalesDraft> saveSaleProgress(SalesDraftCreateRequest request);
   Future<List<SalesDraft>> pending();
   Future<List<SalesDraft>> todayCompleted();
   Future<SalesDraft> byId(int id);
@@ -29,6 +30,7 @@ abstract class SalesRepository {
   Future<SalesWorkRequest> viewSalesRequest(int id);
   Future<SalesWorkRequest> startSalesRequest(int id);
   Future<SalesWorkRequest> prepareSalesRequest(int id);
+  Future<SalesWorkRequest> inspectSalesRequest(int id, SalesDraftCreateRequest progress);
   Future<SalesWorkRequest> pendSalesRequest(int id, String note);
   Future<SalesWorkRequest> rejectSalesRequest(int id, String reason);
   Future<SalesWorkRequest> submitSalesRequest({

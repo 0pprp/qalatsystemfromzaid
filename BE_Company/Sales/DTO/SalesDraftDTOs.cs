@@ -61,6 +61,9 @@ namespace BE_Company.Sales.DTO
         public decimal? OverrideDownPayment { get; set; }
         public int? SalesRequestId { get; set; }
         public int? CustomerListId { get; set; }
+        public int? WizardCurrentStep { get; set; }
+        public bool MarkInspected { get; set; }
+        public SalesShopCompleteDTO? Shop { get; set; }
     }
 
     public sealed class SalesDraftItemDTO
@@ -124,6 +127,7 @@ namespace BE_Company.Sales.DTO
         public int? SalesRequestId { get; set; }
         public int? CustomerListId { get; set; }
         public string? CustomerListName { get; set; }
+        public int? WizardCurrentStep { get; set; }
         [System.Text.Json.Serialization.JsonIgnore]
         [Newtonsoft.Json.JsonIgnore]
         public string? AccountCustomerName { get; set; }

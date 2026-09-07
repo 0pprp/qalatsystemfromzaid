@@ -26,6 +26,11 @@ class _MemRepo implements SalesRepository {
   @override
   Future<SalesDraft> createSale(SalesDraftCreateRequest request) async => draft;
   @override
+  Future<SalesDraft> saveSaleProgress(SalesDraftCreateRequest request) async {
+    draft = draft.copyWith();
+    return draft;
+  }
+  @override
   Future<List<SalesDraft>> pending() async => draft.isCompleted ? [] : [draft];
   @override
   Future<List<SalesDraft>> todayCompleted() async =>
@@ -119,6 +124,9 @@ class _MemRepo implements SalesRepository {
   Future<SalesWorkRequest> startSalesRequest(int id) async => throw UnimplementedError();
   @override
   Future<SalesWorkRequest> prepareSalesRequest(int id) async => throw UnimplementedError();
+  @override
+  Future<SalesWorkRequest> inspectSalesRequest(int id, SalesDraftCreateRequest progress) async =>
+      throw UnimplementedError();
   @override
   Future<SalesWorkRequest> pendSalesRequest(int id, String note) async => throw UnimplementedError();
   @override

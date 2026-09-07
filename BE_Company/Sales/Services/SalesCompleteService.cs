@@ -156,7 +156,7 @@ namespace BE_Company.Sales.Services
                 FinalSalePrice = tx.Sale.FinalSalePrice,
                 DailyInstallment = tx.Sale.DailyInstallment,
                 DownPayment = tx.Sale.DownPayment,
-                Documents = docs.ToList()
+                Documents = SalesDocumentService.PreferDisplayDocuments(docs).ToList()
             };
         }
 
@@ -218,7 +218,7 @@ namespace BE_Company.Sales.Services
             FinalSalePrice = sale.FinalSalePrice,
             DailyInstallment = sale.DailyInstallment,
             DownPayment = sale.DownPayment,
-            Documents = docs.ToList()
+            Documents = SalesDocumentService.PreferDisplayDocuments(docs).ToList()
         };
 
         private async Task ApplyCheckoutAsync(SalesDraftDTO sale, SalesShopCompleteDTO? shop, CancellationToken ct)
@@ -266,15 +266,18 @@ namespace BE_Company.Sales.Services
             {
                 try
                 {
-                    return await _documents.EnsureGeneratedAsync(sale, ct);
+                    return SalesDocumentService.PreferDisplayDocuments(
+                        await _documents.EnsureGeneratedAsync(sale, ct)).ToList();
                 }
                 catch
                 {
-                    return (await _complete.GetDocumentsAsync(saleId, employeeId, ct)).Select(SalesDocumentMapper.ToDto).ToList();
+                    return SalesDocumentService.PreferDisplayDocuments(
+                        (await _complete.GetDocumentsAsync(saleId, employeeId, ct)).Select(SalesDocumentMapper.ToDto)).ToList();
                 }
             }
 
-            return (await _complete.GetDocumentsAsync(saleId, employeeId, ct)).Select(SalesDocumentMapper.ToDto).ToList();
+            return SalesDocumentService.PreferDisplayDocuments(
+                (await _complete.GetDocumentsAsync(saleId, employeeId, ct)).Select(SalesDocumentMapper.ToDto)).ToList();
         }
 
         public async Task<(string FileName, byte[] Bytes)> DownloadAsync(int saleId, int documentId, int employeeId, CancellationToken ct)

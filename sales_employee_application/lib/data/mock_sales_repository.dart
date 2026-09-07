@@ -108,7 +108,20 @@ class MockSalesRepository implements SalesRepository {
   @override
   Future<SalesDraft> createSale(SalesDraftCreateRequest request) async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    if (request.customerListId == null || request.customerListId! <= 0) {
+    return _upsertDraft(request, requireList: true, requireProducts: true);
+  }
+
+  @override
+  Future<SalesDraft> saveSaleProgress(SalesDraftCreateRequest request) async {
+    return _upsertDraft(request, requireList: false, requireProducts: false);
+  }
+
+  Future<SalesDraft> _upsertDraft(
+    SalesDraftCreateRequest request, {
+    required bool requireList,
+    required bool requireProducts,
+  }) async {
+    if (requireList && (request.customerListId == null || request.customerListId! <= 0)) {
       throw Exception('القائمة/المندوب مطلوبة.');
     }
     if (request.salesRequestId != null) {
@@ -125,8 +138,16 @@ class MockSalesRepository implements SalesRepository {
     num defaultDaily = 0;
     final lines = <SalesDraftItem>[];
     for (final item in request.items) {
-      final product = stock.firstWhere((p) => p.productId == item.productId);
-      if (item.quantity > product.availableQuantity) {
+      if (item.quantity <= 0) continue;
+      final matches = stock.where((p) => p.productId == item.productId);
+      if (matches.isEmpty) {
+        if (requireProducts) {
+          throw Exception('المادة غير موجودة');
+        }
+        continue;
+      }
+      final product = matches.first;
+      if (requireProducts && item.quantity > product.availableQuantity) {
         throw Exception('الكمية المطلوبة أكبر من المتوفر الحالي');
       }
       final line = product.salePrice * item.quantity;
@@ -140,11 +161,15 @@ class MockSalesRepository implements SalesRepository {
         lineSalePrice: line,
       ));
     }
+    if (requireProducts && lines.isEmpty) {
+      throw Exception('يجب اختيار مادة واحدة على الأقل');
+    }
     final finalPrice = request.overrideTotalSalePrice ?? base;
     final daily = request.overrideDailyInstallment ??
         (request.dailyInstallment > 0 ? request.dailyInstallment : defaultDaily);
     final down = request.overrideDownPayment ?? ((finalPrice * 0.05).round());
     final resumeId = request.salesRequestId == null ? null : _requestDrafts[request.salesRequestId!];
+    final shop = request.shop;
     final draft = SalesDraft(
       saleId: resumeId ?? _nextId++,
       fullName: request.customer['fullName'] ?? '',
@@ -172,11 +197,30 @@ class MockSalesRepository implements SalesRepository {
       overrideTotalSalePrice: request.overrideTotalSalePrice,
       overrideDailyInstallment: request.overrideDailyInstallment,
       overrideDownPayment: request.overrideDownPayment,
+      wizardCurrentStep: request.wizardCurrentStep,
+      shop: shop == null
+          ? null
+          : SalesShopProfile(
+              shopName: shop.shopName,
+              shopBusinessType: shop.shopBusinessType,
+              shopStockEstimatedValue: shop.shopStockEstimatedValue,
+              estimatedDailyRevenue: shop.estimatedDailyRevenue,
+              shopLength: shop.shopLength,
+              shopWidth: shop.shopWidth,
+              shopArea: shop.shopArea,
+              shopImageKey: shop.shopImageKey,
+              latitude: shop.latitude,
+              longitude: shop.longitude,
+            ),
     );
     _drafts.removeWhere((d) => d.saleId == draft.saleId);
     _drafts.insert(0, draft);
     if (request.salesRequestId != null) {
       _requestDrafts[request.salesRequestId!] = draft.saleId;
+      final idx = _requests.indexWhere((r) => r.id == request.salesRequestId);
+      if (idx >= 0) {
+        _requests[idx] = _requests[idx].copyWith(convertedToSaleId: draft.saleId);
+      }
     }
     return draft;
   }
@@ -203,6 +247,12 @@ class MockSalesRepository implements SalesRepository {
 
   List<SalesDocument> _docsFor(int saleId) => [
         SalesDocument(
+          documentId: saleId * 10 + 2,
+          type: 'SaleDocuments',
+          fileName: 'Sale_${saleId}_SaleDocuments.pdf',
+          downloadUrl: 'sales/$saleId/documents/${saleId * 10 + 2}/download',
+        ),
+        SalesDocument(
           documentId: saleId * 10,
           type: 'Contract',
           fileName: 'Sale_${saleId}_Contract.pdf',
@@ -217,6 +267,12 @@ class MockSalesRepository implements SalesRepository {
       ];
 
   List<SalesDocument> _previewDocsFor(int saleId) => [
+        SalesDocument(
+          documentId: saleId * 10 + 7,
+          type: 'PreviewSaleDocuments',
+          fileName: 'Sale_${saleId}_Preview_SaleDocuments.pdf',
+          downloadUrl: 'sales/$saleId/documents/${saleId * 10 + 7}/download',
+        ),
         SalesDocument(
           documentId: saleId * 10 + 8,
           type: 'PreviewContract',
@@ -449,6 +505,34 @@ class MockSalesRepository implements SalesRepository {
       throw Exception('لا يمكن تجهيز هذا الطلب.');
     }
     final row = current.copyWith(status: 'PreparedForSale');
+    _replace(row);
+    return row;
+  }
+
+  @override
+  Future<SalesWorkRequest> inspectSalesRequest(int id, SalesDraftCreateRequest progress) async {
+    final current = await salesRequest(id);
+    if (current.status == 'Completed') {
+      throw Exception('لا يمكن تعديل طلب مكتمل.');
+    }
+    final saved = await saveSaleProgress(
+      SalesDraftCreateRequest(
+        customerId: progress.customerId,
+        customer: progress.customer,
+        items: progress.items,
+        evaluationLevel: progress.evaluationLevel,
+        evaluationNote: progress.evaluationNote,
+        dailyInstallment: progress.dailyInstallment,
+        overrideTotalSalePrice: progress.overrideTotalSalePrice,
+        overrideDailyInstallment: progress.overrideDailyInstallment,
+        overrideDownPayment: progress.overrideDownPayment,
+        salesRequestId: id,
+        customerListId: progress.customerListId,
+        wizardCurrentStep: progress.wizardCurrentStep,
+        shop: progress.shop,
+      ),
+    );
+    final row = current.copyWith(status: 'Inspected', convertedToSaleId: saved.saleId);
     _replace(row);
     return row;
   }

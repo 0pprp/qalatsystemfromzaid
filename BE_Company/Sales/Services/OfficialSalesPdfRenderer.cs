@@ -17,6 +17,7 @@ namespace BE_Company.Sales.Services
         public const float ReceiptTitleFontSize = 22f;
         public const float LineHeight = 1.22f;
         public const float ParagraphSpacing = 5.5f;
+        public const float DebtorFingerprintHeight = 80f;
 
         private static bool _licenseSet;
         private static bool _fontRegistered;
@@ -63,6 +64,58 @@ namespace BE_Company.Sales.Services
             }).GeneratePdf();
         }
 
+        public static byte[] BuildSaleDocuments(SalesDraftDTO sale)
+        {
+            var contractValues = OfficialSalesDocumentText.FromSale(sale);
+            var contractParagraphs = OfficialSalesDocumentText.BuildContractParagraphs(contractValues);
+            var receiptParagraphs = OfficialSalesDocumentText.BuildReceiptParagraphs(contractValues);
+            EnsureLicense();
+            var bold = BoldFamily();
+            return Document.Create(container =>
+            {
+                container.Page(page =>
+                {
+                    ConfigurePage(page);
+                    FitSingleA4Page(page).Element(c => ContractContent(c, contractParagraphs, bold));
+                });
+                container.Page(page =>
+                {
+                    ConfigurePage(page);
+                    FitSingleA4Page(page).Element(c => ReceiptContent(c, receiptParagraphs, bold));
+                });
+            }).GeneratePdf();
+        }
+
+        private static void ContractContent(
+            IContainer container,
+            IReadOnlyList<OfficialSalesDocumentText.Paragraph> paragraphs,
+            string bold)
+        {
+            container.Column(col =>
+            {
+                col.Item().AlignCenter().BorderBottom(1.2f).PaddingBottom(4)
+                    .Text("عقد بيع").Bold().FontFamily(bold).FontSize(TitleFontSize);
+                col.Item().PaddingTop(10).Column(body =>
+                {
+                    body.Spacing(ParagraphSpacing);
+                    foreach (var paragraph in paragraphs)
+                    {
+                        body.Item().Element(c => BodyParagraph(c, paragraph.PlainText));
+                    }
+                });
+                col.Item().PaddingTop(12).Row(row =>
+                {
+                    Signature(row, "الطرف الأول");
+                    Signature(row, "أمين الصندوق");
+                });
+                col.Item().PaddingTop(28).Row(row =>
+                {
+                    Signature(row, "الطرف الثاني");
+                    Signature(row, "مندوب المبيعات");
+                });
+            });
+        }
+
         public static byte[] BuildPromissoryNote(SalesDraftDTO sale)
         {
             var values = OfficialSalesDocumentText.FromSale(sale);
@@ -74,28 +127,44 @@ namespace BE_Company.Sales.Services
                 container.Page(page =>
                 {
                     ConfigurePage(page);
-                    FitSingleA4Page(page).Column(col =>
-                    {
-                        col.Item().AlignCenter()
-                            .Text("وصل أمانة").Bold().FontFamily(bold).FontSize(ReceiptTitleFontSize);
-                        col.Item().PaddingTop(14).Column(body =>
-                        {
-                            body.Spacing(ParagraphSpacing);
-                            foreach (var paragraph in paragraphs)
-                            {
-                                body.Item().Element(c => BodyParagraph(c, paragraph.PlainText));
-                            }
-                        });
-                        col.Item().PaddingTop(12).Row(row =>
-                        {
-                            row.RelativeItem(2).AlignRight().Text("بصمة المدين:");
-                            row.RelativeItem(3).AlignCenter().Text("توقيع المدين:");
-                        });
-                        col.Item().PaddingTop(18).Element(c => WitnessBlock(c, "الشاهد الأول", bold));
-                        col.Item().PaddingTop(14).Element(c => WitnessBlock(c, "الشاهد الثاني", bold));
-                    });
+                    FitSingleA4Page(page).Element(c => ReceiptContent(c, paragraphs, bold));
                 });
             }).GeneratePdf();
+        }
+
+        private static void ReceiptContent(
+            IContainer container,
+            IReadOnlyList<OfficialSalesDocumentText.Paragraph> paragraphs,
+            string bold)
+        {
+            container.Column(col =>
+            {
+                col.Item().AlignCenter()
+                    .Text("وصل أمانة").Bold().FontFamily(bold).FontSize(ReceiptTitleFontSize);
+                col.Item().PaddingTop(14).Column(body =>
+                {
+                    body.Spacing(ParagraphSpacing);
+                    foreach (var paragraph in paragraphs)
+                    {
+                        body.Item().Element(c => BodyParagraph(c, paragraph.PlainText));
+                    }
+                });
+                col.Item().PaddingTop(10).Row(row =>
+                {
+                    row.RelativeItem(2).AlignRight().Column(print =>
+                    {
+                        print.Item().Text("بصمة المدين:");
+                        print.Item().PaddingTop(6).Height(DebtorFingerprintHeight).Border(0.8f);
+                    });
+                    row.RelativeItem(3).AlignCenter().Column(sign =>
+                    {
+                        sign.Item().Text("توقيع المدين:");
+                        sign.Item().Height(40);
+                    });
+                });
+                col.Item().PaddingTop(28).Element(c => WitnessBlock(c, "الشاهد الأول", bold));
+                col.Item().PaddingTop(16).Element(c => WitnessBlock(c, "الشاهد الثاني", bold));
+            });
         }
 
         private static void ConfigurePage(PageDescriptor page)

@@ -237,11 +237,15 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
     String? contract;
     String? receipt;
     var failed = false;
-    for (final doc in docs) {
+    final toSave = SalesDocument.preferDisplay(docs);
+    for (final doc in toSave) {
       try {
         final bytes = await SalesRepositoryFactory.instance.downloadDocument(_draft?.saleId ?? doc.documentId ?? 0, doc);
         final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
-        if (doc.isContract) {
+        if (doc.isCombined) {
+          contract = file.path;
+          receipt = file.path;
+        } else if (doc.isContract) {
           contract = file.path;
         } else if (doc.isPromissoryNote) {
           receipt = file.path;
@@ -250,7 +254,7 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
         failed = true;
       }
     }
-    if (docs.isEmpty) {
+    if (toSave.isEmpty) {
       failed = true;
     }
     return _DownloadBundle(contractPath: contract, receiptPath: receipt, failed: failed || contract == null || receipt == null);
@@ -341,19 +345,18 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
   }
 
   List<Widget> _documentTiles(SalesDraft d, {List<SalesDocument>? docs}) {
-    final list = (docs != null && docs.isNotEmpty)
+    final list = SalesDocument.preferDisplay((docs != null && docs.isNotEmpty)
         ? docs
         : (d.documents.isNotEmpty
             ? d.documents
             : [
-                SalesDocument(type: 'Contract', fileName: 'عقد البيع', downloadUrl: ''),
-                SalesDocument(type: 'PromissoryNote', fileName: 'وصل الأمانة', downloadUrl: ''),
-              ]);
+                SalesDocument(type: 'SaleDocuments', fileName: 'عقد البيع ووصل الأمانة', downloadUrl: ''),
+              ]));
     return [
       for (final doc in list)
         Card(
           child: ListTile(
-            title: Text(doc.isContract ? 'عقد البيع' : 'وصل الأمانة'),
+            title: Text(doc.displayTitle),
             subtitle: Text(doc.fileName),
             trailing: Wrap(
               spacing: 8,

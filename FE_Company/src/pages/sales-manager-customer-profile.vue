@@ -109,6 +109,12 @@ function saleShop(sale) {
 function saleDocs(sale) {
   const rows = pick(sale, 'documents', 'Documents') || []
   const list = Array.isArray(rows) ? rows : []
+  const combined = list.filter(doc => {
+    const type = String(pick(doc, 'type', 'Type') || '')
+    return type === 'SaleDocuments' || type === 'PreviewSaleDocuments'
+  })
+  if (combined.length)
+    return combined
 
   return list.filter(doc => {
     const type = String(pick(doc, 'type', 'Type') || '')
@@ -120,7 +126,14 @@ function saleDocs(sale) {
 function isContract(doc) {
   const type = String(pick(doc, 'type', 'Type') || '')
 
-  return type === 'Contract' || type === 'PreviewContract'
+  return type === 'SaleDocuments' || type === 'PreviewSaleDocuments' || type === 'Contract' || type === 'PreviewContract'
+}
+
+function documentTitle(doc) {
+  const type = String(pick(doc, 'type', 'Type') || '')
+  if (type === 'SaleDocuments' || type === 'PreviewSaleDocuments')
+    return 'عقد البيع ووصل الأمانة'
+  return isContract(doc) ? 'عقد البيع' : 'وصل الأمانة'
 }
 
 async function load() {
@@ -712,7 +725,7 @@ onUnmounted(() => {
           :key="pick(doc, 'documentId', 'DocumentId')"
           class="d-flex align-center justify-space-between mb-3"
         >
-          <span>{{ isContract(doc) ? 'عقد البيع' : 'وصل الأمانة' }}</span>
+          <span>{{ documentTitle(doc) }}</span>
           <div>
             <VBtn
               size="small"

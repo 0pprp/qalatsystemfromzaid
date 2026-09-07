@@ -95,53 +95,81 @@ class LocationForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        openDb()
-        if (intent?.action == ACTION_STOP || intent?.action == ACTION_FLUSH_STOP) {
-            running = false
+        try {
+            startForegroundNotification()
+        } catch (e: Exception) {
+            log("DATABASE_ERROR startForeground ${e.javaClass.simpleName}: ${e.message}")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        val dbOk = try {
+            openDb()
+        } catch (e: Exception) {
+            log("DATABASE_ERROR openDb ${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
+        if (!dbOk) {
+            stopForegroundCompat()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        try {
+            if (intent?.action == ACTION_STOP || intent?.action == ACTION_FLUSH_STOP) {
+                running = false
+                handler.removeCallbacks(cutoffStop)
+                handler.removeCallbacks(officialTick)
+                handler.removeCallbacks(syncFlush)
+                persistDueOfficialPoints()
+                Thread {
+                    flushPendingToServer()
+                    handler.post {
+                        stopUpdates()
+                        stopForegroundCompat()
+                        stopSelf()
+                        log("SERVICE_STOPPED")
+                    }
+                }.start()
+                return START_NOT_STICKY
+            }
+            loadSession(intent)
+            if (cutoffAtUtcMs <= 0L) {
+                cutoffAtUtcMs = defaultCutoffUtcMs()
+            }
+            lastOfficialAtMs = readMetaLong(officialMetaKey())
+            restoreLastFix()
+            persistSession()
+            if (shiftId <= 0 || System.currentTimeMillis() >= cutoffAtUtcMs) {
+                log("SERVICE_STOPPED reason=no-active-shift shiftId=$shiftId")
+                stopCollecting(flush = false)
+                return START_NOT_STICKY
+            }
+            running = true
+            log("SERVICE_STARTED shiftId=$shiftId officialIntervalMs=$officialIntervalMs")
+            log("SHIFT_ACTIVE shiftId=$shiftId startedAtUtcMs=$shiftStartedAtUtcMs cutoffAtUtcMs=$cutoffAtUtcMs")
+            startUpdates()
+            seedLastLocation()
             handler.removeCallbacks(cutoffStop)
             handler.removeCallbacks(officialTick)
             handler.removeCallbacks(syncFlush)
             persistDueOfficialPoints()
-            Thread {
-                flushPendingToServer()
-                handler.post {
-                    stopUpdates()
-                    stopForegroundCompat()
-                    stopSelf()
-                    log("SERVICE_STOPPED")
-                }
-            }.start()
+            handler.post(syncFlush)
+            scheduleNextOfficialTick()
+            val delay = cutoffAtUtcMs - System.currentTimeMillis()
+            if (delay > 0) {
+                handler.postDelayed(cutoffStop, delay)
+            }
+            return START_REDELIVER_INTENT
+        } catch (e: Exception) {
+            log("DATABASE_ERROR onStartCommand ${e.javaClass.simpleName}: ${e.message}")
+            running = false
+            handler.removeCallbacks(cutoffStop)
+            handler.removeCallbacks(officialTick)
+            handler.removeCallbacks(syncFlush)
+            stopUpdates()
+            stopForegroundCompat()
+            stopSelf()
             return START_NOT_STICKY
         }
-        loadSession(intent)
-        if (cutoffAtUtcMs <= 0L) {
-            cutoffAtUtcMs = defaultCutoffUtcMs()
-        }
-        lastOfficialAtMs = readMetaLong(officialMetaKey())
-        restoreLastFix()
-        persistSession()
-        startForegroundNotification()
-        if (shiftId <= 0 || System.currentTimeMillis() >= cutoffAtUtcMs) {
-            log("SERVICE_STOPPED reason=no-active-shift shiftId=$shiftId")
-            stopCollecting(flush = false)
-            return START_NOT_STICKY
-        }
-        running = true
-        log("SERVICE_STARTED shiftId=$shiftId officialIntervalMs=$officialIntervalMs")
-        log("SHIFT_ACTIVE shiftId=$shiftId startedAtUtcMs=$shiftStartedAtUtcMs cutoffAtUtcMs=$cutoffAtUtcMs")
-        startUpdates()
-        seedLastLocation()
-        handler.removeCallbacks(cutoffStop)
-        handler.removeCallbacks(officialTick)
-        handler.removeCallbacks(syncFlush)
-        persistDueOfficialPoints()
-        handler.post(syncFlush)
-        scheduleNextOfficialTick()
-        val delay = cutoffAtUtcMs - System.currentTimeMillis()
-        if (delay > 0) {
-            handler.postDelayed(cutoffStop, delay)
-        }
-        return START_REDELIVER_INTENT
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -261,14 +289,16 @@ class LocationForegroundService : Service() {
         }
     }
 
-    private fun openDb() {
-        if (db?.isOpen == true) return
-        val file = getDatabasePath(DB_NAME)
-        file.parentFile?.mkdirs()
-        db = SQLiteDatabase.openOrCreateDatabase(file, null)
-        db?.enableWriteAheadLogging()
-        db?.execSQL("PRAGMA busy_timeout=5000")
-        db?.execSQL(
+    private fun openDb(): Boolean {
+        if (db?.isOpen == true) return true
+        return try {
+            val file = getDatabasePath(DB_NAME)
+            file.parentFile?.mkdirs()
+            db = SQLiteDatabase.openOrCreateDatabase(file, null)
+            db?.enableWriteAheadLogging()
+            execPragma("PRAGMA journal_mode=WAL")
+            execPragma("PRAGMA busy_timeout=5000")
+            db?.execSQL(
             """CREATE TABLE IF NOT EXISTS local_location_points (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 shift_id INTEGER NOT NULL,
@@ -294,7 +324,21 @@ class LocationForegroundService : Service() {
                 occurred_at_utc TEXT NOT NULL,
                 sync_status TEXT NOT NULL
             )""",
-        )
+            )
+            true
+        } catch (e: Exception) {
+            log("DATABASE_ERROR openDb ${e.javaClass.simpleName}: ${e.message}")
+            try {
+                db?.close()
+            } catch (_: Exception) {
+            }
+            db = null
+            false
+        }
+    }
+
+    private fun execPragma(sql: String) {
+        db?.rawQuery(sql, null)?.close()
     }
 
     private fun loadSession(intent: Intent?) {
@@ -320,6 +364,7 @@ class LocationForegroundService : Service() {
     private fun persistDueOfficialPoints() {
         if (shiftId <= 0) return
         val loc = lastLocation ?: return
+        try {
         val now = System.currentTimeMillis()
         if (now >= cutoffAtUtcMs) {
             if (running) stopCollecting(flush = true)
@@ -353,6 +398,9 @@ class LocationForegroundService : Service() {
         }
         if (inserted) {
             Thread { flushPendingToServer() }.start()
+        }
+        } catch (e: Exception) {
+            log("DATABASE_ERROR persistDue ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -483,7 +531,11 @@ class LocationForegroundService : Service() {
     }
 
     private fun writeMeta(key: String, value: String) {
-        db?.execSQL("INSERT OR REPLACE INTO tracking_meta(key, value) VALUES (?, ?)", arrayOf(key, value))
+        try {
+            db?.execSQL("INSERT OR REPLACE INTO tracking_meta(key, value) VALUES (?, ?)", arrayOf(key, value))
+        } catch (e: Exception) {
+            log("DATABASE_ERROR writeMeta key=$key ${e.javaClass.simpleName}: ${e.message}")
+        }
     }
 
     private fun readMetaInt(key: String) = readMeta(key)?.toIntOrNull() ?: 0
@@ -491,10 +543,15 @@ class LocationForegroundService : Service() {
     private fun readMetaLong(key: String) = readMeta(key)?.toLongOrNull() ?: 0L
 
     private fun readMeta(key: String): String? {
-        val cursor = db?.rawQuery("SELECT value FROM tracking_meta WHERE key = ?", arrayOf(key))
-        val value = if (cursor != null && cursor.moveToFirst()) cursor.getString(0) else null
-        cursor?.close()
-        return value
+        return try {
+            val cursor = db?.rawQuery("SELECT value FROM tracking_meta WHERE key = ?", arrayOf(key))
+            val value = if (cursor != null && cursor.moveToFirst()) cursor.getString(0) else null
+            cursor?.close()
+            value
+        } catch (e: Exception) {
+            log("DATABASE_ERROR readMeta key=$key ${e.javaClass.simpleName}: ${e.message}")
+            null
+        }
     }
 
     private fun flushPendingToServer() {

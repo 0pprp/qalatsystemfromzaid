@@ -128,6 +128,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('ahmed'), findsNothing);
+    await tester.scrollUntilVisible(find.text('تم البيع'), 400);
     await tester.tap(find.text('تم البيع'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
@@ -253,16 +254,7 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('ليث محمد'), findsWidgets);
-    expect(find.text('الاسم الكامل *'), findsOneWidget);
-    expect(find.text('رقم الهاتف *'), findsOneWidget);
-    expect(find.text('المحافظة *'), findsOneWidget);
-    expect(find.text('العنوان *'), findsOneWidget);
-    expect(find.text('زبون موجود'), findsNothing);
-    expect(find.text('رقم البطاقة الوطنية *'), findsOneWidget);
-    expect(find.text('أقرب نقطة دالة *'), findsOneWidget);
-    expect(find.text('اسم المختار *'), findsOneWidget);
-    expect(find.text('القائمة/المندوب *'), findsOneWidget);
-    expect(find.text('رقم مركز التموين (اختياري)'), findsNothing);
+    expect(find.text('بيانات المحل'), findsWidgets);
+    expect(find.text('الخطوة 1 من 5'), findsOneWidget);
   });
 }

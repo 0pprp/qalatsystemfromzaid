@@ -47,6 +47,13 @@ void main() {
     expect(pdfPageCount(receipt), 1);
   });
 
+  test('combined sale documents PDF has two A4 pages', () async {
+    final mapped = SaleDocumentMap.fromDraft(draft());
+    final combined = await (await SaleDocuments.buildSaleDocuments(mapped)).save();
+    expect(pdfPageCount(combined), 2);
+    expect(SaleDocuments.debtorFingerprintHeight, 80);
+  });
+
   test('contract and receipt PDFs are a single A4 page for long data', () async {
     final mapped = SaleDocumentMap.fromDraft(draft(longData: true));
     final contract = await (await SaleDocuments.buildContract(mapped)).save();

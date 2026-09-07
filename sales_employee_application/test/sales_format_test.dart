@@ -17,6 +17,10 @@ void main() {
     expect(MoneyFormat.parse('١٢٣٤'), 1234);
   });
 
+  test('sales request inspected label', () {
+    expect(SalesRequestStatusLabels.of('Inspected'), 'تم الكشف');
+  });
+
   test('formatter keeps digit cursor', () {
     const formatter = MoneyInputFormatter();
     final next = formatter.formatEditUpdate(

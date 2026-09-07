@@ -216,6 +216,44 @@ namespace BE_Company.Sales.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("progress")]
+        public async Task<ActionResult<SalesDraftDTO>> SaveProgress([FromBody] SalesDraftCreateRequestDTO request, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null)
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                var saved = await _draftService.SaveProgressAsync(
+                    request,
+                    identity.EmployeeId,
+                    identity.EmployeeName,
+                    identity.UserType,
+                    identity.BranchId,
+                    identity.BranchName,
+                    ct);
+                return Ok(saved);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpGet("pending")]
         public async Task<ActionResult<IEnumerable<SalesDraftDTO>>> Pending(CancellationToken ct)
         {
@@ -828,6 +866,43 @@ namespace BE_Company.Sales.Controllers
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/prepare")]
         public Task<IActionResult> PrepareRequest(int id, CancellationToken ct) => StartProcessing(id, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/{id:int}/inspect")]
+        public async Task<IActionResult> InspectRequest(int id, [FromBody] SalesDraftCreateRequestDTO? body, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null) return blocked;
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null) return Unauthorized();
+            try
+            {
+                if (body != null)
+                {
+                    body.SalesRequestId = id;
+                    body.MarkInspected = true;
+                    var saved = await _draftService.SaveProgressAsync(
+                        body,
+                        identity.EmployeeId,
+                        identity.EmployeeName,
+                        identity.UserType,
+                        identity.BranchId,
+                        identity.BranchName,
+                        ct);
+                    return Ok(await _requests.InspectAsync(id, identity.EmployeeId, saved.SaleId, ct));
+                }
+
+                return Ok(await _requests.InspectAsync(id, identity.EmployeeId, null, ct));
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/pending")]

@@ -23,12 +23,20 @@ class PendingSalesScreen extends StatefulWidget {
 }
 
 class _PendingSalesScreenState extends State<PendingSalesScreen> {
+  static const incomingBin = 0;
+  static const readyBin = 1;
+  static const inspectedBin = 2;
+  static const pendingBin = 3;
+  static const rejectedBin = 4;
+  static const soldBin = 5;
+
   static const _bins = [
     (title: 'طلبات البيع', empty: 'لا توجد طلبات بيع', icon: Icons.assignment_outlined),
     (title: 'جاهز للبيع', empty: 'لا توجد طلبات جاهزة للبيع', icon: Icons.storefront_outlined),
-    (title: 'تم البيع', empty: 'لا توجد مبيعات مكتملة', icon: Icons.check_circle_outline),
+    (title: 'تم الكشف', empty: 'لا توجد طلبات تم الكشف عنها', icon: Icons.travel_explore_outlined),
     (title: 'معلقة', empty: 'لا توجد طلبات معلقة', icon: Icons.pause_circle_outline),
     (title: 'مرفوض', empty: 'لا توجد طلبات مرفوضة', icon: Icons.cancel_outlined),
+    (title: 'تم البيع', empty: 'لا توجد مبيعات مكتملة', icon: Icons.check_circle_outline),
   ];
 
   List<SalesWorkRequest> _requests = [];
@@ -52,10 +60,15 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
     super.didChangeDependencies();
     if (!_isDashboard || _openedToday) return;
     final arg = ModalRoute.of(context)?.settings.arguments;
-    if (arg == 'today' || arg == 2) {
+    if (arg == 'today' || arg == 'sold' || arg == soldBin) {
       _openedToday = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _openBin(2);
+        if (mounted) _openBin(soldBin);
+      });
+    } else if (arg == 'inspected' || arg == inspectedBin) {
+      _openedToday = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openBin(inspectedBin);
       });
     }
   }
@@ -159,16 +172,18 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
 
   List<SalesWorkRequest> _forBin(int index) {
     switch (index) {
-      case 0:
+      case incomingBin:
         return _requests.where((r) => r.isIncoming).toList();
-      case 1:
+      case readyBin:
         return _requests.where((r) => r.isPreparedForSale).toList();
-      case 2:
-        return _requests.where((r) => r.isSold).toList();
-      case 3:
+      case inspectedBin:
+        return _requests.where((r) => r.isInspected).toList();
+      case pendingBin:
         return _requests.where((r) => r.isPendingHold).toList();
-      default:
+      case rejectedBin:
         return _requests.where((r) => r.status == 'Rejected').toList();
+      default:
+        return _requests.where((r) => r.isSold).toList();
     }
   }
 
@@ -445,7 +460,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
                 if (r.canPrepare) const SizedBox(height: AppSpacing.sm),
                 ElevatedButton(
                   onPressed: () => _openCheckout(r),
-                  child: const Text('إنشاء بيع'),
+                  child: Text(r.isInspected || r.canContinueSale ? 'متابعة البيع' : 'إنشاء بيع'),
                 ),
               ],
               if (r.canPend) ...[
@@ -658,7 +673,10 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
                     const SizedBox(height: AppSpacing.sm),
                   ],
                   if (row.canConvert || row.canContinueSale) ...[
-                    ElevatedButton(onPressed: _busy ? null : _openCheckout, child: const Text('إنشاء بيع')),
+                    ElevatedButton(
+                      onPressed: _busy ? null : _openCheckout,
+                      child: Text(row.isInspected || row.canContinueSale ? 'متابعة البيع' : 'إنشاء بيع'),
+                    ),
                     const SizedBox(height: AppSpacing.sm),
                   ],
                   if (row.canPend) ...[

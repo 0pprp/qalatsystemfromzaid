@@ -508,6 +508,11 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مرتبط بعملية بيع أخرى.");
             }
 
+            if (row.Status == SalesRequestStatuses.Inspected && row.ConvertedToSaleId == saleId)
+            {
+                return;
+            }
+
             if (row.Status == SalesRequestStatuses.ConvertedToSale && row.ConvertedToSaleId == saleId)
             {
                 return;
@@ -518,12 +523,75 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن بدء عملية بيع من حالة الطلب الحالية.");
             }
 
+            if (SalesRequestStatuses.IsInspected(row.Status))
+            {
+                row.ConvertedToSaleId = saleId;
+                row.ProcessingAtUtc ??= utcNow;
+                await _repo.UpdateAsync(row, ct);
+                return;
+            }
+
             var previous = row.Status;
             row.Status = SalesRequestStatuses.ConvertedToSale;
             row.ConvertedToSaleId = saleId;
             row.ProcessingAtUtc ??= utcNow;
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(row, SalesRequestEvents.ConvertedToSale, EmployeeActor(employeeId, row), saleId.ToString(), ct, previous);
+        }
+
+        public async Task AttachDraftAsync(int requestId, int employeeId, int saleId, CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await RequireOwned(requestId, employeeId, ct);
+            EnsureNotSold(row);
+            if (row.ConvertedToSaleId is > 0 && row.ConvertedToSaleId != saleId)
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مرتبط بعملية بيع أخرى.");
+            }
+
+            if (row.ConvertedToSaleId == saleId)
+            {
+                return;
+            }
+
+            row.ConvertedToSaleId = saleId;
+            row.ProcessingAtUtc ??= _clock.UtcNow;
+            await _repo.UpdateAsync(row, ct);
+        }
+
+        public async Task<SalesRequestDTO> InspectAsync(int id, int employeeId, int? saleId, CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await RequireOwned(id, employeeId, ct);
+            EnsureNotSold(row);
+            if (!SalesRequestStatuses.CanInspect(row.Status))
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن حفظ هذا الطلب كتم الكشف.");
+            }
+
+            if (saleId is > 0)
+            {
+                if (row.ConvertedToSaleId is > 0 && row.ConvertedToSaleId != saleId)
+                {
+                    throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مرتبط بعملية بيع أخرى.");
+                }
+
+                row.ConvertedToSaleId = saleId;
+            }
+
+            if (row.Status == SalesRequestStatuses.Inspected)
+            {
+                await _repo.UpdateAsync(row, ct);
+                return await HydrateAsync(row, ct);
+            }
+
+            var previous = row.Status;
+            row.Status = SalesRequestStatuses.Inspected;
+            row.ViewedAtUtc ??= _clock.UtcNow;
+            row.ProcessingAtUtc ??= _clock.UtcNow;
+            await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(row, SalesRequestEvents.Inspected, EmployeeActor(employeeId, row), null, ct, previous);
+            return await HydrateAsync(row, ct);
         }
 
         public async Task MarkCompletedBySaleIdAsync(int saleId, DateTime utcNow, CancellationToken ct)

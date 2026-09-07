@@ -83,9 +83,27 @@ namespace BE_Company.Sales.Tests
         {
             await using var ctx = await PdfDownloadContext.CreateAsync();
             var preview = await ctx.Documents.EnsurePreviewGeneratedAsync(ctx.Sale, CancellationToken.None);
-            Assert.Equal(2, preview.Count);
+            Assert.Equal(3, preview.Count);
+            Assert.Single(SalesDocumentService.PreferDisplayDocuments(preview));
+            Assert.Equal(SalesDocumentService.PreviewSaleDocuments, SalesDocumentService.PreferDisplayDocuments(preview)[0].Type);
             AssertSingleA4(await ctx.EmployeeDownloadAsync(SalesDocumentService.PreviewContract));
             AssertSingleA4(await ctx.ManagerDownloadAsync(SalesDocumentService.PreviewPromissoryNote));
+        }
+
+        [Fact]
+        public async Task CombinedSaleDocuments_Download_IsTwoA4Pages()
+        {
+            await using var ctx = await PdfDownloadContext.CreateAsync();
+            using var stream = new MemoryStream(await ctx.EmployeeDownloadAsync(SalesDocumentService.SaleDocuments));
+            using var document = PdfDocument.Open(stream);
+            Assert.Equal(2, document.NumberOfPages);
+            Assert.InRange(document.GetPage(1).Width, 590, 600);
+            Assert.InRange(document.GetPage(1).Height, 835, 850);
+            Assert.InRange(document.GetPage(2).Width, 590, 600);
+            Assert.InRange(document.GetPage(2).Height, 835, 850);
+            Assert.Equal(
+                await ctx.EmployeeDownloadAsync(SalesDocumentService.SaleDocuments),
+                await ctx.ManagerDownloadAsync(SalesDocumentService.SaleDocuments));
         }
 
         private static void AssertSingleA4(byte[] pdf)

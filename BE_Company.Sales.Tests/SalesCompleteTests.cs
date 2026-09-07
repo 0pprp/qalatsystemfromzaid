@@ -417,14 +417,14 @@ namespace BE_Company.Sales.Tests
             var docs = new SalesDocumentService(new TempWebHostEnvironment(root), repo);
             var svc = new SalesCompleteService(repo, new FakeDraftRepository(), docs);
             await svc.CompleteAsync(10, Identity(), CancellationToken.None);
-            Assert.Equal(2, repo.Documents.Count);
+            Assert.Equal(3, repo.Documents.Count);
             var firstTimes = repo.Documents.Select(d => d.CreatedAt).ToList();
             var again = await docs.EnsureGeneratedAsync(repo.Sales[10], CancellationToken.None);
-            Assert.Equal(2, again.Count);
+            Assert.Equal(3, again.Count);
             Assert.Equal(firstTimes, repo.Documents.Select(d => d.CreatedAt).ToList());
             File.Delete(repo.Documents[0].StoragePath);
             var regenerated = await docs.EnsureGeneratedAsync(repo.Sales[10], CancellationToken.None);
-            Assert.Equal(2, regenerated.Count);
+            Assert.Equal(3, regenerated.Count);
             Assert.True(File.Exists(repo.Documents[0].StoragePath));
         }
 

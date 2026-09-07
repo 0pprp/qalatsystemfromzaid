@@ -29,11 +29,16 @@ class SaleScreen extends StatefulWidget {
 
 class _SaleScreenState extends State<SaleScreen> {
   static const _lastStep = 4;
+  static const _stepShop = 0;
+  static const _stepCustomer = 1;
+  static const _stepProducts = 2;
+  static const _stepPrices = 3;
+  static const _stepReview = 4;
   static const _stepNames = [
+    'بيانات المحل',
     'بيانات الزبون',
     'المنتجات',
     'الأسعار',
-    'بيانات المحل',
     'المراجعة',
   ];
   int _step = 0;
@@ -92,6 +97,13 @@ class _SaleScreenState extends State<SaleScreen> {
     _loadCustomerLists();
     _shopLength.addListener(() => setState(() {}));
     _shopWidth.addListener(() => setState(() {}));
+    for (final c in [_name, _phone, _card, _address, _landmark, _mukhtar, _ration, _shopName, _shopType, _shopStock, _shopDaily, _shopNote]) {
+      c.addListener(_onVisitDataChanged);
+    }
+  }
+
+  void _onVisitDataChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadCustomerLists() async {
@@ -211,11 +223,35 @@ class _SaleScreenState extends State<SaleScreen> {
         _shopLng = shop.longitude;
       }
     }
-    setState(() {});
+    setState(() => _step = _resumeStep(draft));
     final id = draft.saleId;
     if (id > 0) {
       _hydrateCustomerDocs(id);
     }
+  }
+
+  int _resumeStep(SalesDraft draft) {
+    final saved = draft.wizardCurrentStep;
+    if (saved != null && saved >= 0 && saved <= _lastStep) return saved;
+    return _inferStep(draft);
+  }
+
+  int _inferStep(SalesDraft draft) {
+    final shop = draft.shop;
+    final shopMissing = shop == null ||
+        shop.shopName.trim().isEmpty ||
+        shop.shopBusinessType.trim().isEmpty ||
+        !ShopGps.isValid(shop.latitude, shop.longitude);
+    if (shopMissing) return _stepShop;
+    if (draft.fullName.trim().isEmpty ||
+        (draft.phone ?? '').trim().isEmpty ||
+        (draft.nationalCardNumber ?? '').trim().isEmpty ||
+        (draft.address ?? '').trim().isEmpty) {
+      return _stepCustomer;
+    }
+    if (draft.items.every((item) => item.quantity <= 0)) return _stepProducts;
+    if (draft.finalSalePrice <= 0) return _stepPrices;
+    return _stepReview;
   }
 
   void _fillOverride(TextEditingController c, num? value) {
@@ -349,36 +385,27 @@ class _SaleScreenState extends State<SaleScreen> {
       _toast('لا يمكن إنشاء بيع بدون طلب مبيعات');
       return;
     }
-    if (_step == 0) {
-      if (!(_form.currentState?.validate() ?? false)) return;
-      if (_customerLists.isEmpty) {
-        _toast('لا توجد قوائم معرفة في هذا الفرع');
-        return;
-      }
-      if (_customerListId == null || _customerListId! <= 0) {
-        _toast('اختيار القائمة/المندوب مطلوب');
-        return;
-      }
-      if (!_filled(_name) ||
-          !_filled(_phone) ||
-          !_filled(_province) ||
-          !_filled(_card) ||
-          !_filled(_address) ||
-          !_filled(_landmark) ||
-          !_filled(_mukhtar)) {
-        _toast('بيانات الزبون غير مكتملة');
-        return;
-      }
-      await _loadStock();
+    if (_step == _stepShop) {
+      if (!_validateShop()) return;
+      final ok = await _persistProgress();
+      if (!ok) return;
     }
-    if (_step == 1 && !_qty.values.any((q) => q > 0)) {
+    if (_step == _stepCustomer) {
+      if (!_validateCustomer()) return;
+      await _loadStock();
+      final ok = await _persistProgress();
+      if (!ok) return;
+    }
+    if (_step == _stepProducts && !_qty.values.any((q) => q > 0)) {
       _toast('أضف مادة واحدة على الأقل');
       return;
     }
-    if (_step == 1) {
+    if (_step == _stepProducts) {
       _applyPriceDefaults();
+      final ok = await _persistProgress();
+      if (!ok) return;
     }
-    if (_step == 2) {
+    if (_step == _stepPrices) {
       final daily = _parsedOrNull(_installment) ?? _defaultDaily;
       final total = _parsedOrNull(_totalPrice) ?? _defaultTotal;
       if (total <= 0) {
@@ -389,13 +416,162 @@ class _SaleScreenState extends State<SaleScreen> {
         _toast('القسط اليومي غير متوفر لهذه المواد. أدخل القسط اليومي.');
         return;
       }
-    }
-    if (_step == 3) {
-      if (!_validateShop()) return;
       final ok = await _createDraftAndPreview();
       if (!ok) return;
     }
     setState(() => _step++);
+  }
+
+  bool _validateCustomer() {
+    if (!(_form.currentState?.validate() ?? false)) return false;
+    if (_customerLists.isEmpty) {
+      _toast('لا توجد قوائم معرفة في هذا الفرع');
+      return false;
+    }
+    if (_customerListId == null || _customerListId! <= 0) {
+      _toast('اختيار القائمة/المندوب مطلوب');
+      return false;
+    }
+    if (!_filled(_name) ||
+        !_filled(_phone) ||
+        !_filled(_province) ||
+        !_filled(_card) ||
+        !_filled(_address) ||
+        !_filled(_landmark) ||
+        !_filled(_mukhtar)) {
+      _toast('بيانات الزبون غير مكتملة');
+      return false;
+    }
+    return true;
+  }
+
+  bool get _hasVisitData {
+    if (_filled(_shopName) ||
+        _filled(_shopType) ||
+        _filled(_shopStock) ||
+        _filled(_shopDaily) ||
+        _filled(_shopLength) ||
+        _filled(_shopWidth) ||
+        _filled(_shopNote) ||
+        (_shopImageBytes != null && _shopImageBytes!.isNotEmpty) ||
+        (_shopImageKey != null && _shopImageKey!.isNotEmpty) ||
+        ShopGps.isValid(_shopLat, _shopLng)) {
+      return true;
+    }
+    if (_filled(_name) ||
+        _filled(_phone) ||
+        _filled(_card) ||
+        _filled(_address) ||
+        _filled(_landmark) ||
+        _filled(_mukhtar) ||
+        _filled(_ration)) {
+      return true;
+    }
+    return _qty.values.any((q) => q > 0);
+  }
+
+  Map<String, String> _customerPayload() => {
+        'fullName': _name.text.trim(),
+        'phone': IraqPhone.normalize(_phone.text),
+        'province': _province.text.trim(),
+        'nationalCardNumber': _card.text.trim(),
+        'address': _address.text.trim(),
+        'nearestLandmark': _landmark.text.trim(),
+        'mukhtarName': _mukhtar.text.trim(),
+        if (_ration.text.trim().isNotEmpty) 'rationCenterNumber': _ration.text.trim(),
+      };
+
+  List<SalesDraftItem> _selectedItems() => _qty.entries
+      .where((e) => e.value > 0)
+      .map((e) => SalesDraftItem(productId: e.key, quantity: e.value))
+      .toList();
+
+  SalesShopComplete? _shopProgressPayload() {
+    if (!_hasVisitData) return null;
+    return SalesShopComplete(
+      shopName: _shopName.text.trim(),
+      shopBusinessType: _shopType.text.trim(),
+      shopStockEstimatedValue: _parsedOrNull(_shopStock) ?? 0,
+      estimatedDailyRevenue: _parsedOrNull(_shopDaily) ?? 0,
+      shopLength: _parsedOrNull(_shopLength) ?? 0,
+      shopWidth: _parsedOrNull(_shopWidth) ?? 0,
+      shopImageKey: _shopImageKey ?? '',
+      employeeNote: _shopNote.text.trim(),
+      overrideTotalSalePrice: _parsedOrNull(_totalPrice),
+      overrideDailyInstallment: _parsedOrNull(_installment),
+      overrideDownPayment: _parsedOrNull(_downPayment),
+      latitude: _shopLat,
+      longitude: _shopLng,
+    );
+  }
+
+  SalesDraftCreateRequest _progressRequest({bool markInspected = false}) {
+    return SalesDraftCreateRequest(
+      customerId: (_existing && _picked != null && !_picked!.isForeignBranch) ? _picked!.customerId : null,
+      customer: _customerPayload(),
+      items: _selectedItems(),
+      overrideTotalSalePrice: _parsedOrNull(_totalPrice),
+      overrideDailyInstallment: _parsedOrNull(_installment),
+      overrideDownPayment: _parsedOrNull(_downPayment),
+      dailyInstallment: _parsedOrNull(_installment) ?? 0,
+      salesRequestId: _fromRequest?.id,
+      customerListId: _customerListId,
+      wizardCurrentStep: _step,
+      markInspected: markInspected,
+      shop: _shopProgressPayload(),
+    );
+  }
+
+  Future<bool> _persistProgress({bool silent = false, bool markInspected = false}) async {
+    if (_fromRequest == null) return false;
+    if (silent && !_hasVisitData) return true;
+    try {
+      var saved = await SalesRepositoryFactory.instance.saveSaleProgress(_progressRequest());
+      _created = saved;
+      _fromRequest = _fromRequest!.copyWith(convertedToSaleId: saved.saleId);
+      if ((_shopImageKey == null || _shopImageKey!.isEmpty) &&
+          _shopImageBytes != null &&
+          _shopImageBytes!.isNotEmpty) {
+        _shopImageKey = await SalesRepositoryFactory.instance.uploadShopImage(
+          saved.saleId,
+          _shopImageBytes!,
+          _shopImageName,
+        );
+        saved = await SalesRepositoryFactory.instance.saveSaleProgress(_progressRequest());
+        _created = saved;
+      }
+      if (markInspected) {
+        final row = await SalesRepositoryFactory.instance.inspectSalesRequest(
+          _fromRequest!.id,
+          _progressRequest(markInspected: true),
+        );
+        _fromRequest = row;
+      }
+      return true;
+    } on ApiException catch (e) {
+      if (!silent) _toast(e.message);
+      return false;
+    } catch (e) {
+      if (!silent) _toast(e.toString().replaceFirst('Exception: ', ''));
+      return false;
+    }
+  }
+
+  Future<void> _markInspected() async {
+    if (_fromRequest == null || _saving || !_hasVisitData) return;
+    setState(() => _saving = true);
+    try {
+      final ok = await _persistProgress(markInspected: true);
+      if (!ok || !mounted) return;
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/home',
+        (_) => false,
+        arguments: 'inspected',
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   bool _validateShop() {
@@ -491,6 +667,8 @@ class _SaleScreenState extends State<SaleScreen> {
           dailyInstallment: _parsedOrNull(_installment) ?? 0,
           salesRequestId: _fromRequest?.id,
           customerListId: _customerListId,
+          wizardCurrentStep: _stepReview,
+          shop: _shopPayload(),
         ),
       );
       _created = created;
@@ -563,11 +741,15 @@ class _SaleScreenState extends State<SaleScreen> {
     String? contract;
     String? receipt;
     var failed = false;
-    for (final doc in docs) {
+    final toSave = SalesDocument.preferDisplay(docs);
+    for (final doc in toSave) {
       try {
         final bytes = await SalesRepositoryFactory.instance.downloadDocument(_created?.saleId ?? 0, doc);
         final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);
-        if (doc.isContract) {
+        if (doc.isCombined) {
+          contract = file.path;
+          receipt = file.path;
+        } else if (doc.isContract) {
           contract = file.path;
         } else if (doc.isPromissoryNote) {
           receipt = file.path;
@@ -576,7 +758,7 @@ class _SaleScreenState extends State<SaleScreen> {
         failed = true;
       }
     }
-    if (docs.isEmpty) failed = true;
+    if (toSave.isEmpty) failed = true;
     return _SaleDownloadBundle(
       contractPath: contract,
       receiptPath: receipt,
@@ -734,11 +916,15 @@ class _SaleScreenState extends State<SaleScreen> {
     }
   }
 
-  void _goBack() {
+  Future<void> _goBack() async {
     if (_step <= 0 || _saving) return;
+    await _persistProgress(silent: true);
+    if (!mounted) return;
     setState(() {
       _step--;
-      _previewDocs = const [];
+      if (_step < _stepReview) {
+        _previewDocs = const [];
+      }
     });
   }
 
@@ -748,7 +934,14 @@ class _SaleScreenState extends State<SaleScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: !_saving,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          _persistProgress(silent: true);
+        }
+      },
+      child: Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('إتمام البيع')),
       body: SafeArea(
@@ -779,61 +972,74 @@ class _SaleScreenState extends State<SaleScreen> {
                 AppSpacing.md,
                 AppSpacing.md,
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (_step > 0) ...[
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _saving ? null : _goBack,
-                        child: const Text('السابق'),
+                  Row(
+                    children: [
+                      if (_step > 0) ...[
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: _saving ? null : _goBack,
+                            child: const Text('رجوع'),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                      ],
+                      Expanded(
+                        flex: _step > 0 ? 2 : 1,
+                        child: ElevatedButton(
+                          onPressed: _saving ? null : (_step < _lastStep ? _next : _completeSale),
+                          child: _saving
+                              ? const SizedBox(
+                                  height: 22,
+                                  width: 22,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                )
+                              : Text(_step < _lastStep ? 'التالي' : 'تم البيع'),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                  ],
-                  Expanded(
-                    flex: _step > 0 ? 2 : 1,
-                    child: ElevatedButton(
-                      onPressed: _saving ? null : (_step < _lastStep ? _next : _completeSale),
-                      child: _saving
-                          ? const SizedBox(
-                              height: 22,
-                              width: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : Text(_step < _lastStep ? 'التالي' : 'تم البيع'),
-                    ),
+                    ],
                   ),
+                  if (_hasVisitData) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    OutlinedButton(
+                      onPressed: _saving ? null : _markInspected,
+                      child: const Text('تم الكشف'),
+                    ),
+                  ],
                 ],
               ),
             ),
           ],
         ),
       ),
+    ),
     );
   }
 
   Widget _stepBody() {
     final padding = const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.lg);
     switch (_step) {
-      case 0:
+      case _stepShop:
+        return SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: padding,
+          child: _shopStep(),
+        );
+      case _stepCustomer:
         return SingleChildScrollView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           padding: padding,
           child: _customerStep(),
         );
-      case 1:
+      case _stepProducts:
         return _itemsStep();
-      case 2:
+      case _stepPrices:
         return SingleChildScrollView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           padding: padding,
           child: _priceStep(),
-        );
-      case 3:
-        return SingleChildScrollView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: padding,
-          child: _shopStep(),
         );
       default:
         return SingleChildScrollView(
@@ -1118,10 +1324,9 @@ class _SaleScreenState extends State<SaleScreen> {
 
   Widget _reviewStep() {
     final docs = _previewDocs.isNotEmpty
-        ? _previewDocs
+        ? SalesDocument.preferDisplay(_previewDocs)
         : [
-            SalesDocument(type: 'PreviewContract', fileName: 'عقد البيع', downloadUrl: ''),
-            SalesDocument(type: 'PreviewPromissoryNote', fileName: 'وصل الأمانة', downloadUrl: ''),
+            SalesDocument(type: 'PreviewSaleDocuments', fileName: 'عقد البيع ووصل الأمانة', downloadUrl: ''),
           ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1161,11 +1366,8 @@ class _SaleScreenState extends State<SaleScreen> {
           Text('الموقع: ${_shopLat!.toStringAsFixed(6)}, ${_shopLng!.toStringAsFixed(6)}'),
         if (_shopNote.text.trim().isNotEmpty) Text(_shopNote.text.trim()),
         const SizedBox(height: AppSpacing.md),
-        const Text('العقد', style: TextStyle(fontWeight: FontWeight.w700)),
-        for (final doc in docs.where((d) => d.isContract)) _docTile(doc, 'عقد البيع'),
-        const SizedBox(height: AppSpacing.sm),
-        const Text('وصل الأمانة', style: TextStyle(fontWeight: FontWeight.w700)),
-        for (final doc in docs.where((d) => d.isPromissoryNote)) _docTile(doc, 'وصل الأمانة'),
+        const Text('المستندات', style: TextStyle(fontWeight: FontWeight.w700)),
+        for (final doc in docs) _docTile(doc, doc.displayTitle),
       ],
     );
   }

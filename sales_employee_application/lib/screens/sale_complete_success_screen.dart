@@ -47,21 +47,31 @@ class SaleCompleteSuccessScreen extends StatelessWidget {
                 'تم البيع بنجاح، لكن تعذر تنزيل أحد المستندات.',
                 style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700),
               )
-            else ...[
+            else if (contractPath != null && contractPath == receiptPath) ...[
+              const Text('تم تنزيل:'),
+              const Text('✓ عقد البيع ووصل الأمانة'),
+            ] else ...[
               const Text('تم تنزيل:'),
               Text(contractPath != null ? '✓ عقد البيع' : 'عقد البيع (غير متوفر)'),
               Text(receiptPath != null ? '✓ وصل الأمانة' : 'وصل الأمانة (غير متوفر)'),
             ],
             const Spacer(),
-            ElevatedButton(
-              onPressed: contractPath == null ? null : () => OpenFilex.open(contractPath!),
-              child: const Text('فتح عقد البيع'),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            ElevatedButton(
-              onPressed: receiptPath == null ? null : () => OpenFilex.open(receiptPath!),
-              child: const Text('فتح وصل الأمانة'),
-            ),
+            if (contractPath != null && contractPath == receiptPath)
+              ElevatedButton(
+                onPressed: () => OpenFilex.open(contractPath!),
+                child: const Text('فتح عقد البيع ووصل الأمانة'),
+              )
+            else ...[
+              ElevatedButton(
+                onPressed: contractPath == null ? null : () => OpenFilex.open(contractPath!),
+                child: const Text('فتح عقد البيع'),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              ElevatedButton(
+                onPressed: receiptPath == null ? null : () => OpenFilex.open(receiptPath!),
+                child: const Text('فتح وصل الأمانة'),
+              ),
+            ],
             if (downloadFailed && onRetryDownload != null) ...[
               const SizedBox(height: AppSpacing.sm),
               OutlinedButton(

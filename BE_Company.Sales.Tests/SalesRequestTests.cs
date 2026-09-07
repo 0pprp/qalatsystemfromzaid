@@ -487,6 +487,55 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
+        public async Task Inspect_SavesVisitWithoutCompleting()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await AssignedAsync(svc, 1);
+            var inspected = await svc.InspectAsync(created.Id, 1, 501, CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Inspected, inspected.Status);
+            Assert.NotEqual(SalesRequestStatuses.Completed, inspected.Status);
+            Assert.Null(inspected.CompletedAtUtc);
+            Assert.Equal(501, inspected.ConvertedToSaleId);
+            Assert.Contains(inspected.History, h => h.Event == SalesRequestEvents.Inspected);
+            Assert.True(SalesRequestStatuses.CanPend(inspected.Status));
+            Assert.True(SalesRequestStatuses.CanReject(inspected.Status));
+            Assert.True(SalesRequestStatuses.CanPrepare(inspected.Status));
+            Assert.True(SalesRequestStatuses.CanConvertToSale(inspected.Status));
+            Assert.False(SalesRequestStatuses.CanInspect(SalesRequestStatuses.Completed));
+        }
+
+        [Fact]
+        public async Task Inspect_KeepsSameDraft_AndDoesNotBecomeConverted()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await AssignedAsync(svc, 1);
+            await svc.InspectAsync(created.Id, 1, 501, CancellationToken.None);
+            await svc.MarkConvertedAsync(created.Id, 1, 501, DateTime.UtcNow, CancellationToken.None);
+            var row = await svc.GetForEmployeeAsync(created.Id, 1, CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Inspected, row.Status);
+            Assert.Equal(501, row.ConvertedToSaleId);
+        }
+
+        [Fact]
+        public async Task Inspected_CanPendPrepareAndComplete()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await AssignedAsync(svc, 1);
+            await svc.InspectAsync(created.Id, 1, 77, CancellationToken.None);
+            var pending = await svc.PendAsync(created.Id, 1, "يرجع لاحقاً", CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Pending, pending.Status);
+            var prepared = await svc.PrepareForSaleAsync(created.Id, 1, CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.PreparedForSale, prepared.Status);
+            var inspectedAgain = await svc.InspectAsync(created.Id, 1, 77, CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Inspected, inspectedAgain.Status);
+            await svc.MarkCompletedBySaleIdAsync(77, DateTime.UtcNow, CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Completed, repo.Rows[0].Status);
+        }
+
+        [Fact]
         public async Task DuplicateConversion_Prevented()
         {
             var repo = new FakeRequestRepository();

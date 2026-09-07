@@ -86,6 +86,16 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   @override
+  Future<SalesDraft> saveSaleProgress(SalesDraftCreateRequest request) async {
+    try {
+      final raw = await ApiClient.post('sales/progress', body: request.toJson());
+      return SalesDraft.fromJson(Map<String, dynamic>.from(raw as Map));
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
   Future<List<SalesDraft>> pending() async {
     try {
       final raw = await ApiClient.get('sales/pending');
@@ -332,6 +342,16 @@ class ApiSalesRepository implements SalesRepository {
   Future<SalesWorkRequest> prepareSalesRequest(int id) async {
     try {
       final raw = await ApiClient.post('sales/requests/$id/prepare');
+      return SalesWorkRequest.fromJson(Map<String, dynamic>.from(raw as Map));
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
+  Future<SalesWorkRequest> inspectSalesRequest(int id, SalesDraftCreateRequest progress) async {
+    try {
+      final raw = await ApiClient.post('sales/requests/$id/inspect', body: progress.toJson());
       return SalesWorkRequest.fromJson(Map<String, dynamic>.from(raw as Map));
     } on ApiException catch (e) {
       _throw(e);

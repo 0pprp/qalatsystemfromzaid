@@ -6,8 +6,10 @@ namespace BE_Company.Sales.Services
     {
         public const string Contract = "Contract";
         public const string PromissoryNote = "PromissoryNote";
+        public const string SaleDocuments = "SaleDocuments";
         public const string PreviewContract = "PreviewContract";
         public const string PreviewPromissoryNote = "PreviewPromissoryNote";
+        public const string PreviewSaleDocuments = "PreviewSaleDocuments";
 
         private readonly IWebHostEnvironment _env;
         private readonly ISalesCompleteRepository _complete;
@@ -22,6 +24,7 @@ namespace BE_Company.Sales.Services
         {
             var existing = (await _complete.GetDocumentsAsync(sale.SaleId, sale.EmployeeId, ct)).ToList();
             var results = new List<SalesDocumentRecord>();
+            results.Add(await EnsureOneAsync(sale, SaleDocuments, existing, ct));
             results.Add(await EnsureOneAsync(sale, Contract, existing, ct));
             results.Add(await EnsureOneAsync(sale, PromissoryNote, existing, ct));
             return results.Select(SalesDocumentMapper.ToDto).ToList();
@@ -33,6 +36,7 @@ namespace BE_Company.Sales.Services
             Directory.CreateDirectory(folder);
             var results = new List<SalesDocumentRecord>
             {
+                await WritePreviewAsync(sale, PreviewSaleDocuments, $"Sale_{sale.SaleId}_Preview_SaleDocuments.pdf", folder, ct),
                 await WritePreviewAsync(sale, PreviewContract, $"Sale_{sale.SaleId}_Preview_Contract.pdf", folder, ct),
                 await WritePreviewAsync(sale, PreviewPromissoryNote, $"Sale_{sale.SaleId}_Preview_PromissoryNote.pdf", folder, ct)
             };
@@ -92,7 +96,9 @@ namespace BE_Company.Sales.Services
             var current = existing.FirstOrDefault(d => string.Equals(d.DocumentType, type, StringComparison.OrdinalIgnoreCase));
             var folder = Path.Combine(_env.ContentRootPath, "App_Data", "sales", sale.SaleId.ToString());
             Directory.CreateDirectory(folder);
-            var fileName = type == Contract
+            var fileName = type == SaleDocuments
+                ? $"Sale_{sale.SaleId}_SaleDocuments.pdf"
+                : type == Contract
                 ? $"Sale_{sale.SaleId}_Contract.pdf"
                 : $"Sale_{sale.SaleId}_PromissoryNote.pdf";
             var path = current != null && !string.IsNullOrWhiteSpace(current.StoragePath)
@@ -120,6 +126,11 @@ namespace BE_Company.Sales.Services
 
         public static byte[] Render(SalesDraftDTO sale, string documentType)
         {
+            if (IsCombined(documentType))
+            {
+                return OfficialSalesPdfRenderer.BuildSaleDocuments(sale);
+            }
+
             if (IsContract(documentType))
             {
                 return OfficialSalesPdfRenderer.BuildContract(sale);
@@ -133,6 +144,17 @@ namespace BE_Company.Sales.Services
             throw new SalesCompleteException(StatusCodes.Status400BadRequest, "نوع المستند غير مدعوم.");
         }
 
+        public static bool IsCombined(string? type) =>
+            string.Equals(type, SaleDocuments, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(type, PreviewSaleDocuments, StringComparison.OrdinalIgnoreCase);
+
+        public static IReadOnlyList<SalesDocumentDTO> PreferDisplayDocuments(IEnumerable<SalesDocumentDTO> docs)
+        {
+            var list = docs.ToList();
+            var combined = list.Where(d => IsCombined(d.Type)).ToList();
+            return combined.Count > 0 ? combined : list;
+        }
+
         public static bool IsContract(string? type) =>
             string.Equals(type, Contract, StringComparison.OrdinalIgnoreCase)
             || string.Equals(type, PreviewContract, StringComparison.OrdinalIgnoreCase);
@@ -144,7 +166,9 @@ namespace BE_Company.Sales.Services
         private string DefaultPath(int saleId, string documentType)
         {
             var folder = Path.Combine(_env.ContentRootPath, "App_Data", "sales", saleId.ToString());
-            var fileName = IsContract(documentType)
+            var fileName = IsCombined(documentType)
+                ? $"Sale_{saleId}_SaleDocuments.pdf"
+                : IsContract(documentType)
                 ? $"Sale_{saleId}_Contract.pdf"
                 : $"Sale_{saleId}_PromissoryNote.pdf";
             return Path.Combine(folder, fileName);

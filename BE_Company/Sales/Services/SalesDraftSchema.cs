@@ -12,7 +12,8 @@ namespace BE_Company.Sales.Services
             CoreSql,
             AddPostingColumnsSql,
             BackfillPostingSql,
-            PostingIndexesSql
+            PostingIndexesSql,
+            AddWizardStepSql
         ];
 
         public const string CoreSql = @"
@@ -132,5 +133,9 @@ BEGIN
         ON dbo.SalesDrafts (PostingStatus, Status)
         WHERE PostingStatus IN (N''Pending'', N''Failed'', N''Processing'');');
 END;";
+
+        public const string AddWizardStepSql = @"
+IF COL_LENGTH(N'dbo.SalesDrafts', N'WizardCurrentStep') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD WizardCurrentStep INT NULL;";
     }
 }

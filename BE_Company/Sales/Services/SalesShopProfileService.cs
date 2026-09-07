@@ -816,6 +816,12 @@ WHERE SaleId = @SaleId AND Status = N'Pending'",
 
         private static List<SalesDocumentDTO> PreferFinalDocuments(List<SalesDocumentDTO> documents)
         {
+            var combined = documents.Where(d => SalesDocumentService.IsCombined(d.Type)).ToList();
+            if (combined.Count > 0)
+            {
+                return combined;
+            }
+
             var finals = documents
                 .Where(d => d.Type == SalesDocumentService.Contract || d.Type == SalesDocumentService.PromissoryNote)
                 .ToList();

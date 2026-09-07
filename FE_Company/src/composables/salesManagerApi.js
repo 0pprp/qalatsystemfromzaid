@@ -224,6 +224,7 @@ export const requestStatusLabel = {
   InProgress: 'جاهز للبيع',
   Returned: 'طلبات البيع',
   ConvertedToSale: 'جاهز للبيع',
+  Inspected: 'تم الكشف',
   Completed: 'تم البيع',
   Rejected: 'تم الرفض',
 }
@@ -282,6 +283,7 @@ export const requestHistoryLabel = {
   Returned: 'إعادة للموظف',
   ReturnNote: 'ملاحظة الإعادة',
   ConvertedToSale: 'تحويل إلى بيع',
+  Inspected: 'تم الكشف',
   Completed: 'اكتمال',
 }
 

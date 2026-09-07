@@ -126,6 +126,7 @@ class SalesRequestStatusLabels {
         'InProgress' => 'جاهز للبيع',
         'Returned' => 'طلبات البيع',
         'ConvertedToSale' => 'جاهز للبيع',
+        'Inspected' => 'تم الكشف',
         'Completed' => 'تم البيع',
         'Rejected' => 'مرفوض',
         _ => status ?? '',

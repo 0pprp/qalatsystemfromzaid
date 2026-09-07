@@ -66,6 +66,7 @@ const tabs = [
   { value: 'sent', title: 'الطلبات المرسلة' },
   { value: 'incoming', title: 'طلبات البيع' },
   { value: 'prepared', title: 'جاهز للبيع' },
+  { value: 'inspected', title: 'تم الكشف' },
   { value: 'pending', title: 'معلقة' },
   { value: 'rejected', title: 'مرفوض' },
   { value: 'sold', title: 'تم البيع' },
@@ -108,9 +109,9 @@ function submittedBy(row) {
   return pick(row, 'createdByName', 'CreatedByName') || 'موظف مبيعات'
 }
 
-function matchesTab(row) {
+function matchesTab(row, value = tab.value) {
   const s = requestStatus(row)
-  switch (tab.value) {
+  switch (value) {
     case 'unassigned':
       return isUnassigned(row)
     case 'sent':
@@ -119,6 +120,8 @@ function matchesTab(row) {
       return s === 'Assigned' || s === 'Viewed' || s === 'Returned'
     case 'prepared':
       return s === 'PreparedForSale' || s === 'InProgress' || s === 'ConvertedToSale'
+    case 'inspected':
+      return s === 'Inspected'
     case 'pending':
       return s === 'Pending'
     case 'rejected':
@@ -140,6 +143,8 @@ function statusColor(status) {
     case 'InProgress':
     case 'ConvertedToSale':
       return 'info'
+    case 'Inspected':
+      return 'primary'
     case 'Rejected':
       return 'error'
     case 'Returned':
@@ -192,6 +197,10 @@ function lastUpdated(row) {
 
 const visibleRows = computed(() => rows.value.filter(row => matchesTab(row)))
 
+function tabCount(value) {
+  return rows.value.filter(row => matchesTab(row, value)).length
+}
+
 async function load() {
   rows.value = await smGet(withCityQuery('sales-requests', cityValue.value)) || []
   await refreshSalesRequestUnread(cityValue.value)
@@ -226,6 +235,7 @@ async function openDetails(row, resetAssign = true) {
   }
   await loadEmployees()
   await refreshSalesRequestUnread(cityValue.value)
+  await loadProfile(row, updated)
 }
 
 function resetIntake(d) {
@@ -327,7 +337,11 @@ function areaText(shop) {
   return `${area} م²`
 }
 
-const latestShop = computed(() => profile.value?.latestShop || profile.value?.LatestShop || null)
+const latestShop = computed(() =>
+  profile.value?.latestShop
+  || profile.value?.LatestShop
+  || pick(saleDetail.value, 'shop', 'Shop')
+  || null)
 const profileSales = computed(() => profile.value?.sales || profile.value?.Sales || [])
 const profileNotes = computed(() => profile.value?.notes || profile.value?.Notes || [])
 const profileEvaluations = computed(() => profile.value?.evaluations || profile.value?.Evaluations || [])
@@ -426,6 +440,16 @@ async function loadProfile(row, d) {
   const city = d?.cityValue || row?.cityValue
   if (!city)
     return
+  const linkedSaleId = currentSaleId(row, d)
+  if (linkedSaleId) {
+    try {
+      saleDetail.value = await smGet(saleDetailPath(city, linkedSaleId))
+      await loadShopImage(city, linkedSaleId)
+    }
+    catch {
+      saleDetail.value = null
+    }
+  }
   const params = new URLSearchParams()
   const customerId = pick(d, 'existingCustomerId', 'ExistingCustomerId') || pick(row, 'existingCustomerId', 'ExistingCustomerId')
   const name = pick(d, 'customerName', 'CustomerName') || pick(row, 'customerName', 'CustomerName')
@@ -1041,6 +1065,7 @@ onUnmounted(() => {
         filter
       >
         {{ item.title }}
+        ({{ tabCount(item.value) }})
         <VBadge
           v-if="item.value === 'sent' && salesRequestUnreadCount > 0"
           :content="salesRequestUnreadCount"
@@ -1112,7 +1137,7 @@ onUnmounted(() => {
               آخر تحديث: {{ lastUpdated(row) }}
             </div>
             <VBtn
-              v-if="requestStatus(row) === 'Completed'"
+              v-if="requestStatus(row) === 'Completed' || requestStatus(row) === 'Inspected'"
               class="mt-3"
               color="primary"
               size="small"
@@ -1156,6 +1181,18 @@ onUnmounted(() => {
           </div>
           <div v-if="isPrepared(detail)" class="mt-1">
             مجهز للبيع — الموظف هو من يكمل البيع.
+          </div>
+          <div v-if="requestStatus(detail) === 'Inspected'" class="mt-1">
+            تم الكشف — الزيارة محفوظة ولم يكتمل البيع بعد.
+          </div>
+          <div v-if="saleDetail" class="mt-3">
+            <div class="font-weight-bold mb-1">بيانات المسودة حتى الآن</div>
+            <div>الزبون: {{ pick(saleDetail, 'fullName', 'FullName') || '—' }}</div>
+            <div>الهاتف: {{ pick(saleDetail, 'phone', 'Phone') || '—' }}</div>
+            <div>العنوان: {{ pick(saleDetail, 'address', 'Address') || '—' }}</div>
+            <div v-if="pick(saleDetail, 'shop', 'Shop')">
+              المحل: {{ pick(pick(saleDetail, 'shop', 'Shop'), 'shopName', 'ShopName') || '—' }}
+            </div>
           </div>
           <div v-if="requestStatus(detail) === 'Pending' && (detail.pendingNote || detail.PendingNote)">
             ملاحظة التعليق: {{ detail.pendingNote || detail.PendingNote }}

@@ -102,6 +102,29 @@ namespace BE_Company.Sales.Tests
             Assert.Contains("رقم البطاقة الوطنية: ( N1234567 )", text);
         }
 
+        [Fact]
+        public void CombinedSaleDocuments_AreTwoIndependentA4Pages()
+        {
+            Assert.Equal(80f, OfficialSalesPdfRenderer.DebtorFingerprintHeight);
+            using var stream = new MemoryStream(OfficialSalesPdfRenderer.BuildSaleDocuments(Draft()));
+            using var document = PdfDocument.Open(stream);
+            Assert.Equal(2, document.NumberOfPages);
+            var page1 = document.GetPage(1);
+            var page2 = document.GetPage(2);
+            Assert.InRange(page1.Width, 590, 600);
+            Assert.InRange(page1.Height, 835, 850);
+            Assert.InRange(page2.Width, 590, 600);
+            Assert.InRange(page2.Height, 835, 850);
+        }
+
+        [Fact]
+        public void CombinedSaleDocuments_LongData_StayOnTwoA4Pages()
+        {
+            using var stream = new MemoryStream(OfficialSalesPdfRenderer.BuildSaleDocuments(LongDraft()));
+            using var document = PdfDocument.Open(stream);
+            Assert.Equal(2, document.NumberOfPages);
+        }
+
         private static void AssertSingleA4(byte[] pdf)
         {
             using var stream = new MemoryStream(pdf);

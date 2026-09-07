@@ -89,6 +89,13 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("progress")]
+        public async Task<IActionResult> SaveProgress([FromBody] JsonElement body, CancellationToken ct)
+        {
+            return await ProxyAssigned("sales/progress", HttpMethod.Post, new StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"), ct);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpGet("pending")]
         public async Task<IActionResult> Pending(CancellationToken ct)
         {
@@ -372,6 +379,15 @@ namespace BE_SalesEmployee.Controllers
         [HttpPost("requests/{id:int}/prepare")]
         public Task<IActionResult> Prepare(int id, CancellationToken ct) =>
             ProxyAssigned($"sales/requests/{id}/prepare", HttpMethod.Post, null, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/{id:int}/inspect")]
+        public async Task<IActionResult> Inspect(int id, [FromBody] JsonElement body, CancellationToken ct) =>
+            await ProxyAssigned(
+                $"sales/requests/{id}/inspect",
+                HttpMethod.Post,
+                new StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
+                ct);
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/pending")]

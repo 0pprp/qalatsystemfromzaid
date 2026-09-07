@@ -15,11 +15,12 @@ namespace BE_Company.Sales.Tests
                     SalesDraftSchema.CoreSql,
                     SalesDraftSchema.AddPostingColumnsSql,
                     SalesDraftSchema.BackfillPostingSql,
-                    SalesDraftSchema.PostingIndexesSql
+                    SalesDraftSchema.PostingIndexesSql,
+                    SalesDraftSchema.AddWizardStepSql
                 },
                 SalesDraftSchema.Commands);
 
-            Assert.Equal(4, SalesDraftSchema.Commands.Count);
+            Assert.Equal(5, SalesDraftSchema.Commands.Count);
         }
 
         [Fact]
@@ -106,12 +107,15 @@ namespace BE_Company.Sales.Tests
 
             Assert.Contains("NOT EXISTS", SalesDraftSchema.PostingIndexesSql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("IX_SalesDrafts_PostingDue", SalesDraftSchema.PostingIndexesSql);
+            Assert.Contains("WizardCurrentStep", SalesDraftSchema.AddWizardStepSql, StringComparison.OrdinalIgnoreCase);
 
             var commands = SalesDraftSchema.Commands.ToList();
             Assert.True(commands.IndexOf(SalesDraftSchema.AddPostingColumnsSql) <
                         commands.IndexOf(SalesDraftSchema.BackfillPostingSql));
             Assert.True(commands.IndexOf(SalesDraftSchema.BackfillPostingSql) <
                         commands.IndexOf(SalesDraftSchema.PostingIndexesSql));
+            Assert.True(commands.IndexOf(SalesDraftSchema.PostingIndexesSql) <
+                        commands.IndexOf(SalesDraftSchema.AddWizardStepSql));
         }
 
         private static bool AddsPostingColumn(string sql) =>

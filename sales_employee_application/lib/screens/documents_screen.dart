@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/services/sale_document_storage.dart';
 import 'package:sales_employee_application/services/session.dart';
@@ -27,9 +28,11 @@ class DocumentsScreen extends StatelessWidget {
         if (saleId == null) {
           throw Exception('لا يوجد رقم عملية لتنزيل المستند من الخادم.');
         }
-        final docs = await SalesRepositoryFactory.instance.documents(saleId);
+        final docs = SalesDocument.preferDisplay(
+          await SalesRepositoryFactory.instance.documents(saleId),
+        );
         final doc = docs.firstWhere(
-          (item) => contract ? item.isContract : item.isPromissoryNote,
+          (item) => item.isCombined || (contract ? item.isContract : item.isPromissoryNote),
         );
         final bytes = await SalesRepositoryFactory.instance.downloadDocument(saleId, doc);
         final file = await SaleDocumentStorage.savePdf(doc.fileName, bytes);

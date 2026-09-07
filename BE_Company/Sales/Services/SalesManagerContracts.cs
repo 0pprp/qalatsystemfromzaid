@@ -12,6 +12,7 @@ namespace BE_Company.Sales.Services
         public const string PreparedForSale = "PreparedForSale";
         public const string InProgress = "InProgress";
         public const string ConvertedToSale = "ConvertedToSale";
+        public const string Inspected = "Inspected";
         public const string Rejected = "Rejected";
         public const string Returned = "Returned";
         public const string Completed = "Completed";
@@ -33,16 +34,22 @@ namespace BE_Company.Sales.Services
             !IsSold(status);
 
         public static bool CanPrepare(string? status) =>
-            status is New or Assigned or Viewed or Returned or Pending or PreparedForSale or InProgress;
+            status is New or Assigned or Viewed or Returned or Pending or PreparedForSale or InProgress or Inspected;
 
         public static bool CanPend(string? status) =>
-            status is New or Assigned or Viewed or Returned or PreparedForSale or InProgress or ConvertedToSale or Rejected;
+            status is New or Assigned or Viewed or Returned or PreparedForSale or InProgress or ConvertedToSale or Rejected or Inspected;
 
         public static bool CanReject(string? status) =>
-            status is New or Assigned or Viewed or Returned or Pending or PreparedForSale or InProgress or ConvertedToSale;
+            status is New or Assigned or Viewed or Returned or Pending or PreparedForSale or InProgress or ConvertedToSale or Inspected;
 
         public static bool CanConvertToSale(string? status) =>
-            status is New or Assigned or Viewed or Returned or Pending or PreparedForSale or InProgress or ConvertedToSale or Rejected;
+            status is New or Assigned or Viewed or Returned or Pending or PreparedForSale or InProgress or ConvertedToSale or Rejected or Inspected;
+
+        public static bool CanInspect(string? status) =>
+            status is New or Assigned or Viewed or Returned or PreparedForSale or InProgress or ConvertedToSale or Inspected;
+
+        public static bool IsInspected(string? status) =>
+            string.Equals(status, Inspected, StringComparison.OrdinalIgnoreCase);
 
         public static bool IsTerminal(string? status) =>
             IsSold(status);
@@ -61,6 +68,7 @@ namespace BE_Company.Sales.Services
         public const string ReturnNote = "ReturnNote";
         public const string Completed = "Completed";
         public const string ConvertedToSale = "ConvertedToSale";
+        public const string Inspected = "Inspected";
         public const string Viewed = "Viewed";
         public const string EmployeeSubmitted = "EmployeeSubmitted";
         public const string ManagerViewed = "ManagerViewed";
@@ -182,6 +190,8 @@ namespace BE_Company.Sales.Services
         Task<SalesRequestDTO> AssignAsync(SalesIdentity manager, int id, SalesRequestAssignDTO request, CancellationToken ct);
         Task<SalesRequestDTO> ReturnAsync(SalesIdentity manager, int id, string note, CancellationToken ct);
         Task MarkConvertedAsync(int requestId, int employeeId, int saleId, DateTime utcNow, CancellationToken ct);
+        Task AttachDraftAsync(int requestId, int employeeId, int saleId, CancellationToken ct);
+        Task<SalesRequestDTO> InspectAsync(int id, int employeeId, int? saleId, CancellationToken ct);
         Task MarkCompletedBySaleIdAsync(int saleId, DateTime utcNow, CancellationToken ct);
     }
 

@@ -15,6 +15,7 @@ class SaleDocuments {
   static const double _titleSize = 20;
   static const double _receiptTitleSize = 22;
   static const double _paragraphGap = 5.5;
+  static const double debtorFingerprintHeight = 80;
 
   static Future<void> printContract(Map<String, dynamic> sale) async {
     await _open(await buildContract(SaleDocumentMap.fromLegacyMap(sale)), 'sale-contract.pdf');
@@ -45,57 +46,20 @@ class SaleDocuments {
     await LocalStore.instance.openNamedFile(name);
   }
 
+  static pw.PageTheme _theme(_Fonts fonts) => pw.PageTheme(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(_margin),
+        textDirection: pw.TextDirection.rtl,
+        theme: fonts.theme,
+      );
+
   static Future<pw.Document> buildContract(OfficialContractData sale) async {
     final fonts = await _fonts();
     final doc = pw.Document();
-    final paragraphs = ContractText.buildParagraphs(sale);
-    final style = pw.TextStyle(font: fonts.regular, fontSize: _bodySize, height: 1.22);
-    final titleStyle = pw.TextStyle(font: fonts.bold, fontSize: _titleSize);
-    final signatureStyle = pw.TextStyle(font: fonts.bold, fontSize: _bodySize);
-
     doc.addPage(
       pw.Page(
-        pageTheme: pw.PageTheme(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(_margin),
-          textDirection: pw.TextDirection.rtl,
-          theme: fonts.theme,
-        ),
-        build: (context) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-          children: [
-            pw.Center(
-              child: pw.Container(
-                padding: const pw.EdgeInsets.only(bottom: 4),
-                decoration: const pw.BoxDecoration(
-                  border: pw.Border(bottom: pw.BorderSide(width: 1.2, color: PdfColors.black)),
-                ),
-                child: pw.Text('عقد بيع', style: titleStyle, textDirection: pw.TextDirection.rtl),
-              ),
-            ),
-            pw.SizedBox(height: 10),
-            for (final paragraph in paragraphs) ...[
-              _paragraph(paragraph.plainText, style),
-              pw.SizedBox(height: _paragraphGap),
-            ],
-            pw.SizedBox(height: 6),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text('الطرف الأول', style: signatureStyle, textDirection: pw.TextDirection.rtl),
-                pw.Text('أمين الصندوق', style: signatureStyle, textDirection: pw.TextDirection.rtl),
-              ],
-            ),
-            pw.SizedBox(height: 28),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text('الطرف الثاني', style: signatureStyle, textDirection: pw.TextDirection.rtl),
-                pw.Text('مندوب المبيعات', style: signatureStyle, textDirection: pw.TextDirection.rtl),
-              ],
-            ),
-          ],
-        ),
+        pageTheme: _theme(fonts),
+        build: (context) => _contractPage(sale, fonts),
       ),
     );
     return doc;
@@ -104,55 +68,130 @@ class SaleDocuments {
   static Future<pw.Document> buildReceipt(OfficialContractData sale) async {
     final fonts = await _fonts();
     final doc = pw.Document();
+    doc.addPage(
+      pw.Page(
+        pageTheme: _theme(fonts),
+        build: (context) => _receiptPage(sale, fonts),
+      ),
+    );
+    return doc;
+  }
+
+  static Future<pw.Document> buildSaleDocuments(OfficialContractData sale) async {
+    final fonts = await _fonts();
+    final doc = pw.Document();
+    doc.addPage(
+      pw.Page(
+        pageTheme: _theme(fonts),
+        build: (context) => _contractPage(sale, fonts),
+      ),
+    );
+    doc.addPage(
+      pw.Page(
+        pageTheme: _theme(fonts),
+        build: (context) => _receiptPage(sale, fonts),
+      ),
+    );
+    return doc;
+  }
+
+  static pw.Widget _contractPage(OfficialContractData sale, _Fonts fonts) {
+    final paragraphs = ContractText.buildParagraphs(sale);
+    final style = pw.TextStyle(font: fonts.regular, fontSize: _bodySize, height: 1.22);
+    final titleStyle = pw.TextStyle(font: fonts.bold, fontSize: _titleSize);
+    final signatureStyle = pw.TextStyle(font: fonts.bold, fontSize: _bodySize);
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        pw.Center(
+          child: pw.Container(
+            padding: const pw.EdgeInsets.only(bottom: 4),
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(bottom: pw.BorderSide(width: 1.2, color: PdfColors.black)),
+            ),
+            child: pw.Text('عقد بيع', style: titleStyle, textDirection: pw.TextDirection.rtl),
+          ),
+        ),
+        pw.SizedBox(height: 10),
+        for (final paragraph in paragraphs) ...[
+          _paragraph(paragraph.plainText, style),
+          pw.SizedBox(height: _paragraphGap),
+        ],
+        pw.SizedBox(height: 6),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('الطرف الأول', style: signatureStyle, textDirection: pw.TextDirection.rtl),
+            pw.Text('أمين الصندوق', style: signatureStyle, textDirection: pw.TextDirection.rtl),
+          ],
+        ),
+        pw.SizedBox(height: 28),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('الطرف الثاني', style: signatureStyle, textDirection: pw.TextDirection.rtl),
+            pw.Text('مندوب المبيعات', style: signatureStyle, textDirection: pw.TextDirection.rtl),
+          ],
+        ),
+      ],
+    );
+  }
+
+  static pw.Widget _receiptPage(OfficialContractData sale, _Fonts fonts) {
     final bodyParagraphs = DepositReceiptText.buildBodyParagraphs(contract: sale);
     final style = pw.TextStyle(font: fonts.regular, fontSize: _bodySize, height: 1.22);
     final titleStyle = pw.TextStyle(font: fonts.bold, fontSize: _receiptTitleSize);
     final witnessTitleStyle = pw.TextStyle(font: fonts.bold, fontSize: 14);
-
-    doc.addPage(
-      pw.Page(
-        pageTheme: pw.PageTheme(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(_margin),
-          textDirection: pw.TextDirection.rtl,
-          theme: fonts.theme,
-        ),
-        build: (context) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        pw.Center(child: pw.Text('وصل أمانة', style: titleStyle, textDirection: pw.TextDirection.rtl)),
+        pw.SizedBox(height: 14),
+        for (final paragraph in bodyParagraphs) ...[
+          _paragraph(paragraph.plainText, style),
+          pw.SizedBox(height: _paragraphGap),
+        ],
+        pw.SizedBox(height: 10),
+        pw.Row(
           children: [
-            pw.Center(child: pw.Text('وصل أمانة', style: titleStyle, textDirection: pw.TextDirection.rtl)),
-            pw.SizedBox(height: 14),
-            for (final paragraph in bodyParagraphs) ...[
-              _paragraph(paragraph.plainText, style),
-              pw.SizedBox(height: _paragraphGap),
-            ],
-            pw.SizedBox(height: 6),
-            pw.Row(
-              children: [
-                pw.Expanded(
-                  flex: 2,
-                  child: pw.Align(
-                    alignment: pw.Alignment.centerRight,
-                    child: pw.Text('بصمة المدين:', style: style, textDirection: pw.TextDirection.rtl),
-                  ),
+            pw.Expanded(
+              flex: 2,
+              child: pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.Text('بصمة المدين:', style: style, textDirection: pw.TextDirection.rtl),
+                    pw.SizedBox(height: 6),
+                    pw.Container(
+                      height: debtorFingerprintHeight,
+                      decoration: pw.BoxDecoration(
+                        border: pw.Border.all(width: 0.8, color: PdfColors.black),
+                      ),
+                    ),
+                  ],
                 ),
-                pw.Expanded(
-                  flex: 3,
-                  child: pw.Center(
-                    child: pw.Text('توقيع المدين:', style: style, textDirection: pw.TextDirection.rtl),
-                  ),
-                ),
-              ],
+              ),
             ),
-            pw.SizedBox(height: 18),
-            _witnessBlock('الشاهد الأول', witnessTitleStyle, style),
-            pw.SizedBox(height: 14),
-            _witnessBlock('الشاهد الثاني', witnessTitleStyle, style),
+            pw.Expanded(
+              flex: 3,
+              child: pw.Center(
+                child: pw.Column(
+                  children: [
+                    pw.Text('توقيع المدين:', style: style, textDirection: pw.TextDirection.rtl),
+                    pw.SizedBox(height: 40),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
-      ),
+        pw.SizedBox(height: 28),
+        _witnessBlock('الشاهد الأول', witnessTitleStyle, style),
+        pw.SizedBox(height: 16),
+        _witnessBlock('الشاهد الثاني', witnessTitleStyle, style),
+      ],
     );
-    return doc;
   }
 
   static pw.Widget _paragraph(String text, pw.TextStyle style) {

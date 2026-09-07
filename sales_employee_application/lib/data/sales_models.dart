@@ -266,6 +266,7 @@ class SalesDraft {
     this.customerListId,
     this.customerListName,
     this.shop,
+    this.wizardCurrentStep,
   });
 
   final int saleId;
@@ -299,6 +300,7 @@ class SalesDraft {
   final int? customerListId;
   final String? customerListName;
   final SalesShopProfile? shop;
+  final int? wizardCurrentStep;
 
   bool get isRejected => status == 'Rejected';
   bool get isCompleted =>
@@ -346,6 +348,7 @@ class SalesDraft {
         customerListId: customerListId,
         customerListName: customerListName,
         shop: shop,
+        wizardCurrentStep: wizardCurrentStep,
       );
 
   factory SalesDraft.fromJson(Map<String, dynamic> json) => SalesDraft(
@@ -390,6 +393,7 @@ class SalesDraft {
             : json['Shop'] is Map
                 ? SalesShopProfile.fromJson(Map<String, dynamic>.from(json['Shop'] as Map))
                 : null,
+        wizardCurrentStep: int.tryParse('${json['wizardCurrentStep'] ?? json['WizardCurrentStep'] ?? ''}'),
       );
 }
 
@@ -477,8 +481,23 @@ class SalesDocument {
   final String downloadUrl;
   final int? documentId;
 
-  bool get isContract => type == 'Contract' || type == 'PreviewContract';
-  bool get isPromissoryNote => type == 'PromissoryNote' || type == 'PreviewPromissoryNote';
+  bool get isCombined =>
+      type == 'SaleDocuments' || type == 'PreviewSaleDocuments';
+  bool get isContract =>
+      isCombined || type == 'Contract' || type == 'PreviewContract';
+  bool get isPromissoryNote =>
+      isCombined || type == 'PromissoryNote' || type == 'PreviewPromissoryNote';
+  String get displayTitle {
+    if (isCombined) return 'عقد البيع ووصل الأمانة';
+    if (type == 'PromissoryNote' || type == 'PreviewPromissoryNote') return 'وصل الأمانة';
+    return 'عقد البيع';
+  }
+
+  static List<SalesDocument> preferDisplay(Iterable<SalesDocument> docs) {
+    final list = docs.toList();
+    final combined = list.where((d) => d.isCombined).toList();
+    return combined.isEmpty ? list : combined;
+  }
 
   factory SalesDocument.fromJson(Map<String, dynamic> json) => SalesDocument(
         type: '${json['type'] ?? json['Type'] ?? ''}',
@@ -531,6 +550,9 @@ class SalesDraftCreateRequest {
     this.overrideDownPayment,
     this.salesRequestId,
     this.customerListId,
+    this.wizardCurrentStep,
+    this.markInspected = false,
+    this.shop,
   });
 
   final int? customerId;
@@ -544,6 +566,9 @@ class SalesDraftCreateRequest {
   final num? overrideDownPayment;
   final int? salesRequestId;
   final int? customerListId;
+  final int? wizardCurrentStep;
+  final bool markInspected;
+  final SalesShopComplete? shop;
 
   Map<String, dynamic> toJson() => {
         if (customerId != null) 'customerId': customerId,
@@ -557,6 +582,9 @@ class SalesDraftCreateRequest {
         if (overrideDownPayment != null) 'overrideDownPayment': overrideDownPayment,
         if (salesRequestId != null) 'salesRequestId': salesRequestId,
         if (customerListId != null) 'customerListId': customerListId,
+        if (wizardCurrentStep != null) 'wizardCurrentStep': wizardCurrentStep,
+        if (markInspected) 'markInspected': true,
+        if (shop != null) 'shop': shop!.toJson(),
       };
 }
 
@@ -602,11 +630,12 @@ class SalesWorkRequest {
   bool get canConvert => !isSold && convertedToSaleId == null;
   bool get canContinueSale => !isSold && convertedToSaleId != null;
   bool get canAct => !isSold;
-  bool get canPrepare => !isSold && (isIncoming || isPendingHold);
+  bool get canPrepare => !isSold && (isIncoming || isPendingHold || isInspected);
   bool get canPend => !isSold && status != 'Pending';
   bool get canReject => !isSold && status != 'Rejected';
   bool get isReturned => status == 'Returned';
   bool get isPendingHold => status == 'Pending';
+  bool get isInspected => status == 'Inspected';
   bool get isPreparedForSale =>
       status == 'PreparedForSale' || status == 'InProgress' || status == 'ConvertedToSale';
 
@@ -671,7 +700,7 @@ class SalesShopComplete {
     required this.estimatedDailyRevenue,
     required this.shopLength,
     required this.shopWidth,
-    required this.shopImageKey,
+    this.shopImageKey = '',
     this.employeeNote,
     this.overrideTotalSalePrice,
     this.overrideDailyInstallment,
