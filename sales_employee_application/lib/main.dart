@@ -16,6 +16,7 @@ import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/services/session_kicked.dart';
 import 'package:sales_employee_application/tracking/shift_tracking_controller.dart';
 import 'package:sales_employee_application/tracking/tracking_channel.dart';
+import 'package:sales_employee_application/tracking/work_shift.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 
 Future<void> main() async {
@@ -105,9 +106,15 @@ class _SplashScreenState extends State<_SplashScreen> {
         await TrackingChannel.stop();
       } catch (_) {}
     } catch (_) {
-      try {
-        await TrackingChannel.stop();
-      } catch (_) {}
+      final local = TrackingShiftPolicy.parseLocal(Session.shift);
+      if (local != null && local.isActive && !local.isPastCutoff()) {
+        final tracking = TrackingRuntime.instance ??=
+            ShiftTrackingController(repository: SalesRepositoryFactory.instance);
+        await tracking.attach(local);
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/home');
+        return;
+      }
     }
     if (!mounted) return;
     Navigator.pushReplacementNamed(context, '/shift');

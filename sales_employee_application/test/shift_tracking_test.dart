@@ -236,7 +236,108 @@ void main() {
 
   test('official tracking interval is 10 minutes', () {
     expect(TrackingConfig.officialInterval, const Duration(minutes: 10));
+    expect(TrackingConfig.officialIntervalMs, 600000);
     expect(TrackingConfig.maxAcceptedAccuracyMeters, greaterThanOrEqualTo(50));
+    expect(TrackingConfig.minimumDistanceMeters, 0);
+    expect(TrackingConfig.debugIntervalMs, 0);
+  });
+
+  test('start shift due first official slot immediately', () {
+    final start = DateTime.utc(2026, 9, 2, 8, 7);
+    final due = OfficialSlot.dueSlots(
+      shiftStartUtc: start,
+      lastOfficialSlotUtc: null,
+      nowUtc: start,
+      cutoffUtc: start.add(const Duration(hours: 18)),
+    );
+    expect(due, isNotEmpty);
+    expect(due.first, OfficialSlot.floorUtc(start));
+  });
+
+  test('ten minutes later a new official slot is due without movement', () {
+    final start = DateTime.utc(2026, 9, 2, 8, 0);
+    final due = OfficialSlot.dueSlots(
+      shiftStartUtc: start,
+      lastOfficialSlotUtc: start,
+      nowUtc: start.add(const Duration(minutes: 10)),
+      cutoffUtc: start.add(const Duration(hours: 18)),
+    );
+    expect(due, [DateTime.utc(2026, 9, 2, 8, 10)]);
+  });
+
+  test('network lookup failure does not stop native tracking', () {
+    expect(
+      TrackingShiftPolicy.shouldStopNative(
+        gpsStoppedByUser: false,
+        remoteLookupFailed: true,
+        remoteShift: null,
+      ),
+      isFalse,
+    );
+    expect(
+      TrackingShiftPolicy.shouldStopNative(
+        gpsStoppedByUser: true,
+        remoteLookupFailed: true,
+        remoteShift: null,
+      ),
+      isTrue,
+    );
+  });
+
+  test('end shift flushes then stops then ends the shift', () async {
+    final calls = <String>[];
+    final repo = _OrderedEndRepo(calls);
+    final controller = ShiftTrackingController(
+      repository: repo,
+      store: MemoryLocationStore(),
+      requestPermission: () async => true,
+      startNative: (_) async => true,
+      stopNative: () async { calls.add('stop'); },
+      flushThenStopNative: () async { calls.add('flush'); },
+      connectivity: Stream<List<ConnectivityResult>>.empty(),
+      scheduleTimers: false,
+    );
+    live.add(controller);
+    await controller.attach(_shift(cutoff: DateTime.now().toUtc().add(const Duration(hours: 8))));
+    await controller.endShiftFlow();
+    expect(calls, ['flush', 'end']);
+    expect(controller.isCollecting, isFalse);
+    await controller.dispose();
+    live.remove(controller);
+  });
+
+  test('retry after failed upload does not duplicate the local point', () async {
+    final store = MemoryLocationStore();
+    final repo = _FlakySyncRepo();
+    final seq = OfficialSlot.sequence(OfficialSlot.floorUtc(DateTime.utc(2026, 9, 2, 8, 0)));
+    await store.insert(LocalLocationPoint(
+      shiftId: 1,
+      latitude: 32,
+      longitude: 44,
+      capturedAtUtc: DateTime.utc(2026, 9, 2, 8, 0),
+      deviceSequence: seq,
+    ));
+    expect(await LocationSyncEngine(store, repo).sync(1), isFalse);
+    expect(await store.pendingCount(), 1);
+    expect(await LocationSyncEngine(store, repo).sync(1), isTrue);
+    expect(store.points, hasLength(1));
+    expect(store.points.single.syncStatus, 'Synced');
+    expect(repo.uploads, 2);
+  });
+
+  test('rejected batch stays pending for retry', () async {
+    final store = MemoryLocationStore();
+    final repo = _RejectSyncRepo();
+    await store.insert(LocalLocationPoint(
+      shiftId: 1,
+      latitude: 32,
+      longitude: 44,
+      capturedAtUtc: DateTime.now().toUtc(),
+      deviceSequence: 1,
+    ));
+    expect(await LocationSyncEngine(store, repo).sync(1), isFalse);
+    expect(store.points.single.syncStatus, isNot('Synced'));
+    expect(await store.pendingCount(), 1);
   });
 
   test('official slots are 10 minutes and catch-up fills gaps', () {
@@ -290,5 +391,33 @@ class _FailSyncRepo extends MockSalesRepository {
   @override
   Future<LocationBatchResult> uploadLocationBatch(int shiftId, List<LocalLocationPoint> points) async {
     throw Exception('offline');
+  }
+}
+
+class _RejectSyncRepo extends MockSalesRepository {
+  @override
+  Future<LocationBatchResult> uploadLocationBatch(int shiftId, List<LocalLocationPoint> points) async {
+    return LocationBatchResult(rejected: points.length);
+  }
+}
+
+class _FlakySyncRepo extends MockSalesRepository {
+  int uploads = 0;
+
+  @override
+  Future<LocationBatchResult> uploadLocationBatch(int shiftId, List<LocalLocationPoint> points) async {
+    uploads++;
+    if (uploads == 1) throw Exception('offline');
+    return LocationBatchResult(accepted: points.length);
+  }
+}
+
+class _OrderedEndRepo extends MockSalesRepository {
+  _OrderedEndRepo(this.calls);
+  final List<String> calls;
+
+  @override
+  Future<void> endShift() async {
+    calls.add('end');
   }
 }

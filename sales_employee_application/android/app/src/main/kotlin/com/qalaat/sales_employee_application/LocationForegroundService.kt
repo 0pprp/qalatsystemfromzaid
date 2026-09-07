@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.database.sqlite.SQLiteDatabase
@@ -12,6 +13,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationCallback
@@ -19,14 +22,18 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LocationForegroundService : Service() {
     private val client by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private val handler = Handler(Looper.getMainLooper())
+    private val flushing = AtomicBoolean(false)
     private var db: SQLiteDatabase? = null
     private var shiftId: Int = 0
     private var cutoffAtUtcMs: Long = 0
@@ -38,11 +45,13 @@ class LocationForegroundService : Service() {
     private var lastLocation: Location? = null
     private var lastOfficialAtMs: Long = 0
     private var lastGpsAvailable: Boolean? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
-    private val cutoffStop = Runnable { stopCollecting() }
+    private val cutoffStop = Runnable { stopCollecting(flush = true) }
     private val officialTick = object : Runnable {
         override fun run() {
             persistDueOfficialPoints()
+            requestFreshFix()
             if (running) {
                 scheduleNextOfficialTick()
             }
@@ -60,10 +69,15 @@ class LocationForegroundService : Service() {
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             if (System.currentTimeMillis() >= cutoffAtUtcMs) {
-                stopCollecting()
+                stopCollecting(flush = true)
                 return
             }
             val loc = result.lastLocation ?: return
+            log(
+                "LOCATION_RECEIVED lat=${loc.latitude} lng=${loc.longitude} accuracy=${
+                    if (loc.hasAccuracy()) loc.accuracy else -1
+                }",
+            )
             if (!isUsable(loc)) return
             lastLocation = loc
             persistLastFix(loc)
@@ -81,34 +95,25 @@ class LocationForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        openDb()
+        if (intent?.action == ACTION_STOP || intent?.action == ACTION_FLUSH_STOP) {
             running = false
             handler.removeCallbacks(cutoffStop)
             handler.removeCallbacks(officialTick)
             handler.removeCallbacks(syncFlush)
-            stopUpdates()
-            flushPendingToServer()
-            stopSelf()
+            persistDueOfficialPoints()
+            Thread {
+                flushPendingToServer()
+                handler.post {
+                    stopUpdates()
+                    stopForegroundCompat()
+                    stopSelf()
+                    log("SERVICE_STOPPED")
+                }
+            }.start()
             return START_NOT_STICKY
         }
-        openDb()
-        if (intent != null && intent.hasExtra(EXTRA_SHIFT_ID)) {
-            shiftId = intent.getIntExtra(EXTRA_SHIFT_ID, 0)
-            cutoffAtUtcMs = intent.getLongExtra(EXTRA_CUTOFF, 0L)
-            shiftStartedAtUtcMs = intent.getLongExtra(EXTRA_STARTED_AT, 0L)
-            intervalMs = intent.getLongExtra(EXTRA_INTERVAL, 30_000).coerceAtLeast(5_000)
-            officialIntervalMs = intent.getLongExtra(EXTRA_OFFICIAL_INTERVAL, 600_000).coerceAtLeast(60_000)
-            apiBase = intent.getStringExtra(EXTRA_API_BASE) ?: ""
-            token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
-        } else {
-            shiftId = readMetaInt("active_shift_id")
-            cutoffAtUtcMs = readMetaLong("cutoff_at_utc_ms")
-            shiftStartedAtUtcMs = readMetaLong("shift_started_at_utc_ms")
-            intervalMs = readMetaLong("interval_ms").takeIf { it > 0 } ?: 30_000
-            officialIntervalMs = readMetaLong("official_interval_ms").takeIf { it > 0 } ?: 600_000
-            apiBase = readMeta("api_base") ?: ""
-            token = readMeta("api_token") ?: ""
-        }
+        loadSession(intent)
         if (cutoffAtUtcMs <= 0L) {
             cutoffAtUtcMs = defaultCutoffUtcMs()
         }
@@ -117,10 +122,13 @@ class LocationForegroundService : Service() {
         persistSession()
         startForegroundNotification()
         if (shiftId <= 0 || System.currentTimeMillis() >= cutoffAtUtcMs) {
-            stopCollecting()
+            log("SERVICE_STOPPED reason=no-active-shift shiftId=$shiftId")
+            stopCollecting(flush = false)
             return START_NOT_STICKY
         }
         running = true
+        log("SERVICE_STARTED shiftId=$shiftId officialIntervalMs=$officialIntervalMs")
+        log("SHIFT_ACTIVE shiftId=$shiftId startedAtUtcMs=$shiftStartedAtUtcMs cutoffAtUtcMs=$cutoffAtUtcMs")
         startUpdates()
         seedLastLocation()
         handler.removeCallbacks(cutoffStop)
@@ -136,37 +144,56 @@ class LocationForegroundService : Service() {
         return START_REDELIVER_INTENT
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        log("TASK_REMOVED keep running")
+    }
+
     override fun onDestroy() {
         handler.removeCallbacks(cutoffStop)
         handler.removeCallbacks(officialTick)
         handler.removeCallbacks(syncFlush)
-        flushPendingToServer()
         stopUpdates()
         db?.close()
+        db = null
         running = false
+        releaseWakeLock()
+        log("SERVICE_STOPPED")
         super.onDestroy()
     }
 
-    private fun stopCollecting() {
+    private fun stopCollecting(flush: Boolean) {
         running = false
         handler.removeCallbacks(cutoffStop)
         handler.removeCallbacks(officialTick)
         handler.removeCallbacks(syncFlush)
-        flushPendingToServer()
+        if (flush) {
+            persistDueOfficialPoints()
+            Thread { flushPendingToServer() }.start()
+        }
         stopUpdates()
+        stopForegroundCompat()
         stopSelf()
+    }
+
+    private fun stopForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
     }
 
     private fun startForegroundNotification() {
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Ø§Ù„Ø¯ÙˆØ§Ù…", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL_ID, "الدوام", NotificationManager.IMPORTANCE_LOW),
             )
         }
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Ù‚Ù„Ø¹Ø© Ø§Ù„Ø¶Ù…Ø§Ù†")
-            .setContentText("Ø§Ù„Ø¯ÙˆØ§Ù… ÙØ¹Ø§Ù„")
+            .setContentTitle("قلعة الضمان")
+            .setContentText("الدوام فعال")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
             .setSilent(true)
@@ -186,12 +213,14 @@ class LocationForegroundService : Service() {
             .build()
         try {
             client.requestLocationUpdates(request, callback, Looper.getMainLooper())
-        } catch (_: SecurityException) {
+        } catch (e: SecurityException) {
+            log("UPLOAD_FAILED status=permission error=${e.message}")
             stopSelf()
         }
     }
 
     private fun seedLastLocation() {
+        requestFreshFix()
         try {
             client.lastLocation.addOnSuccessListener { loc ->
                 if (!running) return@addOnSuccessListener
@@ -205,6 +234,26 @@ class LocationForegroundService : Service() {
         }
     }
 
+    private fun requestFreshFix() {
+        try {
+            client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, com.google.android.gms.tasks.CancellationTokenSource().token)
+                .addOnSuccessListener { loc ->
+                    if (!running) return@addOnSuccessListener
+                    if (loc != null && isUsable(loc)) {
+                        log(
+                            "LOCATION_RECEIVED lat=${loc.latitude} lng=${loc.longitude} accuracy=${
+                                if (loc.hasAccuracy()) loc.accuracy else -1
+                            }",
+                        )
+                        lastLocation = loc
+                        persistLastFix(loc)
+                        persistDueOfficialPoints()
+                    }
+                }
+        } catch (_: Exception) {
+        }
+    }
+
     private fun stopUpdates() {
         try {
             client.removeLocationUpdates(callback)
@@ -213,7 +262,12 @@ class LocationForegroundService : Service() {
     }
 
     private fun openDb() {
-        db = openOrCreateDatabase("sales_tracking.db", MODE_PRIVATE, null)
+        if (db?.isOpen == true) return
+        val file = getDatabasePath(DB_NAME)
+        file.parentFile?.mkdirs()
+        db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        db?.enableWriteAheadLogging()
+        db?.execSQL("PRAGMA busy_timeout=5000")
         db?.execSQL(
             """CREATE TABLE IF NOT EXISTS local_location_points (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -228,7 +282,7 @@ class LocationForegroundService : Service() {
                 sync_status TEXT NOT NULL,
                 retry_count INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(shift_id, device_sequence)
-            )"""
+            )""",
         )
         db?.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS ux_local_points_slot ON local_location_points(shift_id, captured_at_utc)")
         db?.execSQL("CREATE TABLE IF NOT EXISTS tracking_meta (key TEXT PRIMARY KEY, value TEXT)")
@@ -239,32 +293,36 @@ class LocationForegroundService : Service() {
                 event_type TEXT NOT NULL,
                 occurred_at_utc TEXT NOT NULL,
                 sync_status TEXT NOT NULL
-            )"""
+            )""",
         )
     }
 
-    private fun nextSequence(): Long {
-        val key = "seq_$shiftId"
-        val cursor = db?.rawQuery("SELECT value FROM tracking_meta WHERE key = ?", arrayOf(key))
-        var current = 0L
-        if (cursor != null && cursor.moveToFirst()) {
-            current = cursor.getString(0)?.toLongOrNull() ?: 0L
+    private fun loadSession(intent: Intent?) {
+        if (intent != null && intent.hasExtra(EXTRA_SHIFT_ID)) {
+            shiftId = intent.getIntExtra(EXTRA_SHIFT_ID, 0)
+            cutoffAtUtcMs = intent.getLongExtra(EXTRA_CUTOFF, 0L)
+            shiftStartedAtUtcMs = intent.getLongExtra(EXTRA_STARTED_AT, 0L)
+            intervalMs = intent.getLongExtra(EXTRA_INTERVAL, 30_000).coerceAtLeast(5_000)
+            officialIntervalMs = intent.getLongExtra(EXTRA_OFFICIAL_INTERVAL, 600_000).coerceAtLeast(5_000)
+            apiBase = normalizeApiBase(intent.getStringExtra(EXTRA_API_BASE) ?: "")
+            token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
+        } else {
+            shiftId = readMetaInt("active_shift_id")
+            cutoffAtUtcMs = readMetaLong("cutoff_at_utc_ms")
+            shiftStartedAtUtcMs = readMetaLong("shift_started_at_utc_ms")
+            intervalMs = readMetaLong("interval_ms").takeIf { it > 0 } ?: 30_000
+            officialIntervalMs = readMetaLong("official_interval_ms").takeIf { it > 0 } ?: 600_000
+            apiBase = normalizeApiBase(readMeta("api_base") ?: "")
+            token = readMeta("api_token") ?: ""
         }
-        cursor?.close()
-        val next = current + 1
-        db?.execSQL(
-            "INSERT OR REPLACE INTO tracking_meta(key, value) VALUES (?, ?)",
-            arrayOf(key, next.toString())
-        )
-        return next
     }
 
     private fun persistDueOfficialPoints() {
-        if (!running || shiftId <= 0) return
+        if (shiftId <= 0) return
         val loc = lastLocation ?: return
         val now = System.currentTimeMillis()
         if (now >= cutoffAtUtcMs) {
-            stopCollecting()
+            if (running) stopCollecting(flush = true)
             return
         }
         val start = if (shiftStartedAtUtcMs > 0L) shiftStartedAtUtcMs else now
@@ -280,14 +338,21 @@ class LocationForegroundService : Service() {
         var latest = last
         var inserted = false
         while (cursor <= now && cursor < cutoffAtUtcMs) {
-            insertOfficialPoint(loc, cursor)
+            if (insertOfficialPoint(loc, cursor)) {
+                inserted = true
+            }
             latest = cursor
-            inserted = true
             cursor += officialIntervalMs
         }
-        if (inserted) {
+        if (latest > lastOfficialAtMs) {
             lastOfficialAtMs = latest
             writeMeta(officialMetaKey(), latest.toString())
+        } else if (inserted) {
+            lastOfficialAtMs = latest
+            writeMeta(officialMetaKey(), latest.toString())
+        }
+        if (inserted) {
+            Thread { flushPendingToServer() }.start()
         }
     }
 
@@ -297,11 +362,15 @@ class LocationForegroundService : Service() {
         val now = System.currentTimeMillis()
         val last = if (lastOfficialAtMs > 0L) floorSlotUtcMs(lastOfficialAtMs) else floorSlotUtcMs(now)
         val next = last + officialIntervalMs
-        val delay = (next - now).coerceIn(1_000L, officialIntervalMs.coerceAtLeast(60_000L))
+        val delay = (next - now).coerceIn(1_000L, officialIntervalMs.coerceAtLeast(5_000L))
+        log("NEXT_CAPTURE delayMs=$delay nextAtMs=$next intervalMs=$officialIntervalMs")
         handler.postDelayed(officialTick, delay)
     }
 
     private fun floorSlotUtcMs(epochMs: Long): Long {
+        if (officialIntervalMs != 600_000L) {
+            return (epochMs / officialIntervalMs) * officialIntervalMs
+        }
         val cal = java.util.Calendar.getInstance(TimeZone.getTimeZone("Asia/Baghdad"))
         cal.timeInMillis = epochMs
         val minute = cal.get(java.util.Calendar.MINUTE)
@@ -313,26 +382,33 @@ class LocationForegroundService : Service() {
 
     private fun slotSequence(slotUtcMs: Long): Long = slotUtcMs / officialIntervalMs
 
-    private fun insertOfficialPoint(loc: Location, slotUtcMs: Long) {
+    private fun insertOfficialPoint(loc: Location, slotUtcMs: Long): Boolean {
         val seq = slotSequence(slotUtcMs)
         val captured = utcIso(slotUtcMs)
         val actual = utcIso(loc.time.takeIf { it > 0 } ?: System.currentTimeMillis())
-        db?.execSQL(
-            """INSERT OR IGNORE INTO local_location_points
-                (shift_id, latitude, longitude, accuracy, speed, heading, captured_at_utc, device_sequence, sync_status, retry_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 0)""",
-            arrayOf<Any?>(
-                shiftId,
-                loc.latitude,
-                loc.longitude,
-                if (loc.hasAccuracy()) loc.accuracy else null,
-                if (loc.hasSpeed()) loc.speed else null,
-                if (loc.hasBearing()) loc.bearing else null,
-                captured,
-                seq
-            )
-        )
+        val values = ContentValues()
+        values.put("shift_id", shiftId)
+        values.put("latitude", loc.latitude)
+        values.put("longitude", loc.longitude)
+        if (loc.hasAccuracy()) values.put("accuracy", loc.accuracy.toDouble())
+        if (loc.hasSpeed()) values.put("speed", loc.speed.toDouble())
+        if (loc.hasBearing()) values.put("heading", loc.bearing.toDouble())
+        values.put("captured_at_utc", captured)
+        values.put("device_sequence", seq)
+        values.put("sync_status", "Pending")
+        values.put("retry_count", 0)
+        val id = db?.insertWithOnConflict(
+            "local_location_points",
+            null,
+            values,
+            SQLiteDatabase.CONFLICT_IGNORE,
+        ) ?: -1L
         writeMeta("actual_captured_${shiftId}_$seq", actual)
+        if (id > 0L) {
+            log("POINT_SAVED localId=$id seq=$seq captured=$captured lat=${loc.latitude} lng=${loc.longitude}")
+            return true
+        }
+        return false
     }
 
     private fun isUsable(loc: Location): Boolean {
@@ -368,6 +444,7 @@ class LocationForegroundService : Service() {
         writeMeta("official_interval_ms", officialIntervalMs.toString())
         if (apiBase.isNotEmpty()) writeMeta("api_base", apiBase)
         if (token.isNotEmpty()) writeMeta("api_token", token)
+        writeMeta("shift_active", if (shiftId > 0) "1" else "0")
     }
 
     private fun persistLastFix(loc: Location) {
@@ -393,7 +470,7 @@ class LocationForegroundService : Service() {
     private fun insertEvent(type: String) {
         db?.execSQL(
             "INSERT INTO local_tracking_events(shift_id, event_type, occurred_at_utc, sync_status) VALUES (?, ?, ?, 'Pending')",
-            arrayOf<Any?>(shiftId, type, utcIso(System.currentTimeMillis()))
+            arrayOf<Any?>(shiftId, type, utcIso(System.currentTimeMillis())),
         )
     }
 
@@ -421,63 +498,144 @@ class LocationForegroundService : Service() {
     }
 
     private fun flushPendingToServer() {
-        val base = (if (apiBase.isNotEmpty()) apiBase else readMeta("api_base") ?: "").trim()
-        val auth = (if (token.isNotEmpty()) token else readMeta("api_token") ?: "").trim()
-        val sid = if (shiftId > 0) shiftId else readMetaInt("active_shift_id")
-        if (base.isEmpty() || auth.isEmpty() || sid <= 0 || db == null) return
-        val cursor = db?.rawQuery(
-            "SELECT latitude, longitude, accuracy, speed, heading, captured_at_utc, device_sequence FROM local_location_points WHERE shift_id = ? AND sync_status IN ('Pending','Failed') ORDER BY device_sequence ASC LIMIT 150",
-            arrayOf(sid.toString())
-        ) ?: return
-        val points = org.json.JSONArray()
-        val seqs = mutableListOf<Long>()
-        while (cursor.moveToNext()) {
-            val seq = cursor.getLong(6)
-            seqs.add(seq)
-            val obj = org.json.JSONObject()
-            obj.put("latitude", cursor.getDouble(0))
-            obj.put("longitude", cursor.getDouble(1))
-            if (!cursor.isNull(2)) obj.put("accuracy", cursor.getDouble(2))
-            if (!cursor.isNull(3)) obj.put("speed", cursor.getDouble(3))
-            if (!cursor.isNull(4)) obj.put("heading", cursor.getDouble(4))
-            obj.put("capturedAtUtc", cursor.getString(5))
-            obj.put("deviceSequence", seq)
-            points.put(obj)
-        }
-        cursor.close()
-        if (points.length() == 0) return
-        val body = org.json.JSONObject()
-        body.put("shiftId", sid)
-        body.put("points", points)
+        if (!flushing.compareAndSet(false, true)) return
+        acquireWakeLock()
         try {
-            val url = java.net.URL(base.trimEnd('/') + "/sales/location/batch")
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 15000
-            conn.readTimeout = 20000
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("Authorization", "Bearer $auth")
-            conn.doOutput = true
-            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            conn.disconnect()
-            if (code in 200..299) {
-                val placeholders = seqs.joinToString(",") { "?" }
-                db?.execSQL(
-                    "UPDATE local_location_points SET sync_status = 'Synced' WHERE shift_id = ? AND device_sequence IN ($placeholders)",
-                    buildList<Any?> {
-                        add(sid)
-                        seqs.forEach { add(it) }
-                    }.toTypedArray()
-                )
+            val base = normalizeApiBase(if (apiBase.isNotEmpty()) apiBase else readMeta("api_base") ?: "")
+            val auth = (if (token.isNotEmpty()) token else readMeta("api_token") ?: "").trim()
+            val sid = if (shiftId > 0) shiftId else readMetaInt("active_shift_id")
+            if (base.isEmpty() || auth.isEmpty() || sid <= 0 || db == null) {
+                log("UPLOAD_FAILED status=missing-config baseEmpty=${base.isEmpty()} tokenEmpty=${auth.isEmpty()} shiftId=$sid")
+                return
             }
+            val cursor = db?.rawQuery(
+                "SELECT id, latitude, longitude, accuracy, speed, heading, captured_at_utc, device_sequence FROM local_location_points WHERE shift_id = ? AND sync_status IN ('Pending','Failed','Syncing') ORDER BY device_sequence ASC LIMIT 150",
+                arrayOf(sid.toString()),
+            ) ?: return
+            val points = JSONArray()
+            val seqs = mutableListOf<Long>()
+            while (cursor.moveToNext()) {
+                val seq = cursor.getLong(7)
+                seqs.add(seq)
+                val obj = JSONObject()
+                obj.put("latitude", cursor.getDouble(1))
+                obj.put("longitude", cursor.getDouble(2))
+                if (!cursor.isNull(3)) obj.put("accuracy", cursor.getDouble(3))
+                if (!cursor.isNull(4)) obj.put("speed", cursor.getDouble(4))
+                if (!cursor.isNull(5)) obj.put("heading", cursor.getDouble(5))
+                obj.put("capturedAtUtc", cursor.getString(6))
+                obj.put("deviceSequence", seq)
+                obj.put("isOfficial", true)
+                points.put(obj)
+            }
+            cursor.close()
+            if (points.length() == 0) return
+            val body = JSONObject()
+            body.put("shiftId", sid)
+            body.put("points", points)
+            val url = java.net.URL(base.trimEnd('/') + "/sales/location/batch")
+            log("UPLOAD_START count=${points.length()} url=$url")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            try {
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 15000
+                conn.readTimeout = 20000
+                conn.useCaches = false
+                conn.instanceFollowRedirects = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Accept", "application/json")
+                conn.setRequestProperty("Authorization", "Bearer $auth")
+                conn.doOutput = true
+                val payload = body.toString().toByteArray(Charsets.UTF_8)
+                conn.setFixedLengthStreamingMode(payload.size)
+                conn.outputStream.use { it.write(payload) }
+                val code = conn.responseCode
+                val text = try {
+                    val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                    stream?.bufferedReader()?.readText() ?: ""
+                } catch (_: Exception) {
+                    ""
+                }
+                if (code in 200..299) {
+                    val parsed = parseBatchResult(text)
+                    val keepPending = parsed != null && parsed.accepted == 0 && parsed.duplicates == 0 && parsed.rejected > 0
+                    if (keepPending) {
+                        markStatus(sid, seqs, "Failed")
+                        log("UPLOAD_FAILED status=$code error=all-rejected rejected=${parsed.rejected}")
+                    } else {
+                        markStatus(sid, seqs, "Synced")
+                        log("UPLOAD_SUCCESS accepted=${parsed?.accepted ?: "?"} duplicates=${parsed?.duplicates ?: "?"} rejected=${parsed?.rejected ?: "?"}")
+                    }
+                } else {
+                    markStatus(sid, seqs, "Failed", incrementRetry = true)
+                    log("UPLOAD_FAILED status=$code error=${text.take(240)}")
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            log("UPLOAD_FAILED status=exception error=${e.javaClass.simpleName}:${e.message}")
+        } finally {
+            flushing.set(false)
+            releaseWakeLock()
+        }
+    }
+
+    private fun markStatus(shiftId: Int, seqs: List<Long>, status: String, incrementRetry: Boolean = false) {
+        if (seqs.isEmpty()) return
+        val placeholders = seqs.joinToString(",") { "?" }
+        val sql = if (incrementRetry) {
+            "UPDATE local_location_points SET sync_status = ?, retry_count = retry_count + 1 WHERE shift_id = ? AND device_sequence IN ($placeholders)"
+        } else {
+            "UPDATE local_location_points SET sync_status = ? WHERE shift_id = ? AND device_sequence IN ($placeholders)"
+        }
+        db?.execSQL(
+            sql,
+            buildList<Any?> {
+                add(status)
+                add(shiftId)
+                seqs.forEach { add(it) }
+            }.toTypedArray(),
+        )
+    }
+
+    private data class BatchResult(val accepted: Int, val duplicates: Int, val rejected: Int)
+
+    private fun parseBatchResult(text: String): BatchResult? {
+        if (text.isBlank()) return null
+        return try {
+            val obj = JSONObject(text)
+            BatchResult(
+                accepted = obj.optInt("accepted", obj.optInt("Accepted")),
+                duplicates = obj.optInt("duplicates", obj.optInt("Duplicates")),
+                rejected = obj.optInt("rejected", obj.optInt("Rejected")),
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "QalaaTracking:flush").also {
+            it.setReferenceCounted(false)
+            it.acquire(30_000)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
         } catch (_: Exception) {
         }
     }
 
     companion object {
+        const val TAG = "QalaaTracking"
+        const val DB_NAME = "sales_tracking.db"
         const val ACTION_STOP = "com.qalaat.sales_employee_application.STOP_TRACKING"
+        const val ACTION_FLUSH_STOP = "com.qalaat.sales_employee_application.FLUSH_STOP_TRACKING"
         const val EXTRA_SHIFT_ID = "shiftId"
         const val EXTRA_CUTOFF = "cutoffAtUtcMs"
         const val EXTRA_INTERVAL = "intervalMs"
@@ -490,7 +648,20 @@ class LocationForegroundService : Service() {
         const val CHANNEL_ID = "sales_shift"
         const val NOTIFICATION_ID = 4101
         @Volatile var running: Boolean = false
+
+        fun log(message: String) {
+            Log.i(TAG, message)
+        }
+
+        fun normalizeApiBase(raw: String): String {
+            var value = raw.trim().replace('\\', '/')
+            if (value.isEmpty()) return value
+            while (value.contains("/api/api")) {
+                value = value.replace("/api/api", "/api")
+            }
+            if (!value.endsWith("/")) value = "$value/"
+            if (value.endsWith(":8080/")) value = "${value}api/"
+            return value
+        }
     }
 }
-
-

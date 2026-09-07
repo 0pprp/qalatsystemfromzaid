@@ -29,9 +29,13 @@ class LocationSyncEngine {
         }
         await _repo.recordTrackingEvent(shiftId, 'SYNC_STARTED');
         final seqs = [for (final p in batch) p.deviceSequence];
-        await _store.markStatus(seqs, shiftId, 'Syncing');
         try {
-          await _repo.uploadLocationBatch(shiftId, batch);
+          final result = await _repo.uploadLocationBatch(shiftId, batch);
+          if (result.allRejected) {
+            await _store.markFailed(seqs, shiftId);
+            await _repo.recordTrackingEvent(shiftId, 'SYNC_FAILED');
+            return false;
+          }
           await _store.markStatus(seqs, shiftId, 'Synced');
           await _repo.recordTrackingEvent(shiftId, 'SYNC_COMPLETED');
         } catch (_) {

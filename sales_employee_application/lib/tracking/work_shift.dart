@@ -138,9 +138,36 @@ class LocationBatchResult {
   final int duplicates;
   final int rejected;
 
+  bool get allRejected => accepted == 0 && duplicates == 0 && rejected > 0;
+
   factory LocationBatchResult.fromJson(Map<String, dynamic> json) => LocationBatchResult(
-        accepted: int.tryParse('${json['accepted'] ?? 0}') ?? 0,
-        duplicates: int.tryParse('${json['duplicates'] ?? 0}') ?? 0,
-        rejected: int.tryParse('${json['rejected'] ?? 0}') ?? 0,
+        accepted: int.tryParse('${json['accepted'] ?? json['Accepted'] ?? 0}') ?? 0,
+        duplicates: int.tryParse('${json['duplicates'] ?? json['Duplicates'] ?? 0}') ?? 0,
+        rejected: int.tryParse('${json['rejected'] ?? json['Rejected'] ?? 0}') ?? 0,
       );
+}
+
+class TrackingShiftPolicy {
+  static WorkShift? parseLocal(Map<String, dynamic>? json) {
+    if (json == null || json.isEmpty) return null;
+    try {
+      final shift = WorkShift.fromJson(json);
+      if (shift.shiftId <= 0) return null;
+      return shift;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Native FGS must keep running if the remote lookup failed (offline / 5xx).
+  /// Stop only after the user ended the shift, or the server says there is no active shift.
+  static bool shouldStopNative({
+    required bool gpsStoppedByUser,
+    required bool remoteLookupFailed,
+    WorkShift? remoteShift,
+  }) {
+    if (gpsStoppedByUser) return true;
+    if (remoteLookupFailed) return false;
+    return remoteShift == null || !remoteShift.isActive;
+  }
 }

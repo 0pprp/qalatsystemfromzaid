@@ -32,8 +32,11 @@ class MainActivity : FlutterActivity() {
                         intent.putExtra(LocationForegroundService.EXTRA_API_BASE, call.argument<String>("apiBase") ?: "")
                         intent.putExtra(LocationForegroundService.EXTRA_TOKEN, call.argument<String>("token") ?: "")
                         try {
+                            LocationForegroundService.log("SERVICE_STARTED invoke startForegroundService")
                             android.util.Log.d("SHIFT START", "startForegroundService called")
                             startForegroundService(intent)
+                            android.util.Log.d("SHIFT START", "startForegroundService returned")
+                            result.success(true)
                             android.util.Log.d("SHIFT START", "startForegroundService returned")
                             result.success(true)
                         } catch (e: Exception) {
@@ -44,6 +47,12 @@ class MainActivity : FlutterActivity() {
                     "stop" -> {
                         val intent = Intent(this, LocationForegroundService::class.java)
                         intent.action = LocationForegroundService.ACTION_STOP
+                        startService(intent)
+                        result.success(true)
+                    }
+                    "flushAndStop" -> {
+                        val intent = Intent(this, LocationForegroundService::class.java)
+                        intent.action = LocationForegroundService.ACTION_FLUSH_STOP
                         startService(intent)
                         result.success(true)
                     }

@@ -263,7 +263,8 @@ namespace BE_Company.Sales.Services
             }
 
             var captured = DateTime.SpecifyKind(point.CapturedAtUtc, DateTimeKind.Utc);
-            if (captured < shift.StartedAtUtc.AddMinutes(-5))
+            var firstOfficial = OfficialSlot.FloorUtc(shift.StartedAtUtc);
+            if (captured < firstOfficial && captured < shift.StartedAtUtc.AddMinutes(-5))
             {
                 return false;
             }

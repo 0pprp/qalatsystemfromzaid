@@ -326,6 +326,22 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
+        public async Task FirstOfficialSlot_BeforeShiftStart_IsAccepted()
+        {
+            var (repo, clock, shift, ingest) = await Ready();
+            shift.StartedAtUtc = new DateTime(2026, 9, 2, 8, 7, 0, DateTimeKind.Utc);
+            var firstSlot = OfficialSlot.FloorUtc(shift.StartedAtUtc);
+            Assert.True(firstSlot < shift.StartedAtUtc.AddMinutes(-5));
+            var result = await ingest.IngestBatchAsync(Id(), new()
+            {
+                ShiftId = shift.ShiftId,
+                Points = [ValidPoint(firstSlot)]
+            }, CancellationToken.None);
+            Assert.Equal(1, result.Accepted);
+            Assert.Equal(0, result.Rejected);
+        }
+
+        [Fact]
         public void Employee_CannotReadGps_NoGetLocationEndpoint()
         {
             var gets = typeof(SalesController).GetMethods()

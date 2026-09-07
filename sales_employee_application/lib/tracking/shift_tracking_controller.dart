@@ -36,6 +36,7 @@ class ShiftTrackingController {
     PermissionFn? requestPermission,
     Future<bool> Function(WorkShift shift)? startNative,
     Future<void> Function()? stopNative,
+    Future<void> Function()? flushThenStopNative,
     Stream<List<ConnectivityResult>>? connectivity,
     this.scheduleTimers = true,
   })  : _repo = repository ?? SalesRepositoryFactory.instance,
@@ -48,6 +49,7 @@ class ShiftTrackingController {
                   startedAtUtc: shift.startedAtUtc,
                 )),
         _stopNative = stopNative ?? TrackingChannel.stop,
+        _flushThenStopNative = flushThenStopNative ?? stopNative ?? TrackingChannel.flushThenStop,
         _connectivity = connectivity ?? Connectivity().onConnectivityChanged {
     _sync = LocationSyncEngine(_store, _repo);
   }
@@ -57,6 +59,7 @@ class ShiftTrackingController {
   final PermissionFn _requestPermission;
   final Future<bool> Function(WorkShift shift) _startNative;
   final Future<void> Function() _stopNative;
+  final Future<void> Function() _flushThenStopNative;
   final Stream<List<ConnectivityResult>> _connectivity;
   final bool scheduleTimers;
   late final LocationSyncEngine _sync;
@@ -215,8 +218,18 @@ class ShiftTrackingController {
       } catch (_) {}
       return;
     }
-    final current = await _repo.currentShift();
-    if (current == null || !current.isActive) {
+    WorkShift? current;
+    var remoteLookupFailed = false;
+    try {
+      current = await _repo.currentShift();
+    } catch (_) {
+      remoteLookupFailed = true;
+    }
+    if (TrackingShiftPolicy.shouldStopNative(
+      gpsStoppedByUser: false,
+      remoteLookupFailed: remoteLookupFailed,
+      remoteShift: current,
+    )) {
       _collecting = false;
       activeShift = null;
       try {
@@ -225,10 +238,14 @@ class ShiftTrackingController {
       await _stopNative();
       return;
     }
+    final shift = current ?? TrackingShiftPolicy.parseLocal(Session.shift);
+    if (shift == null || !shift.isActive) {
+      return;
+    }
     try {
-      await Session.saveShift(current.toJson(), current.cutoffAtUtc.toIso8601String());
+      await Session.saveShift(shift.toJson(), shift.cutoffAtUtc.toIso8601String());
     } catch (_) {}
-    await attach(current);
+    await attach(shift);
   }
 
   Future<void> _onCutoff() async {
@@ -248,15 +265,23 @@ class ShiftTrackingController {
   bool get isCollecting => _collecting;
 
   Future<void> endShiftFlow() async {
-    await _repo.endShift();
     _collecting = false;
     _syncTimer?.cancel();
     _cutoffTimer?.cancel();
     await _netSub?.cancel();
     _netSub = null;
+    await _trySync();
     try {
-      await _stopNative();
+      await _flushThenStopNative();
+    } catch (_) {
+      try {
+        await _stopNative();
+      } catch (_) {}
+    }
+    try {
+      await _trySync();
     } catch (_) {}
+    await _repo.endShift();
     activeShift = null;
     try {
       await Session.setGpsStoppedByUser(true);

@@ -1,5 +1,5 @@
 import 'package:flutter/services.dart';
-import 'package:sales_employee_application/config/app_env.dart';
+import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/geo_fix.dart';
 import 'package:sales_employee_application/services/session.dart';
 import 'package:sales_employee_application/tracking/shift_start_debug.dart';
@@ -19,10 +19,10 @@ class TrackingChannel {
         'cutoffAtUtcMs': cutoffAtUtc.toUtc().millisecondsSinceEpoch,
         'startedAtUtcMs': startedMs,
         'intervalMs': TrackingConfig.movingInterval.inMilliseconds,
-        'officialIntervalMs': TrackingConfig.officialInterval.inMilliseconds,
+        'officialIntervalMs': TrackingConfig.officialIntervalMs,
         'minDistance': TrackingConfig.minimumDistanceMeters,
         'stationaryIntervalMs': TrackingConfig.stationaryInterval.inMilliseconds,
-        'apiBase': Session.apiBase ?? AppEnv.apiBase(),
+        'apiBase': ApiClient.resolveBase(),
         'token': Session.token ?? '',
       });
       ShiftStartDebug.log('MethodChannel.invokeMethod start returned');
@@ -41,6 +41,14 @@ class TrackingChannel {
       await _channel.invokeMethod('stop');
     } on MissingPluginException {
       return;
+    }
+  }
+
+  static Future<void> flushThenStop() async {
+    try {
+      await _channel.invokeMethod('flushAndStop');
+    } on MissingPluginException {
+      await stop();
     }
   }
 

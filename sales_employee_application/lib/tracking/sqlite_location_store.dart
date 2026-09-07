@@ -42,6 +42,11 @@ CREATE TABLE IF NOT EXISTS local_tracking_events (
     _db = await openDatabase(
       p.join(dir, 'sales_tracking.db'),
       version: 1,
+      singleInstance: true,
+      onConfigure: (db) async {
+        await db.rawQuery('PRAGMA journal_mode=WAL');
+        await db.rawQuery('PRAGMA busy_timeout=5000');
+      },
       onCreate: (db, _) async {
         for (final stmt in schema.split(';').where((s) => s.trim().isNotEmpty)) {
           await db.execute(stmt);
