@@ -90,10 +90,11 @@ namespace BE_Company.Sales.Services
         {
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
-            var rows = (await connection.QueryAsync<ItemsBuyDataDTO>(new CommandDefinition(
-                "Items_GetByItemBuy",
+            var rows = (await connection.QueryAsync<ItemsGetDTO>(new CommandDefinition(
+                @"SELECT ItemID, ItemName, ItemCostDenar, ItemPriceDenar, Quantity
+                  FROM View_Items
+                  WHERE StoreID = @StoreID AND ItemState = 1",
                 new { StoreID = storeId },
-                commandType: CommandType.StoredProcedure,
                 cancellationToken: ct))).ToList();
             var q = (search ?? string.Empty).Trim();
             return rows
@@ -197,24 +198,27 @@ namespace BE_Company.Sales.Services
                     tx,
                     cancellationToken: ct));
 
-                var duplicate = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
-                    @"SELECT CASE WHEN EXISTS (
-                        SELECT 1 FROM dbo.Buys WITH (UPDLOCK, HOLDLOCK)
-                        WHERE SupplierID = @SupplierId
-                          AND SupplierInvoiceNumber = @InvoiceNumber
-                      ) THEN 1 ELSE 0 END",
-                    new
-                    {
-                        SupplierId = command.Buy.SupplierID,
-                        InvoiceNumber = command.SupplierInvoiceNumber
-                    },
-                    tx,
-                    cancellationToken: ct));
-                if (duplicate == 1)
+                if (SalesPurchaseRules.HasInvoiceNumber(command.SupplierInvoiceNumber))
                 {
-                    throw new SalesCompleteException(
-                        StatusCodes.Status409Conflict,
-                        "فاتورة الشراء هذه مسجّلة مسبقاً لنفس المورد.");
+                    var duplicate = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                        @"SELECT CASE WHEN EXISTS (
+                            SELECT 1 FROM dbo.Buys WITH (UPDLOCK, HOLDLOCK)
+                            WHERE SupplierID = @SupplierId
+                              AND SupplierInvoiceNumber = @InvoiceNumber
+                          ) THEN 1 ELSE 0 END",
+                        new
+                        {
+                            SupplierId = command.Buy.SupplierID,
+                            InvoiceNumber = command.SupplierInvoiceNumber
+                        },
+                        tx,
+                        cancellationToken: ct));
+                    if (duplicate == 1)
+                    {
+                        throw new SalesCompleteException(
+                            StatusCodes.Status409Conflict,
+                            "فاتورة الشراء هذه مسجّلة مسبقاً لنفس المورد.");
+                    }
                 }
 
                 BuysGetDTO? created;
@@ -262,7 +266,9 @@ namespace BE_Company.Sales.Services
                     new
                     {
                         BuyId = buyId,
-                        InvoiceNumber = command.SupplierInvoiceNumber,
+                        InvoiceNumber = SalesPurchaseRules.HasInvoiceNumber(command.SupplierInvoiceNumber)
+                            ? command.SupplierInvoiceNumber
+                            : null,
                         Notes = notes,
                         UserName = Trunc(command.CreatedByUserName, 100),
                         DisplayName = Trunc(command.CreatedByDisplayName, 150),
@@ -349,10 +355,10 @@ namespace BE_Company.Sales.Services
             return resolved.Value;
         }
 
-        private static SalesPurchaseItemOptionDTO MapItem(ItemsBuyDataDTO row)
+        private static SalesPurchaseItemOptionDTO MapItem(ItemsGetDTO row)
         {
-            var cost = Math.Round(row.ItemCostDenar, 0, MidpointRounding.AwayFromZero);
-            var price = Math.Round(row.ItemPriceDenar, 0, MidpointRounding.AwayFromZero);
+            var cost = Math.Round(row.ItemCostDenar ?? 0, 0, MidpointRounding.AwayFromZero);
+            var price = Math.Round(row.ItemPriceDenar ?? 0, 0, MidpointRounding.AwayFromZero);
             var name = row.ItemName ?? string.Empty;
             return new SalesPurchaseItemOptionDTO
             {
@@ -360,6 +366,7 @@ namespace BE_Company.Sales.Services
                 ItemName = name,
                 ItemCostDenar = cost,
                 ItemPriceDenar = price,
+                Quantity = row.Quantity ?? 0,
                 DisplayName = $"{name} - سعر الشراء  ({cost:N0} دع) - سعر البيع  ({price:N0} دع)"
             };
         }
@@ -367,8 +374,11 @@ namespace BE_Company.Sales.Services
         private static string BuildAuditNotes(SalesPurchaseCreateCommand command)
         {
             var extra = string.IsNullOrWhiteSpace(command.Notes) ? string.Empty : command.Notes.Trim();
+            var invoicePart = SalesPurchaseRules.HasInvoiceNumber(command.SupplierInvoiceNumber)
+                ? $" - رقم فاتورة المورد {command.SupplierInvoiceNumber}"
+                : string.Empty;
             var audit =
-                $"أُدخلت بواسطة مسؤول المبيعات {command.CreatedByDisplayName} ({command.CreatedByUserName}) - فرع {command.BranchName} - رقم فاتورة المورد {command.SupplierInvoiceNumber}";
+                $"أُدخلت بواسطة مسؤول المبيعات {command.CreatedByDisplayName} ({command.CreatedByUserName}) - فرع {command.BranchName}{invoicePart}";
             return string.IsNullOrWhiteSpace(extra) ? audit : extra + " | " + audit;
         }
 

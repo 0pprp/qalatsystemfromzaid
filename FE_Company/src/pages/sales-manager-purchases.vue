@@ -29,7 +29,6 @@ function emptyForm() {
     storeID: null,
     boxID: null,
     date: new Date().toLocaleDateString('en-CA'),
-    supplierInvoiceNumber: '',
     notes: '',
     contents: [],
     totalAmountSpent: 0,
@@ -38,7 +37,14 @@ function emptyForm() {
   }
 }
 
-const formattedNumber = num => (num ? Number(num).toLocaleString('en-US') + ' دع' : '0 دع')
+const formattedNumber = num => (num ? Number(num).toLocaleString('en-US') + ' د.ع' : '0 د.ع')
+
+function formatIq(num) {
+  const n = Number(num)
+  if (!Number.isFinite(n))
+    return '0 د.ع'
+  return `${Math.round(n).toLocaleString('en-US')} د.ع`
+}
 
 function pick(obj, ...keys) {
   if (!obj)
@@ -54,6 +60,17 @@ function pick(obj, ...keys) {
 const remainingAmount = computed(() =>
   Number(formData.value.finalTotalItemCostDenar || 0) - Number(formData.value.totalAmountSpent || 0))
 
+const selectedBox = computed(() =>
+  boxes.value.find(b => pick(b, 'boxID', 'BoxID') === formData.value.boxID) || null)
+
+const selectedBoxBalance = computed(() => {
+  if (!selectedBox.value)
+    return null
+  const raw = pick(selectedBox.value, 'amountDenar', 'AmountDenar')
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : 0
+})
+
 const isFormValid = computed(() => {
   const contentsValid = formData.value.contents.length > 0
     && formData.value.contents.every(content => content.itemID && content.quantity > 0)
@@ -61,7 +78,6 @@ const isFormValid = computed(() => {
     && formData.value.storeID
     && formData.value.boxID
     && formData.value.date
-    && String(formData.value.supplierInvoiceNumber || '').trim()
     && contentsValid
 })
 
@@ -136,12 +152,13 @@ async function onCityChange() {
   await loadRows()
 }
 
-function openAdd() {
+async function openAdd() {
   if (!requireCity())
     return
   formData.value = emptyForm()
   itemsOptions.value = []
   addDialog.value = true
+  await loadLookups()
 }
 
 function addContent() {
@@ -154,12 +171,14 @@ function addContent() {
     itemID: null,
     quantity: 1,
     itemCostDenar: 0,
+    itemPriceDenar: null,
+    quantityOnHand: null,
     totalItemCostDenar: 0,
   })
 }
 
 function itemLabel(item) {
-  return pick(item, 'displayName', 'DisplayName', 'itemName', 'ItemName') || ''
+  return pick(item, 'itemName', 'ItemName', 'displayName', 'DisplayName') || ''
 }
 
 function itemValue(item) {
@@ -173,10 +192,15 @@ function updateItemCost(index) {
   if (duplicate) {
     toast.error('تم اختيار هذا العنصر مسبقاً')
     content.itemID = null
+    content.itemPriceDenar = null
+    content.quantityOnHand = null
     return
   }
   if (selected) {
     content.itemCostDenar = Number(pick(selected, 'itemCostDenar', 'ItemCostDenar') || 0)
+    content.itemPriceDenar = Number(pick(selected, 'itemPriceDenar', 'ItemPriceDenar') ?? 0)
+    const qty = pick(selected, 'quantity', 'Quantity')
+    content.quantityOnHand = qty == null || qty === '' ? null : Number(qty)
     calculateTotalPrice(index)
   }
 }
@@ -208,7 +232,7 @@ watch(() => formData.value.supplierID, calculateTotals)
 const formattedTotalAmountSpent = computed({
   get() {
     return formData.value.totalAmountSpent !== ''
-      ? Number(formData.value.totalAmountSpent).toLocaleString('en-US') + ' دع'
+      ? Number(formData.value.totalAmountSpent).toLocaleString('en-US') + ' د.ع'
       : ''
   },
   set(value) {
@@ -219,7 +243,7 @@ const formattedTotalAmountSpent = computed({
 
 async function submitForm() {
   if (!isFormValid.value) {
-    toast.error('الرجاء ملء جميع الحقول المطلوبة بما فيها رقم فاتورة المورد')
+    toast.error('الرجاء ملء جميع الحقول المطلوبة')
     return
   }
   const boxAmount = Number(pick(
@@ -240,7 +264,7 @@ async function submitForm() {
       storeId: formData.value.storeID,
       boxId: formData.value.boxID,
       date: formData.value.date,
-      supplierInvoiceNumber: String(formData.value.supplierInvoiceNumber || '').trim(),
+      supplierInvoiceNumber: null,
       notes: formData.value.notes || '',
       totalAmountSpent: formData.value.totalAmountSpent,
       amountTotalDenar: formData.value.amountTotalDenar,
@@ -272,7 +296,7 @@ async function submitForm() {
       إدخال فاتورة شراء للمخزن
     </h4>
     <p class="text-medium-emphasis mb-4">
-      تستخدم نفس مسار المحاسب الرئيسي لإضافة الكمية إلى مخزون هذا الفرع فوراً. رقم فاتورة المورد مطلوب حتى لا تُدخل نفس الفاتورة مرتين.
+      تستخدم نفس مسار المحاسب الرئيسي لإضافة الكمية إلى مخزون هذا الفرع فوراً.
     </p>
 
     <VRow class="mb-3">
@@ -313,7 +337,7 @@ async function submitForm() {
       >
         <VTextField
           v-model="filters.textSearch"
-          label="بحث / رقم الفاتورة"
+          label="بحث"
           hide-details
         />
       </VCol>
@@ -342,7 +366,6 @@ async function submitForm() {
       <thead>
         <tr>
           <th>رقم السند</th>
-          <th>رقم فاتورة المورد</th>
           <th>المورد</th>
           <th>المواد</th>
           <th>التاريخ</th>
@@ -357,7 +380,6 @@ async function submitForm() {
           :key="pick(row, 'buyId', 'BuyId')"
         >
           <td>{{ pick(row, 'boundNumber', 'BoundNumber') || pick(row, 'buyId', 'BuyId') }}</td>
-          <td>{{ pick(row, 'supplierInvoiceNumber', 'SupplierInvoiceNumber') || '—' }}</td>
           <td>{{ pick(row, 'supplierName', 'SupplierName') }}</td>
           <td>{{ pick(row, 'itemsNames', 'ItemsNames') }}</td>
           <td>{{ pick(row, 'dateCreate', 'DateCreate') ? new Date(pick(row, 'dateCreate', 'DateCreate')).toLocaleDateString('en-CA') : '—' }}</td>
@@ -367,7 +389,7 @@ async function submitForm() {
         </tr>
         <tr v-if="!rows.length">
           <td
-            colspan="8"
+            colspan="7"
             class="text-center text-medium-emphasis"
           >
             لا توجد فواتير شراء معروضة لهذه المحافظة.
@@ -378,10 +400,11 @@ async function submitForm() {
 
     <VDialog
       v-model="addDialog"
-      max-width="1300px"
+      max-width="1080"
+      scrollable
     >
-      <VCard class="pa-2">
-        <VCardTitle class="d-flex align-center justify-space-between">
+      <VCard class="purchase-invoice-card">
+        <VCardTitle class="d-flex align-center justify-space-between px-6 pt-5">
           <span>إضافة تفاصيل فاتورة الشراء</span>
           <VBtn
             icon
@@ -391,11 +414,12 @@ async function submitForm() {
             <VIcon icon="tabler-x" />
           </VBtn>
         </VCardTitle>
-        <VCardText>
+        <VCardText class="px-6 pb-2">
           <VRow>
             <VCol
-              md="3"
               cols="12"
+              sm="6"
+              md="3"
             >
               <VLabel class="mb-2">
                 المورد
@@ -404,11 +428,13 @@ async function submitForm() {
                 v-model="formData.supplierID"
                 :items="suppliers.map(s => ({ title: pick(s, 'supplierName', 'SupplierName'), value: pick(s, 'supplierID', 'SupplierID') }))"
                 clearable
+                hide-details
               />
             </VCol>
             <VCol
-              md="3"
               cols="12"
+              sm="6"
+              md="3"
             >
               <VLabel class="mb-2">
                 المخزن
@@ -417,12 +443,14 @@ async function submitForm() {
                 v-model="formData.storeID"
                 :items="stores.map(s => ({ title: pick(s, 'storeName', 'StoreName'), value: pick(s, 'storeID', 'StoreID') }))"
                 clearable
+                hide-details
                 @update:model-value="loadItems"
               />
             </VCol>
             <VCol
-              md="3"
               cols="12"
+              sm="6"
+              md="3"
             >
               <VLabel class="mb-2">
                 الخزينة النقدية
@@ -431,11 +459,19 @@ async function submitForm() {
                 v-model="formData.boxID"
                 :items="boxes.map(b => ({ title: pick(b, 'boxName', 'BoxName'), value: pick(b, 'boxID', 'BoxID') }))"
                 clearable
+                hide-details
               />
+              <div
+                v-if="formData.boxID && selectedBoxBalance != null"
+                class="box-balance mt-2"
+              >
+                الرصيد الحالي: {{ formatIq(selectedBoxBalance) }}
+              </div>
             </VCol>
             <VCol
-              md="3"
               cols="12"
+              sm="6"
+              md="3"
             >
               <VLabel class="mb-2">
                 التاريخ
@@ -443,149 +479,215 @@ async function submitForm() {
               <AppTextField
                 v-model="formData.date"
                 type="date"
+                hide-details
               />
             </VCol>
-            <VCol
-              md="4"
-              cols="12"
-            >
-              <VLabel class="mb-2">
-                رقم فاتورة المورد
-              </VLabel>
-              <AppTextField
-                v-model="formData.supplierInvoiceNumber"
-                placeholder="رقم الفاتورة الورقية"
-              />
-            </VCol>
-            <VCol
-              md="8"
-              cols="12"
-            >
+          </VRow>
+
+          <VRow>
+            <VCol cols="12">
               <VLabel class="mb-2">
                 ملاحظات
               </VLabel>
-              <AppTextField v-model="formData.notes" />
+              <AppTextField
+                v-model="formData.notes"
+                hide-details
+              />
             </VCol>
           </VRow>
 
-          <VRow
-            v-for="(content, idx) in formData.contents"
-            :key="idx"
-          >
-            <VCol
-              md="4"
-              cols="12"
-            >
-              <VLabel class="mb-2">
-                العنصر
-              </VLabel>
-              <VAutocomplete
-                v-model="content.itemID"
-                :items="itemsOptions.map(i => ({ title: itemLabel(i), value: itemValue(i) }))"
-                clearable
-                @update:model-value="() => updateItemCost(idx)"
-              />
-            </VCol>
-            <VCol
-              md="2"
-              cols="12"
-            >
-              <VLabel class="mb-2">
-                الكمية
-              </VLabel>
-              <AppTextField
-                v-model="content.quantity"
-                type="number"
-                min="1"
-                @input="() => calculateTotalPrice(idx)"
-              />
-            </VCol>
-            <VCol
-              md="2"
-              cols="12"
-            >
-              <VLabel class="mb-2">
-                سعر الشراء
-              </VLabel>
-              <AppTextField
-                :model-value="formattedNumber(content.itemCostDenar)"
-                readonly
-              />
-            </VCol>
-            <VCol
-              md="2"
-              cols="12"
-            >
-              <VLabel class="mb-2">
-                سعر الشراء الكلي
-              </VLabel>
-              <AppTextField
-                :model-value="formattedNumber(content.totalItemCostDenar)"
-                readonly
-              />
-            </VCol>
-            <VCol
-              md="2"
-              cols="12"
-            >
+          <div class="items-section mt-6 pt-4">
+            <div class="d-flex align-center justify-space-between flex-wrap gap-3 mb-1">
+              <div class="text-subtitle-1 font-weight-medium">
+                عناصر الفاتورة
+              </div>
               <VBtn
-                color="error"
-                class="mt-7"
-                @click="formData.contents.splice(idx, 1)"
+                color="primary"
+                class="add-item-btn"
+                prepend-icon="tabler-plus"
+                :disabled="!formData.storeID"
+                @click="addContent"
               >
-                حذف العنصر
+                إضافة عنصر
               </VBtn>
-            </VCol>
-          </VRow>
+            </div>
 
-          <div class="text-end mb-4">
-            <VBtn
-              color="primary"
-              prepend-icon="tabler-plus"
-              :disabled="!formData.storeID"
-              @click="addContent"
+            <VSheet
+              v-for="(content, idx) in formData.contents"
+              :key="idx"
+              class="item-row pa-4 mt-4"
+              border
+              rounded
             >
-              إضافة عنصر
-            </VBtn>
+              <VRow dense>
+                <VCol
+                  cols="12"
+                  md="4"
+                >
+                  <VLabel class="mb-2">
+                    المادة
+                  </VLabel>
+                  <VAutocomplete
+                    v-model="content.itemID"
+                    :items="itemsOptions.map(i => ({ title: itemLabel(i), value: itemValue(i) }))"
+                    clearable
+                    hide-details
+                    @update:model-value="() => updateItemCost(idx)"
+                  />
+                  <div
+                    v-if="content.itemID"
+                    class="item-meta mt-3"
+                  >
+                    <div>سعر الشراء: {{ formatIq(content.itemCostDenar) }}</div>
+                    <div>سعر البيع: {{ formatIq(content.itemPriceDenar) }}</div>
+                    <div>المخزون الحالي: {{ content.quantityOnHand == null ? '—' : content.quantityOnHand }}</div>
+                  </div>
+                </VCol>
+                <VCol
+                  cols="6"
+                  sm="4"
+                  md="2"
+                >
+                  <VLabel class="mb-2">
+                    الكمية
+                  </VLabel>
+                  <AppTextField
+                    v-model="content.quantity"
+                    type="number"
+                    min="1"
+                    hide-details
+                    @input="() => calculateTotalPrice(idx)"
+                  />
+                </VCol>
+                <VCol
+                  cols="6"
+                  sm="4"
+                  md="2"
+                >
+                  <VLabel class="mb-2">
+                    سعر الشراء
+                  </VLabel>
+                  <AppTextField
+                    :model-value="formattedNumber(content.itemCostDenar)"
+                    readonly
+                    hide-details
+                  />
+                </VCol>
+                <VCol
+                  cols="6"
+                  sm="4"
+                  md="2"
+                >
+                  <VLabel class="mb-2">
+                    سعر البيع الحالي
+                  </VLabel>
+                  <AppTextField
+                    :model-value="content.itemID ? formattedNumber(content.itemPriceDenar) : ''"
+                    readonly
+                    hide-details
+                  />
+                </VCol>
+                <VCol
+                  cols="6"
+                  sm="4"
+                  md="2"
+                >
+                  <VLabel class="mb-2">
+                    المخزون
+                  </VLabel>
+                  <AppTextField
+                    :model-value="content.itemID && content.quantityOnHand != null ? String(content.quantityOnHand) : ''"
+                    readonly
+                    hide-details
+                  />
+                </VCol>
+                <VCol
+                  cols="6"
+                  sm="4"
+                  md="2"
+                >
+                  <VLabel class="mb-2">
+                    الإجمالي
+                  </VLabel>
+                  <AppTextField
+                    :model-value="formattedNumber(content.totalItemCostDenar)"
+                    readonly
+                    hide-details
+                  />
+                </VCol>
+              </VRow>
+              <div class="d-flex justify-start mt-3">
+                <VBtn
+                  color="error"
+                  variant="tonal"
+                  prepend-icon="tabler-trash"
+                  @click="formData.contents.splice(idx, 1)"
+                >
+                  حذف
+                </VBtn>
+              </div>
+            </VSheet>
           </div>
 
-          <VRow>
-            <VCol md="3">
+          <VRow class="mt-6">
+            <VCol
+              cols="12"
+              sm="6"
+              md="3"
+            >
               <VLabel class="mb-2">
                 إجمالي سعر الشراء الكلي
               </VLabel>
               <AppTextField
                 :model-value="formattedNumber(formData.amountTotalDenar)"
                 readonly
+                hide-details
               />
             </VCol>
-            <VCol md="3">
+            <VCol
+              cols="12"
+              sm="6"
+              md="3"
+            >
               <VLabel class="mb-2">
                 إجمالي سعر الشراء النهائي
               </VLabel>
               <AppTextField
                 :model-value="formattedNumber(formData.finalTotalItemCostDenar)"
                 readonly
+                hide-details
               />
             </VCol>
-            <VCol md="3">
+            <VCol
+              cols="12"
+              sm="6"
+              md="3"
+            >
               <VLabel class="mb-2">
                 المبلغ المصروف
               </VLabel>
-              <AppTextField v-model="formattedTotalAmountSpent" />
+              <AppTextField
+                v-model="formattedTotalAmountSpent"
+                hide-details
+              />
             </VCol>
-            <VCol md="3">
+            <VCol
+              cols="12"
+              sm="6"
+              md="3"
+            >
               <VLabel class="mb-2">
                 المبلغ المتبقي
               </VLabel>
               <AppTextField
                 :model-value="formattedNumber(remainingAmount)"
                 readonly
+                hide-details
               />
             </VCol>
           </VRow>
         </VCardText>
-        <VCardActions>
+        <VCardActions class="px-6 pb-5">
           <VSpacer />
           <VBtn @click="addDialog = false">
             إلغاء
@@ -603,3 +705,28 @@ async function submitForm() {
     </VDialog>
   </div>
 </template>
+
+<style scoped>
+.purchase-invoice-card {
+  overflow-x: hidden;
+}
+.box-balance {
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+.items-section {
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+.add-item-btn {
+  margin-block-start: 0.25rem;
+}
+.item-row {
+  background: rgba(var(--v-theme-on-surface), 0.02);
+}
+.item-meta {
+  color: rgba(var(--v-theme-on-surface), 0.68);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+</style>

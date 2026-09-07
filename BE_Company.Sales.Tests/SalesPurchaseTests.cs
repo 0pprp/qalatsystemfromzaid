@@ -128,6 +128,37 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
+        public async Task MissingSupplierInvoice_IsAllowed_AndSecondEmptyIsNotDuplicate()
+        {
+            var repo = Seed();
+            var svc = new SalesPurchaseService(repo);
+
+            await svc.CreateAsync(Manager(), ValidRequest(""), CancellationToken.None);
+            await svc.CreateAsync(Manager(), ValidRequest("   "), CancellationToken.None);
+
+            Assert.Equal(2, repo.Buys.Count);
+            Assert.All(repo.Buys, b => Assert.True(string.IsNullOrWhiteSpace(b.SupplierInvoiceNumber)));
+            Assert.Equal(5, repo.ItemStock[5]);
+            Assert.Equal(2, repo.OfficialBuyCalls);
+        }
+
+        [Fact]
+        public void PurchaseItemOption_ExposesCatalogCostSalePriceAndQuantity()
+        {
+            var dto = new SalesPurchaseItemOptionDTO
+            {
+                ItemId = 5,
+                ItemName = "ثلاجة",
+                ItemCostDenar = 850000,
+                ItemPriceDenar = 1100000,
+                Quantity = 6
+            };
+            Assert.Equal(850000, dto.ItemCostDenar);
+            Assert.Equal(1100000, dto.ItemPriceDenar);
+            Assert.Equal(6, dto.Quantity);
+        }
+
+        [Fact]
         public void InvoiceNumber_IsNormalized_AndNotMatchedByItemName()
         {
             Assert.Equal("INV-9", SalesPurchaseRules.NormalizeInvoiceNumber("  INV-9  "));
@@ -199,6 +230,11 @@ namespace BE_Company.Sales.Tests
         public Task<bool> InvoiceExistsAsync(int supplierId, string invoiceNumber, CancellationToken ct)
         {
             var normalized = SalesPurchaseRules.NormalizeInvoiceNumber(invoiceNumber);
+            if (!SalesPurchaseRules.HasInvoiceNumber(normalized))
+            {
+                return Task.FromResult(false);
+            }
+
             return Task.FromResult(Buys.Any(b =>
                 b.SupplierId == supplierId
                 && string.Equals(b.SupplierInvoiceNumber, normalized, StringComparison.OrdinalIgnoreCase)));
@@ -220,6 +256,8 @@ namespace BE_Company.Sales.Tests
                 ItemId = id,
                 ItemName = ItemNames.GetValueOrDefault(id) ?? "",
                 ItemCostDenar = ItemCosts.GetValueOrDefault(id),
+                ItemPriceDenar = ItemCosts.GetValueOrDefault(id) + 100000,
+                Quantity = ItemStock.GetValueOrDefault(id),
                 DisplayName = ItemNames.GetValueOrDefault(id) ?? ""
             }).ToList();
             return Task.FromResult(rows);
@@ -241,7 +279,7 @@ namespace BE_Company.Sales.Tests
         public Task<SalesPurchaseListItemDTO> CreateOfficialBuyAsync(SalesPurchaseCreateCommand command, CancellationToken ct)
         {
             var invoice = command.SupplierInvoiceNumber;
-            if (Buys.Any(b =>
+            if (SalesPurchaseRules.HasInvoiceNumber(invoice) && Buys.Any(b =>
                     b.SupplierId == command.Buy.SupplierID
                     && string.Equals(b.SupplierInvoiceNumber, invoice, StringComparison.OrdinalIgnoreCase)))
             {

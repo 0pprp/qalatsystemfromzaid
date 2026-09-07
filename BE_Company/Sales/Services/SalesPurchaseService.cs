@@ -52,11 +52,9 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكنك إدخال فاتورة شراء للمخزن.");
             }
 
-            var invoice = SalesPurchaseRules.NormalizeInvoiceNumber(request.SupplierInvoiceNumber);
-            if (!SalesPurchaseRules.HasInvoiceNumber(invoice))
-            {
-                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "رقم فاتورة المورد مطلوب لمنع تكرار الإدخال.");
-            }
+            var invoice = SalesPurchaseRules.HasInvoiceNumber(request.SupplierInvoiceNumber)
+                ? SalesPurchaseRules.NormalizeInvoiceNumber(request.SupplierInvoiceNumber)
+                : null;
 
             if (request.SupplierId <= 0 || request.StoreId <= 0 || request.BoxId <= 0)
             {
@@ -99,7 +97,7 @@ namespace BE_Company.Sales.Services
                 line.TotalItemCostDenar = item.ItemCostDenar * line.Quantity;
             }
 
-            if (await _purchases.InvoiceExistsAsync(request.SupplierId, invoice, ct))
+            if (invoice != null && await _purchases.InvoiceExistsAsync(request.SupplierId, invoice, ct))
             {
                 throw new SalesCompleteException(
                     StatusCodes.Status409Conflict,
