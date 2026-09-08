@@ -28,6 +28,7 @@ builder.Services.AddScoped<ICustomersRepository, CustomersRepository>();
 builder.Services.AddScoped<ICustomersSalesRepository, CustomersSalesRepository>();
 builder.Services.AddScoped<IDelegateRepository, DelegateRepository>();
 builder.Services.AddScoped<ITrustReceiptRepository, TrustReceiptRepository>();
+builder.Services.AddScoped<IFollowerActionsRepository, FollowerActionsRepository>();
 
 
 builder.Services.AddControllers();

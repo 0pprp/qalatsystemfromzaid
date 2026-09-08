@@ -162,6 +162,11 @@ class _HomePageState extends State<HomePage> {
       final data = json.decode(response.body) as List<dynamic>;
       var customers = data.map((item) {
         return {
+          'customerId': int.tryParse('${item['customerID'] ?? item['CustomerID'] ?? item['customerId'] ?? 0}') ?? 0,
+          'userId': int.tryParse('${item['userID'] ?? item['UserID'] ?? item['userId'] ?? 0}') ?? 0,
+          'saleName': item['saleName'] ?? item['SaleName'] ?? '',
+          'cityName': item['cityName'] ?? item['CityName'] ?? '',
+          'address': item['address'] ?? item['Address'] ?? '',
           'customerName': item['customerName'] ?? item['CustomerName'] ?? '',
           'phoneNumber': item['phoneNumber'] ?? item['PhoneNumber'] ?? '',
           'amountReceipt': _toDouble(item['amountReceipt'] ?? item['AmountReceipt']),
@@ -545,35 +550,63 @@ class _HomePageState extends State<HomePage> {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            item['customerName'].toString(),
-            style: const TextStyle(
-                fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {
+          if (_selectedChildId == null) return;
+          Navigator.pushNamed(
+            context,
+            '/CustomerProfile',
+            arguments: {
+              'customer': item,
+              'listId': _selectedChildId,
+            },
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item['customerName'].toString(),
+                style: const TextStyle(
+                    fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                item['phoneNumber'].toString().isEmpty
+                    ? 'لا يوجد هاتف'
+                    : item['phoneNumber'].toString(),
+                style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey),
+              ),
+              if ('${item['saleName'] ?? ''}'.trim().isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'المندوب: ${item['saleName']}',
+                  style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey),
+                ),
+              ],
+              const SizedBox(height: 10),
+              _amountRow('القسط المستحق', '$due دع', AppTheme.primaryColor),
+              const SizedBox(height: 4),
+              _amountRow('القسط المدفوع', '$paid دع', Colors.green.shade700),
+              const SizedBox(height: 4),
+              _amountRow('عدد أيام التسديدات', '$paymentDays', AppTheme.textColor),
+              const SizedBox(height: 4),
+              _amountRow('الباقي', '$remaining دع', Colors.orange),
+              const SizedBox(height: 8),
+              const Text(
+                'اضغط لفتح الملف / الملاحظات / طلب مبيع',
+                style: TextStyle(fontFamily: 'Cairo', fontSize: 11, color: Colors.grey),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            item['phoneNumber'].toString().isEmpty
-                ? 'لا يوجد هاتف'
-                : item['phoneNumber'].toString(),
-            style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey),
-          ),
-          const SizedBox(height: 10),
-          _amountRow('القسط المستحق', '$due دع', AppTheme.primaryColor),
-          const SizedBox(height: 4),
-          _amountRow('القسط المدفوع', '$paid دع', Colors.green.shade700),
-          const SizedBox(height: 4),
-          _amountRow('عدد أيام التسديدات', '$paymentDays', AppTheme.textColor),
-          const SizedBox(height: 4),
-          _amountRow('الباقي', '$remaining دع', Colors.orange),
-        ],
+        ),
       ),
     );
   }

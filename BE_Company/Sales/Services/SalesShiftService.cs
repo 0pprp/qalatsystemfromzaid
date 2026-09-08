@@ -305,8 +305,8 @@ namespace BE_Company.Sales.Services
             }
 
             var captured = DateTime.SpecifyKind(point.CapturedAtUtc, DateTimeKind.Utc);
-            var firstOfficial = OfficialSlot.FloorUtc(shift.StartedAtUtc);
-            if (captured < firstOfficial && captured < shift.StartedAtUtc.AddMinutes(-5))
+            // Small device-clock skew only; do not accept clock-floored slots before shift start.
+            if (captured < shift.StartedAtUtc.AddMinutes(-2))
             {
                 return false;
             }

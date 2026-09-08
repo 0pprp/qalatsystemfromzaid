@@ -122,7 +122,7 @@ class LocationForegroundService : Service() {
                 handler.removeCallbacks(cutoffStop)
                 handler.removeCallbacks(officialTick)
                 handler.removeCallbacks(syncFlush)
-                    persistDueOfficialPoints()
+                // End shift: flush already-queued points only — do not invent a new route pin.
                 Thread {
                     uploadLiveLocation(lastLocation)
                     flushPendingToServer()
@@ -382,6 +382,7 @@ class LocationForegroundService : Service() {
 
     private fun persistDueOfficialPoints() {
         if (shiftId <= 0) return
+        if (!running) return
         val loc = lastLocation ?: return
         try {
         val now = System.currentTimeMillis()
@@ -390,30 +391,39 @@ class LocationForegroundService : Service() {
             return
         }
         val start = if (shiftStartedAtUtcMs > 0L) shiftStartedAtUtcMs else now
-        val firstSlot = floorSlotUtcMs(start)
+        if (now < start) return
+
         var last = lastOfficialAtMs
-        if (last > 0L) {
-            last = floorSlotUtcMs(last)
-        }
-        var cursor = if (last > 0L) last + officialIntervalMs else firstSlot
-        if (cursor < firstSlot) {
-            cursor = firstSlot
-        }
         var latest = last
         var inserted = false
-        while (cursor <= now && cursor < cutoffAtUtcMs) {
-            if (insertOfficialPoint(loc, cursor)) {
+
+        if (last <= 0L) {
+            // First route point: real GPS time as soon as a fix exists after shift start.
+            if (insertOfficialPoint(loc, now, sequenceIndex = 1L)) {
                 inserted = true
+                latest = now
+                lastOfficialAtMs = now
+                writeMeta(officialMetaKey(), now.toString())
+                writeMeta(firstOfficialMetaKey(), now.toString())
             }
-            latest = cursor
-            cursor += officialIntervalMs
-        }
-        if (latest > lastOfficialAtMs) {
-            lastOfficialAtMs = latest
-            writeMeta(officialMetaKey(), latest.toString())
-        } else if (inserted) {
-            lastOfficialAtMs = latest
-            writeMeta(officialMetaKey(), latest.toString())
+        } else {
+            var cursor = last + officialIntervalMs
+            var index = routeSequenceIndex(cursor)
+            while (cursor <= now && cursor < cutoffAtUtcMs) {
+                if (insertOfficialPoint(loc, cursor, sequenceIndex = index)) {
+                    inserted = true
+                }
+                latest = cursor
+                cursor += officialIntervalMs
+                index += 1
+            }
+            if (latest > lastOfficialAtMs) {
+                lastOfficialAtMs = latest
+                writeMeta(officialMetaKey(), latest.toString())
+            } else if (inserted) {
+                lastOfficialAtMs = latest
+                writeMeta(officialMetaKey(), latest.toString())
+            }
         }
         if (inserted) {
             Thread { flushPendingToServer() }.start()
@@ -427,30 +437,31 @@ class LocationForegroundService : Service() {
         handler.removeCallbacks(officialTick)
         if (!running) return
         val now = System.currentTimeMillis()
-        val last = if (lastOfficialAtMs > 0L) floorSlotUtcMs(lastOfficialAtMs) else floorSlotUtcMs(now)
-        val next = last + officialIntervalMs
-        val delay = (next - now).coerceIn(1_000L, officialIntervalMs.coerceAtLeast(5_000L))
+        val next = if (lastOfficialAtMs > 0L) {
+            lastOfficialAtMs + officialIntervalMs
+        } else {
+            now
+        }
+        val delay = if (lastOfficialAtMs <= 0L) {
+            1_000L
+        } else {
+            (next - now).coerceIn(1_000L, officialIntervalMs.coerceAtLeast(5_000L))
+        }
         log("NEXT_CAPTURE delayMs=$delay nextAtMs=$next intervalMs=$officialIntervalMs")
         handler.postDelayed(officialTick, delay)
     }
 
-    private fun floorSlotUtcMs(epochMs: Long): Long {
-        if (officialIntervalMs != 600_000L) {
-            return (epochMs / officialIntervalMs) * officialIntervalMs
-        }
-        val cal = java.util.Calendar.getInstance(TimeZone.getTimeZone("Asia/Baghdad"))
-        cal.timeInMillis = epochMs
-        val minute = cal.get(java.util.Calendar.MINUTE)
-        cal.set(java.util.Calendar.MINUTE, (minute / 10) * 10)
-        cal.set(java.util.Calendar.SECOND, 0)
-        cal.set(java.util.Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
+    private fun firstOfficialMetaKey() = "first_official_ms_$shiftId"
+
+    private fun routeSequenceIndex(slotUtcMs: Long): Long {
+        val first = readMetaLong(firstOfficialMetaKey()).takeIf { it > 0L } ?: lastOfficialAtMs
+        if (first <= 0L) return 1L
+        val index = 1L + ((slotUtcMs - first) / officialIntervalMs)
+        return if (index < 1L) 1L else index
     }
 
-    private fun slotSequence(slotUtcMs: Long): Long = slotUtcMs / officialIntervalMs
-
-    private fun insertOfficialPoint(loc: Location, slotUtcMs: Long): Boolean {
-        val seq = slotSequence(slotUtcMs)
+    private fun insertOfficialPoint(loc: Location, slotUtcMs: Long, sequenceIndex: Long): Boolean {
+        val seq = sequenceIndex
         val captured = utcIso(slotUtcMs)
         val actual = utcIso(loc.time.takeIf { it > 0 } ?: System.currentTimeMillis())
         val values = ContentValues()

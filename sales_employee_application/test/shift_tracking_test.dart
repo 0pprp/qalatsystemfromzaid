@@ -242,19 +242,36 @@ void main() {
     expect(TrackingConfig.debugIntervalMs, 0);
   });
 
-  test('start shift due first official slot immediately', () {
-    final start = DateTime.utc(2026, 9, 2, 8, 7);
+  test('start shift due first route point at shift start not clock floor', () {
+    final start = DateTime.utc(2026, 9, 2, 17, 32); // Iraq 20:32
     final due = OfficialSlot.dueSlots(
       shiftStartUtc: start,
       lastOfficialSlotUtc: null,
       nowUtc: start,
       cutoffUtc: start.add(const Duration(hours: 18)),
     );
-    expect(due, isNotEmpty);
-    expect(due.first, OfficialSlot.floorUtc(start));
+    expect(due, [start]);
+    expect(due.first, isNot(OfficialSlot.floorUtc(start)));
   });
 
-  test('ten minutes later a new official slot is due without movement', () {
+  test('twenty-five minute shift yields three route points from start', () {
+    final start = DateTime.utc(2026, 9, 2, 17, 32);
+    final due = OfficialSlot.dueSlots(
+      shiftStartUtc: start,
+      lastOfficialSlotUtc: null,
+      nowUtc: start.add(const Duration(minutes: 25)),
+      cutoffUtc: start.add(const Duration(hours: 18)),
+    );
+    expect(due, [
+      start,
+      start.add(const Duration(minutes: 10)),
+      start.add(const Duration(minutes: 20)),
+    ]);
+    expect(due, isNot(contains(DateTime.utc(2026, 9, 2, 17, 40))));
+    expect(due, isNot(contains(DateTime.utc(2026, 9, 2, 17, 50))));
+  });
+
+  test('ten minutes later a new route point is due without movement', () {
     final start = DateTime.utc(2026, 9, 2, 8, 0);
     final due = OfficialSlot.dueSlots(
       shiftStartUtc: start,
@@ -263,6 +280,13 @@ void main() {
       cutoffUtc: start.add(const Duration(hours: 18)),
     );
     expect(due, [DateTime.utc(2026, 9, 2, 8, 10)]);
+  });
+
+  test('Iraq display UTC 18:40 is Baghdad 21:40', () {
+    final utc = DateTime.utc(2026, 9, 2, 18, 40);
+    final iraq = utc.add(OfficialSlot.iraqOffset);
+    expect(iraq.hour, 21);
+    expect(iraq.minute, 40);
   });
 
   test('network lookup failure does not stop native tracking', () {
@@ -340,7 +364,7 @@ void main() {
     expect(await store.pendingCount(), 1);
   });
 
-  test('official slots are 10 minutes and catch-up fills gaps', () {
+  test('official slots are 10 minutes and catch-up fills gaps from first capture', () {
     final start = DateTime.utc(2026, 9, 2, 22, 0);
     final due = OfficialSlot.dueSlots(
       shiftStartUtc: start,
@@ -360,24 +384,24 @@ void main() {
     );
   });
 
-  test('offline sync does not duplicate the same official slot', () async {
+  test('offline sync does not duplicate the same device sequence', () async {
     final store = MemoryLocationStore();
     final repo = _ShiftRepo();
     await repo.startShift();
-    final slot = OfficialSlot.floorUtc(DateTime.utc(2026, 9, 2, 8, 7));
-    final seq = OfficialSlot.sequence(slot);
+    final captured = DateTime.utc(2026, 9, 2, 17, 32);
+    final seq = OfficialSlot.sequence(captured);
     await store.insert(LocalLocationPoint(
       shiftId: 1,
       latitude: 32,
       longitude: 44,
-      capturedAtUtc: slot,
+      capturedAtUtc: captured,
       deviceSequence: seq,
     ));
     await store.insert(LocalLocationPoint(
       shiftId: 1,
       latitude: 32.1,
       longitude: 44.1,
-      capturedAtUtc: slot,
+      capturedAtUtc: captured,
       deviceSequence: seq,
     ));
     expect(store.points, hasLength(1));

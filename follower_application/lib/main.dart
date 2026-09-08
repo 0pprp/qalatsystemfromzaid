@@ -2,6 +2,8 @@ import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/HomePage.dart';
 import 'package:follower_application/Login.dart';
 import 'package:follower_application/WelcomePage.dart';
+import 'package:follower_application/customer_profile_page.dart';
+import 'package:follower_application/follower_sales_request_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -32,6 +34,14 @@ class MyApp extends StatelessWidget {
             '/': (context) => const WelcomePage(),
             '/Login': (context) => const Login(),
             '/HomePage': (context) => const HomePage(),
+            '/CustomerProfile': (context) {
+              final args = ModalRoute.of(context)!.settings.arguments as Map;
+              return CustomerProfilePage(
+                customer: Map<String, dynamic>.from(args['customer'] as Map),
+                listId: int.tryParse('${args['listId'] ?? 0}') ?? 0,
+              );
+            },
+            '/FollowerSalesRequest': (context) => const FollowerSalesRequestPage(),
           },
           theme: ThemeData(fontFamily: 'Cairo', brightness: Brightness.light),
           darkTheme:

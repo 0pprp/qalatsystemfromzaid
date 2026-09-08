@@ -212,8 +212,7 @@ namespace BE_Company.Sales.Tests
             clock.UtcNow = new DateTime(2026, 9, 2, 8, 0, 0, DateTimeKind.Utc);
             var point = ValidPoint(captured);
             await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [point] }, CancellationToken.None);
-            Assert.Equal(captured, OfficialSlot.FloorUtc(captured));
-            Assert.Equal(OfficialSlot.FloorUtc(captured), repo.InsertedCapturedAt.Single());
+            Assert.Equal(captured, repo.InsertedCapturedAt.Single());
             Assert.Equal(clock.UtcNow, repo.InsertedReceivedAt.Single());
         }
 
@@ -251,14 +250,35 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public void OfficialSlot_FloorsToIraqTenMinutes()
+        public void OfficialSlot_DoesNotFloorToClockTenMinutes()
         {
-            var utc = new DateTime(2026, 9, 2, 8, 7, 40, DateTimeKind.Utc);
-            Assert.Equal(new DateTime(2026, 9, 2, 8, 0, 0, DateTimeKind.Utc), OfficialSlot.FloorUtc(utc));
+            var start = new DateTime(2026, 9, 2, 17, 32, 0, DateTimeKind.Utc); // Iraq 20:32
+            var due = OfficialSlot.DueSlots(start, null, start, start.AddHours(18));
+            Assert.Equal(new[] { start }, due);
+            Assert.NotEqual(OfficialSlot.FloorUtc(start), due[0]);
         }
 
         [Fact]
-        public void OfficialSlot_CatchUpFillsMissingTenMinuteSlots()
+        public void OfficialSlot_CatchUpFromShiftStartEveryTenMinutes()
+        {
+            var start = new DateTime(2026, 9, 2, 17, 32, 0, DateTimeKind.Utc); // Iraq 20:32
+            var now = start.AddMinutes(25);
+            var cutoff = start.AddHours(6);
+            var due = OfficialSlot.DueSlots(start, null, now, cutoff);
+            Assert.Equal(
+                new[]
+                {
+                    start,
+                    start.AddMinutes(10),
+                    start.AddMinutes(20),
+                },
+                due);
+            Assert.DoesNotContain(new DateTime(2026, 9, 2, 17, 40, 0, DateTimeKind.Utc), due);
+            Assert.DoesNotContain(new DateTime(2026, 9, 2, 17, 50, 0, DateTimeKind.Utc), due);
+        }
+
+        [Fact]
+        public void OfficialSlot_CatchUpAfterFirstCapture()
         {
             var start = new DateTime(2026, 9, 2, 22, 0, 0, DateTimeKind.Utc);
             var last = start;
@@ -276,17 +296,34 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task DuplicateOfficialSlot_NotInserted()
+        public async Task DuplicateDeviceSequence_Retry_NotInserted()
         {
             var (repo, clock, shift, ingest) = await Ready();
-            var first = ValidPoint(new DateTime(2026, 9, 2, 8, 1, 0, DateTimeKind.Utc), 11);
-            var second = ValidPoint(new DateTime(2026, 9, 2, 8, 9, 0, DateTimeKind.Utc), 12);
+            var first = ValidPoint(new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc), 1);
+            var retry = ValidPoint(new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc), 1);
             await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [first] }, CancellationToken.None);
-            var result = await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [second] }, CancellationToken.None);
+            var result = await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [retry] }, CancellationToken.None);
             Assert.Equal(1, result.Duplicates);
             Assert.Equal(0, result.Accepted);
             Assert.Single(repo.Points);
-            Assert.Equal(new DateTime(2026, 9, 2, 8, 0, 0, DateTimeKind.Utc), repo.InsertedCapturedAt.Single());
+            Assert.Equal(new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc), repo.InsertedCapturedAt.Single());
+        }
+
+        [Fact]
+        public async Task AdjacentTenMinuteCaptures_AreEachAccepted()
+        {
+            var (repo, clock, shift, ingest) = await Ready();
+            var start = new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc);
+            var points = new[]
+            {
+                ValidPoint(start, 1),
+                ValidPoint(start.AddMinutes(10), 2),
+                ValidPoint(start.AddMinutes(20), 3),
+            };
+            var result = await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [..points] }, CancellationToken.None);
+            Assert.Equal(3, result.Accepted);
+            Assert.Equal(0, result.Duplicates);
+            Assert.Equal(3, repo.Points.Count);
         }
 
         [Fact]
@@ -307,17 +344,18 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public void Route_KeepsOfficialSlotsOnly_AndBucketsLegacy()
+        public void Route_KeepsOfficialPointsWithoutClockBucketing()
         {
             var official = new List<SalesManagerRoutePointDTO>
             {
-                new() { IsOfficial = true, CapturedAt = new DateTime(2026, 9, 2, 8, 0, 0, DateTimeKind.Utc), Latitude = 1, DeviceSequence = 1 },
-                new() { IsOfficial = true, CapturedAt = new DateTime(2026, 9, 2, 8, 10, 0, DateTimeKind.Utc), Latitude = 2, DeviceSequence = 2 },
-                new() { IsOfficial = false, CapturedAt = new DateTime(2026, 9, 2, 8, 3, 0, DateTimeKind.Utc), Latitude = 9, DeviceSequence = 9 },
+                new() { IsOfficial = true, CapturedAt = new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc), Latitude = 1, DeviceSequence = 1 },
+                new() { IsOfficial = true, CapturedAt = new DateTime(2026, 9, 2, 8, 42, 0, DateTimeKind.Utc), Latitude = 2, DeviceSequence = 2 },
+                new() { IsOfficial = false, CapturedAt = new DateTime(2026, 9, 2, 8, 35, 0, DateTimeKind.Utc), Latitude = 9, DeviceSequence = 9 },
             };
             var selected = OfficialSlot.SelectRoutePoints(official);
             Assert.Equal(2, selected.Count);
             Assert.Equal(1, selected[0].Latitude);
+            Assert.Equal(new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc), selected[0].CapturedAt);
             Assert.Equal(2, selected[1].Latitude);
 
             var legacy = new List<SalesManagerRoutePointDTO>
@@ -361,19 +399,26 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task FirstOfficialSlot_BeforeShiftStart_IsAccepted()
+        public async Task FirstCapture_AtShiftStart_IsAccepted()
         {
             var (repo, clock, shift, ingest) = await Ready();
-            shift.StartedAtUtc = new DateTime(2026, 9, 2, 8, 7, 0, DateTimeKind.Utc);
-            var firstSlot = OfficialSlot.FloorUtc(shift.StartedAtUtc);
-            Assert.True(firstSlot < shift.StartedAtUtc.AddMinutes(-5));
+            shift.StartedAtUtc = new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc);
             var result = await ingest.IngestBatchAsync(Id(), new()
             {
                 ShiftId = shift.ShiftId,
-                Points = [ValidPoint(firstSlot)]
+                Points = [ValidPoint(shift.StartedAtUtc, 1)]
             }, CancellationToken.None);
             Assert.Equal(1, result.Accepted);
             Assert.Equal(0, result.Rejected);
+            Assert.Equal(shift.StartedAtUtc, repo.InsertedCapturedAt.Single());
+        }
+
+        [Fact]
+        public void IraqDisplay_Utc1840_IsBaghdad2140()
+        {
+            var utc = new DateTime(2026, 9, 2, 18, 40, 0, DateTimeKind.Utc);
+            var iraq = IraqTimeService.ToIraq(utc);
+            Assert.Equal(new DateTime(2026, 9, 2, 21, 40, 0), iraq);
         }
 
         [Fact]

@@ -79,9 +79,13 @@ namespace BE_Company.Sales.Services
         public const string NewCustomer = "NewCustomer";
         public const string ExistingCustomer = "ExistingCustomer";
         public const string EmployeeSubmitted = "EmployeeSubmitted";
+        public const string Follower = "Follower";
 
         public static bool IsEmployeeSubmitted(string? source) =>
             string.Equals(source, EmployeeSubmitted, StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsFollower(string? source) =>
+            string.Equals(source, Follower, StringComparison.OrdinalIgnoreCase);
     }
 
     public static class SalesLocationStatuses

@@ -101,6 +101,20 @@ function isEmployeeSubmitted(row) {
   return pick(row, 'customerSourceType', 'CustomerSourceType') === 'EmployeeSubmitted'
 }
 
+function isFollowerSubmitted(row) {
+  const source = pick(row, 'customerSourceType', 'CustomerSourceType')
+  const role = pick(row, 'createdByUserType', 'CreatedByUserType')
+  return source === 'Follower' || role === 'Follower' || role === 'متابع'
+}
+
+function requestSourceLabel(row) {
+  if (isFollowerSubmitted(row))
+    return 'المتابع'
+  if (isEmployeeSubmitted(row))
+    return 'موظف المبيعات'
+  return 'مدير المبيعات'
+}
+
 function isUnreadSent(row) {
   if (!isEmployeeSubmitted(row))
     return false
@@ -111,6 +125,8 @@ function isUnreadSent(row) {
 }
 
 function submittedBy(row) {
+  if (isFollowerSubmitted(row))
+    return pick(row, 'createdByName', 'CreatedByName') || 'متابع'
   return pick(row, 'createdByName', 'CreatedByName') || 'موظف مبيعات'
 }
 
@@ -1208,6 +1224,10 @@ onUnmounted(() => {
             <div>المحافظة: {{ displayCityName(row, branches) }}</div>
             <div>العنوان: {{ row.customerAddress || row.CustomerAddress || '—' }}</div>
             <div>الموظف: {{ isEmployeeSubmitted(row) ? submittedBy(row) : (row.targetEmployeeName || 'غير مسند') }}</div>
+            <div v-if="isFollowerSubmitted(row) || isEmployeeSubmitted(row)">
+              المصدر: {{ requestSourceLabel(row) }}
+              <template v-if="isFollowerSubmitted(row)"> — أرسل بواسطة: {{ submittedBy(row) }}</template>
+            </div>
             <div>التاريخ: {{ formatIraqDate(row.createdAtUtc || row.CreatedAtUtc) }}</div>
             <div>الحالة: {{ statusText(row) }}</div>
             <div v-if="lastNote(row)">
@@ -1256,6 +1276,10 @@ onUnmounted(() => {
           <div>الهاتف: {{ detail.customerPhone || '—' }}</div>
           <div>العنوان: {{ detail.customerAddress || '—' }}</div>
           <div>الموظف: {{ isEmployeeSubmitted(detail) ? submittedBy(detail) : (detail.targetEmployeeName || 'غير مسند') }}</div>
+          <div v-if="isFollowerSubmitted(detail) || isEmployeeSubmitted(detail)">
+            المصدر: {{ requestSourceLabel(detail) }}
+            <template v-if="isFollowerSubmitted(detail)"> — أرسل بواسطة: {{ submittedBy(detail) }}</template>
+          </div>
           <div>المحافظة: {{ displayCityName(detail, branches) }}</div>
           <div class="d-flex align-center gap-2 mt-1">
             <span>الحالة:</span>

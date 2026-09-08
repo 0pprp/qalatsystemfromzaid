@@ -51,16 +51,21 @@ namespace BE_Company.Sales.Services
             }
 
             await _repo.EnsureSchemaAsync(ct);
+            var sourceType = SalesRoles.IsFollower(actor.UserType)
+                ? SalesRequestSources.Follower
+                : request.ExistingCustomerId is > 0 ? "ExistingCustomer" : "NewCustomer";
             var row = new SalesRequestDTO
             {
                 CreatedByUserId = actor.EmployeeId,
                 CreatedByName = actor.EmployeeName,
-                CreatedByUserType = actor.UserType,
+                CreatedByUserType = SalesRoles.IsFollower(actor.UserType)
+                    ? SalesRequestSources.Follower
+                    : actor.UserType,
                 TargetEmployeeId = 0,
                 TargetEmployeeName = null,
                 CityValue = actor.BranchId,
                 CityName = actor.BranchName,
-                CustomerSourceType = request.ExistingCustomerId is > 0 ? "ExistingCustomer" : "NewCustomer",
+                CustomerSourceType = sourceType,
                 ExistingCustomerId = request.ExistingCustomerId is > 0 ? request.ExistingCustomerId : null,
                 CustomerSourceCityValue = request.CustomerSourceCityValue,
                 CustomerName = name ?? string.Empty,

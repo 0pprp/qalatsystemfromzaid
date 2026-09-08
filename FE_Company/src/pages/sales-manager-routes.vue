@@ -90,10 +90,14 @@ function popupHtml(point) {
   const acc = Number.isFinite(point.acc)
     ? `الدقة: ${Math.round(point.acc)} متر`
     : ''
+  const coords = Number.isFinite(point.lat) && Number.isFinite(point.lng)
+    ? `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`
+    : ''
 
   return `<div dir="rtl" class="sales-route-popup">
     <div>${point.timeLabel || ''}</div>
     ${acc ? `<div>${acc}</div>` : ''}
+    ${coords ? `<div>${coords}</div>` : ''}
   </div>`
 }
 
@@ -112,6 +116,7 @@ function paintPoints(list) {
   if (!map)
     return
 
+  // Markers only — no Polyline / LineString between route points.
   if (map.getLayer('route-line'))
     map.removeLayer('route-line')
   if (map.getSource('route'))
@@ -122,26 +127,6 @@ function paintPoints(list) {
     map.removeSource('stops')
 
   clearMarkers()
-  if (list.length >= 2) {
-    map.addSource('route', {
-      type: 'geojson',
-      data: {
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: list.map(point => [point.lng, point.lat]),
-        },
-      },
-    })
-    map.addLayer({
-      id: 'route-line',
-      type: 'line',
-      source: 'route',
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#16a34a', 'line-width': 4, 'line-opacity': 0.85 },
-    })
-  }
   for (const [index, point] of list.entries()) {
     const marker = new mapboxgl.Marker({ color: '#16a34a', anchor: 'bottom' })
       .setLngLat([point.lng, point.lat])

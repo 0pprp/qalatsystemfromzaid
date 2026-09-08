@@ -1,8 +1,10 @@
-/// Official manager pins: one 10-minute Iraq-local slot. Timestamp is the slot, not GPS time.
+/// Official manager route pins: first GPS after shift start, then every 10 minutes
+/// from that capture — not Iraq clock floors (:00/:10/:20).
 class OfficialSlot {
   static const iraqOffset = Duration(hours: 3);
   static const length = Duration(minutes: 10);
 
+  /// Legacy only — new route timing does not floor to clock slots.
   static DateTime floorUtc(DateTime utc) {
     final iraq = utc.toUtc().add(iraqOffset);
     final slottedIraq = DateTime.utc(
@@ -15,9 +17,12 @@ class OfficialSlot {
     return slottedIraq.subtract(iraqOffset);
   }
 
-  static int sequence(DateTime slotUtc) =>
-      slotUtc.toUtc().millisecondsSinceEpoch ~/ length.inMilliseconds;
+  static int sequence(DateTime capturedUtc) {
+    final seq = capturedUtc.toUtc().millisecondsSinceEpoch ~/ length.inMilliseconds;
+    return seq <= 0 ? 1 : seq;
+  }
 
+  /// Due capture times from shift start / last capture (fixed 10-minute interval).
   static List<DateTime> dueSlots({
     required DateTime shiftStartUtc,
     DateTime? lastOfficialSlotUtc,
@@ -27,13 +32,9 @@ class OfficialSlot {
     final start = shiftStartUtc.toUtc();
     final now = nowUtc.toUtc();
     final cutoff = cutoffUtc.toUtc();
-    final first = floorUtc(start);
     var cursor = lastOfficialSlotUtc != null
-        ? floorUtc(lastOfficialSlotUtc.toUtc()).add(length)
-        : first;
-    if (cursor.isBefore(first)) {
-      cursor = first;
-    }
+        ? lastOfficialSlotUtc.toUtc().add(length)
+        : start;
 
     final slots = <DateTime>[];
     while (!cursor.isAfter(now) && cursor.isBefore(cutoff)) {
