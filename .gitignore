@@ -55,3 +55,5 @@ deploy/sales-demo/frontend/
 deploy/sales-demo/flutter/
 
 *.apk
+
+.cursor/

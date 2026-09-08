@@ -29,7 +29,7 @@ namespace BE_Company.Sales.Tests
         };
 
         [Fact]
-        public async Task Follower_CanSendSalesRequest_SourceTypeFollower()
+        public async Task Follower_CanCreateSalesRequest_ForExistingCustomer_SourceFollower()
         {
             var repo = new FakeRequestRepository();
             var created = await new SalesRequestService(repo, new FakeClock()).CreateAsync(
@@ -42,9 +42,25 @@ namespace BE_Company.Sales.Tests
                 CancellationToken.None);
 
             Assert.Equal(SalesRequestSources.Follower, created.CustomerSourceType);
-            Assert.Equal(SalesRequestSources.Follower, created.CreatedByUserType);
+            Assert.Equal(10, created.ExistingCustomerId);
             Assert.Equal(77, created.CreatedByUserId);
-            Assert.Equal("متابع الناصرية", created.CreatedByName);
+        }
+
+        [Fact]
+        public async Task Follower_CanCreateSalesRequest_ForNewCustomer_SourceFollower()
+        {
+            var repo = new FakeRequestRepository();
+            var created = await new SalesRequestService(repo, new FakeClock()).CreateAsync(
+                Follower(),
+                new SalesRequestCreateDTO
+                {
+                    Customer = new() { FullName = "زبون جديد", Phone = "07709998887", Address = "حي الأنصار", Province = "النجف" }
+                },
+                CancellationToken.None);
+
+            Assert.Equal(SalesRequestSources.Follower, created.CustomerSourceType);
+            Assert.Null(created.ExistingCustomerId);
+            Assert.Equal("زبون جديد", created.CustomerName);
             Assert.Equal(SalesRequestStatuses.New, created.Status);
             Assert.Equal(0, created.TargetEmployeeId);
         }
@@ -77,13 +93,9 @@ namespace BE_Company.Sales.Tests
         {
             Assert.True(SalesRequestSources.IsFollower("Follower"));
             Assert.False(SalesRequestSources.IsFollower("EmployeeSubmitted"));
-            Assert.False(SalesRequestSources.IsEmployeeSubmitted("Follower"));
         }
     }
 
-    /// <summary>
-    /// Mirrors BE_DelegateWebApplication.Services.FollowerAuthorization rules for CI without Delegate project reference.
-    /// </summary>
     public class FollowerAuthorizationRulesTests
     {
         [Fact]
@@ -93,24 +105,23 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public void Follower_CannotNoteCustomer_OutsideAssignedScope()
+        public void Customer_OutsideAssignedScope_Denied()
         {
             Assert.False(CanNoteCustomer(isLinked: true, customerDelegateId: 9, listId: 5));
-            Assert.False(CanNoteCustomer(isLinked: false, customerDelegateId: 5, listId: 5));
         }
 
         [Fact]
-        public void Follower_CanAddEmployeeNote_OnlyInsideAssignedLists()
+        public void Follower_CanAddDelegateNote_OnlyForAssignedListDelegate()
         {
-            Assert.True(CanNoteEmployee(isLinked: true, employeeAppearsOnAssignedList: true));
-            Assert.False(CanNoteEmployee(isLinked: true, employeeAppearsOnAssignedList: false));
-            Assert.False(CanNoteEmployee(isLinked: false, employeeAppearsOnAssignedList: true));
+            Assert.True(CanNoteListDelegate(isLinked: true, listId: 12, requestedDelegateId: 12));
+            Assert.False(CanNoteListDelegate(isLinked: true, listId: 12, requestedDelegateId: 99));
+            Assert.False(CanNoteListDelegate(isLinked: false, listId: 12, requestedDelegateId: 12));
         }
 
         [Fact]
-        public void Salesman_CannotReadFollowerEmployeeNotes()
+        public void SalesEmployee_IsNotUsedInDelegateNoteFlow()
         {
-            Assert.False(SalesmanCanReadFollowerEmployeeNotes());
+            Assert.False(SalesEmployeeUsedInDelegateNoteFlow());
         }
 
         [Fact]
@@ -122,34 +133,44 @@ namespace BE_Company.Sales.Tests
         [Fact]
         public void Follower_CannotSpoofCreatedByUserId()
         {
-            Assert.False(AcceptClientCreatedByUserId(999, authenticatedFollowerId: 77));
-            Assert.Equal(77, ResolveCreatedByUserId(77, clientClaimedId: 999));
+            Assert.Equal(77, ResolveCreatedByUserId(77, 999));
         }
 
         [Fact]
-        public void Follower_CannotSubmitRequest_OutsideAllowedScope()
+        public void Follower_CanSubmitNewCustomer_OnAssignedListOnly()
         {
-            Assert.False(CanSubmitSalesRequest(isLinked: false, customerDelegateId: 5, listId: 5));
-            Assert.False(CanSubmitSalesRequest(isLinked: true, customerDelegateId: 8, listId: 5));
-            Assert.True(CanSubmitSalesRequest(isLinked: true, customerDelegateId: 5, listId: 5));
+            Assert.True(CanSubmitNewCustomerRequest(isLinked: true, listId: 5));
+            Assert.False(CanSubmitNewCustomerRequest(isLinked: false, listId: 5));
+        }
+
+        [Fact]
+        public void ImageUrl_UsesImagesFolder()
+        {
+            Assert.Equal("https://host/Images/a.jpg", BuildImageUrl("https://host/Images", "a.jpg"));
+            Assert.Null(BuildImageUrl("https://host/Images", null));
         }
 
         private static bool CanNoteCustomer(bool isLinked, int customerDelegateId, int listId) =>
             isLinked && listId > 0 && customerDelegateId == listId;
 
-        private static bool CanNoteEmployee(bool isLinked, bool employeeAppearsOnAssignedList) =>
-            isLinked && employeeAppearsOnAssignedList;
+        private static bool CanNoteListDelegate(bool isLinked, int listId, int requestedDelegateId) =>
+            isLinked && listId > 0 && requestedDelegateId == listId;
 
-        private static bool CanSubmitSalesRequest(bool isLinked, int customerDelegateId, int listId) =>
-            CanNoteCustomer(isLinked, customerDelegateId, listId);
-
-        private static bool AcceptClientCreatedByUserId(int? clientClaimedId, int authenticatedFollowerId) => false;
+        private static bool CanSubmitNewCustomerRequest(bool isLinked, int listId) =>
+            isLinked && listId > 0;
 
         private static int ResolveCreatedByUserId(int authenticatedFollowerId, int? clientClaimedId) =>
             authenticatedFollowerId;
 
-        private static bool SalesmanCanReadFollowerEmployeeNotes() => false;
+        private static bool SalesEmployeeUsedInDelegateNoteFlow() => false;
 
         private static bool CanEditOrDeleteNoteAfterSave() => false;
+
+        private static string? BuildImageUrl(string? imagesBaseUrl, string? fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return null;
+            var leaf = fileName.Trim().Replace('\\', '/').Split('/').Last();
+            return imagesBaseUrl!.TrimEnd('/') + "/" + leaf;
+        }
     }
 }

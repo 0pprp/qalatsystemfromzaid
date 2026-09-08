@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Sales request form for follower: existing customer OR brand-new customer.
 class FollowerSalesRequestPage extends StatefulWidget {
   const FollowerSalesRequestPage({super.key});
 
@@ -21,21 +22,30 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
   final _address = TextEditingController();
   final _notes = TextEditingController();
   bool _saving = false;
+  bool _ready = false;
   Map<String, dynamic>? _customer;
   int _listId = 0;
+  bool get _isNew => (_customer == null) || ((int.tryParse('${_customer?['customerId'] ?? 0}') ?? 0) <= 0);
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_ready) return;
     final args = ModalRoute.of(context)?.settings.arguments;
-    if (args is Map && _customer == null) {
-      _customer = Map<String, dynamic>.from(args['customer'] as Map);
+    if (args is Map) {
+      final c = args['customer'];
+      if (c is Map) {
+        _customer = Map<String, dynamic>.from(c);
+      }
       _listId = int.tryParse('${args['listId'] ?? 0}') ?? 0;
-      _name.text = '${_customer!['customerName'] ?? ''}';
-      _phone.text = '${_customer!['phoneNumber'] ?? ''}';
-      _address.text = '${_customer!['address'] ?? ''}';
-      _province.text = '${_customer!['cityName'] ?? ''}';
+      if (_customer != null) {
+        _name.text = '${_customer!['customerName'] ?? _customer!['CustomerName'] ?? ''}';
+        _phone.text = '${_customer!['phoneNumber'] ?? _customer!['PhoneNumber'] ?? ''}';
+        _address.text = '${_customer!['address'] ?? _customer!['Address'] ?? ''}';
+        _province.text = '${_customer!['cityName'] ?? _customer!['CityName'] ?? ''}';
+      }
     }
+    _ready = true;
   }
 
   @override
@@ -50,10 +60,9 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
 
   Future<void> _submit() async {
     if (!_form.currentState!.validate() || _saving) return;
-    final customerId = int.tryParse('${_customer?['customerId'] ?? 0}') ?? 0;
-    if (customerId <= 0 || _listId <= 0) {
+    if (_listId <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('بيانات الزبون غير مكتملة', style: TextStyle(fontFamily: 'Cairo'))),
+        const SnackBar(content: Text('اختر قائمة مسندة أولاً', style: TextStyle(fontFamily: 'Cairo'))),
       );
       return;
     }
@@ -62,6 +71,7 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
       final prefs = await SharedPreferences.getInstance();
       final asyncId = prefs.getString('AsyncId') ?? '';
       final link = AppEnv.apiBase(fallback: prefs.getString('LinkDelegate') ?? '');
+      final customerId = int.tryParse('${_customer?['customerId'] ?? _customer?['CustomerId'] ?? 0}') ?? 0;
       final uri = Uri.parse('${link}Followers/SalesRequests');
       final response = await http
           .post(
@@ -70,13 +80,12 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
             body: json.encode({
               'asyncId': asyncId,
               'listId': _listId,
-              'customerId': customerId,
+              if (customerId > 0) 'customerId': customerId,
               'fullName': _name.text.trim(),
               'phone': _phone.text.trim(),
               'province': _province.text.trim(),
               'address': _address.text.trim(),
               'notes': _notes.text.trim(),
-              'createdByUserId': 111,
             }),
           )
           .timeout(const Duration(seconds: 30));
@@ -86,9 +95,13 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
           const SnackBar(content: Text('تم إرسال طلب المبيع إلى مدير المبيعات', style: TextStyle(fontFamily: 'Cairo'))),
         );
         Navigator.pop(context);
+      } else if (response.statusCode == 404) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('404: مسار Followers/SalesRequests غير موجود على السيرفر', style: TextStyle(fontFamily: 'Cairo'))),
+        );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر الإرسال (${response.statusCode})', style: const TextStyle(fontFamily: 'Cairo'))),
+          SnackBar(content: Text('تعذر الإرسال (HTTP ${response.statusCode})', style: const TextStyle(fontFamily: 'Cairo'))),
         );
       }
     } catch (_) {
@@ -108,7 +121,7 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('إرسال طلب مبيع', style: TextStyle(fontFamily: 'Cairo')),
+          title: Text(_isNew ? 'طلب مبيع جديد' : 'إرسال طلب مبيع', style: const TextStyle(fontFamily: 'Cairo')),
           backgroundColor: AppTheme.primaryColor,
         ),
         body: Form(
@@ -116,9 +129,11 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              const Text(
-                'سيصل الطلب إلى مدير المبيعات. المصدر: المتابع',
-                style: TextStyle(fontFamily: 'Cairo', color: Colors.grey),
+              Text(
+                _isNew
+                    ? 'زبون جديد — لن يُنشأ في Customers الآن. المصدر: المتابع'
+                    : 'طلب لزبون موجود. المصدر: المتابع',
+                style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey),
               ),
               const SizedBox(height: 16),
               TextFormField(
@@ -128,16 +143,18 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
               ),
               TextFormField(
                 controller: _phone,
-                decoration: const InputDecoration(labelText: 'الهاتف', labelStyle: TextStyle(fontFamily: 'Cairo')),
+                decoration: const InputDecoration(labelText: 'الهاتف *', labelStyle: TextStyle(fontFamily: 'Cairo')),
                 keyboardType: TextInputType.phone,
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'مطلوب' : null,
               ),
               TextFormField(
                 controller: _province,
-                decoration: const InputDecoration(labelText: 'المحافظة', labelStyle: TextStyle(fontFamily: 'Cairo')),
+                decoration: const InputDecoration(labelText: 'المحافظة/المدينة', labelStyle: TextStyle(fontFamily: 'Cairo')),
               ),
               TextFormField(
                 controller: _address,
-                decoration: const InputDecoration(labelText: 'العنوان', labelStyle: TextStyle(fontFamily: 'Cairo')),
+                decoration: const InputDecoration(labelText: 'العنوان *', labelStyle: TextStyle(fontFamily: 'Cairo')),
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'مطلوب' : null,
               ),
               TextFormField(
                 controller: _notes,

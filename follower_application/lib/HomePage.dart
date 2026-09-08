@@ -238,6 +238,63 @@ class _HomePageState extends State<HomePage> {
     await _loadFollow();
   }
 
+  Future<void> _addListDelegateNote() async {
+    if (_selectedChildId == null) return;
+    final list = _lists.cast<Map<String, dynamic>?>().firstWhere(
+          (item) => item?['id'] == _selectedChildId,
+          orElse: () => null,
+        );
+    final listName = list?['name']?.toString() ?? 'القائمة';
+    final controller = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('ملاحظة على مندوب $listName', style: const TextStyle(fontFamily: 'Cairo')),
+        content: TextField(
+          controller: controller,
+          maxLines: 4,
+          decoration: const InputDecoration(hintText: 'نص الملاحظة *', hintStyle: TextStyle(fontFamily: 'Cairo')),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء', style: TextStyle(fontFamily: 'Cairo'))),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('حفظ', style: TextStyle(fontFamily: 'Cairo'))),
+        ],
+      ),
+    );
+    final text = controller.text.trim();
+    controller.dispose();
+    if (ok != true || text.isEmpty) return;
+    try {
+      final session = await _session();
+      final delegateId = _selectedChildId!;
+      final uri = Uri.parse('${session['link']}Followers/Delegates/$delegateId/notes');
+      final response = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'asyncId': session['asyncId'],
+              'listId': delegateId,
+              'noteText': text,
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      final msg = response.statusCode == 200
+          ? 'تم حفظ ملاحظة مندوب القائمة'
+          : response.statusCode == 404
+              ? '404: مسار ملاحظات المندوب غير موجود على السيرفر'
+              : 'تعذر الحفظ (HTTP ${response.statusCode})';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg, style: const TextStyle(fontFamily: 'Cairo'))));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر حفظ ملاحظة المندوب', style: TextStyle(fontFamily: 'Cairo'))),
+        );
+      }
+    }
+  }
+
   Future<void> _logout() async {
     await AsyncIdChecker.logout();
     if (mounted) Navigator.pushReplacementNamed(context, '/Login');
@@ -347,6 +404,36 @@ class _HomePageState extends State<HomePage> {
                           .toList(),
                       onChanged: _onSelectList,
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _selectedChildId == null
+                              ? null
+                              : () => Navigator.pushNamed(
+                                    context,
+                                    '/FollowerSalesRequest',
+                                    arguments: {'listId': _selectedChildId},
+                                  ),
+                          icon: const Icon(Icons.add_shopping_cart, size: 18),
+                          label: const Text('طلب مبيع جديد', style: TextStyle(fontFamily: 'Cairo', fontSize: 13)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.primaryColor,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _selectedChildId == null ? null : _addListDelegateNote,
+                          icon: const Icon(Icons.note_alt_outlined, size: 18),
+                          label: const Text('ملاحظة المندوب', style: TextStyle(fontFamily: 'Cairo', fontSize: 13)),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   _card(

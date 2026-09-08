@@ -79,6 +79,77 @@ namespace BE_DelegateWebApplication.Controllers
             }
         }
 
+        [HttpGet("Customers/{customerId:int}/profile")]
+        public async Task<IActionResult> CustomerProfile(
+            int customerId,
+            [FromQuery] string? asyncId,
+            [FromQuery] int listId,
+            CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(asyncId);
+            if (father == null)
+            {
+                return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            }
+
+            var denied = await EnsureCustomerInScope(father.DelegateId, listId, customerId, ct);
+            if (denied != null)
+            {
+                return denied;
+            }
+
+            var info = await _customersRepository.GetCustomersDataInfo(customerId);
+            if (info == null)
+            {
+                return NotFound(new { message = "الزبون غير موجود" });
+            }
+
+            var notes = await _followerActions.ListCustomerNotesAsync(customerId, father.DelegateId, ct);
+            var imageUrl = FollowerAuthorization.BuildImageUrl(ImagesBaseUrl(), info.CustomerImage);
+            var images = new List<FollowerProfileImageDTO>();
+            if (!string.IsNullOrWhiteSpace(imageUrl))
+            {
+                images.Add(new FollowerProfileImageDTO
+                {
+                    Kind = "Customer",
+                    Label = "صورة الزبون",
+                    Url = imageUrl
+                });
+            }
+
+            var profile = new FollowerCustomerProfileDTO
+            {
+                CustomerId = info.CustomerId,
+                CustomerName = info.CustomerName,
+                PhoneNumber = info.PhoneNumber,
+                Address = info.Address,
+                CityName = info.CityName,
+                ShopName = info.ShopName,
+                StoreAddress = info.StoreAddress,
+                StorePhoneNumber = info.StorePhoneNumber,
+                NearestFunctionPoint = info.NearestFunctionPoint,
+                Neighborhood = info.Neighborhood,
+                Latitude = info.Latitude,
+                Longitude = info.Longitude,
+                CustomerImage = info.CustomerImage,
+                CustomerImageUrl = imageUrl,
+                DelegateName = info.DelegateName,
+                ListDelegateId = listId,
+                CostTotalSales = info.CostTotalSales,
+                AmountTotalSales = info.AmountTotalSales,
+                AmountDaySales = info.AmountDaySales,
+                AmountRemaining = info.AmountRemaining,
+                ReceiptsTotal = info.ReceiptsTotal,
+                AmountReceverDay = info.AmountReceverDay,
+                ItemsNames = info.ItemsNames,
+                DateSaleDevice = info.DateSaleDevice,
+                CustomerSystemNotes = info.Notes,
+                Notes = notes.ToList(),
+                Images = images
+            };
+            return Ok(profile);
+        }
+
         [HttpGet("Customers/{customerId:int}/notes")]
         public async Task<IActionResult> ListCustomerNotes(
             int customerId,
@@ -125,7 +196,6 @@ namespace BE_DelegateWebApplication.Controllers
                 return denied;
             }
 
-            // Reject client spoof of CreatedBy*
             _ = FollowerAuthorization.AcceptClientCreatedByUserId(body.CreatedByUserId, father.DelegateId);
 
             var saved = await _followerActions.AddCustomerNoteAsync(new FollowerCustomerNoteDTO
@@ -140,9 +210,9 @@ namespace BE_DelegateWebApplication.Controllers
             return Ok(saved);
         }
 
-        [HttpGet("Employees/{employeeId:int}/notes")]
-        public async Task<IActionResult> ListEmployeeNotes(
-            int employeeId,
+        [HttpGet("Delegates/{delegateId:int}/notes")]
+        public async Task<IActionResult> ListDelegateNotes(
+            int delegateId,
             [FromQuery] string? asyncId,
             [FromQuery] int listId,
             CancellationToken ct)
@@ -154,20 +224,18 @@ namespace BE_DelegateWebApplication.Controllers
             }
 
             var linked = await _delegateRepository.IsFollowerListLinked(father.DelegateId, listId);
-            var onList = await _followerActions.EmployeeAppearsOnListAsync(listId, employeeId, ct);
-            if (!FollowerAuthorization.CanNoteEmployee(linked, onList))
+            if (!FollowerAuthorization.CanNoteListDelegate(linked, listId, delegateId))
             {
-                return StatusCode(StatusCodes.Status403Forbidden, new { message = "لا يمكنك عرض ملاحظات هذا المندوب" });
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "لا يمكنك عرض ملاحظات مندوب هذه القائمة" });
             }
 
-            // Author-only read path for followers; never exposed to salesman APIs.
-            var notes = await _followerActions.ListEmployeeNotesForFollowerAsync(employeeId, father.DelegateId, ct);
+            var notes = await _followerActions.ListDelegateNotesForFollowerAsync(delegateId, father.DelegateId, ct);
             return Ok(notes);
         }
 
-        [HttpPost("Employees/{employeeId:int}/notes")]
-        public async Task<IActionResult> AddEmployeeNote(
-            int employeeId,
+        [HttpPost("Delegates/{delegateId:int}/notes")]
+        public async Task<IActionResult> AddDelegateNote(
+            int delegateId,
             [FromBody] FollowerNoteCreateDTO body,
             CancellationToken ct)
         {
@@ -182,24 +250,20 @@ namespace BE_DelegateWebApplication.Controllers
                 return BadRequest(new { message = "نص الملاحظة مطلوب" });
             }
 
-            if (employeeId <= 0)
-            {
-                return BadRequest(new { message = "المندوب غير معروف" });
-            }
-
             var linked = await _delegateRepository.IsFollowerListLinked(father.DelegateId, body.ListId);
-            var onList = await _followerActions.EmployeeAppearsOnListAsync(body.ListId, employeeId, ct);
-            if (!FollowerAuthorization.CanNoteEmployee(linked, onList))
+            // Force target = assigned list delegate (ignore spoofed path id mismatch).
+            if (!FollowerAuthorization.CanNoteListDelegate(linked, body.ListId, delegateId)
+                || delegateId != body.ListId)
             {
-                return StatusCode(StatusCodes.Status403Forbidden, new { message = "لا يمكنك إضافة ملاحظة على مندوب خارج قوائمك" });
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "لا يمكنك إضافة ملاحظة على مندوب قائمة غير مسندة" });
             }
 
             _ = FollowerAuthorization.AcceptClientCreatedByUserId(body.CreatedByUserId, father.DelegateId);
 
-            var saved = await _followerActions.AddEmployeeNoteAsync(new FollowerEmployeeNoteDTO
+            var saved = await _followerActions.AddDelegateNoteAsync(new FollowerDelegateNoteDTO
             {
-                EmployeeId = employeeId,
-                ListId = body.ListId > 0 ? body.ListId : null,
+                DelegateId = body.ListId,
+                ListId = body.ListId,
                 NoteText = body.NoteText.Trim(),
                 CreatedByUserId = FollowerAuthorization.ResolveCreatedByUserId(father.DelegateId, body.CreatedByUserId),
                 CreatedByName = father.DelegateName?.Trim() is { Length: > 0 } n ? n : "متابع",
@@ -226,32 +290,71 @@ namespace BE_DelegateWebApplication.Controllers
                 return Unauthorized(new { message = "رمز المتابع غير صحيح" });
             }
 
-            if (body.CustomerId <= 0)
+            if (body.ListId <= 0)
             {
-                return BadRequest(new { message = "الزبون مطلوب" });
+                return BadRequest(new { message = "يجب اختيار القائمة المسندة" });
             }
 
-            var denied = await EnsureCustomerInScope(father.DelegateId, body.ListId, body.CustomerId, ct);
-            if (denied != null)
+            var linked = await _delegateRepository.IsFollowerListLinked(father.DelegateId, body.ListId);
+            var existingId = body.CustomerId is > 0 ? body.CustomerId : null;
+
+            string? name;
+            string? phone;
+            string? address;
+            string? province;
+            string? cityValue;
+            string? cityName;
+
+            if (existingId is > 0)
             {
-                return denied;
+                var denied = await EnsureCustomerInScope(father.DelegateId, body.ListId, existingId.Value, ct);
+                if (denied != null)
+                {
+                    return denied;
+                }
+
+                var scope = await _followerActions.GetCustomerScopeAsync(existingId.Value, ct);
+                if (scope == null)
+                {
+                    return NotFound(new { message = "الزبون غير موجود" });
+                }
+
+                name = (body.FullName ?? scope.Value.CustomerName ?? string.Empty).Trim();
+                phone = string.IsNullOrWhiteSpace(body.Phone) ? scope.Value.Phone : body.Phone.Trim();
+                address = string.IsNullOrWhiteSpace(body.Address) ? scope.Value.Address : body.Address.Trim();
+                province = string.IsNullOrWhiteSpace(body.Province) ? scope.Value.CityName : body.Province.Trim();
+                cityValue = scope.Value.CityName;
+                cityName = scope.Value.CityName;
+            }
+            else
+            {
+                if (!FollowerAuthorization.CanSubmitNewCustomerRequest(linked, body.ListId))
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new { message = "القائمة غير مسندة" });
+                }
+
+                name = (body.FullName ?? string.Empty).Trim();
+                phone = body.Phone?.Trim();
+                address = body.Address?.Trim();
+                province = body.Province?.Trim();
+                cityValue = province;
+                cityName = province;
             }
 
-            var scope = await _followerActions.GetCustomerScopeAsync(body.CustomerId, ct);
-            if (scope == null)
-            {
-                return NotFound(new { message = "الزبون غير موجود" });
-            }
-
-            var name = (body.FullName ?? scope.Value.CustomerName ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(name))
             {
                 return BadRequest(new { message = "اسم الزبون مطلوب" });
             }
 
-            var phone = string.IsNullOrWhiteSpace(body.Phone) ? scope.Value.Phone : body.Phone.Trim();
-            var address = string.IsNullOrWhiteSpace(body.Address) ? scope.Value.Address : body.Address.Trim();
-            var province = string.IsNullOrWhiteSpace(body.Province) ? scope.Value.CityName : body.Province.Trim();
+            if (string.IsNullOrWhiteSpace(phone))
+            {
+                return BadRequest(new { message = "رقم الهاتف مطلوب" });
+            }
+
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                return BadRequest(new { message = "العنوان مطلوب" });
+            }
 
             _ = FollowerAuthorization.AcceptClientCreatedByUserId(body.CreatedByUserId, father.DelegateId);
             var createdBy = FollowerAuthorization.ResolveCreatedByUserId(father.DelegateId, body.CreatedByUserId);
@@ -270,12 +373,19 @@ namespace BE_DelegateWebApplication.Controllers
                 province,
                 address,
                 string.IsNullOrWhiteSpace(body.Notes) ? null : body.Notes.Trim(),
-                body.CustomerId,
-                scope.Value.CityName,
-                scope.Value.CityName,
+                existingId,
+                cityValue,
+                cityName,
                 ct);
 
             return Ok(saved);
+        }
+
+        private string ImagesBaseUrl()
+        {
+            var request = HttpContext.Request;
+            var root = $"{request.Scheme}://{request.Host}";
+            return $"{root}/Images";
         }
 
         private async Task<IActionResult?> EnsureCustomerInScope(int followerId, int listId, int customerId, CancellationToken ct)

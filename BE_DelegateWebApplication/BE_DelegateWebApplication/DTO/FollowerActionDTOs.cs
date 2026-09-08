@@ -22,10 +22,10 @@ namespace BE_DelegateWebApplication.DTO
         public DateTime CreatedAtUtc { get; set; }
     }
 
-    public sealed class FollowerEmployeeNoteDTO
+    public sealed class FollowerDelegateNoteDTO
     {
         public int Id { get; set; }
-        public int EmployeeId { get; set; }
+        public int DelegateId { get; set; }
         public int? ListId { get; set; }
         public int CreatedByUserId { get; set; }
         public string CreatedByName { get; set; } = string.Empty;
@@ -38,13 +38,14 @@ namespace BE_DelegateWebApplication.DTO
     {
         public string? AsyncId { get; set; }
         public int ListId { get; set; }
-        public int CustomerId { get; set; }
+        /// <summary>0 / null = زبون جديد (لا يُنشأ في Customers).</summary>
+        public int? CustomerId { get; set; }
         public string? FullName { get; set; }
         public string? Phone { get; set; }
         public string? Province { get; set; }
         public string? Address { get; set; }
         public string? Notes { get; set; }
-        /// <summary>Ignored — server sets from authenticated follower.</summary>
+        /// <summary>Ignored.</summary>
         public int? CreatedByUserId { get; set; }
     }
 
@@ -57,5 +58,45 @@ namespace BE_DelegateWebApplication.DTO
         public int CreatedByUserId { get; set; }
         public string Status { get; set; } = "New";
         public DateTime CreatedAtUtc { get; set; }
+        public int? ExistingCustomerId { get; set; }
+    }
+
+    public sealed class FollowerCustomerProfileDTO
+    {
+        public int CustomerId { get; set; }
+        public string? CustomerName { get; set; }
+        public string? PhoneNumber { get; set; }
+        public string? Address { get; set; }
+        public string? CityName { get; set; }
+        public string? ShopName { get; set; }
+        public string? StoreAddress { get; set; }
+        public string? StorePhoneNumber { get; set; }
+        public string? NearestFunctionPoint { get; set; }
+        public string? Neighborhood { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
+        public string? CustomerImage { get; set; }
+        public string? CustomerImageUrl { get; set; }
+        public string? DelegateName { get; set; }
+        public int? ListDelegateId { get; set; }
+        public double? CostTotalSales { get; set; }
+        public double? AmountTotalSales { get; set; }
+        public double? AmountDaySales { get; set; }
+        public double? AmountRemaining { get; set; }
+        public double? ReceiptsTotal { get; set; }
+        public double? AmountReceverDay { get; set; }
+        public string? ItemsNames { get; set; }
+        public DateTime? DateSaleDevice { get; set; }
+        /// <summary>ملاحظات مخزّنة على سجل الزبون (قراءة فقط).</summary>
+        public string? CustomerSystemNotes { get; set; }
+        public List<FollowerCustomerNoteDTO> Notes { get; set; } = [];
+        public List<FollowerProfileImageDTO> Images { get; set; } = [];
+    }
+
+    public sealed class FollowerProfileImageDTO
+    {
+        public string Kind { get; set; } = "Customer";
+        public string? Label { get; set; }
+        public string? Url { get; set; }
     }
 }

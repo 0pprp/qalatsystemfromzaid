@@ -1,4 +1,3 @@
-using System.Data;
 using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
 using Dapper;
@@ -53,14 +52,12 @@ WHERE C.CustomerID = @CustomerId;",
                 (string?)row.SaleName);
         }
 
-        public async Task<bool> EmployeeAppearsOnListAsync(int listId, int employeeId, CancellationToken ct = default)
+        public async Task<string?> GetDelegateNameAsync(int delegateId, CancellationToken ct = default)
         {
             await using var connection = new SqlConnection(_connectionString);
-            var count = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
-SELECT COUNT(1) FROM dbo.Customers
-WHERE DelegateID = @ListId AND UserID = @EmployeeId;",
-                new { ListId = listId, EmployeeId = employeeId }, cancellationToken: ct));
-            return count > 0;
+            return await connection.ExecuteScalarAsync<string?>(new CommandDefinition(
+                "SELECT TOP 1 DelegateName FROM dbo.Delegates WHERE DelegateID = @Id",
+                new { Id = delegateId }, cancellationToken: ct));
         }
 
         public async Task<FollowerCustomerNoteDTO> AddCustomerNoteAsync(FollowerCustomerNoteDTO note, CancellationToken ct = default)
@@ -81,7 +78,6 @@ VALUES (@CustomerId, @NoteText, @CreatedByUserId, @CreatedByName, @CreatedByRole
         {
             await EnsureSchemaAsync(ct);
             await using var connection = new SqlConnection(_connectionString);
-            // Follower sees notes they authored on this customer; branch manager can be added later without salesman access.
             var rows = await connection.QueryAsync<FollowerCustomerNoteDTO>(new CommandDefinition(@"
 SELECT Id, CustomerId, NoteText, CreatedByUserId, CreatedByName, CreatedByRole, CreatedAtUtc
 FROM dbo.FollowerCustomerNotes
@@ -91,30 +87,30 @@ ORDER BY CreatedAtUtc DESC;",
             return rows.ToList();
         }
 
-        public async Task<FollowerEmployeeNoteDTO> AddEmployeeNoteAsync(FollowerEmployeeNoteDTO note, CancellationToken ct = default)
+        public async Task<FollowerDelegateNoteDTO> AddDelegateNoteAsync(FollowerDelegateNoteDTO note, CancellationToken ct = default)
         {
             await EnsureSchemaAsync(ct);
             await using var connection = new SqlConnection(_connectionString);
             var id = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
-INSERT INTO dbo.FollowerEmployeeNotes
-(EmployeeId, ListId, NoteText, CreatedByUserId, CreatedByName, CreatedByRole, CreatedAtUtc)
+INSERT INTO dbo.FollowerDelegateNotes
+(DelegateId, ListId, NoteText, CreatedByUserId, CreatedByName, CreatedByRole, CreatedAtUtc)
 OUTPUT INSERTED.Id
-VALUES (@EmployeeId, @ListId, @NoteText, @CreatedByUserId, @CreatedByName, @CreatedByRole, @CreatedAtUtc);",
+VALUES (@DelegateId, @ListId, @NoteText, @CreatedByUserId, @CreatedByName, @CreatedByRole, @CreatedAtUtc);",
                 note, cancellationToken: ct));
             note.Id = id;
             return note;
         }
 
-        public async Task<IReadOnlyList<FollowerEmployeeNoteDTO>> ListEmployeeNotesForFollowerAsync(int employeeId, int followerId, CancellationToken ct = default)
+        public async Task<IReadOnlyList<FollowerDelegateNoteDTO>> ListDelegateNotesForFollowerAsync(int delegateId, int followerId, CancellationToken ct = default)
         {
             await EnsureSchemaAsync(ct);
             await using var connection = new SqlConnection(_connectionString);
-            var rows = await connection.QueryAsync<FollowerEmployeeNoteDTO>(new CommandDefinition(@"
-SELECT Id, EmployeeId, ListId, NoteText, CreatedByUserId, CreatedByName, CreatedByRole, CreatedAtUtc
-FROM dbo.FollowerEmployeeNotes
-WHERE EmployeeId = @EmployeeId AND CreatedByUserId = @FollowerId
+            var rows = await connection.QueryAsync<FollowerDelegateNoteDTO>(new CommandDefinition(@"
+SELECT Id, DelegateId, ListId, NoteText, CreatedByUserId, CreatedByName, CreatedByRole, CreatedAtUtc
+FROM dbo.FollowerDelegateNotes
+WHERE DelegateId = @DelegateId AND CreatedByUserId = @FollowerId
 ORDER BY CreatedAtUtc DESC;",
-                new { EmployeeId = employeeId, FollowerId = followerId }, cancellationToken: ct));
+                new { DelegateId = delegateId, FollowerId = followerId }, cancellationToken: ct));
             return rows.ToList();
         }
 
@@ -155,7 +151,7 @@ VALUES
                     CityValue = cityValue,
                     CityName = cityName,
                     CustomerSourceType = "Follower",
-                    ExistingCustomerId = existingCustomerId,
+                    ExistingCustomerId = existingCustomerId is > 0 ? existingCustomerId : null,
                     CustomerName = customerName,
                     Phone = phone,
                     Province = province,
@@ -186,6 +182,7 @@ VALUES
             meta.Id = id;
             meta.CustomerSourceType = "Follower";
             meta.Status = "New";
+            meta.ExistingCustomerId = existingCustomerId is > 0 ? existingCustomerId : null;
             return meta;
         }
 
@@ -203,20 +200,37 @@ BEGIN
     );
     CREATE INDEX IX_FollowerCustomerNotes_Customer ON dbo.FollowerCustomerNotes (CustomerId, CreatedAtUtc DESC);
 END
-IF OBJECT_ID(N'dbo.FollowerEmployeeNotes', N'U') IS NULL
+
+IF OBJECT_ID(N'dbo.FollowerDelegateNotes', N'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.FollowerEmployeeNotes (
+    CREATE TABLE dbo.FollowerDelegateNotes (
         Id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-        EmployeeId INT NOT NULL,
+        DelegateId INT NOT NULL,
         ListId INT NULL,
         NoteText NVARCHAR(MAX) NOT NULL,
         CreatedByUserId INT NOT NULL,
         CreatedByName NVARCHAR(200) NOT NULL,
-        CreatedByRole NVARCHAR(50) NOT NULL CONSTRAINT DF_FollowerEmployeeNotes_Role DEFAULT (N'Follower'),
-        CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_FollowerEmployeeNotes_At DEFAULT (SYSUTCDATETIME())
+        CreatedByRole NVARCHAR(50) NOT NULL CONSTRAINT DF_FollowerDelegateNotes_Role DEFAULT (N'Follower'),
+        CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_FollowerDelegateNotes_At DEFAULT (SYSUTCDATETIME())
     );
-    CREATE INDEX IX_FollowerEmployeeNotes_Employee ON dbo.FollowerEmployeeNotes (EmployeeId, CreatedByUserId);
-END";
+    CREATE INDEX IX_FollowerDelegateNotes_Delegate ON dbo.FollowerDelegateNotes (DelegateId, CreatedByUserId);
+END
+
+-- Idempotent migration: copy old Employee-notes rows into Delegate notes (EmployeeId had been misused as list id in some demos).
+IF OBJECT_ID(N'dbo.FollowerEmployeeNotes', N'U') IS NOT NULL
+BEGIN
+    INSERT INTO dbo.FollowerDelegateNotes (DelegateId, ListId, NoteText, CreatedByUserId, CreatedByName, CreatedByRole, CreatedAtUtc)
+    SELECT e.EmployeeId, e.ListId, e.NoteText, e.CreatedByUserId, e.CreatedByName, e.CreatedByRole, e.CreatedAtUtc
+    FROM dbo.FollowerEmployeeNotes e
+    WHERE NOT EXISTS (
+        SELECT 1 FROM dbo.FollowerDelegateNotes d
+        WHERE d.DelegateId = e.EmployeeId
+          AND d.CreatedByUserId = e.CreatedByUserId
+          AND d.NoteText = e.NoteText
+          AND d.CreatedAtUtc = e.CreatedAtUtc
+    );
+END
+";
 
         private const string SalesRequestsEnsureSql = @"
 IF OBJECT_ID(N'dbo.SalesRequests', N'U') IS NULL
