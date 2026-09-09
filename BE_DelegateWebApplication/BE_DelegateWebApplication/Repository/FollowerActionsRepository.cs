@@ -8,10 +8,14 @@ namespace BE_DelegateWebApplication.Repository
     public sealed class FollowerActionsRepository : IFollowerActionsRepository
     {
         private readonly string _connectionString;
+        private readonly IWebHostEnvironment _env;
+        private readonly string? _documentsRoot;
 
-        public FollowerActionsRepository(IConfiguration configuration)
+        public FollowerActionsRepository(IConfiguration configuration, IWebHostEnvironment env)
         {
             _connectionString = configuration.GetConnectionString("DataBaseConnection")!;
+            _env = env;
+            _documentsRoot = configuration["SalesDocumentsRoot"];
         }
 
         public async Task EnsureSchemaAsync(CancellationToken ct = default)
@@ -59,6 +63,235 @@ WHERE C.CustomerID = @CustomerId;",
                 "SELECT TOP 1 DelegateName FROM dbo.Delegates WHERE DelegateID = @Id",
                 new { Id = delegateId }, cancellationToken: ct));
         }
+
+        public async Task<string?> GetFollowerCityNameAsync(int followerDelegateId, CancellationToken ct = default)
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            return await connection.ExecuteScalarAsync<string?>(new CommandDefinition(@"
+SELECT TOP 1 Ci.CityName
+FROM dbo.Delegates D
+LEFT JOIN dbo.Cities Ci ON Ci.CityID = D.CityID
+WHERE D.DelegateID = @Id;",
+                new { Id = followerDelegateId }, cancellationToken: ct));
+        }
+
+        public async Task<IReadOnlyList<FollowerSalesDocumentRow>> ListCustomerSalesDocumentsAsync(
+            int customerId, string? customerName, string? phone, CancellationToken ct = default)
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            var exists = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                "SELECT CASE WHEN OBJECT_ID(N'dbo.SalesCustomerDocuments', N'U') IS NULL THEN 0 ELSE 1 END",
+                cancellationToken: ct));
+            if (exists == 0)
+            {
+                return [];
+            }
+
+            HashSet<int> saleIds = [];
+            var draftsExist = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                "SELECT CASE WHEN OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NULL THEN 0 ELSE 1 END",
+                cancellationToken: ct));
+            if (draftsExist == 1)
+            {
+                var drafts = await connection.QueryAsync<(int SaleId, int? CustomerId, string? FullName, string? Phone)>(
+                    new CommandDefinition(
+                        "SELECT SaleId, CustomerId, FullName, Phone FROM dbo.SalesDrafts",
+                        cancellationToken: ct));
+                saleIds = drafts
+                    .Where(d =>
+                        (customerId > 0 && d.CustomerId == customerId)
+                        || NamesMatch(d.FullName, customerName)
+                        || PhonesMatch(d.Phone, phone))
+                    .Select(d => d.SaleId)
+                    .ToHashSet();
+            }
+
+            var rows = (await connection.QueryAsync<FollowerSalesDocumentRow>(new CommandDefinition(@"
+SELECT Id, SaleId, CustomerId, CustomerName, CustomerPhone, DocumentType, FileKey, FileName, ContentType
+FROM dbo.SalesCustomerDocuments
+ORDER BY CreatedAtUtc, Id;", cancellationToken: ct))).ToList();
+
+            return rows.Where(r => DocumentMatches(r, customerId, customerName, phone, saleIds)).ToList();
+        }
+
+        public async Task<FollowerSalesDocumentRow?> GetSalesDocumentAsync(int documentId, CancellationToken ct = default)
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            var exists = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                "SELECT CASE WHEN OBJECT_ID(N'dbo.SalesCustomerDocuments', N'U') IS NULL THEN 0 ELSE 1 END",
+                cancellationToken: ct));
+            if (exists == 0)
+            {
+                return null;
+            }
+
+            return await connection.QueryFirstOrDefaultAsync<FollowerSalesDocumentRow>(new CommandDefinition(@"
+SELECT Id, SaleId, CustomerId, CustomerName, CustomerPhone, DocumentType, FileKey, FileName, ContentType
+FROM dbo.SalesCustomerDocuments WHERE Id = @Id;",
+                new { Id = documentId }, cancellationToken: ct));
+        }
+
+        public async Task<(string? ShopImageKey, int? SaleId)?> GetCustomerShopImageAsync(
+            int customerId, string? customerName, string? phone, CancellationToken ct = default)
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            var ok = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
+SELECT CASE
+  WHEN OBJECT_ID(N'dbo.SalesShopProfiles', N'U') IS NULL OR OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NULL THEN 0
+  ELSE 1 END", cancellationToken: ct));
+            if (ok == 0)
+            {
+                return null;
+            }
+
+            var rows = await connection.QueryAsync<(int SaleId, int? CustomerId, string? FullName, string? Phone, string? ShopImageKey)>(
+                new CommandDefinition(@"
+SELECT d.SaleId, d.CustomerId, d.FullName, d.Phone, p.ShopImageKey
+FROM dbo.SalesDrafts d
+INNER JOIN dbo.SalesShopProfiles p ON p.SaleId = d.SaleId
+WHERE p.ShopImageKey IS NOT NULL AND LTRIM(RTRIM(p.ShopImageKey)) <> N''
+ORDER BY d.SaleId DESC;", cancellationToken: ct));
+
+            foreach (var row in rows)
+            {
+                if ((customerId > 0 && row.CustomerId == customerId)
+                    || NamesMatch(row.FullName, customerName)
+                    || PhonesMatch(row.Phone, phone))
+                {
+                    return (row.ShopImageKey, row.SaleId);
+                }
+            }
+
+            return null;
+        }
+
+        public Task<(string FileName, byte[] Bytes, string ContentType)?> ReadSalesDocumentFileAsync(int documentId, CancellationToken ct = default) =>
+            ReadKeyedFileAsync(async () =>
+            {
+                var row = await GetSalesDocumentAsync(documentId, ct);
+                return row == null ? null : (row.FileKey, row.FileName, row.ContentType);
+            }, ct);
+
+        public Task<(string FileName, byte[] Bytes, string ContentType)?> ReadShopImageFileAsync(string shopImageKey, CancellationToken ct = default) =>
+            ReadKeyedFileAsync(() => Task.FromResult<(string FileKey, string FileName, string? ContentType)?>(
+                (shopImageKey, Path.GetFileName(shopImageKey.Replace('\\', '/')), null)), ct);
+
+        private async Task<(string FileName, byte[] Bytes, string ContentType)?> ReadKeyedFileAsync(
+            Func<Task<(string FileKey, string FileName, string? ContentType)?>> load,
+            CancellationToken ct)
+        {
+            var meta = await load();
+            if (meta == null || string.IsNullOrWhiteSpace(meta.Value.FileKey))
+            {
+                return null;
+            }
+
+            var path = ResolveDocumentPath(meta.Value.FileKey);
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var bytes = await File.ReadAllBytesAsync(path, ct);
+            var contentType = string.IsNullOrWhiteSpace(meta.Value.ContentType)
+                ? GuessContentType(Path.GetExtension(path))
+                : meta.Value.ContentType!;
+            var fileName = string.IsNullOrWhiteSpace(meta.Value.FileName)
+                ? Path.GetFileName(path)
+                : meta.Value.FileName;
+            return (fileName, bytes, contentType);
+        }
+
+        private string ResolveDocumentPath(string key)
+        {
+            if (Path.IsPathRooted(key) || key.Contains(":\\", StringComparison.Ordinal))
+            {
+                return key;
+            }
+
+            var relative = key.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
+            var roots = new List<string>();
+            if (!string.IsNullOrWhiteSpace(_documentsRoot))
+            {
+                roots.Add(_documentsRoot!);
+            }
+
+            roots.Add(Path.Combine(_env.ContentRootPath, "App_Data"));
+            if (!string.IsNullOrWhiteSpace(_env.WebRootPath))
+            {
+                // Demo often shares company wwwroot; App_Data may sit beside it.
+                roots.Add(Path.GetFullPath(Path.Combine(_env.WebRootPath, "..", "App_Data")));
+            }
+
+            foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var candidate = relative.StartsWith("App_Data", StringComparison.OrdinalIgnoreCase)
+                    ? Path.Combine(root.EndsWith("App_Data", StringComparison.OrdinalIgnoreCase)
+                        ? Path.GetDirectoryName(root) ?? root
+                        : root, relative)
+                    : Path.Combine(root, relative);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return Path.Combine(_env.ContentRootPath, "App_Data", relative);
+        }
+
+        private static bool DocumentMatches(
+            FollowerSalesDocumentRow row,
+            int customerId,
+            string? customerName,
+            string? phone,
+            IReadOnlyCollection<int> saleIds)
+        {
+            if (customerId > 0 && row.CustomerId == customerId)
+            {
+                return true;
+            }
+
+            if (row.SaleId is int saleId && saleIds.Contains(saleId))
+            {
+                return true;
+            }
+
+            return NamesMatch(row.CustomerName, customerName) || PhonesMatch(row.CustomerPhone, phone);
+        }
+
+        private static bool NamesMatch(string? left, string? right)
+        {
+            var a = string.Join(" ", (left ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .ToLowerInvariant();
+            var b = string.Join(" ", (right ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .ToLowerInvariant();
+            return a.Length > 0 && a == b;
+        }
+
+        private static bool PhonesMatch(string? left, string? right)
+        {
+            static string? Digits(string? v)
+            {
+                if (string.IsNullOrWhiteSpace(v)) return null;
+                var d = new string(v.Where(char.IsDigit).ToArray());
+                return d.Length == 0 ? null : d;
+            }
+
+            var a = Digits(left);
+            var b = Digits(right);
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+            if (a == b) return true;
+            var tailA = a.Length > 10 ? a[^10..] : a;
+            var tailB = b.Length > 10 ? b[^10..] : b;
+            return tailA.Length >= 7 && tailA == tailB;
+        }
+
+        private static string GuessContentType(string ext) => ext.ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            _ => "image/jpeg"
+        };
 
         public async Task<FollowerCustomerNoteDTO> AddCustomerNoteAsync(FollowerCustomerNoteDTO note, CancellationToken ct = default)
         {

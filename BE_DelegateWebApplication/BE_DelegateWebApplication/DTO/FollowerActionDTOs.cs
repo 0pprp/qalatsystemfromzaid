@@ -42,6 +42,7 @@ namespace BE_DelegateWebApplication.DTO
         public int? CustomerId { get; set; }
         public string? FullName { get; set; }
         public string? Phone { get; set; }
+        /// <summary>Ignored — province is taken from authenticated follower city.</summary>
         public string? Province { get; set; }
         public string? Address { get; set; }
         public string? Notes { get; set; }
@@ -95,8 +96,25 @@ namespace BE_DelegateWebApplication.DTO
 
     public sealed class FollowerProfileImageDTO
     {
+        public int? DocumentId { get; set; }
+        /// <summary>DocumentType / Customer / Shop.</summary>
         public string Kind { get; set; } = "Customer";
         public string? Label { get; set; }
+        public string? FileName { get; set; }
         public string? Url { get; set; }
+    }
+
+    /// <summary>Row from dbo.SalesCustomerDocuments (same source as company KYC gallery).</summary>
+    public sealed class FollowerSalesDocumentRow
+    {
+        public int Id { get; set; }
+        public int? SaleId { get; set; }
+        public int? CustomerId { get; set; }
+        public string? CustomerName { get; set; }
+        public string? CustomerPhone { get; set; }
+        public string DocumentType { get; set; } = string.Empty;
+        public string FileKey { get; set; } = string.Empty;
+        public string FileName { get; set; } = string.Empty;
+        public string? ContentType { get; set; }
     }
 }

@@ -1,12 +1,15 @@
 import 'dart:convert';
 
 import 'package:follower_application/config/app_env.dart';
+import 'package:follower_application/services/follower_auth_rules.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Sales request form for follower: existing customer OR brand-new customer.
+/// Province is NOT collected — Backend sets it from the authenticated follower.
 class FollowerSalesRequestPage extends StatefulWidget {
   const FollowerSalesRequestPage({super.key});
 
@@ -18,7 +21,6 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _phone = TextEditingController();
-  final _province = TextEditingController();
   final _address = TextEditingController();
   final _notes = TextEditingController();
   bool _saving = false;
@@ -42,7 +44,6 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
         _name.text = '${_customer!['customerName'] ?? _customer!['CustomerName'] ?? ''}';
         _phone.text = '${_customer!['phoneNumber'] ?? _customer!['PhoneNumber'] ?? ''}';
         _address.text = '${_customer!['address'] ?? _customer!['Address'] ?? ''}';
-        _province.text = '${_customer!['cityName'] ?? _customer!['CityName'] ?? ''}';
       }
     }
     _ready = true;
@@ -52,7 +53,6 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
   void dispose() {
     _name.dispose();
     _phone.dispose();
-    _province.dispose();
     _address.dispose();
     _notes.dispose();
     super.dispose();
@@ -63,6 +63,18 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
     if (_listId <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('اختر قائمة مسندة أولاً', style: TextStyle(fontFamily: 'Cairo'))),
+      );
+      return;
+    }
+    final phone = _phone.text.trim().replaceAll(RegExp(r'\s+'), '');
+    if (!FollowerAuthRules.isValidFollowerPhone(phone)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            FollowerAuthRules.phoneValidationMessage(phone) ?? 'رقم الهاتف غير صالح',
+            style: const TextStyle(fontFamily: 'Cairo'),
+          ),
+        ),
       );
       return;
     }
@@ -82,8 +94,7 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
               'listId': _listId,
               if (customerId > 0) 'customerId': customerId,
               'fullName': _name.text.trim(),
-              'phone': _phone.text.trim(),
-              'province': _province.text.trim(),
+              'phone': phone,
               'address': _address.text.trim(),
               'notes': _notes.text.trim(),
             }),
@@ -131,8 +142,8 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
             children: [
               Text(
                 _isNew
-                    ? 'زبون جديد — لن يُنشأ في Customers الآن. المصدر: المتابع'
-                    : 'طلب لزبون موجود. المصدر: المتابع',
+                    ? 'زبون جديد — لن يُنشأ في Customers الآن. المصدر: المتابع. المحافظة تُحدد تلقائياً من حسابك.'
+                    : 'طلب لزبون موجود. المصدر: المتابع. المحافظة تُحدد تلقائياً من حسابك.',
                 style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey),
               ),
               const SizedBox(height: 16),
@@ -143,13 +154,16 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
               ),
               TextFormField(
                 controller: _phone,
-                decoration: const InputDecoration(labelText: 'الهاتف *', labelStyle: TextStyle(fontFamily: 'Cairo')),
+                decoration: const InputDecoration(
+                  labelText: 'الهاتف * (11 رقم يبدأ بـ 07)',
+                  labelStyle: TextStyle(fontFamily: 'Cairo'),
+                ),
                 keyboardType: TextInputType.phone,
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'مطلوب' : null,
-              ),
-              TextFormField(
-                controller: _province,
-                decoration: const InputDecoration(labelText: 'المحافظة/المدينة', labelStyle: TextStyle(fontFamily: 'Cairo')),
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(11),
+                ],
+                validator: (v) => FollowerAuthRules.phoneValidationMessage(v),
               ),
               TextFormField(
                 controller: _address,

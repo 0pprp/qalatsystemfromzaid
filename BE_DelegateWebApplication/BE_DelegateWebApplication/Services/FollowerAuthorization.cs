@@ -38,6 +38,35 @@ namespace BE_DelegateWebApplication.Services
 
         public static bool CanEditOrDeleteNoteAfterSave() => false;
 
+        /// Iraqi mobile: exactly 11 digits starting with 07.
+        public static bool IsValidFollowerPhone(string? phone)
+        {
+            if (string.IsNullOrWhiteSpace(phone))
+            {
+                return false;
+            }
+
+            var digits = phone.Trim().Replace(" ", string.Empty);
+            if (digits.Length != 11 || !digits.StartsWith("07", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            foreach (var c in digits)
+            {
+                if (c is < '0' or > '9')
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// Province always comes from authenticated follower city — client value ignored.
+        public static string? ResolveProvinceFromFollower(string? followerCityName, string? clientProvince) =>
+            string.IsNullOrWhiteSpace(followerCityName) ? null : followerCityName.Trim();
+
         public static string? BuildImageUrl(string? imagesBaseUrl, string? fileName)
         {
             if (string.IsNullOrWhiteSpace(fileName))

@@ -4,9 +4,9 @@ import 'package:follower_application/AsyncIdChecker.dart';
 import 'package:follower_application/main.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/utils/Formatters.dart';
+import 'package:follower_application/utils/iraq_datetime.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart' hide TextDirection;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class HomePage extends StatefulWidget {
@@ -129,7 +129,7 @@ class _HomePageState extends State<HomePage> {
 
     try {
       final session = await _session();
-      final date = DateFormat('yyyy-MM-dd').format(_paymentDate);
+      final date = IraqDateTime.formatYmd(_paymentDate);
       final uri = Uri.parse('${session['link']}Followers/Daily').replace(
         queryParameters: {
           'asyncId': session['asyncId'],
@@ -245,14 +245,15 @@ class _HomePageState extends State<HomePage> {
           orElse: () => null,
         );
     final listName = list?['name']?.toString() ?? 'القائمة';
-    final controller = TextEditingController();
+    // Avoid TextEditingController dispose races with dialog TextField (_dependents.isEmpty).
+    var draft = '';
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('ملاحظة على مندوب $listName', style: const TextStyle(fontFamily: 'Cairo')),
         content: TextField(
-          controller: controller,
           maxLines: 4,
+          onChanged: (v) => draft = v,
           decoration: const InputDecoration(hintText: 'نص الملاحظة *', hintStyle: TextStyle(fontFamily: 'Cairo')),
         ),
         actions: [
@@ -261,9 +262,8 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
-    final text = controller.text.trim();
-    controller.dispose();
-    if (ok != true || text.isEmpty) return;
+    final text = draft.trim();
+    if (!mounted || ok != true || text.isEmpty) return;
     try {
       final session = await _session();
       final delegateId = _selectedChildId!;
@@ -445,7 +445,7 @@ class _HomePageState extends State<HomePage> {
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               child: Text(
-                                'التاريخ: ${DateFormat('yyyy-MM-dd').format(_paymentDate)}',
+                                'التاريخ: ${IraqDateTime.formatYmd(_paymentDate)}',
                                 style: const TextStyle(
                                     fontFamily: 'Cairo',
                                     fontWeight: FontWeight.bold),

@@ -12,15 +12,18 @@ namespace BE_DelegateWebApplication.Controllers
         private readonly IDelegateRepository _delegateRepository;
         private readonly ICustomersRepository _customersRepository;
         private readonly IFollowerActionsRepository _followerActions;
+        private readonly IWebHostEnvironment _env;
 
         public FollowersController(
             IDelegateRepository delegateRepository,
             ICustomersRepository customersRepository,
-            IFollowerActionsRepository followerActions)
+            IFollowerActionsRepository followerActions,
+            IWebHostEnvironment env)
         {
             _delegateRepository = delegateRepository;
             _customersRepository = customersRepository;
             _followerActions = followerActions;
+            _env = env;
         }
 
         [HttpGet("Lists")]
@@ -105,15 +108,52 @@ namespace BE_DelegateWebApplication.Controllers
             }
 
             var notes = await _followerActions.ListCustomerNotesAsync(customerId, father.DelegateId, ct);
-            var imageUrl = FollowerAuthorization.BuildImageUrl(ImagesBaseUrl(), info.CustomerImage);
+            var webRoot = _env.WebRootPath;
+            var imagesBase = ImagesBaseUrl();
+            var apiRoot = $"{Request.Scheme}://{Request.Host}/api";
             var images = new List<FollowerProfileImageDTO>();
-            if (!string.IsNullOrWhiteSpace(imageUrl))
+
+            var portraitUrl = FollowerCustomerMedia.TryPublicImagesUrl(imagesBase, webRoot, info.CustomerImage)
+                              ?? FollowerAuthorization.BuildImageUrl(imagesBase, info.CustomerImage);
+            if (!string.IsNullOrWhiteSpace(portraitUrl))
             {
                 images.Add(new FollowerProfileImageDTO
                 {
                     Kind = "Customer",
-                    Label = "صورة الزبون",
-                    Url = imageUrl
+                    Label = FollowerCustomerMedia.DocumentTypeLabel("Customer"),
+                    FileName = FollowerCustomerMedia.LeafFileName(info.CustomerImage),
+                    Url = portraitUrl
+                });
+            }
+
+            var docs = await _followerActions.ListCustomerSalesDocumentsAsync(
+                customerId, info.CustomerName, info.PhoneNumber, ct);
+            foreach (var doc in docs)
+            {
+                var url = FollowerCustomerMedia.TryPublicImagesUrl(imagesBase, webRoot, doc.FileName)
+                          ?? FollowerCustomerMedia.TryPublicImagesUrl(imagesBase, webRoot, doc.FileKey)
+                          ?? FollowerCustomerMedia.BuildDocumentFileApiUrl(apiRoot, customerId, doc.Id, asyncId ?? string.Empty, listId);
+                images.Add(new FollowerProfileImageDTO
+                {
+                    DocumentId = doc.Id,
+                    Kind = doc.DocumentType,
+                    Label = FollowerCustomerMedia.DocumentTypeLabel(doc.DocumentType),
+                    FileName = doc.FileName,
+                    Url = url
+                });
+            }
+
+            var shop = await _followerActions.GetCustomerShopImageAsync(customerId, info.CustomerName, info.PhoneNumber, ct);
+            if (shop?.ShopImageKey is { Length: > 0 } shopKey)
+            {
+                var shopUrl = FollowerCustomerMedia.TryPublicImagesUrl(imagesBase, webRoot, shopKey)
+                              ?? FollowerCustomerMedia.BuildShopImageApiUrl(apiRoot, customerId, asyncId ?? string.Empty, listId);
+                images.Add(new FollowerProfileImageDTO
+                {
+                    Kind = "Shop",
+                    Label = FollowerCustomerMedia.DocumentTypeLabel("Shop"),
+                    FileName = FollowerCustomerMedia.LeafFileName(shopKey),
+                    Url = shopUrl
                 });
             }
 
@@ -132,7 +172,7 @@ namespace BE_DelegateWebApplication.Controllers
                 Latitude = info.Latitude,
                 Longitude = info.Longitude,
                 CustomerImage = info.CustomerImage,
-                CustomerImageUrl = imageUrl,
+                CustomerImageUrl = portraitUrl,
                 DelegateName = info.DelegateName,
                 ListDelegateId = listId,
                 CostTotalSales = info.CostTotalSales,
@@ -148,6 +188,85 @@ namespace BE_DelegateWebApplication.Controllers
                 Images = images
             };
             return Ok(profile);
+        }
+
+        [HttpGet("Customers/{customerId:int}/documents/{documentId:int}/file")]
+        public async Task<IActionResult> CustomerDocumentFile(
+            int customerId,
+            int documentId,
+            [FromQuery] string? asyncId,
+            [FromQuery] int listId,
+            CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(asyncId);
+            if (father == null)
+            {
+                return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            }
+
+            var denied = await EnsureCustomerInScope(father.DelegateId, listId, customerId, ct);
+            if (denied != null)
+            {
+                return denied;
+            }
+
+            var row = await _followerActions.GetSalesDocumentAsync(documentId, ct);
+            if (row == null)
+            {
+                return NotFound(new { message = "المستند غير موجود" });
+            }
+
+            var info = await _customersRepository.GetCustomersDataInfo(customerId);
+            var docs = await _followerActions.ListCustomerSalesDocumentsAsync(
+                customerId, info?.CustomerName, info?.PhoneNumber, ct);
+            if (docs.All(d => d.Id != documentId))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "المستند خارج نطاق هذا الزبون" });
+            }
+
+            var file = await _followerActions.ReadSalesDocumentFileAsync(documentId, ct);
+            if (file == null)
+            {
+                return NotFound(new { message = "ملف المستند غير موجود على السيرفر" });
+            }
+
+            return File(file.Value.Bytes, file.Value.ContentType, file.Value.FileName);
+        }
+
+        [HttpGet("Customers/{customerId:int}/shop-image")]
+        public async Task<IActionResult> CustomerShopImage(
+            int customerId,
+            [FromQuery] string? asyncId,
+            [FromQuery] int listId,
+            CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(asyncId);
+            if (father == null)
+            {
+                return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            }
+
+            var denied = await EnsureCustomerInScope(father.DelegateId, listId, customerId, ct);
+            if (denied != null)
+            {
+                return denied;
+            }
+
+            var info = await _customersRepository.GetCustomersDataInfo(customerId);
+            var shop = await _followerActions.GetCustomerShopImageAsync(
+                customerId, info?.CustomerName, info?.PhoneNumber, ct);
+            if (shop?.ShopImageKey is not { Length: > 0 } key)
+            {
+                return NotFound(new { message = "لا توجد صورة محل" });
+            }
+
+            var file = await _followerActions.ReadShopImageFileAsync(key, ct);
+            if (file == null)
+            {
+                return NotFound(new { message = "ملف صورة المحل غير موجود على السيرفر" });
+            }
+
+            return File(file.Value.Bytes, file.Value.ContentType, file.Value.FileName);
         }
 
         [HttpGet("Customers/{customerId:int}/notes")]
@@ -298,12 +417,19 @@ namespace BE_DelegateWebApplication.Controllers
             var linked = await _delegateRepository.IsFollowerListLinked(father.DelegateId, body.ListId);
             var existingId = body.CustomerId is > 0 ? body.CustomerId : null;
 
+            // Province/city ALWAYS from authenticated follower — never from client body.
+            var followerCity = await _followerActions.GetFollowerCityNameAsync(father.DelegateId, ct);
+            var province = FollowerAuthorization.ResolveProvinceFromFollower(followerCity, body.Province);
+            if (string.IsNullOrWhiteSpace(province))
+            {
+                return BadRequest(new { message = "محافظة حساب المتابع غير معرّفة في النظام" });
+            }
+
             string? name;
             string? phone;
             string? address;
-            string? province;
-            string? cityValue;
-            string? cityName;
+            var cityValue = province;
+            var cityName = province;
 
             if (existingId is > 0)
             {
@@ -322,9 +448,6 @@ namespace BE_DelegateWebApplication.Controllers
                 name = (body.FullName ?? scope.Value.CustomerName ?? string.Empty).Trim();
                 phone = string.IsNullOrWhiteSpace(body.Phone) ? scope.Value.Phone : body.Phone.Trim();
                 address = string.IsNullOrWhiteSpace(body.Address) ? scope.Value.Address : body.Address.Trim();
-                province = string.IsNullOrWhiteSpace(body.Province) ? scope.Value.CityName : body.Province.Trim();
-                cityValue = scope.Value.CityName;
-                cityName = scope.Value.CityName;
             }
             else
             {
@@ -336,9 +459,6 @@ namespace BE_DelegateWebApplication.Controllers
                 name = (body.FullName ?? string.Empty).Trim();
                 phone = body.Phone?.Trim();
                 address = body.Address?.Trim();
-                province = body.Province?.Trim();
-                cityValue = province;
-                cityName = province;
             }
 
             if (string.IsNullOrWhiteSpace(name))
@@ -346,9 +466,10 @@ namespace BE_DelegateWebApplication.Controllers
                 return BadRequest(new { message = "اسم الزبون مطلوب" });
             }
 
-            if (string.IsNullOrWhiteSpace(phone))
+            phone = phone?.Trim().Replace(" ", string.Empty);
+            if (!FollowerAuthorization.IsValidFollowerPhone(phone))
             {
-                return BadRequest(new { message = "رقم الهاتف مطلوب" });
+                return BadRequest(new { message = "رقم الهاتف يجب أن يكون 11 رقماً ويبدأ بـ 07" });
             }
 
             if (string.IsNullOrWhiteSpace(address))

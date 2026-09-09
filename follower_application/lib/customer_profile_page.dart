@@ -2,16 +2,25 @@ import 'dart:convert';
 
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/utils/AppTheme.dart';
+import 'package:follower_application/utils/iraq_datetime.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart' hide TextDirection;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class CustomerProfilePage extends StatefulWidget {
-  const CustomerProfilePage({super.key, required this.customer, required this.listId});
+  const CustomerProfilePage({
+    super.key,
+    required this.customer,
+    required this.listId,
+    @visibleForTesting this.seedProfile,
+  });
 
   final Map<String, dynamic> customer;
   final int listId;
+
+  /// When set (tests only), skips network load and renders this profile.
+  @visibleForTesting
+  final Map<String, dynamic>? seedProfile;
 
   @override
   State<CustomerProfilePage> createState() => _CustomerProfilePageState();
@@ -31,7 +40,12 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
   @override
   void initState() {
     super.initState();
-    _loadProfile();
+    if (widget.seedProfile != null) {
+      _profile = Map<String, dynamic>.from(widget.seedProfile!);
+      _loading = false;
+    } else {
+      _loadProfile();
+    }
   }
 
   @override
@@ -48,7 +62,7 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
     };
   }
 
-  Future<void> _loadProfile() async {
+  Future<void> _loadProfile({bool silent = false}) async {
     final id = int.tryParse('${widget.customer['customerId'] ?? 0}') ?? 0;
     if (id <= 0) {
       setState(() {
@@ -57,11 +71,13 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
       });
       return;
     }
-    setState(() {
-      _loading = true;
-      _error = null;
-      _httpStatus = null;
-    });
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _httpStatus = null;
+      });
+    }
     try {
       final session = await _session();
       final uri = Uri.parse('${session['link']}Followers/Customers/$id/profile').replace(
@@ -86,9 +102,14 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
       setState(() {
         _profile = data;
         _loading = false;
+        _error = null;
       });
     } catch (e) {
       if (!mounted) return;
+      if (silent && _profile != null) {
+        setState(() {});
+        return;
+      }
       setState(() {
         _loading = false;
         if (e.toString().contains('404')) {
@@ -120,11 +141,28 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
             }),
           )
           .timeout(const Duration(seconds: 20));
+      if (!mounted) return;
       if (response.statusCode != 200) {
         throw Exception(response.statusCode);
       }
+      Map<String, dynamic>? saved;
+      try {
+        final decoded = json.decode(response.body);
+        if (decoded is Map) saved = Map<String, dynamic>.from(decoded);
+      } catch (_) {}
       _noteController.clear();
-      await _loadProfile();
+      if (saved != null) {
+        setState(() {
+          final notes = List<dynamic>.from((_profile?['notes'] ?? _profile?['Notes'] ?? []) as List? ?? []);
+          notes.insert(0, saved);
+          _profile = {
+            ...?_profile,
+            'notes': notes,
+            'Notes': notes,
+          };
+        });
+      }
+      await _loadProfile(silent: true);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -136,18 +174,9 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
     }
   }
 
-  String _iraqClock(dynamic utc) {
-    final parsed = DateTime.tryParse(utc?.toString() ?? '')?.toUtc();
-    if (parsed == null) return '—';
-    final iraq = parsed.add(const Duration(hours: 3));
-    return DateFormat('yyyy/MM/dd hh:mm a', 'en').format(iraq).replaceAll('AM', 'صباحاً').replaceAll('PM', 'مساءً');
-  }
+  String _iraqClock(dynamic utc) => IraqDateTime.formatClock(utc);
 
-  String _num(dynamic v) {
-    final n = double.tryParse('${v ?? ''}');
-    if (n == null) return '—';
-    return NumberFormat('#,##0').format(n);
-  }
+  String _num(dynamic v) => IraqDateTime.formatNumber(v);
 
   String? _pick(Map m, List<String> keys) {
     for (final k in keys) {
@@ -157,12 +186,21 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
     return null;
   }
 
+  List<Map<String, dynamic>> _normalizeImages(Map<String, dynamic>? p) {
+    final raw = (p?['images'] ?? p?['Images'] ?? p?['documents'] ?? p?['Documents'] ?? []) as List? ?? [];
+    return raw
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .where((m) => (_pick(m, ['url', 'Url']) ?? '').isNotEmpty)
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = _profile;
     final notes = (p?['notes'] ?? p?['Notes'] ?? []) as List? ?? [];
-    final images = (p?['images'] ?? p?['Images'] ?? []) as List? ?? [];
-    final imageUrl = _pick(p ?? {}, ['customerImageUrl', 'CustomerImageUrl']);
+    final images = _normalizeImages(p);
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -171,123 +209,148 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
           title: const Text('ملف الزبون', style: TextStyle(fontFamily: 'Cairo')),
           backgroundColor: AppTheme.primaryColor,
           actions: [
-            IconButton(onPressed: _loading ? null : _loadProfile, icon: const Icon(Icons.refresh)),
+            IconButton(onPressed: _loading ? null : () => _loadProfile(), icon: const Icon(Icons.refresh)),
           ],
         ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(_error!, textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'Cairo', color: Colors.red)),
-                    ),
-                  )
-                : ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      if (imageUrl != null)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.network(
-                            imageUrl,
-                            height: 180,
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => _placeholder('لا توجد صورة زبون'),
-                          ),
-                        )
-                      else
-                        _placeholder('لا توجد صورة زبون'),
-                      const SizedBox(height: 12),
-                      Text(_pick(p!, ['customerName', 'CustomerName']) ?? '', style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 18)),
-                      _line('الهاتف', _pick(p, ['phoneNumber', 'PhoneNumber'])),
-                      _line('العنوان', _pick(p, ['address', 'Address'])),
-                      _line('المحافظة', _pick(p, ['cityName', 'CityName'])),
-                      _line('المحل', _pick(p, ['shopName', 'ShopName'])),
-                      _line('عنوان المحل', _pick(p, ['storeAddress', 'StoreAddress'])),
-                      _line('هاتف المحل', _pick(p, ['storePhoneNumber', 'StorePhoneNumber'])),
-                      _line('أقرب نقطة', _pick(p, ['nearestFunctionPoint', 'NearestFunctionPoint'])),
-                      _line('الحي', _pick(p, ['neighborhood', 'Neighborhood'])),
-                      _line('الموقع', () {
-                        final lat = p['latitude'] ?? p['Latitude'];
-                        final lng = p['longitude'] ?? p['Longitude'];
-                        if (lat == null || lng == null) return null;
-                        return '$lat , $lng';
-                      }()),
-                      _line('مندوب القائمة', _pick(p, ['delegateName', 'DelegateName'])),
-                      const Divider(height: 28),
-                      const Text('بيانات البيع', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
-                      _line('سعر الشراء', _num(p['costTotalSales'] ?? p['CostTotalSales'])),
-                      _line('سعر البيع', _num(p['amountTotalSales'] ?? p['AmountTotalSales'])),
-                      _line('القسط اليومي', _num(p['amountDaySales'] ?? p['AmountDaySales'])),
-                      _line('المدفوع', _num(p['receiptsTotal'] ?? p['ReceiptsTotal'])),
-                      _line('الرصيد/الباقي', _num(p['amountRemaining'] ?? p['AmountRemaining'])),
-                      _line('المقدم/اليومي المستلم', _num(p['amountReceverDay'] ?? p['AmountReceverDay'])),
-                      _line('المواد', _pick(p, ['itemsNames', 'ItemsNames'])),
-                      _line('ملاحظات النظام', _pick(p, ['customerSystemNotes', 'CustomerSystemNotes'])),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: () => Navigator.pushNamed(
-                          context,
-                          '/FollowerSalesRequest',
-                          arguments: {'customer': {...widget.customer, ...?_profile}, 'listId': widget.listId},
+        body: SafeArea(
+          top: false,
+          bottom: true,
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(_error!, textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'Cairo', color: Colors.red)),
+                      ),
+                    )
+                  : ListView(
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset.clamp(0, 24)),
+                      children: [
+                        Text(
+                          _pick(p!, ['customerName', 'CustomerName']) ?? '',
+                          style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 18),
                         ),
-                        icon: const Icon(Icons.send),
-                        label: const Text('إرسال طلب مبيع', style: TextStyle(fontFamily: 'Cairo')),
-                      ),
-                      if (images.length > 1) ...[
+                        _line('الهاتف', _pick(p, ['phoneNumber', 'PhoneNumber'])),
+                        _line('العنوان', _pick(p, ['address', 'Address'])),
+                        _line('المحافظة', _pick(p, ['cityName', 'CityName'])),
+                        _line('المحل', _pick(p, ['shopName', 'ShopName'])),
+                        _line('عنوان المحل', _pick(p, ['storeAddress', 'StoreAddress'])),
+                        _line('هاتف المحل', _pick(p, ['storePhoneNumber', 'StorePhoneNumber'])),
+                        _line('أقرب نقطة', _pick(p, ['nearestFunctionPoint', 'NearestFunctionPoint'])),
+                        _line('الحي', _pick(p, ['neighborhood', 'Neighborhood'])),
+                        _line('الموقع', () {
+                          final lat = p['latitude'] ?? p['Latitude'];
+                          final lng = p['longitude'] ?? p['Longitude'];
+                          if (lat == null || lng == null) return null;
+                          return '$lat , $lng';
+                        }()),
+                        _line('مندوب القائمة', _pick(p, ['delegateName', 'DelegateName'])),
+                        const Divider(height: 28),
+                        const Text('بيانات البيع', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+                        _line('سعر الشراء', _num(p['costTotalSales'] ?? p['CostTotalSales'])),
+                        _line('سعر البيع', _num(p['amountTotalSales'] ?? p['AmountTotalSales'])),
+                        _line('القسط اليومي', _num(p['amountDaySales'] ?? p['AmountDaySales'])),
+                        _line('المدفوع', _num(p['receiptsTotal'] ?? p['ReceiptsTotal'])),
+                        _line('الرصيد/الباقي', _num(p['amountRemaining'] ?? p['AmountRemaining'])),
+                        _line('المقدم/اليومي المستلم', _num(p['amountReceverDay'] ?? p['AmountReceverDay'])),
+                        _line('المواد', _pick(p, ['itemsNames', 'ItemsNames'])),
+                        _line('ملاحظات النظام', _pick(p, ['customerSystemNotes', 'CustomerSystemNotes'])),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: () => Navigator.pushNamed(
+                            context,
+                            '/FollowerSalesRequest',
+                            arguments: {'customer': {...widget.customer, ...?_profile}, 'listId': widget.listId},
+                          ),
+                          icon: const Icon(Icons.send),
+                          label: const Text('إرسال طلب مبيع', style: TextStyle(fontFamily: 'Cairo')),
+                        ),
                         const SizedBox(height: 16),
-                        const Text('الصور', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
-                        ...images.skip(1).map((raw) {
-                          final img = Map<String, dynamic>.from(raw as Map);
-                          final url = _pick(img, ['url', 'Url']);
-                          if (url == null) return const SizedBox.shrink();
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Image.network(url, height: 140, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _placeholder('تعذر تحميل الصورة')),
-                          );
-                        }),
-                      ],
-                      const SizedBox(height: 24),
-                      const Text('الملاحظات', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16)),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _noteController,
-                        maxLines: 3,
-                        decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'أضف ملاحظة جديدة...', hintStyle: TextStyle(fontFamily: 'Cairo')),
-                      ),
-                      const SizedBox(height: 8),
-                      ElevatedButton(
-                        onPressed: _saving ? null : _saveNote,
-                        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryColor),
-                        child: Text(_saving ? '...' : 'حفظ الملاحظة', style: const TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-                      ),
-                      const SizedBox(height: 12),
-                      if (notes.isEmpty)
-                        const Text('لا توجد ملاحظات', style: TextStyle(fontFamily: 'Cairo', color: Colors.grey))
-                      else
-                        ...notes.map((raw) {
-                          final n = Map<String, dynamic>.from(raw as Map);
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('${n['noteText'] ?? n['NoteText'] ?? ''}', style: const TextStyle(fontFamily: 'Cairo')),
-                                  const SizedBox(height: 8),
-                                  Text('الكاتب: ${n['createdByName'] ?? n['CreatedByName'] ?? ''}', style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey)),
-                                  const Text('الصفة: متابع', style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey)),
-                                  Text('التاريخ: ${_iraqClock(n['createdAtUtc'] ?? n['CreatedAtUtc'])}', style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey)),
-                                ],
+                        const Text('الصور والمستمسكات', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        if (images.isEmpty)
+                          _placeholder('لا توجد صور للزبون')
+                        else
+                          ...images.map(_documentTile),
+                        const SizedBox(height: 24),
+                        const Text('الملاحظات', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16)),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _noteController,
+                          maxLines: 3,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            hintText: 'أضف ملاحظة جديدة...',
+                            hintStyle: TextStyle(fontFamily: 'Cairo'),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        ElevatedButton(
+                          onPressed: _saving ? null : _saveNote,
+                          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryColor),
+                          child: Text(_saving ? '...' : 'حفظ الملاحظة', style: const TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+                        ),
+                        const SizedBox(height: 12),
+                        if (notes.isEmpty)
+                          const Text('لا توجد ملاحظات', style: TextStyle(fontFamily: 'Cairo', color: Colors.grey))
+                        else
+                          ...notes.map((raw) {
+                            final n = Map<String, dynamic>.from(raw as Map);
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('${n['noteText'] ?? n['NoteText'] ?? ''}', style: const TextStyle(fontFamily: 'Cairo')),
+                                    const SizedBox(height: 8),
+                                    Text('الكاتب: ${n['createdByName'] ?? n['CreatedByName'] ?? ''}', style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey)),
+                                    const Text('الصفة: متابع', style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey)),
+                                    Text('التاريخ: ${_iraqClock(n['createdAtUtc'] ?? n['CreatedAtUtc'])}', style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey)),
+                                  ],
+                                ),
                               ),
-                            ),
-                          );
-                        }),
-                    ],
-                  ),
+                            );
+                          }),
+                      ],
+                    ),
+        ),
+      ),
+    );
+  }
+
+  Widget _documentTile(Map<String, dynamic> img) {
+    final url = _pick(img, ['url', 'Url'])!;
+    final label = _pick(img, ['label', 'Label', 'kind', 'Kind']) ?? 'مستمسك';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.network(
+              url,
+              height: 160,
+              width: double.infinity,
+              fit: BoxFit.cover,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return Container(
+                  height: 160,
+                  alignment: Alignment.center,
+                  color: Colors.grey.shade200,
+                  child: const CircularProgressIndicator(strokeWidth: 2),
+                );
+              },
+              errorBuilder: (_, __, ___) => _placeholder('تعذر تحميل: $label'),
+            ),
+          ),
+        ],
       ),
     );
   }

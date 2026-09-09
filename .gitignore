@@ -57,3 +57,5 @@ deploy/sales-demo/flutter/
 *.apk
 
 .cursor/
+
+.cursor/

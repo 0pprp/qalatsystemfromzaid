@@ -136,7 +136,8 @@ function matchesTab(row, value = tab.value) {
     case 'unassigned':
       return isUnassigned(row)
     case 'sent':
-      return isEmployeeSubmitted(row)
+      // الطلبات المرسلة: متابع أو موظف مبيعات، والحالة New فقط (غير مسند).
+      return (isEmployeeSubmitted(row) || isFollowerSubmitted(row)) && s === 'New'
     case 'incoming':
       return s === 'Assigned' || s === 'Viewed' || s === 'Returned'
     case 'prepared':

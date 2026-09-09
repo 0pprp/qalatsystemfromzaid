@@ -150,6 +150,97 @@ namespace BE_Company.Sales.Tests
             Assert.Null(BuildImageUrl("https://host/Images", null));
         }
 
+        [Fact]
+        public void Phone_Valid_StartsWith07_Length11()
+        {
+            Assert.True(IsValidFollowerPhone("07701234567"));
+        }
+
+        [Fact]
+        public void Phone_Invalid_ShorterOrLongerThan11()
+        {
+            Assert.False(IsValidFollowerPhone("0770123456"));
+            Assert.False(IsValidFollowerPhone("077012345678"));
+        }
+
+        [Fact]
+        public void Phone_Invalid_DoesNotStartWith07()
+        {
+            Assert.False(IsValidFollowerPhone("08701234567"));
+            Assert.False(IsValidFollowerPhone("19701234567"));
+        }
+
+        [Fact]
+        public void Province_AlwaysFromFollower_IgnoresClient()
+        {
+            Assert.Equal("الناصرية", ResolveProvinceFromFollower("الناصرية", "بغداد"));
+            Assert.Equal("النجف", ResolveProvinceFromFollower("النجف", null));
+            Assert.Null(ResolveProvinceFromFollower(null, "كربلاء"));
+            Assert.Null(ResolveProvinceFromFollower("  ", "كربلاء"));
+        }
+
+        [Fact]
+        public void FollowerSalesRequest_DefaultStatus_IsNew_Unassigned()
+        {
+            Assert.Equal("New", SalesRequestStatuses.New);
+            Assert.True(SalesRequestStatuses.IsUnassigned("New"));
+            Assert.False(SalesRequestStatuses.IsUnassigned("Assigned"));
+        }
+
+        [Fact]
+        public void SentRequestsTab_ShowsFollowerOrEmployee_OnlyWhenUnassigned()
+        {
+            Assert.True(MatchesSentTab(source: "Follower", status: "New", targetEmployeeId: 0));
+            Assert.True(MatchesSentTab(source: "EmployeeSubmitted", status: "New", targetEmployeeId: 0));
+            Assert.False(MatchesSentTab(source: "Follower", status: "Assigned", targetEmployeeId: 5));
+            Assert.False(MatchesSentTab(source: "Follower", status: "Pending", targetEmployeeId: 0));
+            Assert.False(MatchesSentTab(source: "EmployeeSubmitted", status: "Assigned", targetEmployeeId: 9));
+            Assert.False(MatchesSentTab(source: null, status: "New", targetEmployeeId: 0));
+        }
+
+        [Fact]
+        public void DocumentTypeLabels_MatchCompanyKyc()
+        {
+            Assert.Equal("البطاقة الوطنية - أمامية", DocumentTypeLabel("NationalIdFront"));
+            Assert.Equal("تأييد السكن", DocumentTypeLabel("ResidenceCertificate"));
+            Assert.Equal("صورة المحل", DocumentTypeLabel("Shop"));
+        }
+
+        [Fact]
+        public void DocumentFileApiUrl_UsesFollowersProxy_NotInternalPath()
+        {
+            var url = BuildDocumentFileApiUrl("http://169.58.236.52:8081/api", 10, 44, "abc", 3);
+            Assert.StartsWith("http://169.58.236.52:8081/api/Followers/Customers/10/documents/44/file", url);
+            Assert.Contains("asyncId=abc", url);
+            Assert.Contains("listId=3", url);
+            Assert.DoesNotContain("App_Data", url);
+            Assert.DoesNotContain("/opt/", url);
+        }
+
+        private static bool MatchesSentTab(string? source, string status, int targetEmployeeId)
+        {
+            var isFollower = source == "Follower";
+            var isEmployee = source == "EmployeeSubmitted";
+            return (isFollower || isEmployee) && status == "New";
+        }
+
+        private static string DocumentTypeLabel(string? type) => type switch
+        {
+            "NationalIdFront" => "البطاقة الوطنية - أمامية",
+            "NationalIdBack" => "البطاقة الوطنية - خلفية",
+            "ResidenceCardFront" => "بطاقة السكن - أمامية",
+            "ResidenceCardBack" => "بطاقة السكن - خلفية",
+            "ResidenceCard" => "بطاقة السكن - قديمة",
+            "ResidenceCertificate" => "تأييد السكن",
+            "Customer" => "صورة الزبون",
+            "Shop" => "صورة المحل",
+            _ => type ?? ""
+        };
+
+        private static string BuildDocumentFileApiUrl(string apiRoot, int customerId, int documentId, string asyncId, int listId) =>
+            $"{apiRoot.TrimEnd('/')}/Followers/Customers/{customerId}/documents/{documentId}/file"
+            + $"?asyncId={Uri.EscapeDataString(asyncId)}&listId={listId}";
+
         private static bool CanNoteCustomer(bool isLinked, int customerDelegateId, int listId) =>
             isLinked && listId > 0 && customerDelegateId == listId;
 
@@ -165,6 +256,17 @@ namespace BE_Company.Sales.Tests
         private static bool SalesEmployeeUsedInDelegateNoteFlow() => false;
 
         private static bool CanEditOrDeleteNoteAfterSave() => false;
+
+        private static bool IsValidFollowerPhone(string? phone)
+        {
+            if (string.IsNullOrWhiteSpace(phone)) return false;
+            var digits = phone.Trim().Replace(" ", string.Empty);
+            if (digits.Length != 11 || !digits.StartsWith("07", StringComparison.Ordinal)) return false;
+            return digits.All(char.IsDigit);
+        }
+
+        private static string? ResolveProvinceFromFollower(string? followerCityName, string? clientProvince) =>
+            string.IsNullOrWhiteSpace(followerCityName) ? null : followerCityName.Trim();
 
         private static string? BuildImageUrl(string? imagesBaseUrl, string? fileName)
         {
