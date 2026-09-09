@@ -111,8 +111,14 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
           const SnackBar(content: Text('404: مسار Followers/SalesRequests غير موجود على السيرفر', style: TextStyle(fontFamily: 'Cairo'))),
         );
       } else {
+        final detail = _extractApiMessage(response.body);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر الإرسال (HTTP ${response.statusCode})', style: const TextStyle(fontFamily: 'Cairo'))),
+          SnackBar(
+            content: Text(
+              detail ?? 'تعذر الإرسال (HTTP ${response.statusCode})',
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+          ),
         );
       }
     } catch (_) {
@@ -124,6 +130,19 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  String? _extractApiMessage(String body) {
+    try {
+      final decoded = json.decode(body);
+      if (decoded is Map) {
+        final msg = decoded['message'] ?? decoded['Message'] ?? decoded['title'] ?? decoded['Title'];
+        if (msg != null && '$msg'.trim().isNotEmpty) return '$msg'.trim();
+      }
+    } catch (_) {}
+    final trimmed = body.trim();
+    if (trimmed.isNotEmpty && trimmed.length < 240 && !trimmed.startsWith('<')) return trimmed;
+    return null;
   }
 
   @override

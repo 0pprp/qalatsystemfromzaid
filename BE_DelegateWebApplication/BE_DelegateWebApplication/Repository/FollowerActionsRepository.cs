@@ -1,5 +1,6 @@
 using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
+using BE_DelegateWebApplication.Services;
 using Dapper;
 using Microsoft.Data.SqlClient;
 
@@ -73,6 +74,15 @@ FROM dbo.Delegates D
 LEFT JOIN dbo.Cities Ci ON Ci.CityID = D.CityID
 WHERE D.DelegateID = @Id;",
                 new { Id = followerDelegateId }, cancellationToken: ct));
+        }
+
+        public async Task<string?> GetCityNameByIdAsync(int cityId, CancellationToken ct = default)
+        {
+            if (cityId <= 0) return null;
+            await using var connection = new SqlConnection(_connectionString);
+            return await connection.ExecuteScalarAsync<string?>(new CommandDefinition(
+                "SELECT TOP 1 CityName FROM dbo.Cities WHERE CityID = @Id",
+                new { Id = cityId }, cancellationToken: ct));
         }
 
         public async Task<IReadOnlyList<FollowerSalesDocumentRow>> ListCustomerSalesDocumentsAsync(
@@ -193,13 +203,19 @@ ORDER BY d.SaleId DESC;", cancellationToken: ct));
             }
 
             var bytes = await File.ReadAllBytesAsync(path, ct);
-            var contentType = string.IsNullOrWhiteSpace(meta.Value.ContentType)
-                ? GuessContentType(Path.GetExtension(path))
-                : meta.Value.ContentType!;
+            var contentType = FollowerCustomerMedia.ResolveImageContentType(meta.Value.ContentType, path);
             var fileName = string.IsNullOrWhiteSpace(meta.Value.FileName)
                 ? Path.GetFileName(path)
                 : meta.Value.FileName;
             return (fileName, bytes, contentType);
+        }
+
+        /// <summary>Used for failure diagnostics only — never log secrets.</summary>
+        public string DescribeDocumentPathResolution(string fileKey)
+        {
+            var resolved = ResolveDocumentPath(fileKey);
+            var exists = File.Exists(resolved);
+            return $"resolved='{resolved}'; exists={exists}; documentsRootConfigured={!string.IsNullOrWhiteSpace(_documentsRoot)}; contentRoot='{_env.ContentRootPath}'";
         }
 
         private string ResolveDocumentPath(string key)
@@ -213,13 +229,12 @@ ORDER BY d.SaleId DESC;", cancellationToken: ct));
             var roots = new List<string>();
             if (!string.IsNullOrWhiteSpace(_documentsRoot))
             {
-                roots.Add(_documentsRoot!);
+                roots.Add(_documentsRoot.TrimEnd('/', '\\'));
             }
 
             roots.Add(Path.Combine(_env.ContentRootPath, "App_Data"));
             if (!string.IsNullOrWhiteSpace(_env.WebRootPath))
             {
-                // Demo often shares company wwwroot; App_Data may sit beside it.
                 roots.Add(Path.GetFullPath(Path.Combine(_env.WebRootPath, "..", "App_Data")));
             }
 
@@ -286,12 +301,14 @@ ORDER BY d.SaleId DESC;", cancellationToken: ct));
             return tailA.Length >= 7 && tailA == tailB;
         }
 
-        private static string GuessContentType(string ext) => ext.ToLowerInvariant() switch
-        {
-            ".png" => "image/png",
-            ".webp" => "image/webp",
-            _ => "image/jpeg"
-        };
+        /// <summary>
+        /// Prefer image MIME from extension when DB stores application/octet-stream or empty.
+        /// </summary>
+        internal static string ResolveContentType(string? stored, string path) =>
+            FollowerCustomerMedia.ResolveImageContentType(stored, path);
+
+        private static string GuessContentType(string ext) =>
+            FollowerCustomerMedia.ResolveImageContentType(null, "x" + ext);
 
         public async Task<FollowerCustomerNoteDTO> AddCustomerNoteAsync(FollowerCustomerNoteDTO note, CancellationToken ct = default)
         {

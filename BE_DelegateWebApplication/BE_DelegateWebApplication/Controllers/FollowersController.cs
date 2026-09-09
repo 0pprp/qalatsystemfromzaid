@@ -13,17 +13,23 @@ namespace BE_DelegateWebApplication.Controllers
         private readonly ICustomersRepository _customersRepository;
         private readonly IFollowerActionsRepository _followerActions;
         private readonly IWebHostEnvironment _env;
+        private readonly IConfiguration _configuration;
+        private readonly ILogger<FollowersController> _logger;
 
         public FollowersController(
             IDelegateRepository delegateRepository,
             ICustomersRepository customersRepository,
             IFollowerActionsRepository followerActions,
-            IWebHostEnvironment env)
+            IWebHostEnvironment env,
+            IConfiguration configuration,
+            ILogger<FollowersController> logger)
         {
             _delegateRepository = delegateRepository;
             _customersRepository = customersRepository;
             _followerActions = followerActions;
             _env = env;
+            _configuration = configuration;
+            _logger = logger;
         }
 
         [HttpGet("Lists")]
@@ -110,7 +116,7 @@ namespace BE_DelegateWebApplication.Controllers
             var notes = await _followerActions.ListCustomerNotesAsync(customerId, father.DelegateId, ct);
             var webRoot = _env.WebRootPath;
             var imagesBase = ImagesBaseUrl();
-            var apiRoot = $"{Request.Scheme}://{Request.Host}/api";
+            var apiRoot = PublicApiRoot();
             var images = new List<FollowerProfileImageDTO>();
 
             var portraitUrl = FollowerCustomerMedia.TryPublicImagesUrl(imagesBase, webRoot, info.CustomerImage)
@@ -130,9 +136,9 @@ namespace BE_DelegateWebApplication.Controllers
                 customerId, info.CustomerName, info.PhoneNumber, ct);
             foreach (var doc in docs)
             {
-                var url = FollowerCustomerMedia.TryPublicImagesUrl(imagesBase, webRoot, doc.FileName)
-                          ?? FollowerCustomerMedia.TryPublicImagesUrl(imagesBase, webRoot, doc.FileKey)
-                          ?? FollowerCustomerMedia.BuildDocumentFileApiUrl(apiRoot, customerId, doc.Id, asyncId ?? string.Empty, listId);
+                // Always use Followers document proxy for KYC docs (never /Images/{id}.jpg collision).
+                var url = FollowerCustomerMedia.BuildDocumentFileApiUrl(
+                    apiRoot, customerId, doc.Id, asyncId ?? string.Empty, listId);
                 images.Add(new FollowerProfileImageDTO
                 {
                     DocumentId = doc.Id,
@@ -144,15 +150,15 @@ namespace BE_DelegateWebApplication.Controllers
             }
 
             var shop = await _followerActions.GetCustomerShopImageAsync(customerId, info.CustomerName, info.PhoneNumber, ct);
-            if (shop?.ShopImageKey is { Length: > 0 } shopKey)
+            if (shop?.ShopImageKey is { Length: > 0 })
             {
-                var shopUrl = FollowerCustomerMedia.TryPublicImagesUrl(imagesBase, webRoot, shopKey)
-                              ?? FollowerCustomerMedia.BuildShopImageApiUrl(apiRoot, customerId, asyncId ?? string.Empty, listId);
+                var shopUrl = FollowerCustomerMedia.BuildShopImageApiUrl(
+                    apiRoot, customerId, asyncId ?? string.Empty, listId);
                 images.Add(new FollowerProfileImageDTO
                 {
                     Kind = "Shop",
                     Label = FollowerCustomerMedia.DocumentTypeLabel("Shop"),
-                    FileName = FollowerCustomerMedia.LeafFileName(shopKey),
+                    FileName = FollowerCustomerMedia.LeafFileName(shop.Value.ShopImageKey),
                     Url = shopUrl
                 });
             }
@@ -213,6 +219,9 @@ namespace BE_DelegateWebApplication.Controllers
             var row = await _followerActions.GetSalesDocumentAsync(documentId, ct);
             if (row == null)
             {
+                _logger.LogWarning(
+                    "Follower document 404: document row missing. customerId={CustomerId} documentId={DocumentId}",
+                    customerId, documentId);
                 return NotFound(new { message = "المستند غير موجود" });
             }
 
@@ -227,10 +236,14 @@ namespace BE_DelegateWebApplication.Controllers
             var file = await _followerActions.ReadSalesDocumentFileAsync(documentId, ct);
             if (file == null)
             {
+                _logger.LogWarning(
+                    "Follower document 404: file missing on disk. customerId={CustomerId} documentId={DocumentId} fileKey={FileKey} {PathInfo}",
+                    customerId, documentId, row.FileKey, _followerActions.DescribeDocumentPathResolution(row.FileKey));
                 return NotFound(new { message = "ملف المستند غير موجود على السيرفر" });
             }
 
-            return File(file.Value.Bytes, file.Value.ContentType, file.Value.FileName);
+            // Inline image bytes (no Content-Disposition:attachment) so Flutter Image.network can decode.
+            return File(file.Value.Bytes, file.Value.ContentType);
         }
 
         [HttpGet("Customers/{customerId:int}/shop-image")]
@@ -257,16 +270,20 @@ namespace BE_DelegateWebApplication.Controllers
                 customerId, info?.CustomerName, info?.PhoneNumber, ct);
             if (shop?.ShopImageKey is not { Length: > 0 } key)
             {
+                _logger.LogWarning("Follower shop-image 404: no ShopImageKey. customerId={CustomerId}", customerId);
                 return NotFound(new { message = "لا توجد صورة محل" });
             }
 
             var file = await _followerActions.ReadShopImageFileAsync(key, ct);
             if (file == null)
             {
+                _logger.LogWarning(
+                    "Follower shop-image 404: file missing on disk. customerId={CustomerId} fileKey={FileKey} {PathInfo}",
+                    customerId, key, _followerActions.DescribeDocumentPathResolution(key));
                 return NotFound(new { message = "ملف صورة المحل غير موجود على السيرفر" });
             }
 
-            return File(file.Value.Bytes, file.Value.ContentType, file.Value.FileName);
+            return File(file.Value.Bytes, file.Value.ContentType);
         }
 
         [HttpGet("Customers/{customerId:int}/notes")]
@@ -419,10 +436,15 @@ namespace BE_DelegateWebApplication.Controllers
 
             // Province/city ALWAYS from authenticated follower — never from client body.
             var followerCity = await _followerActions.GetFollowerCityNameAsync(father.DelegateId, ct);
+            if (string.IsNullOrWhiteSpace(followerCity) && father.CityId is > 0)
+            {
+                followerCity = await _followerActions.GetCityNameByIdAsync(father.CityId.Value, ct);
+            }
+
             var province = FollowerAuthorization.ResolveProvinceFromFollower(followerCity, body.Province);
             if (string.IsNullOrWhiteSpace(province))
             {
-                return BadRequest(new { message = "محافظة حساب المتابع غير معرّفة في النظام" });
+                return BadRequest(new { message = "محافظة حساب المتابع غير معرّفة في النظام. حدّث CityID لحساب المتابع في Delegates." });
             }
 
             string? name;
@@ -502,11 +524,32 @@ namespace BE_DelegateWebApplication.Controllers
             return Ok(saved);
         }
 
+        private string PublicApiRoot()
+        {
+            var configured = _configuration["PublicApiBaseUrl"];
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                return configured.TrimEnd('/');
+            }
+
+            // Prefer forwarded host when behind nginx so Flutter gets a reachable absolute URL.
+            var request = HttpContext.Request;
+            var proto = request.Headers["X-Forwarded-Proto"].FirstOrDefault()
+                        ?? request.Scheme;
+            var host = request.Headers["X-Forwarded-Host"].FirstOrDefault()
+                       ?? request.Host.Value;
+            return $"{proto}://{host}/api";
+        }
+
         private string ImagesBaseUrl()
         {
-            var request = HttpContext.Request;
-            var root = $"{request.Scheme}://{request.Host}";
-            return $"{root}/Images";
+            var api = PublicApiRoot();
+            if (api.EndsWith("/api", StringComparison.OrdinalIgnoreCase))
+            {
+                return api[..^4] + "/Images";
+            }
+
+            return $"{Request.Scheme}://{Request.Host}/Images";
         }
 
         private async Task<IActionResult?> EnsureCustomerInScope(int followerId, int listId, int customerId, CancellationToken ct)

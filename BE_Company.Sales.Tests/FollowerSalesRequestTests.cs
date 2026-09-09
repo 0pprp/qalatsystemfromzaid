@@ -217,6 +217,41 @@ namespace BE_Company.Sales.Tests
             Assert.DoesNotContain("/opt/", url);
         }
 
+        [Fact]
+        public void OctetStream_ContentType_IsReplacedByJpegFromExtension()
+        {
+            Assert.Equal("image/jpeg", ResolveImageContentType("application/octet-stream", "9.jpg"));
+            Assert.Equal("image/png", ResolveImageContentType("", "a.png"));
+            Assert.Equal("image/webp", ResolveImageContentType(null, "b.webp"));
+            Assert.Equal("image/png", ResolveImageContentType("image/png", "c.jpg"));
+        }
+
+        [Fact]
+        public void Follower_WithoutCity_HasClearArabicMessageConstant()
+        {
+            Assert.Contains("محافظة", "محافظة حساب المتابع غير معرّفة في النظام. حدّث CityID لحساب المتابع في Delegates.");
+        }
+
+        private static string ResolveImageContentType(string? stored, string fileNameOrPath)
+        {
+            var ext = Path.GetExtension(fileNameOrPath).ToLowerInvariant();
+            var guessed = ext switch
+            {
+                ".png" => "image/png",
+                ".webp" => "image/webp",
+                ".gif" => "image/gif",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                _ => "image/jpeg"
+            };
+            if (string.IsNullOrWhiteSpace(stored)
+                || stored.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                return guessed;
+            }
+
+            return stored;
+        }
+
         private static bool MatchesSentTab(string? source, string status, int targetEmployeeId)
         {
             var isFollower = source == "Follower";

@@ -63,5 +63,26 @@ namespace BE_DelegateWebApplication.Services
         public static string BuildShopImageApiUrl(string apiRoot, int customerId, string asyncId, int listId) =>
             $"{apiRoot.TrimEnd('/')}/Followers/Customers/{customerId}/shop-image"
             + $"?asyncId={Uri.EscapeDataString(asyncId ?? string.Empty)}&listId={listId}";
+
+        public static string ResolveImageContentType(string? stored, string fileNameOrPath)
+        {
+            var ext = Path.GetExtension(fileNameOrPath);
+            var guessed = ext.ToLowerInvariant() switch
+            {
+                ".png" => "image/png",
+                ".webp" => "image/webp",
+                ".gif" => "image/gif",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                _ => "image/jpeg"
+            };
+            if (string.IsNullOrWhiteSpace(stored)
+                || stored.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase)
+                || stored.Equals("binary/octet-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                return guessed;
+            }
+
+            return stored;
+        }
     }
 }

@@ -1,11 +1,13 @@
 import 'dart:convert';
 
 import 'package:follower_application/config/app_env.dart';
+import 'package:follower_application/services/follower_media_urls.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/utils/iraq_datetime.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class CustomerProfilePage extends StatefulWidget {
   const CustomerProfilePage({
@@ -33,6 +35,8 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
   bool _saving = false;
   String? _error;
   int? _httpStatus;
+  String _apiBase = '';
+  String _asyncId = '';
 
   int get _customerId =>
       int.tryParse('${_profile?['customerId'] ?? _profile?['CustomerId'] ?? widget.customer['customerId'] ?? 0}') ?? 0;
@@ -56,10 +60,26 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
 
   Future<Map<String, String>> _session() async {
     final prefs = await SharedPreferences.getInstance();
+    final link = AppEnv.apiBase(fallback: prefs.getString('LinkDelegate') ?? '');
+    final asyncId = prefs.getString('AsyncId') ?? '';
+    _apiBase = link;
+    _asyncId = asyncId;
     return {
-      'asyncId': prefs.getString('AsyncId') ?? '',
-      'link': AppEnv.apiBase(fallback: prefs.getString('LinkDelegate') ?? ''),
+      'asyncId': asyncId,
+      'link': link,
     };
+  }
+
+  Future<void> _dial(String? phone) async {
+    final digits = (phone ?? '').replaceAll(RegExp(r'[^\d+]'), '');
+    if (digits.isEmpty) return;
+    final uri = Uri(scheme: 'tel', path: digits);
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر فتح تطبيق الاتصال', style: TextStyle(fontFamily: 'Cairo'))),
+      );
+    }
   }
 
   Future<void> _loadProfile({bool silent = false}) async {
@@ -188,11 +208,21 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
 
   List<Map<String, dynamic>> _normalizeImages(Map<String, dynamic>? p) {
     final raw = (p?['images'] ?? p?['Images'] ?? p?['documents'] ?? p?['Documents'] ?? []) as List? ?? [];
-    return raw
-        .whereType<Map>()
-        .map((m) => Map<String, dynamic>.from(m))
-        .where((m) => (_pick(m, ['url', 'Url']) ?? '').isNotEmpty)
-        .toList();
+    final list = <Map<String, dynamic>>[];
+    for (final item in raw.whereType<Map>()) {
+      final m = Map<String, dynamic>.from(item);
+      final resolved = FollowerMediaUrls.resolve(
+        apiBase: _apiBase.isNotEmpty ? _apiBase : AppEnv.apiBase(fallback: AppEnv.demoApiBaseUrl),
+        customerId: _customerId,
+        asyncId: _asyncId,
+        listId: widget.listId,
+        image: m,
+      );
+      if (resolved == null || resolved.isEmpty) continue;
+      m['url'] = resolved;
+      list.add(m);
+    }
+    return list;
   }
 
   @override
@@ -231,7 +261,7 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
                           _pick(p!, ['customerName', 'CustomerName']) ?? '',
                           style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 18),
                         ),
-                        _line('الهاتف', _pick(p, ['phoneNumber', 'PhoneNumber'])),
+                        _phoneLine(_pick(p, ['phoneNumber', 'PhoneNumber'])),
                         _line('العنوان', _pick(p, ['address', 'Address'])),
                         _line('المحافظة', _pick(p, ['cityName', 'CityName'])),
                         _line('المحل', _pick(p, ['shopName', 'ShopName'])),
@@ -348,6 +378,43 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
                 );
               },
               errorBuilder: (_, __, ___) => _placeholder('تعذر تحميل: $label'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _phoneLine(String? phone) {
+    if (phone == null || phone.isEmpty) return const SizedBox.shrink();
+    final dialable = phone.replaceAll(RegExp(r'[^\d+]'), '').isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(width: 110, child: Text('الهاتف', style: TextStyle(fontFamily: 'Cairo', color: Colors.grey))),
+          Expanded(
+            child: InkWell(
+              onTap: dialable ? () => _dial(phone) : null,
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      phone,
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: dialable ? AppTheme.primaryColor : null,
+                        decoration: dialable ? TextDecoration.underline : null,
+                      ),
+                    ),
+                  ),
+                  if (dialable) ...[
+                    const SizedBox(width: 8),
+                    Icon(Icons.phone, size: 18, color: AppTheme.primaryColor),
+                  ],
+                ],
+              ),
             ),
           ),
         ],

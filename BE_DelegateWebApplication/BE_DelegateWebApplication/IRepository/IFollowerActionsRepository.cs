@@ -9,11 +9,14 @@ namespace BE_DelegateWebApplication.IRepository
         Task<string?> GetDelegateNameAsync(int delegateId, CancellationToken ct = default);
         /// <summary>City/province of the authenticated follower account (Delegates.CityID → Cities).</summary>
         Task<string?> GetFollowerCityNameAsync(int followerDelegateId, CancellationToken ct = default);
+        Task<string?> GetCityNameByIdAsync(int cityId, CancellationToken ct = default);
         Task<IReadOnlyList<FollowerSalesDocumentRow>> ListCustomerSalesDocumentsAsync(int customerId, string? customerName, string? phone, CancellationToken ct = default);
         Task<FollowerSalesDocumentRow?> GetSalesDocumentAsync(int documentId, CancellationToken ct = default);
         Task<(string? ShopImageKey, int? SaleId)?> GetCustomerShopImageAsync(int customerId, string? customerName, string? phone, CancellationToken ct = default);
         Task<(string FileName, byte[] Bytes, string ContentType)?> ReadSalesDocumentFileAsync(int documentId, CancellationToken ct = default);
         Task<(string FileName, byte[] Bytes, string ContentType)?> ReadShopImageFileAsync(string shopImageKey, CancellationToken ct = default);
+        /// <summary>Failure diagnostics for document path resolution (no secrets).</summary>
+        string DescribeDocumentPathResolution(string fileKey);
         Task<FollowerCustomerNoteDTO> AddCustomerNoteAsync(FollowerCustomerNoteDTO note, CancellationToken ct = default);
         Task<IReadOnlyList<FollowerCustomerNoteDTO>> ListCustomerNotesAsync(int customerId, int followerId, CancellationToken ct = default);
         Task<FollowerDelegateNoteDTO> AddDelegateNoteAsync(FollowerDelegateNoteDTO note, CancellationToken ct = default);
