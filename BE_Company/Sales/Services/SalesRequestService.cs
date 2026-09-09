@@ -230,7 +230,7 @@ namespace BE_Company.Sales.Services
             return await HydrateAsync(row, ct);
         }
 
-        public async Task<SalesRequestDTO> ManagerPrepareForSaleAsync(SalesIdentity manager, int id, CancellationToken ct)
+        public async Task<SalesRequestDTO> ManagerPrepareForSaleAsync(SalesIdentity manager, int id, string? note, CancellationToken ct)
         {
             EnsureManager(manager);
             await _repo.EnsureSchemaAsync(ct);
@@ -242,14 +242,30 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تجهيز هذا الطلب.");
             }
 
+            var trimmed = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
             if (row.Status != SalesRequestStatuses.PreparedForSale)
             {
                 var previous = row.Status;
                 row.Status = SalesRequestStatuses.PreparedForSale;
                 row.ProcessingAtUtc = _clock.UtcNow;
                 row.ViewedAtUtc ??= row.ProcessingAtUtc;
+                if (trimmed != null)
+                {
+                    row.PreparedForSaleNote = trimmed;
+                }
+
                 await _repo.UpdateAsync(row, ct);
-                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSale, manager, null, ct, previous);
+                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSale, manager, trimmed, ct, previous);
+                if (trimmed != null)
+                {
+                    await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSaleNote, manager, trimmed, ct, previous);
+                }
+            }
+            else if (trimmed != null)
+            {
+                row.PreparedForSaleNote = trimmed;
+                await _repo.UpdateAsync(row, ct);
+                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSaleNote, manager, trimmed, ct, row.Status);
             }
 
             return await HydrateAsync(row, ct);
@@ -342,11 +358,16 @@ namespace BE_Company.Sales.Services
             return await HydrateAsync(row, ct);
         }
 
-        public Task<SalesRequestDTO> StartProcessingAsync(int id, int employeeId, CancellationToken ct) =>
-            PrepareForSaleAsync(id, employeeId, ct);
+        public Task<SalesRequestDTO> StartProcessingAsync(int id, int employeeId, string note, CancellationToken ct) =>
+            PrepareForSaleAsync(id, employeeId, note, ct);
 
-        public async Task<SalesRequestDTO> PrepareForSaleAsync(int id, int employeeId, CancellationToken ct)
+        public async Task<SalesRequestDTO> PrepareForSaleAsync(int id, int employeeId, string note, CancellationToken ct)
         {
+            if (string.IsNullOrWhiteSpace(note))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "ملاحظة جاهز للبيع مطلوبة.");
+            }
+
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(id, employeeId, ct);
             EnsureNotSold(row);
@@ -355,14 +376,24 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن تجهيز هذا الطلب.");
             }
 
+            var trimmed = note.Trim();
             if (row.Status != SalesRequestStatuses.PreparedForSale)
             {
                 var previous = row.Status;
                 row.Status = SalesRequestStatuses.PreparedForSale;
                 row.ProcessingAtUtc = _clock.UtcNow;
                 row.ViewedAtUtc ??= row.ProcessingAtUtc;
+                row.PreparedForSaleNote = trimmed;
                 await _repo.UpdateAsync(row, ct);
-                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSale, EmployeeActor(employeeId, row), null, ct, previous);
+                var actor = EmployeeActor(employeeId, row);
+                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSale, actor, trimmed, ct, previous);
+                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSaleNote, actor, trimmed, ct, previous);
+            }
+            else
+            {
+                row.PreparedForSaleNote = trimmed;
+                await _repo.UpdateAsync(row, ct);
+                await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSaleNote, EmployeeActor(employeeId, row), trimmed, ct, row.Status);
             }
 
             return await HydrateAsync(row, ct);

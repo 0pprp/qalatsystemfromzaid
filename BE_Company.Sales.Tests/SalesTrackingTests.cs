@@ -185,6 +185,7 @@ namespace BE_Company.Sales.Tests
         public async Task NormalBatch_Accepted()
         {
             var (repo, clock, shift, ingest) = await Ready();
+            clock.UtcNow = shift.StartedAtUtc.AddMinutes(10);
             var result = await ingest.IngestBatchAsync(Id(), new SalesLocationBatchRequestDTO
             {
                 ShiftId = shift.ShiftId,
@@ -197,6 +198,7 @@ namespace BE_Company.Sales.Tests
         public async Task AccuracyAround50m_IsAccepted()
         {
             var (_, clock, shift, ingest) = await Ready();
+            clock.UtcNow = shift.StartedAtUtc.AddMinutes(10);
             var point = ValidPoint(clock.UtcNow);
             point.Accuracy = 80;
             var result = await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [point] }, CancellationToken.None);
@@ -208,7 +210,8 @@ namespace BE_Company.Sales.Tests
         public async Task CapturedTimestamp_IsNotReplacedByServerTime()
         {
             var (repo, clock, shift, ingest) = await Ready();
-            var captured = new DateTime(2026, 9, 2, 6, 40, 0, DateTimeKind.Utc);
+            // Exact official slot relative to Ready() start (05:15) → 05:15 + 10*n
+            var captured = shift.StartedAtUtc.AddMinutes(10);
             clock.UtcNow = new DateTime(2026, 9, 2, 8, 0, 0, DateTimeKind.Utc);
             var point = ValidPoint(captured);
             await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [point] }, CancellationToken.None);
@@ -220,7 +223,7 @@ namespace BE_Company.Sales.Tests
         public async Task DuplicateDeviceSequence_NotRepeated()
         {
             var (repo, clock, shift, ingest) = await Ready();
-            var point = ValidPoint(clock.UtcNow);
+            var point = ValidPoint(shift.StartedAtUtc.AddMinutes(10));
             await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [point] }, CancellationToken.None);
             var second = await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [point] }, CancellationToken.None);
             Assert.Equal(1, second.Duplicates);
@@ -232,7 +235,8 @@ namespace BE_Company.Sales.Tests
         public async Task BatchOver500_Rejected()
         {
             var (_, clock, shift, ingest) = await Ready();
-            var points = Enumerable.Range(1, 501).Select(i => ValidPoint(clock.UtcNow, i)).ToList();
+            var slot = shift.StartedAtUtc.AddMinutes(10);
+            var points = Enumerable.Range(1, 501).Select(i => ValidPoint(slot, i)).ToList();
             var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => ingest.IngestBatchAsync(
                 Id(), new() { ShiftId = shift.ShiftId, Points = points }, CancellationToken.None));
             Assert.Equal(400, ex.StatusCode);
@@ -242,7 +246,7 @@ namespace BE_Company.Sales.Tests
         public async Task InvalidCoordinates_Rejected()
         {
             var (_, clock, shift, ingest) = await Ready();
-            var bad = ValidPoint(clock.UtcNow);
+            var bad = ValidPoint(shift.StartedAtUtc.AddMinutes(10));
             bad.Latitude = 200;
             var result = await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [bad] }, CancellationToken.None);
             Assert.Equal(1, result.Rejected);
@@ -250,45 +254,50 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public void OfficialSlot_DoesNotFloorToClockTenMinutes()
+        public void OfficialSlot_NoPointAtShiftStart_FirstDuePlusTen()
         {
-            var start = new DateTime(2026, 9, 2, 17, 32, 0, DateTimeKind.Utc); // Iraq 20:32
-            var due = OfficialSlot.DueSlots(start, null, start, start.AddHours(18));
-            Assert.Equal(new[] { start }, due);
+            var start = new DateTime(2026, 9, 2, 7, 13, 0, DateTimeKind.Utc); // Iraq 10:13
+            Assert.Empty(OfficialSlot.DueSlots(start, null, start, start.AddHours(18)));
+            var due = OfficialSlot.DueSlots(start, null, start.AddMinutes(10), start.AddHours(18));
+            Assert.Equal(new[] { start.AddMinutes(10) }, due);
             Assert.NotEqual(OfficialSlot.FloorUtc(start), due[0]);
         }
 
         [Fact]
         public void OfficialSlot_CatchUpFromShiftStartEveryTenMinutes()
         {
-            var start = new DateTime(2026, 9, 2, 17, 32, 0, DateTimeKind.Utc); // Iraq 20:32
-            var now = start.AddMinutes(25);
+            var start = new DateTime(2026, 9, 2, 7, 13, 0, DateTimeKind.Utc); // Iraq 10:13
+            var now = start.AddMinutes(25); // 10:38
             var cutoff = start.AddHours(6);
             var due = OfficialSlot.DueSlots(start, null, now, cutoff);
             Assert.Equal(
                 new[]
                 {
-                    start,
-                    start.AddMinutes(10),
-                    start.AddMinutes(20),
+                    start.AddMinutes(10), // 10:23
+                    start.AddMinutes(20), // 10:33
                 },
                 due);
-            Assert.DoesNotContain(new DateTime(2026, 9, 2, 17, 40, 0, DateTimeKind.Utc), due);
-            Assert.DoesNotContain(new DateTime(2026, 9, 2, 17, 50, 0, DateTimeKind.Utc), due);
+        }
+
+        [Fact]
+        public void OfficialSlot_DelayedWakeKeepsLogicalSlot()
+        {
+            var start = new DateTime(2026, 9, 2, 7, 13, 0, DateTimeKind.Utc);
+            var due = OfficialSlot.DueSlots(start, null, start.AddMinutes(12), start.AddHours(6));
+            Assert.Equal(new[] { start.AddMinutes(10) }, due);
         }
 
         [Fact]
         public void OfficialSlot_CatchUpAfterFirstCapture()
         {
             var start = new DateTime(2026, 9, 2, 22, 0, 0, DateTimeKind.Utc);
-            var last = start;
+            var last = start.AddMinutes(10);
             var now = new DateTime(2026, 9, 2, 22, 34, 0, DateTimeKind.Utc);
             var cutoff = new DateTime(2026, 9, 3, 0, 0, 0, DateTimeKind.Utc);
             var due = OfficialSlot.DueSlots(start, last, now, cutoff);
             Assert.Equal(
                 new[]
                 {
-                    new DateTime(2026, 9, 2, 22, 10, 0, DateTimeKind.Utc),
                     new DateTime(2026, 9, 2, 22, 20, 0, DateTimeKind.Utc),
                     new DateTime(2026, 9, 2, 22, 30, 0, DateTimeKind.Utc),
                 },
@@ -299,6 +308,7 @@ namespace BE_Company.Sales.Tests
         public async Task DuplicateDeviceSequence_Retry_NotInserted()
         {
             var (repo, clock, shift, ingest) = await Ready();
+            shift.StartedAtUtc = new DateTime(2026, 9, 2, 8, 22, 0, DateTimeKind.Utc);
             var first = ValidPoint(new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc), 1);
             var retry = ValidPoint(new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc), 1);
             await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [first] }, CancellationToken.None);
@@ -313,12 +323,13 @@ namespace BE_Company.Sales.Tests
         public async Task AdjacentTenMinuteCaptures_AreEachAccepted()
         {
             var (repo, clock, shift, ingest) = await Ready();
-            var start = new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc);
+            shift.StartedAtUtc = new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc);
+            var start = shift.StartedAtUtc;
             var points = new[]
             {
-                ValidPoint(start, 1),
-                ValidPoint(start.AddMinutes(10), 2),
-                ValidPoint(start.AddMinutes(20), 3),
+                ValidPoint(start.AddMinutes(10), 1),
+                ValidPoint(start.AddMinutes(20), 2),
+                ValidPoint(start.AddMinutes(30), 3),
             };
             var result = await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [..points] }, CancellationToken.None);
             Assert.Equal(3, result.Accepted);
@@ -330,6 +341,7 @@ namespace BE_Company.Sales.Tests
         public async Task CatchUpSlots_AreEachAcceptedOnce()
         {
             var (repo, clock, shift, ingest) = await Ready();
+            shift.StartedAtUtc = new DateTime(2026, 9, 2, 7, 50, 0, DateTimeKind.Utc);
             var points = new[]
             {
                 ValidPoint(new DateTime(2026, 9, 2, 8, 0, 0, DateTimeKind.Utc), 1),
@@ -372,18 +384,19 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task LateOfflinePoints_BeforeCutoff_Accepted()
+        public async Task LateOfflinePoints_AfterAutoClose_AreRejectedWith409()
         {
             var (repo, clock, shift, ingest) = await Ready();
+            var slot = OfficialSlot.SlotUtc(shift.StartedAtUtc, 1);
             clock.UtcNow = shift.CutoffAtUtc.AddHours(5);
-            var captured = shift.CutoffAtUtc.AddMinutes(-5);
-            var result = await ingest.IngestBatchAsync(Id(), new()
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => ingest.IngestBatchAsync(Id(), new()
             {
                 ShiftId = shift.ShiftId,
-                Points = [ValidPoint(captured)]
-            }, CancellationToken.None);
-            Assert.Equal(1, result.Accepted);
+                Points = [ValidPoint(slot)]
+            }, CancellationToken.None));
+            Assert.Equal(409, ex.StatusCode);
             Assert.Equal(SalesShiftStatuses.Closed, repo.Shifts[0].Status);
+            Assert.Empty(repo.Points);
         }
 
         [Fact]
@@ -399,18 +412,141 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task FirstCapture_AtShiftStart_IsAccepted()
+        public async Task EarlyTimes_BeforeFirstSlot_AreRejected_NoSkew()
+        {
+            var (repo, _, shift, ingest) = await Ready();
+            // Iraq 10:13 start
+            shift.StartedAtUtc = new DateTime(2026, 9, 2, 7, 13, 0, DateTimeKind.Utc);
+            var early21 = await ingest.IngestBatchAsync(Id(), new()
+            {
+                ShiftId = shift.ShiftId,
+                Points = [ValidPoint(shift.StartedAtUtc.AddMinutes(8), 1)] // 10:21
+            }, CancellationToken.None);
+            Assert.Equal(0, early21.Accepted);
+            Assert.Equal(1, early21.Rejected);
+
+            var early2259 = await ingest.IngestBatchAsync(Id(), new()
+            {
+                ShiftId = shift.ShiftId,
+                Points = [ValidPoint(shift.StartedAtUtc.AddMinutes(9).AddSeconds(59), 1)] // 10:22:59
+            }, CancellationToken.None);
+            Assert.Equal(0, early2259.Accepted);
+            Assert.Equal(1, early2259.Rejected);
+            Assert.Empty(repo.Points);
+        }
+
+        [Fact]
+        public async Task FirstOfficialSlot_IsStartPlusTen_LateCaptureMapsToSlot()
+        {
+            var (repo, _, shift, ingest) = await Ready();
+            shift.StartedAtUtc = new DateTime(2026, 9, 2, 7, 13, 0, DateTimeKind.Utc);
+            var slot1023 = shift.StartedAtUtc.AddMinutes(10);
+            var point = ValidPoint(slot1023, 1);
+            point.OfficialSlotUtc = slot1023;
+            point.ActualCapturedAtUtc = shift.StartedAtUtc.AddMinutes(12); // wake 10:25
+            var result = await ingest.IngestBatchAsync(Id(), new()
+            {
+                ShiftId = shift.ShiftId,
+                Points = [point]
+            }, CancellationToken.None);
+            Assert.Equal(1, result.Accepted);
+            Assert.Equal(slot1023, repo.InsertedCapturedAt.Single());
+            Assert.True(OfficialSlot.IsExactOfficialSlot(shift.StartedAtUtc, slot1023));
+            Assert.Equal(slot1023.AddMinutes(10), OfficialSlot.SlotUtc(shift.StartedAtUtc, 2)); // 10:33
+        }
+
+        [Fact]
+        public void OfficialSlot_ExactAlignment_RejectsSkewWindows()
+        {
+            var start = new DateTime(2026, 9, 2, 7, 13, 0, DateTimeKind.Utc);
+            Assert.False(OfficialSlot.IsExactOfficialSlot(start, start.AddMinutes(8)));
+            Assert.False(OfficialSlot.IsExactOfficialSlot(start, start.AddMinutes(9).AddSeconds(59)));
+            Assert.True(OfficialSlot.IsExactOfficialSlot(start, start.AddMinutes(10)));
+            Assert.True(OfficialSlot.IsExactOfficialSlot(start, start.AddMinutes(20)));
+            Assert.False(OfficialSlot.IsExactOfficialSlot(start, start.AddMinutes(10).AddSeconds(1)));
+        }
+
+        [Fact]
+        public async Task PointAtShiftStart_IsRejected_FirstSlotIsStartPlusTen()
         {
             var (repo, clock, shift, ingest) = await Ready();
             shift.StartedAtUtc = new DateTime(2026, 9, 2, 8, 32, 0, DateTimeKind.Utc);
-            var result = await ingest.IngestBatchAsync(Id(), new()
+            var atStart = await ingest.IngestBatchAsync(Id(), new()
             {
                 ShiftId = shift.ShiftId,
                 Points = [ValidPoint(shift.StartedAtUtc, 1)]
             }, CancellationToken.None);
-            Assert.Equal(1, result.Accepted);
-            Assert.Equal(0, result.Rejected);
-            Assert.Equal(shift.StartedAtUtc, repo.InsertedCapturedAt.Single());
+            Assert.Equal(0, atStart.Accepted);
+            Assert.Equal(1, atStart.Rejected);
+
+            var firstSlot = await ingest.IngestBatchAsync(Id(), new()
+            {
+                ShiftId = shift.ShiftId,
+                Points = [ValidPoint(shift.StartedAtUtc.AddMinutes(10), 1)]
+            }, CancellationToken.None);
+            Assert.Equal(1, firstSlot.Accepted);
+            Assert.Equal(0, firstSlot.Rejected);
+            Assert.Equal(shift.StartedAtUtc.AddMinutes(10), repo.InsertedCapturedAt.Single());
+        }
+
+        [Fact]
+        public async Task Batch_WhileActive_Accepted_ThenAnyBatchAfterClosed_Throws409_EvenWithOlderCapturedAt()
+        {
+            var (repo, clock, shift, ingest) = await Ready();
+            shift.StartedAtUtc = new DateTime(2026, 9, 2, 7, 13, 0, DateTimeKind.Utc);
+            var slot = shift.StartedAtUtc.AddMinutes(10);
+            var beforeEnd = await ingest.IngestBatchAsync(Id(), new()
+            {
+                ShiftId = shift.ShiftId,
+                Points = [ValidPoint(slot, 1)]
+            }, CancellationToken.None);
+            Assert.Equal(1, beforeEnd.Accepted);
+
+            var shifts = new SalesShiftService(repo, clock);
+            clock.UtcNow = shift.StartedAtUtc.AddMinutes(15);
+            await shifts.EndAsync(Id(), CancellationToken.None);
+            Assert.NotNull(repo.Shifts[0].ClosedAtUtc);
+
+            var backdated = ValidPoint(slot, 2);
+            backdated.CapturedAtUtc = slot;
+            backdated.OfficialSlotUtc = slot;
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => ingest.IngestBatchAsync(Id(), new()
+            {
+                ShiftId = shift.ShiftId,
+                Points = [backdated]
+            }, CancellationToken.None));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Single(repo.Points);
+        }
+
+        [Fact]
+        public async Task BatchPoint_AfterManualEnd_IsRejected()
+        {
+            var (repo, clock, shift, ingest) = await Ready();
+            var shifts = new SalesShiftService(repo, clock);
+            clock.UtcNow = shift.StartedAtUtc.AddMinutes(5);
+            await shifts.EndAsync(Id(), CancellationToken.None);
+            var afterEnd = shift.StartedAtUtc.AddMinutes(10);
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => ingest.IngestBatchAsync(Id(), new()
+            {
+                ShiftId = shift.ShiftId,
+                Points = [ValidPoint(afterEnd, 1)]
+            }, CancellationToken.None));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Empty(repo.Points);
+        }
+
+        [Fact]
+        public async Task DuplicateOfficialSlot_DoesNotInsertSecondRecord()
+        {
+            var (repo, _, shift, ingest) = await Ready();
+            shift.StartedAtUtc = new DateTime(2026, 9, 2, 7, 13, 0, DateTimeKind.Utc);
+            var slot = shift.StartedAtUtc.AddMinutes(10);
+            await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [ValidPoint(slot, 1)] }, CancellationToken.None);
+            var again = await ingest.IngestBatchAsync(Id(), new() { ShiftId = shift.ShiftId, Points = [ValidPoint(slot, 1)] }, CancellationToken.None);
+            Assert.Equal(1, again.Duplicates);
+            Assert.Equal(0, again.Accepted);
+            Assert.Single(repo.Points);
         }
 
         [Fact]
@@ -558,7 +694,7 @@ namespace BE_Company.Sales.Tests
             var result = await ingest.IngestBatchAsync(Id(), new SalesLocationBatchRequestDTO
             {
                 ShiftId = shift.ShiftId,
-                Points = [ValidPoint(clock.UtcNow)]
+                Points = [ValidPoint(shift.StartedAtUtc.AddMinutes(10))]
             }, CancellationToken.None);
             Assert.True(result.Accepted >= 1);
             Assert.Empty(repo.Live);

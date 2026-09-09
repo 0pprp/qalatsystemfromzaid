@@ -48,6 +48,7 @@ class LocationForegroundService : Service() {
     private var lastOfficialAtMs: Long = 0
     private var lastGpsAvailable: Boolean? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile private var ending: Boolean = false
 
     private val cutoffStop = Runnable { stopCollecting(flush = true) }
     private val officialTick = object : Runnable {
@@ -70,6 +71,7 @@ class LocationForegroundService : Service() {
 
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
+            if (ending || !running) return
             if (System.currentTimeMillis() >= cutoffAtUtcMs) {
                 stopCollecting(flush = true)
                 return
@@ -118,24 +120,27 @@ class LocationForegroundService : Service() {
         }
         try {
             if (intent?.action == ACTION_STOP || intent?.action == ACTION_FLUSH_STOP) {
+                // Ending: stop captures immediately — no new pending pins after this point.
+                ending = true
                 running = false
                 handler.removeCallbacks(cutoffStop)
                 handler.removeCallbacks(officialTick)
                 handler.removeCallbacks(syncFlush)
-                // End shift: flush already-queued points only — do not invent a new route pin.
+                stopUpdates()
+                // Flush already-queued points only — do not invent a new route pin.
                 Thread {
-                    uploadLiveLocation(lastLocation)
                     flushPendingToServer()
+                    clearActiveShiftMeta()
                     handler.post {
-                        stopUpdates()
                         stopForegroundCompat()
                         stopSelf()
                         log("SHIFT_ENDED")
-                        log("SERVICE_STOPPED")
+                        log("TRACKING_SERVICE_STOPPED")
                     }
                 }.start()
                 return START_NOT_STICKY
             }
+            ending = false
             loadSession(intent)
             if (cutoffAtUtcMs <= 0L) {
                 cutoffAtUtcMs = defaultCutoffUtcMs()
@@ -149,7 +154,7 @@ class LocationForegroundService : Service() {
                 return START_NOT_STICKY
             }
             running = true
-            log("SERVICE_STARTED shiftId=$shiftId officialIntervalMs=$officialIntervalMs")
+            log("TRACKING_SERVICE_STARTED shiftId=$shiftId officialIntervalMs=$officialIntervalMs")
             log("SHIFT_STARTED shiftId=$shiftId startedAtUtcMs=$shiftStartedAtUtcMs cutoffAtUtcMs=$cutoffAtUtcMs")
             startUpdates()
             seedLastLocation()
@@ -195,29 +200,30 @@ class LocationForegroundService : Service() {
     }
 
     private fun stopCollecting(flush: Boolean) {
+        ending = true
         running = false
         handler.removeCallbacks(cutoffStop)
         handler.removeCallbacks(officialTick)
         handler.removeCallbacks(syncFlush)
+        stopUpdates()
         if (flush) {
-            persistDueOfficialPoints()
+            // Cutoff only: do not invent slots after stop; flush what is already queued.
             Thread {
-                uploadLiveLocation(lastLocation)
                 flushPendingToServer()
+                clearActiveShiftMeta()
                 handler.post {
-                    stopUpdates()
                     stopForegroundCompat()
                     stopSelf()
                     log("SHIFT_ENDED")
-                    log("SERVICE_STOPPED")
+                    log("TRACKING_SERVICE_STOPPED")
                 }
             }.start()
             return
         }
-        stopUpdates()
+        clearActiveShiftMeta()
         stopForegroundCompat()
         stopSelf()
-        log("SERVICE_STOPPED")
+        log("TRACKING_SERVICE_STOPPED")
     }
 
     private fun stopForegroundCompat() {
@@ -268,7 +274,7 @@ class LocationForegroundService : Service() {
         requestFreshFix()
         try {
             client.lastLocation.addOnSuccessListener { loc ->
-                if (!running) return@addOnSuccessListener
+                if (ending || !running) return@addOnSuccessListener
                 if (loc != null && isUsable(loc)) {
                     lastLocation = loc
                     persistLastFix(loc)
@@ -284,7 +290,7 @@ class LocationForegroundService : Service() {
         try {
             client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, com.google.android.gms.tasks.CancellationTokenSource().token)
                 .addOnSuccessListener { loc ->
-                    if (!running) return@addOnSuccessListener
+                    if (ending || !running) return@addOnSuccessListener
                     if (loc != null && isUsable(loc)) {
                         log(
                             "LOCATION_RECEIVED lat=${loc.latitude} lng=${loc.longitude} accuracy=${
@@ -380,54 +386,64 @@ class LocationForegroundService : Service() {
         }
     }
 
+    /**
+     * Next official slot from shiftStart + n*interval (n starts at 1).
+     * Never uses now+interval (avoids drift). Returns overdue or future slot after last accepted.
+     */
+    private fun nextOfficialSlotMs(afterLastMs: Long): Long? {
+        val start = if (shiftStartedAtUtcMs > 0L) shiftStartedAtUtcMs else return null
+        var index = 1L
+        while (index <= 2000L) {
+            val due = start + index * officialIntervalMs
+            if (due >= cutoffAtUtcMs) return null
+            if (due > afterLastMs) return due
+            index++
+        }
+        return null
+    }
+
+    private fun slotIndexFor(slotUtcMs: Long): Long {
+        val start = if (shiftStartedAtUtcMs > 0L) shiftStartedAtUtcMs else return 1L
+        val index = (slotUtcMs - start) / officialIntervalMs
+        return if (index < 1L) 1L else index
+    }
+
     private fun persistDueOfficialPoints() {
-        if (shiftId <= 0) return
-        if (!running) return
-        val loc = lastLocation ?: return
+        if (ending || !running || shiftId <= 0) return
         try {
-        val now = System.currentTimeMillis()
-        if (now >= cutoffAtUtcMs) {
-            if (running) stopCollecting(flush = true)
-            return
-        }
-        val start = if (shiftStartedAtUtcMs > 0L) shiftStartedAtUtcMs else now
-        if (now < start) return
+            val now = System.currentTimeMillis()
+            if (now >= cutoffAtUtcMs) {
+                if (running) stopCollecting(flush = true)
+                return
+            }
+            val start = if (shiftStartedAtUtcMs > 0L) shiftStartedAtUtcMs else {
+                log("LOCATION_RETRY reason=missing-shift-start")
+                return
+            }
+            // No point before first slot (start + 10min). No early skew.
+            if (now < start + officialIntervalMs) {
+                return
+            }
+            val due = nextOfficialSlotMs(lastOfficialAtMs) ?: return
+            if (due > now) return
 
-        var last = lastOfficialAtMs
-        var latest = last
-        var inserted = false
+            val loc = lastLocation
+            if (loc == null || !isUsable(loc)) {
+                log("LOCATION_RETRY reason=no-fix slotDueAtMs=$due")
+                return
+            }
 
-        if (last <= 0L) {
-            // First route point: real GPS time as soon as a fix exists after shift start.
-            if (insertOfficialPoint(loc, now, sequenceIndex = 1L)) {
-                inserted = true
-                latest = now
-                lastOfficialAtMs = now
-                writeMeta(officialMetaKey(), now.toString())
-                writeMeta(firstOfficialMetaKey(), now.toString())
+            // Safe catch-up: at most one slot per tick.
+            val index = slotIndexFor(due)
+            if (insertOfficialPoint(loc, due, index)) {
+                lastOfficialAtMs = due
+                writeMeta(officialMetaKey(), due.toString())
+                writeMeta(firstOfficialMetaKey(), (start + officialIntervalMs).toString())
+                log("LOCATION_CAPTURED seq=$index slotDueAtUtcMs=$due lat=${loc.latitude} lng=${loc.longitude}")
+                Thread {
+                    flushPendingToServer()
+                }.start()
             }
-        } else {
-            var cursor = last + officialIntervalMs
-            var index = routeSequenceIndex(cursor)
-            while (cursor <= now && cursor < cutoffAtUtcMs) {
-                if (insertOfficialPoint(loc, cursor, sequenceIndex = index)) {
-                    inserted = true
-                }
-                latest = cursor
-                cursor += officialIntervalMs
-                index += 1
-            }
-            if (latest > lastOfficialAtMs) {
-                lastOfficialAtMs = latest
-                writeMeta(officialMetaKey(), latest.toString())
-            } else if (inserted) {
-                lastOfficialAtMs = latest
-                writeMeta(officialMetaKey(), latest.toString())
-            }
-        }
-        if (inserted) {
-            Thread { flushPendingToServer() }.start()
-        }
         } catch (e: Exception) {
             log("DATABASE_ERROR persistDue ${e.javaClass.simpleName}: ${e.message}")
         }
@@ -437,30 +453,17 @@ class LocationForegroundService : Service() {
         handler.removeCallbacks(officialTick)
         if (!running) return
         val now = System.currentTimeMillis()
-        val next = if (lastOfficialAtMs > 0L) {
-            lastOfficialAtMs + officialIntervalMs
-        } else {
-            now
-        }
-        val delay = if (lastOfficialAtMs <= 0L) {
-            1_000L
-        } else {
-            (next - now).coerceIn(1_000L, officialIntervalMs.coerceAtLeast(5_000L))
-        }
-        log("NEXT_CAPTURE delayMs=$delay nextAtMs=$next intervalMs=$officialIntervalMs")
+        val next = nextOfficialSlotMs(lastOfficialAtMs) ?: return
+        if (next >= cutoffAtUtcMs) return
+        val delay = (next - now).coerceAtLeast(1_000L)
+        log("NEXT_SLOT_DUE delayMs=$delay dueAtUtcMs=$next intervalMs=$officialIntervalMs")
         handler.postDelayed(officialTick, delay)
     }
 
     private fun firstOfficialMetaKey() = "first_official_ms_$shiftId"
 
-    private fun routeSequenceIndex(slotUtcMs: Long): Long {
-        val first = readMetaLong(firstOfficialMetaKey()).takeIf { it > 0L } ?: lastOfficialAtMs
-        if (first <= 0L) return 1L
-        val index = 1L + ((slotUtcMs - first) / officialIntervalMs)
-        return if (index < 1L) 1L else index
-    }
-
     private fun insertOfficialPoint(loc: Location, slotUtcMs: Long, sequenceIndex: Long): Boolean {
+        if (ending || !running) return false
         val seq = sequenceIndex
         val captured = utcIso(slotUtcMs)
         val actual = utcIso(loc.time.takeIf { it > 0 } ?: System.currentTimeMillis())
@@ -483,10 +486,23 @@ class LocationForegroundService : Service() {
         ) ?: -1L
         writeMeta("actual_captured_${shiftId}_$seq", actual)
         if (id > 0L) {
-            log("ROUTE_POINT_SAVED localId=$id seq=$seq captured=$captured lat=${loc.latitude} lng=${loc.longitude}")
+            log("LOCATION_SENT localId=$id seq=$seq slotDueAtUtc=$captured actualCapturedAtUtc=$actual")
             return true
         }
         return false
+    }
+
+    private fun clearActiveShiftMeta() {
+        writeMeta("active_shift_id", "0")
+        writeMeta("shift_active", "0")
+        writeMeta("cutoff_at_utc_ms", "0")
+        writeMeta("shift_started_at_utc_ms", "0")
+        writeMeta("api_token", "")
+        shiftId = 0
+        shiftStartedAtUtcMs = 0L
+        cutoffAtUtcMs = 0L
+        lastOfficialAtMs = 0L
+        token = ""
     }
 
     private fun isUsable(loc: Location): Boolean {
@@ -533,7 +549,7 @@ class LocationForegroundService : Service() {
     }
 
     private fun maybeUploadLive(loc: Location) {
-        if (!running || shiftId <= 0) return
+        if (ending || !running || shiftId <= 0) return
         val now = System.currentTimeMillis()
         if (now - lastLiveUploadMs < 10_000L) return
         lastLiveUploadMs = now
@@ -675,8 +691,13 @@ class LocationForegroundService : Service() {
                 if (!cursor.isNull(4)) obj.put("speed", cursor.getDouble(4))
                 if (!cursor.isNull(5)) obj.put("heading", cursor.getDouble(5))
                 obj.put("capturedAtUtc", cursor.getString(6))
+                obj.put("officialSlotUtc", cursor.getString(6))
                 obj.put("deviceSequence", seq)
                 obj.put("isOfficial", true)
+                val actual = readMeta("actual_captured_${sid}_$seq")
+                if (!actual.isNullOrBlank()) {
+                    obj.put("actualCapturedAtUtc", actual)
+                }
                 points.put(obj)
             }
             cursor.close()
@@ -715,10 +736,12 @@ class LocationForegroundService : Service() {
                         log("ROUTE_UPLOAD_FAILED status=$code error=all-rejected rejected=${parsed.rejected}")
                     } else {
                         markStatus(sid, seqs, "Synced")
+                        log("LOCATION_ACCEPTED accepted=${parsed?.accepted ?: "?"} duplicates=${parsed?.duplicates ?: "?"} rejected=${parsed?.rejected ?: "?"}")
                         log("ROUTE_UPLOAD_SUCCESS accepted=${parsed?.accepted ?: "?"} duplicates=${parsed?.duplicates ?: "?"} rejected=${parsed?.rejected ?: "?"}")
                     }
                 } else {
                     markStatus(sid, seqs, "Failed", incrementRetry = true)
+                    log("LOCATION_RETRY status=$code error=${text.take(240)}")
                     log("ROUTE_UPLOAD_FAILED status=$code error=${text.take(240)}")
                 }
             } finally {

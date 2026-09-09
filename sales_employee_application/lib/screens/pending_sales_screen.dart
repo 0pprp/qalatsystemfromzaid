@@ -443,6 +443,14 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
                 padding: const EdgeInsets.only(top: AppSpacing.sm),
                 child: Text('ملاحظة التعليق: ${r.pendingNote}'),
               ),
+            if (r.isPreparedForSale && (r.preparedForSaleNote ?? '').trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.sm),
+                child: Text(
+                  'ملاحظة البيع: ${r.preparedForSaleNote}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
             if (r.status == 'Rejected' && (r.rejectionReason ?? '').trim().isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.sm),
@@ -475,14 +483,18 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
   }
 
   Future<void> _prepareRequest(SalesWorkRequest request) async {
-    try {
-      await SalesRepositoryFactory.instance.prepareSalesRequest(request.id);
-      if (mounted) await _load();
-    } on ApiException catch (e) {
-      if (mounted) _toast(e.message);
-    } catch (_) {
-      if (mounted) _toast('تعذر تجهيز المبيع');
-    }
+    final ok = await _RequestNoteDialog.open(
+      context,
+      title: 'جاهز للبيع',
+      label: 'ملاحظة جاهز للبيع *',
+      confirm: 'تأكيد',
+      onConfirm: (note) =>
+          SalesRepositoryFactory.instance.prepareSalesRequest(request.id, note),
+    );
+    if (!ok || !mounted) return;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    await _load();
   }
 
   Future<void> _pendRequest(SalesWorkRequest request) async {
@@ -563,21 +575,23 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
   }
 
   Future<void> _prepare() async {
-    setState(() => _busy = true);
-    try {
-      final row = await SalesRepositoryFactory.instance.prepareSalesRequest(widget.requestId);
-      if (!mounted) return;
-      setState(() {
-        _row = row;
-        _busy = false;
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
-    } catch (_) {
-      if (mounted) setState(() => _busy = false);
-    }
+    SalesWorkRequest? updated;
+    final ok = await _RequestNoteDialog.open(
+      context,
+      title: 'جاهز للبيع',
+      label: 'ملاحظة جاهز للبيع *',
+      confirm: 'تأكيد',
+      onConfirm: (note) async {
+        updated = await SalesRepositoryFactory.instance.prepareSalesRequest(widget.requestId, note);
+      },
+    );
+    if (!ok || !mounted) return;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    setState(() {
+      if (updated != null) _row = updated;
+      _busy = false;
+    });
   }
 
   Future<void> _pend() async {
@@ -644,6 +658,11 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
                 ],
                 if (row.isPendingHold && (row.pendingNote ?? '').trim().isNotEmpty)
                   Text('ملاحظة التعليق: ${row.pendingNote}'),
+                if (row.isPreparedForSale && (row.preparedForSaleNote ?? '').trim().isNotEmpty)
+                  Text(
+                    'ملاحظة البيع: ${row.preparedForSaleNote}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                 if (row.status == 'Rejected' && (row.rejectionReason ?? '').trim().isNotEmpty)
                   Text('سبب الرفض: ${row.rejectionReason}',
                       style: const TextStyle(color: AppColors.danger)),

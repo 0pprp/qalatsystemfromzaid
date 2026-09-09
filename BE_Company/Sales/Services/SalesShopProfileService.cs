@@ -328,6 +328,7 @@ VALUES
             {
                 AddRequestNote(notes, req.Notes, req.CreatedByName, req.CreatedAtUtc, "Request");
                 AddRequestNote(notes, req.PendingNote, req.TargetEmployeeName, req.CreatedAtUtc, "Pending");
+                AddRequestNote(notes, req.PreparedForSaleNote, req.TargetEmployeeName, req.ProcessingAtUtc ?? req.CreatedAtUtc, "PreparedForSale");
                 AddRequestNote(notes, req.ReturnNote, req.AssignedByName, req.CreatedAtUtc, "Return");
                 AddRequestNote(notes, req.RejectionReason, req.TargetEmployeeName, req.RejectedAtUtc ?? req.CreatedAtUtc, "Rejection");
             }

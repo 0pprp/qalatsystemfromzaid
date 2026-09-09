@@ -120,6 +120,7 @@ namespace BE_Company.Sales.DTO
         public int? AssignedByUserId { get; set; }
         public string? AssignedByName { get; set; }
         public string? PendingNote { get; set; }
+        public string? PreparedForSaleNote { get; set; }
         public string? ReturnNote { get; set; }
         public DateTime? ManagerReadAtUtc { get; set; }
         public bool IsManagerRead => ManagerReadAtUtc != null;

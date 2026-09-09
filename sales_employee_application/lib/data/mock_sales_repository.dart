@@ -502,10 +502,11 @@ class MockSalesRepository implements SalesRepository {
   }
 
   @override
-  Future<SalesWorkRequest> startSalesRequest(int id) => prepareSalesRequest(id);
+  Future<SalesWorkRequest> startSalesRequest(int id) =>
+      prepareSalesRequest(id, 'تجهيز');
 
   @override
-  Future<SalesWorkRequest> prepareSalesRequest(int id) async {
+  Future<SalesWorkRequest> prepareSalesRequest(int id, String note) async {
     final current = await salesRequest(id);
     if (current.status == 'Completed') {
       throw Exception('لا يمكن تعديل طلب مكتمل.');
@@ -513,7 +514,14 @@ class MockSalesRepository implements SalesRepository {
     if (current.status == 'Rejected') {
       throw Exception('لا يمكن تجهيز هذا الطلب.');
     }
-    final row = current.copyWith(status: 'PreparedForSale');
+    final trimmed = note.trim();
+    if (trimmed.isEmpty) {
+      throw Exception('ملاحظة جاهز للبيع مطلوبة.');
+    }
+    final row = current.copyWith(
+      status: 'PreparedForSale',
+      preparedForSaleNote: trimmed,
+    );
     _replace(row);
     return row;
   }

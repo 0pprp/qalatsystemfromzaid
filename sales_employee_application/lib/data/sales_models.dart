@@ -635,6 +635,7 @@ class SalesWorkRequest {
     this.convertedToSaleId,
     this.rejectionReason,
     this.pendingNote,
+    this.preparedForSaleNote,
     this.returnNote,
     this.delegateId,
     this.delegateName,
@@ -652,6 +653,7 @@ class SalesWorkRequest {
   final int? convertedToSaleId;
   final String? rejectionReason;
   final String? pendingNote;
+  final String? preparedForSaleNote;
   final String? returnNote;
   final int? delegateId;
   final String? delegateName;
@@ -700,6 +702,7 @@ class SalesWorkRequest {
     String? status,
     String? rejectionReason,
     String? pendingNote,
+    String? preparedForSaleNote,
     String? returnNote,
     int? convertedToSaleId,
   }) =>
@@ -716,6 +719,7 @@ class SalesWorkRequest {
         convertedToSaleId: convertedToSaleId ?? this.convertedToSaleId,
         rejectionReason: rejectionReason ?? this.rejectionReason,
         pendingNote: pendingNote ?? this.pendingNote,
+        preparedForSaleNote: preparedForSaleNote ?? this.preparedForSaleNote,
         returnNote: returnNote ?? this.returnNote,
         delegateId: delegateId,
         delegateName: delegateName,
@@ -735,6 +739,8 @@ class SalesWorkRequest {
         convertedToSaleId: int.tryParse('${json['convertedToSaleId'] ?? json['ConvertedToSaleId'] ?? ''}'),
         rejectionReason: json['rejectionReason']?.toString() ?? json['RejectionReason']?.toString(),
         pendingNote: json['pendingNote']?.toString() ?? json['PendingNote']?.toString(),
+        preparedForSaleNote:
+            json['preparedForSaleNote']?.toString() ?? json['PreparedForSaleNote']?.toString(),
         returnNote: json['returnNote']?.toString() ?? json['ReturnNote']?.toString(),
         delegateId: _optionalPositiveInt(json, const [
           'delegateId',

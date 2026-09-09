@@ -62,6 +62,7 @@ namespace BE_Company.Sales.Services
         public const string Pending = "Pending";
         public const string PendingNote = "PendingNote";
         public const string PreparedForSale = "PreparedForSale";
+        public const string PreparedForSaleNote = "PreparedForSaleNote";
         public const string Rejected = "Rejected";
         public const string RejectionReason = "RejectionReason";
         public const string Returned = "Returned";
@@ -183,14 +184,14 @@ namespace BE_Company.Sales.Services
         Task<SalesRequestDTO> MarkReadAsync(SalesIdentity manager, int id, CancellationToken ct);
         Task<int> MarkAllReadAsync(SalesIdentity manager, CancellationToken ct);
         Task<SalesRequestDTO> ManagerRejectAsync(SalesIdentity manager, int id, string reason, CancellationToken ct);
-        Task<SalesRequestDTO> ManagerPrepareForSaleAsync(SalesIdentity manager, int id, CancellationToken ct);
+        Task<SalesRequestDTO> ManagerPrepareForSaleAsync(SalesIdentity manager, int id, string? note, CancellationToken ct);
         Task<SalesRequestDTO> ManagerPendAsync(SalesIdentity manager, int id, string note, CancellationToken ct);
         Task<SalesRequestDTO?> GetForManagerAsync(int id, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForEmployeeAsync(int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> GetForEmployeeAsync(int id, int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> ViewAsync(int id, int employeeId, CancellationToken ct);
-        Task<SalesRequestDTO> StartProcessingAsync(int id, int employeeId, CancellationToken ct);
-        Task<SalesRequestDTO> PrepareForSaleAsync(int id, int employeeId, CancellationToken ct);
+        Task<SalesRequestDTO> StartProcessingAsync(int id, int employeeId, string note, CancellationToken ct);
+        Task<SalesRequestDTO> PrepareForSaleAsync(int id, int employeeId, string note, CancellationToken ct);
         Task<SalesRequestDTO> PendAsync(int id, int employeeId, string note, CancellationToken ct);
         Task<SalesRequestDTO> RejectAsync(int id, int employeeId, string reason, CancellationToken ct);
         Task<SalesRequestDTO> AssignAsync(SalesIdentity manager, int id, SalesRequestAssignDTO request, CancellationToken ct);

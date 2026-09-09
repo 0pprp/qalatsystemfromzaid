@@ -165,7 +165,14 @@ namespace BE_Company.Sales.Services
             {
                 await _repo.CloseAsync(shift.ShiftId, utc, SalesShiftCloseReasons.AutomaticCutoff, ct);
                 shift.Status = SalesShiftStatuses.Closed;
+                shift.ClosedAtUtc = utc;
                 await _repo.InsertEventAsync(identity.EmployeeId, shift.ShiftId, SalesTrackingEventTypes.ShiftAutoClosed, utc, null, ct);
+            }
+
+            // Any closed shift rejects the entire batch — including backdated CapturedAtUtc.
+            if (shift.Status != SalesShiftStatuses.Active || shift.ClosedAtUtc != null)
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "الدوام مغلق.");
             }
 
             var result = new SalesLocationBatchResultDTO
@@ -220,6 +227,7 @@ namespace BE_Company.Sales.Services
             {
                 await _repo.CloseAsync(shift.ShiftId, utc, SalesShiftCloseReasons.AutomaticCutoff, ct);
                 shift.Status = SalesShiftStatuses.Closed;
+                shift.ClosedAtUtc = utc;
                 await _repo.InsertEventAsync(identity.EmployeeId, shift.ShiftId, SalesTrackingEventTypes.ShiftAutoClosed, utc, null, ct);
             }
 
@@ -299,21 +307,36 @@ namespace BE_Company.Sales.Services
                 return false;
             }
 
+            if (Math.Abs(point.Latitude) < 0.000001 && Math.Abs(point.Longitude) < 0.000001)
+            {
+                return false;
+            }
+
             if (point.Accuracy is < 0 or > 5000)
             {
                 return false;
             }
 
-            var captured = DateTime.SpecifyKind(point.CapturedAtUtc, DateTimeKind.Utc);
-            // Small device-clock skew only; do not accept clock-floored slots before shift start.
-            if (captured < shift.StartedAtUtc.AddMinutes(-2))
+            var slot = DateTime.SpecifyKind(point.OfficialSlotUtc ?? point.CapturedAtUtc, DateTimeKind.Utc);
+            // OfficialSlotUtc must be exactly start + n*10 (n >= 1). No early skew.
+            if (!OfficialSlot.IsExactOfficialSlot(shift.StartedAtUtc, slot))
             {
                 return false;
             }
 
-            if (captured >= shift.CutoffAtUtc)
+            if (slot >= shift.CutoffAtUtc)
             {
                 return false;
+            }
+
+            // Actual capture may be late vs the logical slot; it must not precede shift start.
+            if (point.ActualCapturedAtUtc is DateTime actual)
+            {
+                var actualUtc = DateTime.SpecifyKind(actual, DateTimeKind.Utc);
+                if (actualUtc < DateTime.SpecifyKind(shift.StartedAtUtc, DateTimeKind.Utc))
+                {
+                    return false;
+                }
             }
 
             return true;

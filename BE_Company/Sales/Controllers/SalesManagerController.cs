@@ -544,14 +544,14 @@ namespace BE_Company.Sales.Controllers
         }
 
         [HttpPost("sales-requests/{id:int}/prepare")]
-        public async Task<IActionResult> PrepareRequest(int id, CancellationToken ct)
+        public async Task<IActionResult> PrepareRequest(int id, [FromBody] SalesRequestNoteDTO? body, CancellationToken ct)
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
             var identity = _identity.FromAuthenticatedUser();
             try
             {
-                return Ok(await _requests.ManagerPrepareForSaleAsync(identity!, id, ct));
+                return Ok(await _requests.ManagerPrepareForSaleAsync(identity!, id, body?.Note ?? body?.Reason, ct));
             }
             catch (SalesCompleteException ex)
             {

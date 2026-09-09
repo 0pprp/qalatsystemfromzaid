@@ -416,13 +416,21 @@ namespace BE_SalesEmployee.Controllers
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/start-processing")]
-        public Task<IActionResult> StartProcessing(int id, CancellationToken ct) =>
-            ProxyAssigned($"sales/requests/{id}/start-processing", HttpMethod.Post, null, ct);
+        public async Task<IActionResult> StartProcessing(int id, [FromBody] JsonElement body, CancellationToken ct) =>
+            await ProxyAssigned(
+                $"sales/requests/{id}/start-processing",
+                HttpMethod.Post,
+                new StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
+                ct);
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/prepare")]
-        public Task<IActionResult> Prepare(int id, CancellationToken ct) =>
-            ProxyAssigned($"sales/requests/{id}/prepare", HttpMethod.Post, null, ct);
+        public async Task<IActionResult> Prepare(int id, [FromBody] JsonElement body, CancellationToken ct) =>
+            await ProxyAssigned(
+                $"sales/requests/{id}/prepare",
+                HttpMethod.Post,
+                new StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json"),
+                ct);
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/inspect")]

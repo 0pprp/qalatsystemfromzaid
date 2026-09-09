@@ -3,6 +3,7 @@ import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
+import 'package:sales_employee_application/utils/inventory_search.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
 import 'package:sales_employee_application/widgets/inventory_item_info.dart';
 
@@ -58,17 +59,10 @@ class _WarehouseScreenState extends State<WarehouseScreen> {
     }
   }
 
-  bool _matches(SalesInventoryItem item, String q) {
-    if (item.productName.contains(q)) return true;
-    if ((item.notes ?? '').contains(q)) return true;
-    if ('${item.productId}'.contains(q)) return true;
-    return false;
-  }
-
   @override
   Widget build(BuildContext context) {
     final q = _query.text.trim();
-    final rows = q.isEmpty ? _all : _all.where((i) => _matches(i, q)).toList();
+    final rows = filterInventoryItems(_all, q);
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('مخزن الفرع')),
@@ -94,7 +88,12 @@ class _WarehouseScreenState extends State<WarehouseScreen> {
                 child: _error != null
                     ? Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)))
                     : rows.isEmpty && !_loading
-                        ? const Center(child: Text('لا توجد مواد', style: TextStyle(color: AppColors.muted)))
+                        ? Center(
+                            child: Text(
+                              q.isEmpty ? 'لا توجد مواد' : 'لا توجد نتائج',
+                              style: const TextStyle(color: AppColors.muted),
+                            ),
+                          )
                         : ListView.builder(
                             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                             padding: EdgeInsets.fromLTRB(

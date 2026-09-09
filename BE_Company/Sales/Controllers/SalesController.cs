@@ -879,7 +879,7 @@ namespace BE_Company.Sales.Controllers
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/start-processing")]
-        public async Task<IActionResult> StartProcessing(int id, CancellationToken ct)
+        public async Task<IActionResult> StartProcessing(int id, [FromBody] SalesRequestNoteDTO? body, CancellationToken ct)
         {
             var blocked = await BlockIfNotDemo(ct);
             if (blocked != null) return blocked;
@@ -887,7 +887,8 @@ namespace BE_Company.Sales.Controllers
             if (identity == null) return Unauthorized();
             try
             {
-                return Ok(await _requests.PrepareForSaleAsync(id, identity.EmployeeId, ct));
+                var note = body?.Note ?? body?.Reason ?? string.Empty;
+                return Ok(await _requests.PrepareForSaleAsync(id, identity.EmployeeId, note, ct));
             }
             catch (SalesCompleteException ex)
             {
@@ -897,7 +898,8 @@ namespace BE_Company.Sales.Controllers
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/prepare")]
-        public Task<IActionResult> PrepareRequest(int id, CancellationToken ct) => StartProcessing(id, ct);
+        public Task<IActionResult> PrepareRequest(int id, [FromBody] SalesRequestNoteDTO? body, CancellationToken ct) =>
+            StartProcessing(id, body, ct);
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("requests/{id:int}/inspect")]

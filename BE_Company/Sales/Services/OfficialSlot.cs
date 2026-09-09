@@ -3,9 +3,9 @@ using BE_Company.Sales.DTO;
 namespace BE_Company.Sales.Services
 {
     /// <summary>
-    /// Official sales-manager route pins: first GPS after shift start, then every 10 minutes
-    /// from that first capture (not clock-rounded :00/:10/:20 slots).
-    /// CapturedAtUtc stays the real due/capture time; DB stores UTC.
+    /// Official sales-manager route pins: deterministic slots from shift start.
+    /// First due = shiftStart + 10 minutes; then +20, +30, … (no point at start).
+    /// CapturedAtUtc / OfficialSlotUtc stay the logical slot time; DB stores UTC.
     /// </summary>
     public static class OfficialSlot
     {
@@ -22,6 +22,44 @@ namespace BE_Company.Sales.Services
             return IraqTimeService.ToUtcFromIraq(slottedIraq);
         }
 
+        /// <summary>
+        /// Slot index n where due = shiftStart + n * 10min (n starts at 1).
+        /// </summary>
+        public static long SlotIndex(DateTime shiftStartUtc, DateTime slotUtc)
+        {
+            var start = Utc(shiftStartUtc);
+            var slot = Utc(slotUtc);
+            var index = (slot - start).Ticks / Length.Ticks;
+            return index <= 0 ? 1 : index;
+        }
+
+        /// <summary>
+        /// True only when officialSlotUtc equals shiftStart + n*10 minutes for integer n &gt;= 1.
+        /// No early skew — 10:21 / 10:22:59 are never valid official slots for start 10:13.
+        /// </summary>
+        public static bool IsExactOfficialSlot(DateTime shiftStartUtc, DateTime officialSlotUtc)
+        {
+            var start = Utc(shiftStartUtc);
+            var slot = Utc(officialSlotUtc);
+            var delta = slot - start;
+            if (delta < Length)
+            {
+                return false;
+            }
+
+            return delta.Ticks % Length.Ticks == 0;
+        }
+
+        public static DateTime SlotUtc(DateTime shiftStartUtc, long index)
+        {
+            if (index < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+
+            return Utc(shiftStartUtc).AddMinutes(10 * index);
+        }
+
         public static long Sequence(DateTime capturedUtc)
         {
             var utc = capturedUtc.Kind == DateTimeKind.Utc ? capturedUtc : DateTime.SpecifyKind(capturedUtc, DateTimeKind.Utc);
@@ -30,8 +68,8 @@ namespace BE_Company.Sales.Services
         }
 
         /// <summary>
-        /// Due route capture times relative to shift start / last capture — never clock-floored.
-        /// First due = shift start when no prior capture; then last + 10 minutes repeatedly.
+        /// Due route capture times: shiftStart + 10*n for n=1,2,… while due &lt;= now and &lt; cutoff.
+        /// Skips slots already accepted (due &lt;= lastOfficialSlotUtc).
         /// </summary>
         public static IReadOnlyList<DateTime> DueSlots(
             DateTime shiftStartUtc,
@@ -42,21 +80,28 @@ namespace BE_Company.Sales.Services
             shiftStartUtc = Utc(shiftStartUtc);
             nowUtc = Utc(nowUtc);
             cutoffUtc = Utc(cutoffUtc);
-            DateTime cursor;
-            if (lastOfficialSlotUtc is DateTime last && last != default)
-            {
-                cursor = Utc(last).Add(Length);
-            }
-            else
-            {
-                cursor = shiftStartUtc;
-            }
+            DateTime? last = lastOfficialSlotUtc is DateTime prior && prior != default
+                ? Utc(prior)
+                : null;
 
             var slots = new List<DateTime>();
-            while (cursor <= nowUtc && cursor < cutoffUtc)
+            for (var index = 1; index <= 2000; index++)
             {
-                slots.Add(cursor);
-                cursor = cursor.Add(Length);
+                var due = shiftStartUtc.AddMinutes(10 * index);
+                if (due >= cutoffUtc)
+                {
+                    break;
+                }
+
+                if (due > nowUtc)
+                {
+                    break;
+                }
+
+                if (last is null || due > last.Value)
+                {
+                    slots.Add(due);
+                }
             }
 
             return slots;
@@ -64,15 +109,23 @@ namespace BE_Company.Sales.Services
 
         public static SalesLocationPointRequestDTO SnapOfficial(SalesLocationPointRequestDTO point, DateTime? actualCapturedUtc = null)
         {
-            var original = Utc(actualCapturedUtc ?? point.CapturedAtUtc);
-            // Keep exact capture/due time — do not floor to clock slots.
-            point.CapturedAtUtc = original;
-            point.OfficialSlotUtc = original;
-            point.ActualCapturedAtUtc = original;
+            // OfficialSlotUtc = logical due (start + n*10). ActualCapturedAtUtc = device capture (may be late).
+            var slot = point.OfficialSlotUtc is DateTime official && official != default
+                ? Utc(official)
+                : Utc(point.CapturedAtUtc);
+            var actual = actualCapturedUtc is DateTime forced
+                ? Utc(forced)
+                : point.ActualCapturedAtUtc is DateTime reported && reported != default
+                    ? Utc(reported)
+                    : slot;
+
+            point.OfficialSlotUtc = slot;
+            point.CapturedAtUtc = slot;
+            point.ActualCapturedAtUtc = actual;
             point.IsOfficial = true;
             if (point.DeviceSequence <= 0)
             {
-                point.DeviceSequence = Sequence(original);
+                point.DeviceSequence = Sequence(slot);
             }
 
             return point;

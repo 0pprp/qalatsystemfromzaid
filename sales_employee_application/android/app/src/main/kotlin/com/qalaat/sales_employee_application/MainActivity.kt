@@ -37,8 +37,6 @@ class MainActivity : FlutterActivity() {
                             startForegroundService(intent)
                             android.util.Log.d("SHIFT START", "startForegroundService returned")
                             result.success(true)
-                            android.util.Log.d("SHIFT START", "startForegroundService returned")
-                            result.success(true)
                         } catch (e: Exception) {
                             android.util.Log.e("SHIFT START", "startForegroundService ${e.javaClass.simpleName}: ${e.message}", e)
                             result.error("FOREGROUND_START", e.message, e.javaClass.simpleName)

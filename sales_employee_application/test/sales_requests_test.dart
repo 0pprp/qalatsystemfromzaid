@@ -175,8 +175,9 @@ void main() {
     final pending = await repo.pendSalesRequest(1, 'الزبون مشغول');
     expect(pending.status, 'Pending');
     expect(pending.pendingNote, 'الزبون مشغول');
-    final prepared = await repo.prepareSalesRequest(1);
+    final prepared = await repo.prepareSalesRequest(1, 'سعر مقترح 200');
     expect(prepared.status, 'PreparedForSale');
+    expect(prepared.preparedForSaleNote, 'سعر مقترح 200');
   });
 
   test('Returned request shows return note and can be prepared again', () async {
@@ -190,8 +191,85 @@ void main() {
       ));
     final row = await repo.salesRequest(2);
     expect(row.returnNote, 'أكمل البيانات');
-    final prepared = await repo.prepareSalesRequest(2);
+    final prepared = await repo.prepareSalesRequest(2, 'جاهز بعد الإكمال');
     expect(prepared.status, 'PreparedForSale');
+    expect(prepared.preparedForSaleNote, 'جاهز بعد الإكمال');
+  });
+
+  test('Prepare requires note and does not change status on empty note', () async {
+    final repo = MockSalesRepository()
+      ..seedRequest(SalesWorkRequest(
+        id: 11,
+        customerName: 'ج',
+        status: 'Assigned',
+        createdAtUtc: DateTime.utc(2026, 9, 2),
+      ));
+    expect(() => repo.prepareSalesRequest(11, '  '), throwsException);
+    final still = await repo.salesRequest(11);
+    expect(still.status, 'Assigned');
+    expect(still.preparedForSaleNote, isNull);
+  });
+
+  test('Prepared note survives refresh and shows only for prepared bin', () async {
+    final repo = MockSalesRepository()
+      ..seedRequest(SalesWorkRequest(
+        id: 12,
+        customerName: 'د',
+        status: 'Assigned',
+        createdAtUtc: DateTime.utc(2026, 9, 2),
+      ));
+    await repo.prepareSalesRequest(12, 'الجهاز نظيف والسعر 175');
+    final refreshed = await repo.salesRequest(12);
+    expect(refreshed.isPreparedForSale, isTrue);
+    expect(refreshed.preparedForSaleNote, 'الجهاز نظيف والسعر 175');
+    expect(refreshed.pendingNote, isNull);
+  });
+
+  testWidgets('Ready for sale button opens note dialog before status change', (tester) async {
+    tester.view.physicalSize = const Size(800, 2000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repo = MockSalesRepository()
+      ..seedRequest(SalesWorkRequest(
+        id: 9,
+        customerName: 'سعد كاظم',
+        customerPhone: '0770',
+        customerProvince: 'النجف',
+        status: 'New',
+        createdAtUtc: DateTime.utc(2026, 9, 2),
+      ));
+    SalesRepositoryFactory.setInstance(repo);
+    await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.themeData,
+      home: const PendingSalesScreen(),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('طلبات البيع'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.widgetWithText(ElevatedButton, 'جاهز للبيع'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('ملاحظة جاهز للبيع *'), findsOneWidget);
+    expect((await repo.salesRequest(9)).status, 'New');
+    await tester.enterText(find.byType(TextField).last, 'سعر 160 وحالة ممتازة');
+    await tester.pump();
+    await tester.tap(find.text('تأكيد'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final prepared = await repo.salesRequest(9);
+    expect(prepared.status, 'PreparedForSale');
+    expect(prepared.preparedForSaleNote, 'سعر 160 وحالة ممتازة');
+
+    await tester.pageBack();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('جاهز للبيع'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.textContaining('ملاحظة البيع: سعر 160 وحالة ممتازة'), findsOneWidget);
   });
 
   test('Evaluation no longer changes price or blocks sale', () async {

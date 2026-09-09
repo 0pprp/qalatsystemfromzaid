@@ -68,6 +68,7 @@ class ShiftTrackingController {
   Timer? _syncTimer;
   Timer? _cutoffTimer;
   bool _collecting = true;
+  bool _ending = false;
   bool _internet = true;
   WorkShift? activeShift;
   String? lastError;
@@ -257,20 +258,24 @@ class ShiftTrackingController {
   }
 
   Future<void> _trySync() async {
+    if (_ending && activeShift == null) return;
     final shift = activeShift;
     if (shift == null) return;
     await _sync.sync(shift.shiftId);
   }
 
   bool get isCollecting => _collecting;
+  bool get isEnding => _ending;
 
   Future<void> endShiftFlow() async {
+    // Ending: stop accepting new work before flush / End API.
+    _ending = true;
     _collecting = false;
     _syncTimer?.cancel();
     _cutoffTimer?.cancel();
     await _netSub?.cancel();
     _netSub = null;
-    await _trySync();
+    // 1) Stop native updates + flush pending queue while shift still Active server-side.
     try {
       await _flushThenStopNative();
     } catch (_) {
@@ -278,11 +283,14 @@ class ShiftTrackingController {
         await _stopNative();
       } catch (_) {}
     }
+    // 2) Sync any Dart-side pending (best effort) before End.
     try {
       await _trySync();
     } catch (_) {}
+    // 3) Close shift on backend — after this, batch must 409.
     await _repo.endShift();
     activeShift = null;
+    // 4) Clear local active-shift metadata only after End succeeded.
     try {
       await Session.setGpsStoppedByUser(true);
     } catch (_) {}

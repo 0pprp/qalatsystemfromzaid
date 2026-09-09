@@ -10,6 +10,7 @@ import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/sale_document_storage.dart';
 import 'package:sales_employee_application/services/shop_gps.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
+import 'package:sales_employee_application/utils/inventory_search.dart';
 import 'package:sales_employee_application/utils/iraq_phone.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
 import 'package:sales_employee_application/widgets/customer_document_slot.dart';
@@ -69,6 +70,7 @@ class _SaleScreenState extends State<SaleScreen> {
   num _defaultDown = 0;
   final Map<int, int> _qty = {};
   List<SalesInventoryItem> _stock = [];
+  final _stockQuery = TextEditingController();
   bool _loadingStock = false;
   bool _saving = false;
   SalesWorkRequest? _fromRequest;
@@ -310,6 +312,7 @@ class _SaleScreenState extends State<SaleScreen> {
     _shopLength.dispose();
     _shopWidth.dispose();
     _shopNote.dispose();
+    _stockQuery.dispose();
     super.dispose();
   }
 
@@ -1196,50 +1199,66 @@ class _SaleScreenState extends State<SaleScreen> {
     if (_loadingStock) {
       return const Center(child: CircularProgressIndicator());
     }
+    final filtered = filterInventoryItems(_stock, _stockQuery.text);
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+          child: TextField(
+            controller: _stockQuery,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              hintText: 'بحث في المواد (الاسم أو الكود)',
+              prefixIcon: Icon(Icons.search),
+            ),
+          ),
+        ),
         Expanded(
-          child: ListView.builder(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
-            itemCount: _stock.length,
-            itemBuilder: (context, index) {
-              final item = _stock[index];
-              final q = _qty[item.productId] ?? 0;
-              final empty = item.availableQuantity <= 0;
-              return Card(
-                margin: const EdgeInsets.only(bottom: AppSpacing.md),
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: InventoryItemInfo(item: item)),
-                      if (!empty)
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
+          child: filtered.isEmpty
+              ? const Center(
+                  child: Text('لا توجد نتائج', style: TextStyle(color: AppColors.muted)),
+                )
+              : ListView.builder(
+                  keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+                  itemCount: filtered.length,
+                  itemBuilder: (context, index) {
+                    final item = filtered[index];
+                    final q = _qty[item.productId] ?? 0;
+                    final empty = item.availableQuantity <= 0;
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: AppSpacing.md),
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            IconButton(
-                              onPressed: q <= 0
-                                  ? null
-                                  : () => setState(() => _qty[item.productId] = q - 1),
-                              icon: const Icon(Icons.remove),
-                            ),
-                            Text('$q'),
-                            IconButton(
-                              onPressed: q >= item.availableQuantity
-                                  ? null
-                                  : () => setState(() => _qty[item.productId] = q + 1),
-                              icon: const Icon(Icons.add),
-                            ),
+                            Expanded(child: InventoryItemInfo(item: item)),
+                            if (!empty)
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    onPressed: q <= 0
+                                        ? null
+                                        : () => setState(() => _qty[item.productId] = q - 1),
+                                    icon: const Icon(Icons.remove),
+                                  ),
+                                  Text('$q'),
+                                  IconButton(
+                                    onPressed: q >= item.availableQuantity
+                                        ? null
+                                        : () => setState(() => _qty[item.productId] = q + 1),
+                                    icon: const Icon(Icons.add),
+                                  ),
+                                ],
+                              ),
                           ],
                         ),
-                    ],
-                  ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),

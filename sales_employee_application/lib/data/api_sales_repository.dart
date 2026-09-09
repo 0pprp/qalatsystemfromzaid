@@ -397,12 +397,16 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   @override
-  Future<SalesWorkRequest> startSalesRequest(int id) => prepareSalesRequest(id);
+  Future<SalesWorkRequest> startSalesRequest(int id) =>
+      prepareSalesRequest(id, 'تجهيز');
 
   @override
-  Future<SalesWorkRequest> prepareSalesRequest(int id) async {
+  Future<SalesWorkRequest> prepareSalesRequest(int id, String note) async {
     try {
-      final raw = await ApiClient.post('sales/requests/$id/prepare');
+      final raw = await ApiClient.post(
+        'sales/requests/$id/prepare',
+        body: {'note': note},
+      );
       return SalesWorkRequest.fromJson(Map<String, dynamic>.from(raw as Map));
     } on ApiException catch (e) {
       _throw(e);

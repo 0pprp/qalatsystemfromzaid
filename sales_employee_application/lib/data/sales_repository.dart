@@ -36,7 +36,7 @@ abstract class SalesRepository {
   Future<SalesWorkRequest> salesRequest(int id);
   Future<SalesWorkRequest> viewSalesRequest(int id);
   Future<SalesWorkRequest> startSalesRequest(int id);
-  Future<SalesWorkRequest> prepareSalesRequest(int id);
+  Future<SalesWorkRequest> prepareSalesRequest(int id, String note);
   Future<SalesWorkRequest> inspectSalesRequest(int id, SalesDraftCreateRequest progress);
   Future<SalesWorkRequest> pendSalesRequest(int id, String note);
   Future<SalesWorkRequest> rejectSalesRequest(int id, String reason);

@@ -370,8 +370,29 @@ namespace BE_Company.Sales.Tests
             var repo = new FakeRequestRepository();
             var svc = Svc(repo);
             var created = await AssignedAsync(svc, 1);
-            var started = await svc.StartProcessingAsync(created.Id, 1, CancellationToken.None);
+            var started = await svc.StartProcessingAsync(created.Id, 1, "ملاحظة تجهيز", CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.PreparedForSale, started.Status);
+            Assert.Equal("ملاحظة تجهيز", started.PreparedForSaleNote);
+        }
+
+        [Fact]
+        public async Task PrepareForSale_RequiresNote_PersistsAndRejectsEmpty()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await AssignedAsync(svc, 1);
+            var empty = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+                svc.PrepareForSaleAsync(created.Id, 1, "  ", CancellationToken.None));
+            Assert.Equal(400, empty.StatusCode);
+            Assert.Equal(SalesRequestStatuses.Assigned, (await svc.GetForEmployeeAsync(created.Id, 1, CancellationToken.None)).Status);
+
+            var prepared = await svc.PrepareForSaleAsync(created.Id, 1, "سعر 150 والسعر قابل للنقاش", CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.PreparedForSale, prepared.Status);
+            Assert.Equal("سعر 150 والسعر قابل للنقاش", prepared.PreparedForSaleNote);
+            Assert.Contains(prepared.History, h => h.Event == SalesRequestEvents.PreparedForSaleNote);
+
+            var again = await svc.GetForEmployeeAsync(created.Id, 1, CancellationToken.None);
+            Assert.Equal("سعر 150 والسعر قابل للنقاش", again.PreparedForSaleNote);
         }
 
         [Fact]
@@ -440,7 +461,7 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(1, returned.TargetEmployeeId);
             Assert.Equal("زبون غير موجود", returned.RejectionReason);
             Assert.Equal("أعد المتابعة", returned.ReturnNote);
-            var prepared = await svc.PrepareForSaleAsync(created.Id, 1, CancellationToken.None);
+            var prepared = await svc.PrepareForSaleAsync(created.Id, 1, "ملاحظة تجهيز", CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.PreparedForSale, prepared.Status);
         }
 
@@ -451,7 +472,7 @@ namespace BE_Company.Sales.Tests
             var svc = Svc(repo);
             var created = await AssignedAsync(svc, 1);
             await svc.PendAsync(created.Id, 1, "تعليق", CancellationToken.None);
-            await svc.PrepareForSaleAsync(created.Id, 1, CancellationToken.None);
+            await svc.PrepareForSaleAsync(created.Id, 1, "ملاحظة تجهيز", CancellationToken.None);
             var row = await svc.GetForManagerAsync(created.Id, CancellationToken.None);
             Assert.Contains(row!.History, h => h.Event == SalesRequestEvents.Created);
             Assert.Contains(row.History, h => h.Event == SalesRequestEvents.Assigned);
@@ -467,7 +488,7 @@ namespace BE_Company.Sales.Tests
             var repo = new FakeRequestRepository();
             var svc = Svc(repo);
             var created = await AssignedAsync(svc, 1);
-            await svc.PrepareForSaleAsync(created.Id, 1, CancellationToken.None);
+            await svc.PrepareForSaleAsync(created.Id, 1, "ملاحظة تجهيز", CancellationToken.None);
             await svc.MarkConvertedAsync(created.Id, 1, 77, DateTime.UtcNow, CancellationToken.None);
             var row = await svc.GetForEmployeeAsync(created.Id, 1, CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.ConvertedToSale, row.Status);
@@ -480,7 +501,7 @@ namespace BE_Company.Sales.Tests
             var repo = new FakeRequestRepository();
             var svc = Svc(repo);
             var created = await AssignedAsync(svc, 1);
-            await svc.PrepareForSaleAsync(created.Id, 1, CancellationToken.None);
+            await svc.PrepareForSaleAsync(created.Id, 1, "ملاحظة تجهيز", CancellationToken.None);
             await svc.MarkConvertedAsync(created.Id, 1, 77, DateTime.UtcNow, CancellationToken.None);
             await svc.MarkCompletedBySaleIdAsync(77, DateTime.UtcNow, CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.Completed, repo.Rows[0].Status);
@@ -527,7 +548,7 @@ namespace BE_Company.Sales.Tests
             await svc.InspectAsync(created.Id, 1, 77, CancellationToken.None);
             var pending = await svc.PendAsync(created.Id, 1, "يرجع لاحقاً", CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.Pending, pending.Status);
-            var prepared = await svc.PrepareForSaleAsync(created.Id, 1, CancellationToken.None);
+            var prepared = await svc.PrepareForSaleAsync(created.Id, 1, "ملاحظة تجهيز", CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.PreparedForSale, prepared.Status);
             var inspectedAgain = await svc.InspectAsync(created.Id, 1, 77, CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.Inspected, inspectedAgain.Status);
@@ -542,7 +563,7 @@ namespace BE_Company.Sales.Tests
             var svc = Svc(repo);
             var created = await AssignedAsync(svc, 1);
             await svc.InspectAsync(created.Id, 1, 88, CancellationToken.None);
-            var prepared = await svc.ManagerPrepareForSaleAsync(Manager(), created.Id, CancellationToken.None);
+            var prepared = await svc.ManagerPrepareForSaleAsync(Manager(), created.Id, null, CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.PreparedForSale, prepared.Status);
             Assert.Contains(prepared.History, h => h.Event == SalesRequestEvents.PreparedForSale);
 
@@ -563,7 +584,7 @@ namespace BE_Company.Sales.Tests
             var repo = new FakeRequestRepository();
             var svc = Svc(repo);
             var created = await AssignedAsync(svc, 1);
-            await svc.PrepareForSaleAsync(created.Id, 1, CancellationToken.None);
+            await svc.PrepareForSaleAsync(created.Id, 1, "ملاحظة تجهيز", CancellationToken.None);
             await svc.MarkConvertedAsync(created.Id, 1, 77, DateTime.UtcNow, CancellationToken.None);
             var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
                 svc.MarkConvertedAsync(created.Id, 1, 88, DateTime.UtcNow, CancellationToken.None));

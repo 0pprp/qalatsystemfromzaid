@@ -242,44 +242,113 @@ void main() {
     expect(TrackingConfig.debugIntervalMs, 0);
   });
 
-  test('start shift due first route point at shift start not clock floor', () {
-    final start = DateTime.utc(2026, 9, 2, 17, 32); // Iraq 20:32
-    final due = OfficialSlot.dueSlots(
+  test('start shift: no point at start; first due at start+10min', () {
+    final start = DateTime.utc(2026, 9, 2, 7, 13); // Iraq 10:13
+    final atStart = OfficialSlot.dueSlots(
       shiftStartUtc: start,
       lastOfficialSlotUtc: null,
       nowUtc: start,
       cutoffUtc: start.add(const Duration(hours: 18)),
     );
-    expect(due, [start]);
-    expect(due.first, isNot(OfficialSlot.floorUtc(start)));
+    expect(atStart, isEmpty);
+
+    expect(
+      OfficialSlot.dueSlots(
+        shiftStartUtc: start,
+        lastOfficialSlotUtc: null,
+        nowUtc: start.add(const Duration(minutes: 8)), // 10:21
+        cutoffUtc: start.add(const Duration(hours: 18)),
+      ),
+      isEmpty,
+    );
+    expect(
+      OfficialSlot.dueSlots(
+        shiftStartUtc: start,
+        lastOfficialSlotUtc: null,
+        nowUtc: start.add(const Duration(minutes: 9, seconds: 59)), // 10:22:59
+        cutoffUtc: start.add(const Duration(hours: 18)),
+      ),
+      isEmpty,
+    );
+    expect(OfficialSlot.isExactOfficialSlot(start, start.add(const Duration(minutes: 8))), isFalse);
+    expect(
+      OfficialSlot.isExactOfficialSlot(start, start.add(const Duration(minutes: 9, seconds: 59))),
+      isFalse,
+    );
+
+    final firstDue = OfficialSlot.dueSlots(
+      shiftStartUtc: start,
+      lastOfficialSlotUtc: null,
+      nowUtc: start.add(const Duration(minutes: 10)),
+      cutoffUtc: start.add(const Duration(hours: 18)),
+    );
+    expect(firstDue, [start.add(const Duration(minutes: 10))]); // 10:23
+    expect(OfficialSlot.isExactOfficialSlot(start, firstDue.first), isTrue);
+    expect(firstDue.first, isNot(OfficialSlot.floorUtc(start)));
   });
 
-  test('twenty-five minute shift yields three route points from start', () {
-    final start = DateTime.utc(2026, 9, 2, 17, 32);
+  test('wake at 10:25 maps to official 10:23; next official 10:33', () {
+    final start = DateTime.utc(2026, 9, 2, 7, 13);
     final due = OfficialSlot.dueSlots(
       shiftStartUtc: start,
       lastOfficialSlotUtc: null,
-      nowUtc: start.add(const Duration(minutes: 25)),
+      nowUtc: start.add(const Duration(minutes: 12)), // 10:25
       cutoffUtc: start.add(const Duration(hours: 18)),
     );
-    expect(due, [
-      start,
-      start.add(const Duration(minutes: 10)),
-      start.add(const Duration(minutes: 20)),
-    ]);
-    expect(due, isNot(contains(DateTime.utc(2026, 9, 2, 17, 40))));
-    expect(due, isNot(contains(DateTime.utc(2026, 9, 2, 17, 50))));
+    expect(due, [start.add(const Duration(minutes: 10))]); // 10:23
+    expect(
+      OfficialSlot.nextDueUtc(
+        shiftStartUtc: start,
+        lastOfficialSlotUtc: due.first,
+        cutoffUtc: start.add(const Duration(hours: 18)),
+      ),
+      start.add(const Duration(minutes: 20)), // 10:33
+    );
   });
 
   test('ten minutes later a new route point is due without movement', () {
     final start = DateTime.utc(2026, 9, 2, 8, 0);
     final due = OfficialSlot.dueSlots(
       shiftStartUtc: start,
-      lastOfficialSlotUtc: start,
-      nowUtc: start.add(const Duration(minutes: 10)),
+      lastOfficialSlotUtc: start.add(const Duration(minutes: 10)),
+      nowUtc: start.add(const Duration(minutes: 20)),
       cutoffUtc: start.add(const Duration(hours: 18)),
     );
-    expect(due, [DateTime.utc(2026, 9, 2, 8, 10)]);
+    expect(due, [DateTime.utc(2026, 9, 2, 8, 20)]);
+  });
+
+  test('end before first slot yields no due points', () {
+    final start = DateTime.utc(2026, 9, 2, 7, 13);
+    final due = OfficialSlot.dueSlots(
+      shiftStartUtc: start,
+      lastOfficialSlotUtc: null,
+      nowUtc: start.add(const Duration(minutes: 5)),
+      cutoffUtc: start.add(const Duration(minutes: 5)),
+    );
+    expect(due, isEmpty);
+  });
+
+  test('restart uses original shiftStart cadence not restart time', () {
+    final start = DateTime.utc(2026, 9, 2, 7, 13);
+    final last = start.add(const Duration(minutes: 10));
+    final due = OfficialSlot.dueSlots(
+      shiftStartUtc: start,
+      lastOfficialSlotUtc: last,
+      nowUtc: start.add(const Duration(minutes: 35)),
+      cutoffUtc: start.add(const Duration(hours: 18)),
+    );
+    expect(due, [
+      start.add(const Duration(minutes: 20)),
+      start.add(const Duration(minutes: 30)),
+    ]);
+    expect(
+      OfficialSlot.nextDueUtc(
+        shiftStartUtc: start,
+        lastOfficialSlotUtc: last,
+        cutoffUtc: start.add(const Duration(hours: 18)),
+      ),
+      start.add(const Duration(minutes: 20)),
+    );
   });
 
   test('Iraq display UTC 18:40 is Baghdad 21:40', () {
@@ -311,13 +380,18 @@ void main() {
   test('end shift flushes then stops then ends the shift', () async {
     final calls = <String>[];
     final repo = _OrderedEndRepo(calls);
-    final controller = ShiftTrackingController(
+    late final ShiftTrackingController controller;
+    controller = ShiftTrackingController(
       repository: repo,
       store: MemoryLocationStore(),
       requestPermission: () async => true,
       startNative: (_) async => true,
       stopNative: () async { calls.add('stop'); },
-      flushThenStopNative: () async { calls.add('flush'); },
+      flushThenStopNative: () async {
+        expect(controller.isEnding, isTrue);
+        expect(controller.isCollecting, isFalse);
+        calls.add('flush');
+      },
       connectivity: Stream<List<ConnectivityResult>>.empty(),
       scheduleTimers: false,
     );
@@ -326,8 +400,25 @@ void main() {
     await controller.endShiftFlow();
     expect(calls, ['flush', 'end']);
     expect(controller.isCollecting, isFalse);
+    expect(controller.isEnding, isTrue);
+    expect(controller.activeShift, isNull);
     await controller.dispose();
     live.remove(controller);
+  });
+
+  test('slots follow start+10/20 without creating early points', () {
+    final start = DateTime.utc(2026, 9, 2, 7, 13);
+    final due = OfficialSlot.dueSlots(
+      shiftStartUtc: start,
+      lastOfficialSlotUtc: null,
+      nowUtc: start.add(const Duration(minutes: 25)),
+      cutoffUtc: start.add(const Duration(hours: 18)),
+    );
+    expect(due, [
+      start.add(const Duration(minutes: 10)),
+      start.add(const Duration(minutes: 20)),
+    ]);
+    expect(due, isNot(contains(start)));
   });
 
   test('retry after failed upload does not duplicate the local point', () async {
@@ -364,24 +455,20 @@ void main() {
     expect(await store.pendingCount(), 1);
   });
 
-  test('official slots are 10 minutes and catch-up fills gaps from first capture', () {
+  test('official slots are 10 minutes from shiftStart not first-capture wall clock', () {
     final start = DateTime.utc(2026, 9, 2, 22, 0);
     final due = OfficialSlot.dueSlots(
       shiftStartUtc: start,
-      lastOfficialSlotUtc: start,
+      lastOfficialSlotUtc: start.add(const Duration(minutes: 10)),
       nowUtc: DateTime.utc(2026, 9, 2, 22, 34),
       cutoffUtc: DateTime.utc(2026, 9, 3, 0, 0),
     );
     expect(due, [
-      DateTime.utc(2026, 9, 2, 22, 10),
       DateTime.utc(2026, 9, 2, 22, 20),
       DateTime.utc(2026, 9, 2, 22, 30),
     ]);
-    expect(OfficialSlot.sequence(DateTime.utc(2026, 9, 2, 22, 10)), OfficialSlot.sequence(DateTime.utc(2026, 9, 2, 22, 10)));
-    expect(
-      OfficialSlot.sequence(DateTime.utc(2026, 9, 2, 22, 10)),
-      isNot(OfficialSlot.sequence(DateTime.utc(2026, 9, 2, 22, 20))),
-    );
+    expect(OfficialSlot.slotIndex(start, DateTime.utc(2026, 9, 2, 22, 10)), 1);
+    expect(OfficialSlot.slotIndex(start, DateTime.utc(2026, 9, 2, 22, 20)), 2);
   });
 
   test('offline sync does not duplicate the same device sequence', () async {
