@@ -1,3 +1,6 @@
+﻿SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 -- Exclude auto-accepted collection payments from manual accountant approval queue.
 -- Harden Approve to ignore AutoPostEnabled=1 (HostedService / catch-up posts them).
 -- Safe to re-run.
@@ -59,3 +62,4 @@ BEGIN
     END;
 END;
 GO
+

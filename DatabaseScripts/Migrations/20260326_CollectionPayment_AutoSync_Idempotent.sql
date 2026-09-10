@@ -1,3 +1,6 @@
+﻿SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 -- Idempotent offline collection payments + 16:00 Baghdad posting fields.
 -- Safe to re-run.
 
@@ -170,3 +173,4 @@ BEGIN
     DEALLOCATE payment_cursor;
 END
 GO
+
