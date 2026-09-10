@@ -1,5 +1,6 @@
 using BE_Company.Sales;
 using BE_Company.Services;
+using BE_Company.Services.CollectionPayments;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -7,6 +8,8 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpContextAccessor();
 builder.Services.RegisterRepositories();
 builder.Services.AddSalesManagementModule();
+builder.Services.AddScoped<ICollectionPaymentPostingService, CollectionPaymentPostingService>();
+builder.Services.AddHostedService<CollectionPaymentPostingHostedService>();
 builder.Services.ConfigureJwt(builder.Configuration);
 builder.Services.AddCustomCors(builder.Configuration);
 builder.Services.AddControllers();

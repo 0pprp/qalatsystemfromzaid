@@ -1,9 +1,6 @@
 ﻿using BE_DelegateWebApplication.IRepository;
 using BE_DelegateWebApplication.DTO;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using System.IdentityModel.Tokens.Jwt;
 
 namespace BE_DelegateWebApplication.Controllers
 {
@@ -12,10 +9,14 @@ namespace BE_DelegateWebApplication.Controllers
     public class CustomersPaymentsRequestsController : ControllerBase
     {
         private readonly ICustomersPaymentsRequestsRepository _customersPaymentsRequestsRepository;
+        private readonly IDelegateRepository _delegateRepository;
 
-        public CustomersPaymentsRequestsController(ICustomersPaymentsRequestsRepository customersPaymentsRequestsRepository)
+        public CustomersPaymentsRequestsController(
+            ICustomersPaymentsRequestsRepository customersPaymentsRequestsRepository,
+            IDelegateRepository delegateRepository)
         {
             _customersPaymentsRequestsRepository = customersPaymentsRequestsRepository;
+            _delegateRepository = delegateRepository;
         }
 
         [HttpPost("PostSelectPaymentCustomerTemporary")]
@@ -52,6 +53,43 @@ namespace BE_DelegateWebApplication.Controllers
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Idempotent offline-first payment intake. Requires AsyncId; DelegateId taken from server identity.
+        /// </summary>
+        [HttpPost("PostPaymentIdempotent")]
+        public async Task<ActionResult<PaymentIdempotentResultDTO>> PostPaymentIdempotent(
+            [FromBody] CustomersPaymentsRequestsPostDTO? body,
+            CancellationToken ct)
+        {
+            if (body is null)
+            {
+                return BadRequest(new { message = "بيانات التسديد مطلوبة" });
+            }
+
+            if (string.IsNullOrWhiteSpace(body.AsyncId))
+            {
+                return Unauthorized(new { message = "جلسة المندوب غير صالحة" });
+            }
+
+            var login = await _delegateRepository.GetDelegateLogin(body.AsyncId.Trim().TrimEnd('/'));
+            if (login is null || login.DelegateId <= 0)
+            {
+                return Unauthorized(new { message = "جلسة المندوب غير صالحة" });
+            }
+
+            var result = await _customersPaymentsRequestsRepository.PostPaymentIdempotentAsync(
+                body,
+                login.DelegateId,
+                ct);
+
+            if (!result.Success)
+            {
+                return BadRequest(new { message = result.Message });
+            }
+
+            return Ok(result);
         }
 
         [HttpGet("GetCustomersPaymentsRequestsByDelegateID/{delegateId}")]

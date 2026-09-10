@@ -14,5 +14,10 @@
         public float? AmountDaySales { get; set; }
         public float? ReceiptsTotal { get; set; }
         public float? AmountRemaining { get; set; }
+        public string? ClientPaymentId { get; set; }
+        public DateTime? CreatedAtUtc { get; set; }
+        public DateTime? ReceivedAtUtc { get; set; }
+        public DateTime? EligibleForPostingAtUtc { get; set; }
+        public string? ReceiptNumber { get; set; }
     }
 }

@@ -43,7 +43,7 @@ function findByRouteName(items, name) {
   return null
 }
 
-const { canManageUsers, canBackup, canViewDecisions, isSalesManager } = useUserRole()
+const { canManageUsers, canBackup, canViewDecisions, isSalesManager, canViewFollowerGps, isAdmin } = useUserRole()
 useSalesRequestUnread()
 
 const navItems = computed(() => {
@@ -57,6 +57,7 @@ const navItems = computed(() => {
     if (item.title === 'النسخ الاحتياطي' && !canBackup.value) return false
     if (item.title === 'القرارات' && !canViewDecisions.value) return false
     if (item.title === 'إدارة المبيعات' && !isSalesManager.value) return false
+    if (item.title === 'متابعة المتابعين' && !canViewFollowerGps.value) return false
 
     return true
   })

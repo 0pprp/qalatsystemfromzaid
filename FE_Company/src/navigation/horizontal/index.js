@@ -77,6 +77,14 @@ export default [
     icon: { icon: 'tabler-cash', size: '25' },
   },
   {
+    title: 'متابعة المتابعين',
+    icon: { icon: 'tabler-current-location', size: '25' },
+    children: [
+      { title: 'الموقع المباشر', to: { name: 'follower-tracking-map' }, icon: { icon: 'tabler-map', size: '22' } },
+      { title: 'المسارات', to: { name: 'follower-tracking-routes' }, icon: { icon: 'tabler-route', size: '22' } },
+    ],
+  },
+  {
     title: 'إدارة المبيعات',
     icon: { icon: 'tabler-map-pin', size: '25' },
     children: [

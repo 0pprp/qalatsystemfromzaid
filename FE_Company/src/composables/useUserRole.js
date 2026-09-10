@@ -11,6 +11,7 @@ export function useUserRole() {
   const canViewDecisions = computed(() => isAdmin.value || isBranchManager.value)
   const canWriteNotes = computed(() => isAdmin.value || isBranchManager.value)
   const canDecide = computed(() => isBranchManager.value)
+  const canViewFollowerGps = computed(() => isAdmin.value)
 
   return {
     userType,
@@ -23,5 +24,6 @@ export function useUserRole() {
     canWriteNotes,
     canDecide,
     isSalesManager,
+    canViewFollowerGps,
   }
 }

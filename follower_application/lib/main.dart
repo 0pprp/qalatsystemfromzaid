@@ -1,24 +1,24 @@
-import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/HomePage.dart';
 import 'package:follower_application/Login.dart';
 import 'package:follower_application/WelcomePage.dart';
+import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/customer_profile_page.dart';
 import 'package:follower_application/follower_sales_request_page.dart';
+import 'package:follower_application/services/follower_tracking_repository.dart';
+import 'package:follower_application/tracking/shift_tracking_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Belt-and-suspenders for any remaining intl usage (e.g. third-party).
-  // UI date display itself does NOT rely on DateFormat anymore.
   try {
     await initializeDateFormatting('ar');
     await initializeDateFormatting('en');
-  } catch (_) {
-    // Never block app start if locale data fails to load.
-  }
+  } catch (_) {}
   AppEnv.logIfDebug();
+  TrackingRuntime.instance ??=
+      ShiftTrackingController(repository: ApiFollowerTrackingRepository());
   runApp(const MyApp());
 }
 

@@ -63,6 +63,18 @@ namespace BE_Company.Sales
                     p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
                 options.AddPolicy(SalesPolicies.ReadAllBranchSales, p =>
                     p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
+                options.AddPolicy(SalesPolicies.MainAccountant, p =>
+                    p.RequireAssertion(ctx =>
+                        string.Equals(
+                            ctx.User.FindFirst("UserType")?.Value,
+                            SalesRoles.UserTypeMainAccountant,
+                            StringComparison.Ordinal)));
+                options.AddPolicy(SalesPolicies.ReadFollowerGps, p =>
+                    p.RequireAssertion(ctx =>
+                        string.Equals(
+                            ctx.User.FindFirst("UserType")?.Value,
+                            SalesRoles.UserTypeMainAccountant,
+                            StringComparison.Ordinal)));
             });
             return services;
         }

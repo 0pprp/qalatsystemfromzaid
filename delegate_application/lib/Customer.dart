@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:delegate_application/utils/AppTheme.dart';
 
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:delegate_application/AllReceiptCustomer.dart';
 import 'package:delegate_application/AllSaleCustomer.dart';
 import 'package:delegate_application/AsyncIdChecker.dart';
@@ -12,9 +11,13 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'package:delegate_application/services/payment_sync_service.dart';
+import 'package:delegate_application/services/payment_sync_status.dart';
+import 'package:delegate_application/services/payment_validation.dart';
 import 'package:delegate_application/utils/Formatters.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
 
 class Customer extends StatefulWidget {
   const Customer({super.key});
@@ -320,19 +323,12 @@ class _CustomerState extends State<Customer> {
 // دالة لإضافة التسديد
   Future<void> _addPayment(
       Client client, double amount, BuildContext context) async {
-    // التحقق إذا كان المبلغ فارغًا أو يساوي صفرًا
-    if (amount <= 0) {
-      _showMessage('لا يمكن ترك المبلغ فارغًا أو يساوي صفر', context);
+    final amountError = PaymentValidation.validateAmount(amount);
+    if (amountError != null) {
+      _showMessage(amountError, context);
       return;
     }
 
-    if (amount.toString() == "") {
-      _showMessage('لا يمكن ترك المبلغ فارغًا أو يساوي صفر', context);
-      return;
-    }
-
-    // التحقق مما إذا كان العميل قد سدد مسبقًا
-    // التحقق مما إذا كان العميل قد سدد مسبقًا
     final db = await DatabaseHelper().database;
     final List<Map<String, dynamic>> existingPayment = await db.query(
       'CustomerPayment',
@@ -343,12 +339,16 @@ class _CustomerState extends State<Customer> {
     if (!mounted) return;
 
     if (existingPayment.isNotEmpty) {
-      // إذا وجدنا تسديدًا سابقًا لهذا العميل
       _showMessage('لا يمكن التسديد مرة أخرى لهذا العميل', context);
       return;
     }
     String? currentLocation = await _getCurrentLocation();
-    // إضافة التسديد إلى جدول CustomerPayment
+    final clientPaymentId = const Uuid().v4();
+    final createdAtUtc = DateTime.now().toUtc().toIso8601String();
+    final receiptNumber = client.countReceiptDevice.isNotEmpty
+        ? client.countReceiptDevice
+        : clientPaymentId;
+
     await db.insert('CustomerPayment', {
       'CustomerId': client.customerId,
       'CustomerName': client.name,
@@ -357,16 +357,18 @@ class _CustomerState extends State<Customer> {
           rep['DelegateId'].toString() ==
           selectedRepresentative)['DelegateName'],
       'Amount': amount,
-      'Location': currentLocation
+      'Location': currentLocation,
+      'ClientPaymentId': clientPaymentId,
+      'CreatedAtUtc': createdAtUtc,
+      'SyncStatus': PaymentSyncStatus.pendingSync,
+      'ReceiptNumber': receiptNumber,
+      'PermanentFailure': 0,
     });
 
-    await _deleteDuplicatePaymentsExceptLocation();
-
-    // تحديث التسديدات بعد الإضافة
     await _calculatePayments(int.parse(selectedRepresentative!));
 
     String customerName = client.name;
-    String countReceiptDevice = client.countReceiptDevice;
+    String countReceiptDevice = receiptNumber;
     String receiptName = representatives.firstWhere(
       (rep) => rep['DelegateId'].toString() == selectedRepresentative,
       orElse: () => {'ReceiptName': 'Unknown'},
@@ -408,6 +410,12 @@ class _CustomerState extends State<Customer> {
 
     if (context.mounted) {
       await report.printReceipt(context);
+    }
+
+    // Auto-sync if online; offline stays PendingSync for later.
+    await PaymentSyncService.instance.syncPendingPayments();
+    if (mounted) {
+      await _calculatePayments(int.parse(selectedRepresentative!));
     }
   }
 
@@ -684,8 +692,8 @@ class _CustomerState extends State<Customer> {
                                         color: Colors.white),
                                 label: Text(
                                     isButtonDisabled
-                                        ? 'جاري الارسال...'
-                                        : 'إرسال التسديدات',
+                                        ? 'جاري المزامنة...'
+                                        : 'إعادة مزامنة الآن (تلقائية)',
                                     style: const TextStyle(
                                         fontFamily: 'Cairo',
                                         color: Colors.white)),
@@ -893,104 +901,53 @@ class _CustomerState extends State<Customer> {
     setState(() {});
   }
 
-  Future<void> sendPaymentsToAPI(int delegateId) async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String linkDelegate = prefs.getString('LinkDelegate') ?? '0';
-    bool hasError = false;
-
-    // تجهيز قائمة الدفع كلها دفعة واحدة
-    List<Map<String, dynamic>> paymentsData = payments.map((payment) {
-      return {
-        "CustomerId": payment['CustomerId'],
-        "DelegateId": payment['DelegateId'],
-        "Amount": payment['Amount'],
-        "Location": payment['Location'],
-      };
-    }).toList();
-
-    try {
-      final response = await http.post(
-        Uri.parse(
-            '${linkDelegate}CustomersPaymentsRequests/PostSelectPaymentCustomerTemporaryMulti'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode(paymentsData),
-      );
-
-      if (response.statusCode == 200) {
-        print("All payments sent successfully.");
-      } else {
-        print("Failed to send payments. Status code: ${response.statusCode}");
-        hasError = true;
-      }
-    } catch (error) {
-      print('Error sending payments: $error');
-      hasError = true;
-    }
-
-    if (hasError) {
-      await deletePayments(delegateId);
-      print('Error occurred, but payments deleted anyway.');
-    } else {
-      await deletePayments(delegateId);
-      print('All payments were successfully sent and deleted.');
-    }
-
-    _loadClients(int.parse(selectedRepresentative!));
-  }
-
-  // دالة لمسح التسديدات الخاصة بالمندوب المختار
-  Future<void> deletePayments(int delegateId) async {
-    final db = await DatabaseHelper().database;
-    await db.delete(
-      'CustomerPayment',
-      where: 'DelegateId = ?',
-      whereArgs: [delegateId],
-    );
-    print('Deleted all payments for DelegateId: $delegateId');
-  }
-
   Future<void> _sendPayments(BuildContext context) async {
-    await fetchPayments(
-        int.parse(selectedRepresentative!)); // جلب التسديدات أولاً
-
+    await fetchPayments(int.parse(selectedRepresentative!));
     if (!mounted) return;
 
-    if (payments.isNotEmpty) {
-      setState(() {
-        isButtonDisabled = true; // تعطيل الزر عند البدء
-      });
-      var connectivityResult = await (Connectivity().checkConnectivity());
-      if (!connectivityResult.contains(ConnectivityResult.none)) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('انتظر لحين ارسال التسديدات')),
-        );
-        await Future.delayed(const Duration(seconds: 5));
-        if (!mounted) return;
-        await sendPaymentsToAPI(
-            int.parse(selectedRepresentative!)); // إرسال التسديدات إلى الـ API
-        if (!mounted) return;
-        setState(() {
-          isButtonDisabled = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إرسال جميع التسديدات بنجاح')),
-        );
-        Navigator.pop(context);
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('لا يمكن إرسال التسديدات بدون اتصال بالإنترنت')),
-        );
-      }
-    } else {
-      if (!mounted) return;
-      print('No payments to send');
+    final pending = payments
+        .where((p) => PaymentSyncStatus.needsSync(p['SyncStatus']?.toString()))
+        .toList();
+
+    if (pending.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('لا توجد تسديدات للإرسال')),
+        const SnackBar(
+            content: Text('لا توجد تسديدات بانتظار المزامنة التلقائية')),
       );
+      return;
     }
+
+    setState(() => isButtonDisabled = true);
+    if (!await PaymentSyncService.instance.isOnline) {
+      if (!mounted) return;
+      setState(() => isButtonDisabled = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'لا يوجد إنترنت — ستُرسل التسديدات تلقائيًا عند عودة الاتصال')),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('جاري المزامنة التلقائية...')),
+    );
+    await PaymentSyncService.instance.syncPendingPayments();
+    if (!mounted) return;
+    await fetchPayments(int.parse(selectedRepresentative!));
+    await _calculatePayments(int.parse(selectedRepresentative!));
+    setState(() => isButtonDisabled = false);
+
+    final stillPending = payments
+        .where((p) => PaymentSyncStatus.needsSync(p['SyncStatus']?.toString()))
+        .length;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(stillPending == 0
+            ? 'تمت مزامنة جميع التسديدات'
+            : 'تبقى $stillPending تسديد بانتظار إعادة المحاولة التلقائية'),
+      ),
+    );
   }
 
   double roundToNearestThousand(double value) {
@@ -1063,8 +1020,9 @@ class _CustomerState extends State<Customer> {
                           onPressed: () async {
                             double amount =
                                 double.tryParse(amountController.text) ?? 0.0;
-                            if (amount <= 0) {
-                              _showMessage('لا يمكن ترك المبلغ فارغًا أو يساوي صفر', context);
+                            final err = PaymentValidation.validateAmount(amount);
+                            if (err != null) {
+                              _showMessage(err, context);
                               return;
                             }
                             await _addPayment(client, amount, context);

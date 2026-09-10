@@ -1,0 +1,301 @@
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
+import 'package:follower_application/services/follower_tracking_api.dart';
+import 'package:follower_application/services/follower_tracking_repository.dart';
+import 'package:follower_application/services/follower_tracking_session.dart';
+import 'package:follower_application/tracking/follower_shift_debug.dart';
+import 'package:follower_application/tracking/location_store.dart';
+import 'package:follower_application/tracking/location_sync_engine.dart';
+import 'package:follower_application/tracking/sqlite_location_store.dart';
+import 'package:follower_application/tracking/tracking_channel.dart';
+import 'package:follower_application/tracking/tracking_config.dart';
+import 'package:follower_application/tracking/work_shift.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+typedef PermissionFn = Future<bool> Function();
+
+LocationPointStore defaultLocationStore() {
+  if (kIsWeb) return MemoryLocationStore();
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    return SqliteLocationStore();
+  }
+  return MemoryLocationStore();
+}
+
+class TrackingRuntime {
+  static ShiftTrackingController? instance;
+}
+
+class ShiftTrackingController {
+  ShiftTrackingController({
+    FollowerTrackingRepository? repository,
+    LocationPointStore? store,
+    PermissionFn? requestPermission,
+    Future<bool> Function(WorkShift shift)? startNative,
+    Future<void> Function()? stopNative,
+    Future<void> Function()? flushThenStopNative,
+    Stream<List<ConnectivityResult>>? connectivity,
+    this.scheduleTimers = true,
+  })  : _repo = repository ?? ApiFollowerTrackingRepository(),
+        _store = store ?? defaultLocationStore(),
+        _requestPermission = requestPermission ?? _defaultPermission,
+        _startNative = startNative ??
+            ((shift) async => TrackingChannel.start(
+                  shiftId: shift.shiftId,
+                  cutoffAtUtc: shift.cutoffAtUtc,
+                  startedAtUtc: shift.startedAtUtc,
+                )),
+        _stopNative = stopNative ?? TrackingChannel.stop,
+        _flushThenStopNative =
+            flushThenStopNative ?? stopNative ?? TrackingChannel.flushThenStop,
+        _connectivity = connectivity ?? Connectivity().onConnectivityChanged {
+    _sync = LocationSyncEngine(_store, _repo);
+  }
+
+  final FollowerTrackingRepository _repo;
+  final LocationPointStore _store;
+  final PermissionFn _requestPermission;
+  final Future<bool> Function(WorkShift shift) _startNative;
+  final Future<void> Function() _stopNative;
+  final Future<void> Function() _flushThenStopNative;
+  final Stream<List<ConnectivityResult>> _connectivity;
+  final bool scheduleTimers;
+  late final LocationSyncEngine _sync;
+
+  StreamSubscription? _netSub;
+  Timer? _syncTimer;
+  Timer? _cutoffTimer;
+  bool _collecting = true;
+  bool _ending = false;
+  bool _internet = true;
+  WorkShift? activeShift;
+  String? lastError;
+  Object? lastNativeError;
+
+  static Future<bool> _defaultPermission() async {
+    var status = await Permission.locationWhenInUse.request();
+    if (!status.isGranted) return false;
+    await Permission.notification.request();
+    await Permission.locationAlways.request();
+    return true;
+  }
+
+  Future<WorkShift?> startShiftFlow() async {
+    lastError = null;
+    lastNativeError = null;
+    try {
+      await FollowerTrackingSession.setGpsStoppedByUser(false);
+    } catch (_) {}
+    final allowed = await _requestPermission();
+    if (!allowed) {
+      await _repo.recordTrackingEvent(null, 'LOCATION_PERMISSION_DENIED');
+      lastError = 'يلزم السماح بالموقع لتشغيل الدوام.';
+      return null;
+    }
+    FollowerShiftDebug.log('Permission granted');
+    await _repo.recordTrackingEvent(null, 'LOCATION_PERMISSION_GRANTED');
+    FollowerShiftDebug.log('POST Followers/shifts/start started');
+    late final WorkShift shift;
+    try {
+      shift = await _repo.startShift();
+      FollowerShiftDebug.log('POST Followers/shifts/start response');
+    } catch (e, st) {
+      if (e is FollowerApiException) {
+        FollowerShiftDebug.log(
+          'POST Followers/shifts/start response ${e.statusCode} ${e.message}',
+        );
+      } else {
+        FollowerShiftDebug.log('POST Followers/shifts/start response ${e.runtimeType}');
+      }
+      FollowerShiftDebug.logError('POST Followers/shifts/start', e, st);
+      lastError = FollowerShiftDebug.apiFailure(e);
+      rethrow;
+    }
+    FollowerShiftDebug.log('shiftId received ${shift.shiftId}');
+    if (!shift.isActive) {
+      lastError = FollowerShiftDebug.showDetail
+          ? '${FollowerShiftDebug.generic}: shift not active status=${shift.status} hasActive=${shift.hasActiveShift}'
+          : FollowerShiftDebug.generic;
+      FollowerShiftDebug.log('abort before native: shift not active');
+      return null;
+    }
+    try {
+      FollowerShiftDebug.log('saving WorkShift locally');
+      await FollowerTrackingSession.saveShift(
+          shift.toJson(), shift.cutoffAtUtc.toIso8601String());
+      FollowerShiftDebug.log('local shift saved');
+    } catch (e, st) {
+      FollowerShiftDebug.logError('FollowerTrackingSession.saveShift', e, st);
+    }
+    bool nativeOk;
+    try {
+      FollowerShiftDebug.log('invoking native tracking');
+      nativeOk = await attach(shift);
+    } catch (e, st) {
+      FollowerShiftDebug.logError('attach/native tracking', e, st);
+      lastError = FollowerShiftDebug.trackingFailure(e);
+      rethrow;
+    }
+    if (!nativeOk && FollowerShiftDebug.isAndroidDevice) {
+      lastError = FollowerShiftDebug.trackingFailure(lastNativeError);
+      return null;
+    }
+    return shift;
+  }
+
+  Future<bool> attach(WorkShift shift) async {
+    activeShift = shift;
+    _collecting = !shift.isPastCutoff();
+    FollowerShiftDebug.log('attach collecting=$_collecting');
+    try {
+      FollowerShiftDebug.log('init location store');
+      await _store.init();
+      FollowerShiftDebug.log('location store ready');
+    } catch (e, st) {
+      FollowerShiftDebug.logError('location store init', e, st);
+      rethrow;
+    }
+    var nativeOk = true;
+    if (_collecting) {
+      FollowerShiftDebug.log('startForegroundService called');
+      try {
+        nativeOk = await _startNative(shift);
+        FollowerShiftDebug.log('native service ${nativeOk ? 'success' : 'failure'}');
+        if (nativeOk) {
+          FollowerShiftDebug.log('native tracking started');
+          await _repo.recordTrackingEvent(shift.shiftId, 'GPS_STARTED');
+        } else {
+          lastNativeError ??= Exception('startForegroundService returned false');
+        }
+      } catch (e, st) {
+        nativeOk = false;
+        lastNativeError = e;
+        FollowerShiftDebug.logError(
+            'TrackingChannel.start / startForegroundService', e, st);
+      }
+    }
+    _cutoffTimer?.cancel();
+    final remain = shift.cutoffAtUtc.difference(DateTime.now().toUtc());
+    if (remain.isNegative) {
+      await _onCutoff();
+    } else if (scheduleTimers) {
+      _cutoffTimer = Timer(remain, _onCutoff);
+    }
+    _syncTimer?.cancel();
+    if (scheduleTimers) {
+      _syncTimer =
+          Timer.periodic(TrackingConfig.syncInterval, (_) => _trySync());
+    }
+    _netSub?.cancel();
+    if (scheduleTimers) {
+      _netSub = _connectivity.listen((results) async {
+        final online = results.any((r) => r != ConnectivityResult.none);
+        if (!online && _internet) {
+          _internet = false;
+          await _store.insertEvent(shift.shiftId, 'INTERNET_LOST');
+        } else if (online && !_internet) {
+          _internet = true;
+          await _store.insertEvent(shift.shiftId, 'INTERNET_RESTORED');
+          _trySync();
+        }
+      });
+    }
+    await _trySync();
+    return nativeOk;
+  }
+
+  Future<void> restoreIfNeeded() async {
+    if (await FollowerTrackingSession.gpsStoppedByUser) {
+      _collecting = false;
+      activeShift = null;
+      await _stopNative();
+      try {
+        await FollowerTrackingSession.clearShift();
+      } catch (_) {}
+      return;
+    }
+    WorkShift? current;
+    var remoteLookupFailed = false;
+    try {
+      current = await _repo.currentShift();
+    } catch (_) {
+      remoteLookupFailed = true;
+    }
+    if (TrackingShiftPolicy.shouldStopNative(
+      gpsStoppedByUser: false,
+      remoteLookupFailed: remoteLookupFailed,
+      remoteShift: current,
+    )) {
+      _collecting = false;
+      activeShift = null;
+      try {
+        await FollowerTrackingSession.clearShift();
+      } catch (_) {}
+      await _stopNative();
+      return;
+    }
+    final shift =
+        current ?? TrackingShiftPolicy.parseLocal(await FollowerTrackingSession.shift);
+    if (shift == null || !shift.isActive) {
+      return;
+    }
+    try {
+      await FollowerTrackingSession.saveShift(
+          shift.toJson(), shift.cutoffAtUtc.toIso8601String());
+    } catch (_) {}
+    await attach(shift);
+  }
+
+  Future<void> _onCutoff() async {
+    _collecting = false;
+    await _stopNative();
+    if (activeShift != null) {
+      await _trySync();
+    }
+  }
+
+  Future<void> _trySync() async {
+    if (_ending && activeShift == null) return;
+    final shift = activeShift;
+    if (shift == null) return;
+    await _sync.sync(shift.shiftId);
+  }
+
+  bool get isCollecting => _collecting;
+  bool get isEnding => _ending;
+
+  Future<void> endShiftFlow() async {
+    _ending = true;
+    _collecting = false;
+    _syncTimer?.cancel();
+    _cutoffTimer?.cancel();
+    await _netSub?.cancel();
+    _netSub = null;
+    try {
+      await _flushThenStopNative();
+    } catch (_) {
+      try {
+        await _stopNative();
+      } catch (_) {}
+    }
+    try {
+      await _trySync();
+    } catch (_) {}
+    await _repo.endShift();
+    activeShift = null;
+    try {
+      await FollowerTrackingSession.setGpsStoppedByUser(true);
+    } catch (_) {}
+    try {
+      await FollowerTrackingSession.clearShift();
+    } catch (_) {}
+  }
+
+  Future<void> dispose() async {
+    _syncTimer?.cancel();
+    _cutoffTimer?.cancel();
+    await _netSub?.cancel();
+  }
+}

@@ -1,7 +1,11 @@
 import 'dart:convert';
-import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/AsyncIdChecker.dart';
+import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/main.dart';
+import 'package:follower_application/services/follower_tracking_repository.dart';
+import 'package:follower_application/tracking/follower_shift_debug.dart';
+import 'package:follower_application/tracking/shift_tracking_controller.dart';
+import 'package:follower_application/tracking/work_shift.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/utils/Formatters.dart';
 import 'package:follower_application/utils/iraq_datetime.dart';
@@ -19,10 +23,14 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   bool _loadingLists = true;
   bool _loadingFollow = false;
+  bool _shiftBusy = false;
   String _error = '';
+  String _shiftError = '';
   String _delegateName = '';
   String _showType = 'المسددين';
   DateTime _paymentDate = DateTime.now().subtract(const Duration(days: 1));
+  WorkShift? _activeShift;
+  late final ShiftTrackingController _tracking;
 
   List<Map<String, dynamic>> _lists = [];
   int? _selectedChildId;
@@ -33,6 +41,8 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _tracking = TrackingRuntime.instance ??=
+        ShiftTrackingController(repository: ApiFollowerTrackingRepository());
     _boot();
   }
 
@@ -48,7 +58,58 @@ class _HomePageState extends State<HomePage> {
       if (mounted) Navigator.pushReplacementNamed(context, '/Login');
       return;
     }
+    try {
+      await _tracking.restoreIfNeeded();
+      if (mounted) {
+        setState(() {
+          _activeShift = _tracking.activeShift;
+        });
+      }
+    } catch (_) {}
     await _loadLists();
+  }
+
+  Future<void> _startShift() async {
+    setState(() {
+      _shiftBusy = true;
+      _shiftError = '';
+    });
+    try {
+      final shift = await _tracking.startShiftFlow();
+      if (!mounted) return;
+      setState(() {
+        _shiftBusy = false;
+        _activeShift = shift ?? _tracking.activeShift;
+        _shiftError = shift == null ? (_tracking.lastError ?? FollowerShiftDebug.generic) : '';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _shiftBusy = false;
+        _shiftError = FollowerShiftDebug.apiFailure(e);
+      });
+    }
+  }
+
+  Future<void> _endShift() async {
+    setState(() {
+      _shiftBusy = true;
+      _shiftError = '';
+    });
+    try {
+      await _tracking.endShiftFlow();
+      if (!mounted) return;
+      setState(() {
+        _shiftBusy = false;
+        _activeShift = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _shiftBusy = false;
+        _shiftError = FollowerShiftDebug.apiFailure(e);
+      });
+    }
   }
 
   Future<Map<String, String>> _session() async {
@@ -379,6 +440,74 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
                 const SizedBox(height: 20),
+                _card(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        _activeShift != null && _activeShift!.isActive
+                            ? 'الدوام فعال — #${_activeShift!.shiftId}'
+                            : 'الدوام غير فعال',
+                        style: const TextStyle(
+                          fontFamily: 'Cairo',
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (_shiftError.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          _shiftError,
+                          style: const TextStyle(
+                            fontFamily: 'Cairo',
+                            color: Colors.red,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: _shiftBusy || (_activeShift?.isActive ?? false)
+                                  ? null
+                                  : _startShift,
+                              icon: _shiftBusy
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.play_arrow, size: 18),
+                              label: const Text(
+                                'بدء الدوام',
+                                style: TextStyle(fontFamily: 'Cairo', fontSize: 13),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade700,
+                                foregroundColor: Colors.white,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _shiftBusy || !(_activeShift?.isActive ?? false)
+                                  ? null
+                                  : _endShift,
+                              icon: const Icon(Icons.stop, size: 18),
+                              label: const Text(
+                                'إنهاء الدوام',
+                                style: TextStyle(fontFamily: 'Cairo', fontSize: 13),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 if (_loadingLists)
                   const Center(
                       child: Padding(

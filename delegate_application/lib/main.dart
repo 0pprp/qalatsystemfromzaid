@@ -7,10 +7,13 @@ import 'package:delegate_application/Sync.dart';
 import 'package:delegate_application/WelcomePage.dart';
 import 'package:delegate_application/TrustReceiptsListPage.dart';
 import 'package:delegate_application/TrustReceiptFormPage.dart';
+import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await PaymentSyncService.instance.start();
   runApp(const MyApp());
 }
 

@@ -13,6 +13,13 @@
     [Location] NVARCHAR(255) NULL,
     [CreatedDate] DATETIME NOT NULL DEFAULT (getdate()),
     [UpdatedDate] DATETIME NULL,
+    [ClientPaymentId] NVARCHAR(36) NULL,
+    [CreatedAtUtc] DATETIME2 NULL,
+    [ReceivedAtUtc] DATETIME2 NULL,
+    [EligibleForPostingAtUtc] DATETIME2 NULL,
+    [PostedToBoxAtUtc] DATETIME2 NULL,
+    [AutoPostEnabled] BIT NOT NULL DEFAULT (0),
+    [ReceiptNumber] NVARCHAR(100) NULL,
     CONSTRAINT [FK_dbo.CustomersPaymentsRequest_dbo.Customers_CustomerID] FOREIGN KEY ([CustomerID]) REFERENCES [dbo].[Customers] ([CustomerID]),
     CONSTRAINT [FK_dbo.CustomersPaymentsRequest_dbo.Delegates_DelegateID] FOREIGN KEY ([DelegateID]) REFERENCES [dbo].[Delegates] ([DelegateID])
 );

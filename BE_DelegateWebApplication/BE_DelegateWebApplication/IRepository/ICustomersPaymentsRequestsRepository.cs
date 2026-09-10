@@ -7,5 +7,9 @@ namespace BE_DelegateWebApplication.IRepository
         Task<bool?> PostSelectPaymentCustomerTemporary(CustomersPaymentsRequestsPostDTO? customersPaymentsRequestsPostDTO);
         Task<IEnumerable<CustomersPaymentsRequestsGetDTO>?> GetCustomersPaymentsRequestsByDelegateID(int? delegateId);
         Task<bool?> PostSelectPaymentCustomerTemporaryMulti(List<CustomersPaymentsRequestsPostDTO>? customersPaymentsRequestsPostDTO);
+        Task<PaymentIdempotentResultDTO> PostPaymentIdempotentAsync(
+            CustomersPaymentsRequestsPostDTO dto,
+            int authenticatedDelegateId,
+            CancellationToken ct = default);
     }
 }
