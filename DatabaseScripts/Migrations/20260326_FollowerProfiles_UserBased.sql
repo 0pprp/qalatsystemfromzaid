@@ -1,10 +1,12 @@
-﻿SET QUOTED_IDENTIFIER ON;
+﻿-- LEGACY / UNUSED by runtime after UserType-only follower gate.
+-- Table may remain for compatibility. Do not DROP from app code.
+-- Optional drop: 20260327_FollowerProfiles_Drop_OPTIONAL.sql
+-- Demo-safe / idempotent: originally created FollowerProfiles for Users (not Delegates).
+-- Going forward FollowerWorkShifts.FollowerId stores Users.UserID; activation = Users.UserType متابع.
+
+SET QUOTED_IDENTIFIER ON;
 SET ANSI_NULLS ON;
 GO
-
--- Demo-safe / idempotent: Follower capability on company Users (not Delegates).
--- Does NOT delete historical GPS rows keyed by old DelegateId.
--- Going forward FollowerWorkShifts.FollowerId stores Users.UserID.
 
 IF OBJECT_ID(N'dbo.FollowerProfiles', N'U') IS NULL
 BEGIN

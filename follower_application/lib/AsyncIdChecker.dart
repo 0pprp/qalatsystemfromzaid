@@ -3,7 +3,7 @@ import 'package:follower_application/config/app_env.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
-/// Session for User-based followers (Users + FollowerProfiles).
+/// Session for User-based followers (Users.UserType = متابع).
 /// Pref keys keep DelegateID name for older screens; value is UserId.
 class AsyncIdChecker {
   static Future<bool> checkAsyncId() async {

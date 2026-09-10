@@ -1,11 +1,10 @@
 -- Optional Demo helper (DO NOT run on Production without review).
--- Creates/updates a Demo follower User + active FollowerProfile.
--- Replace @AsyncId with the password/async the Flutter app will use.
+-- Creates/updates a Demo follower User (UserType = متابع). No FollowerProfiles required.
 
 /*
 DECLARE @AsyncId NVARCHAR(100) = N'demo-follower-1';
 DECLARE @UserName NVARCHAR(100) = N'متابع تجريبي';
-DECLARE @CityId INT = NULL; -- NULL = open city (all payment lists)
+DECLARE @CityId INT = NULL; -- optional city via UsersSelectedCities
 DECLARE @CityName NVARCHAR(200) = N'النجف - DEMO';
 DECLARE @UserId INT;
 
@@ -14,19 +13,24 @@ BEGIN
     INSERT INTO dbo.Users (UserName, Password, AsyncID, UserType, UserState, CreatedDate)
     VALUES (@UserName, @AsyncId, @AsyncId, N'متابع', 1, GETDATE());
 END
+ELSE
+BEGIN
+    UPDATE dbo.Users
+    SET UserType = N'متابع',
+        UserState = 1,
+        UserName = @UserName
+    WHERE AsyncID = @AsyncId;
+END
 
 SELECT @UserId = UserID FROM dbo.Users WHERE AsyncID = @AsyncId;
 
-IF @UserId IS NOT NULL
-AND NOT EXISTS (SELECT 1 FROM dbo.FollowerProfiles WHERE UserId = @UserId)
+-- Optional city assignment (lists scoped by UsersSelectedCities).
+IF @UserId IS NOT NULL AND @CityId IS NOT NULL
+AND NOT EXISTS (SELECT 1 FROM dbo.UsersSelectedCities WHERE UserID = @UserId AND CityID = @CityId)
 BEGIN
-    INSERT INTO dbo.FollowerProfiles (UserId, IsActive, CityId, CityName)
-    VALUES (@UserId, 1, @CityId, @CityName);
+    INSERT INTO dbo.UsersSelectedCities (UserID, CityID)
+    VALUES (@UserId, @CityId);
 END
-ELSE IF @UserId IS NOT NULL
-BEGIN
-    UPDATE dbo.FollowerProfiles
-    SET IsActive = 1, CityId = @CityId, CityName = @CityName, UpdatedAtUtc = SYSUTCDATETIME()
-    WHERE UserId = @UserId;
-END
+
+PRINT CONCAT(N'Demo follower UserId=', @UserId, N' AsyncId=', @AsyncId, N' City=', @CityName);
 */

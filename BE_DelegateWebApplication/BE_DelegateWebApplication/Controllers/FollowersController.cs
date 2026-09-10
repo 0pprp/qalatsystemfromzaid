@@ -581,7 +581,7 @@ namespace BE_DelegateWebApplication.Controllers
 
         private async Task<DelegateGetDTO?> AuthenticateFollower(string? asyncId)
         {
-            // User-based follower only (Users + active FollowerProfile). Never Delegates login.
+            // User-based follower only (Users.UserType = متابع). Never Delegates login.
             var user = await _followerIdentity.ResolveByAsyncIdAsync(asyncId);
             if (user == null || user.UserId <= 0 || !user.IsActive)
             {

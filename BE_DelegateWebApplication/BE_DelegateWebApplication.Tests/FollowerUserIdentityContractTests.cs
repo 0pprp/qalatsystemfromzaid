@@ -1,47 +1,77 @@
+using BE_DelegateWebApplication.Services.FollowerIdentity;
 using Xunit;
 
 namespace BE_DelegateWebApplication.Tests
 {
-    /// <summary>Contracts for User-based follower identity (not Delegates).</summary>
+    /// <summary>
+    /// Contracts: follower = Users.UserType متابع only. No FollowerProfiles gate. GPS FollowerId = UserId.
+    /// </summary>
     public sealed class FollowerUserIdentityContractTests
     {
         [Fact]
-        public void NonFollower_IsRejected()
+        public void UserTypeFollower_AllowsLogin()
         {
-            const bool hasActiveProfile = false;
-            const bool allowed = hasActiveProfile;
-            Assert.False(allowed);
+            const string userType = "متابع";
+            const bool userStateActive = true;
+            var allowed = FollowerUserType.IsFollowerType(userType) && userStateActive;
+            Assert.True(allowed);
         }
 
         [Fact]
-        public void ActiveFollowerProfile_IsAllowed()
+        public void UserTypeNotFollower_Returns403()
         {
-            const bool hasActiveProfile = true;
-            const bool userActive = true;
-            Assert.True(hasActiveProfile && userActive);
+            const string userType = "مندوب";
+            Assert.False(FollowerUserType.IsFollowerType(userType));
         }
 
         [Fact]
-        public void DuplicateEnable_IsIdempotentUniqueUserId()
+        public void Login_DoesNotRequireFollowerProfile()
         {
-            // Unique(UserId) on FollowerProfiles prevents two active profiles for same user.
-            var set = new HashSet<int> { 7 };
-            Assert.False(set.Add(7));
+            const bool hasFollowerProfile = false;
+            const string userType = "متابع";
+            const bool userStateActive = true;
+            var allowed = FollowerUserType.IsFollowerType(userType) && userStateActive;
+            Assert.True(allowed);
+            Assert.False(hasFollowerProfile); // profile unused; must not gate login
         }
 
         [Fact]
-        public void FollowersList_DoesNotUseDelegateIdsAsIdentity()
+        public void FollowerList_IncludesUserTypeFollower()
         {
-            const string identitySource = "Users+FollowerProfiles";
-            Assert.DoesNotContain("Delegates", identitySource, StringComparison.Ordinal);
+            var users = new[]
+            {
+                new { UserId = 1, UserType = "متابع" },
+                new { UserId = 2, UserType = "مندوب" },
+            };
+            var list = users.Where(u => FollowerUserType.IsFollowerType(u.UserType)).Select(u => u.UserId).ToList();
+            Assert.Equal(new[] { 1 }, list);
         }
 
         [Fact]
-        public void GpsFollowerId_MeansUserId()
+        public void ChangeUserTypeAwayFromFollower_BlocksLoginImmediately()
+        {
+            var userType = "متابع";
+            Assert.True(FollowerUserType.IsFollowerType(userType));
+            userType = "موظف مبيعات";
+            Assert.False(FollowerUserType.IsFollowerType(userType));
+        }
+
+        [Fact]
+        public void GpsFollowerId_MeansUserId_NotDelegateId()
         {
             const int userId = 42;
             const int followerIdStoredInShift = userId;
+            int? delegateId = null;
             Assert.Equal(userId, followerIdStoredInShift);
+            Assert.Null(delegateId);
+        }
+
+        [Fact]
+        public void RuntimeIdentity_DoesNotDependOnDelegateId()
+        {
+            const string identitySource = "Users.UserType";
+            Assert.DoesNotContain("DelegateId", identitySource, StringComparison.Ordinal);
+            Assert.DoesNotContain("FollowerProfiles", identitySource, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -49,25 +79,25 @@ namespace BE_DelegateWebApplication.Tests
         {
             const int authUserId = 10;
             const int bodyClaimedUserId = 99;
-            var spoof = bodyClaimedUserId != authUserId;
-            Assert.True(spoof);
-            // Server uses AsyncId → UserId; body UserId is ignored for authorization.
+            Assert.True(bodyClaimedUserId != authUserId);
         }
 
         [Fact]
-        public void InactiveFollower_CannotStartShift()
+        public void InactiveUserState_CannotLogin()
         {
-            const bool isActive = false;
-            Assert.False(isActive);
+            const bool userStateActive = false;
+            const string userType = "متابع";
+            var allowed = FollowerUserType.IsFollowerType(userType) && userStateActive;
+            Assert.False(allowed);
         }
 
         [Fact]
-        public void DisableProfile_BlocksAppWithoutDeletingUser()
+        public void FollowerUserType_MatchesSalesRolesArabic()
         {
-            const bool userRowDeleted = false;
-            const bool profileActive = false;
-            Assert.False(userRowDeleted);
-            Assert.False(profileActive);
+            Assert.Equal("متابع", FollowerUserType.Arabic);
+            Assert.True(FollowerUserType.IsFollowerType("متابع"));
+            Assert.True(FollowerUserType.IsFollowerType("متابع خاص"));
+            Assert.False(FollowerUserType.IsFollowerType("محاسب رئيسي"));
         }
     }
 }

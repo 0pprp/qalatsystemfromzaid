@@ -189,7 +189,7 @@ class _LoginState extends State<Login> {
       }
 
       if (response.statusCode == 403) {
-        _showErrorDialog("هذا الحساب ليس متابعًا مفعّلًا");
+        _showErrorDialog("هذا الحساب ليس من نوع متابع");
         return;
       }
 
@@ -213,7 +213,7 @@ class _LoginState extends State<Login> {
           if (!mounted) return;
 
           if (listsRes.statusCode == 403 || listsRes.statusCode == 401) {
-            _showErrorDialog("هذا الحساب ليس متابعًا مفعّلًا");
+            _showErrorDialog("هذا الحساب ليس من نوع متابع");
             return;
           }
 

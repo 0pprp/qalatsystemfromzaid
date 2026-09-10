@@ -68,15 +68,16 @@ WHERE C.CustomerID = @CustomerId;",
         public async Task<string?> GetFollowerCityNameAsync(int followerDelegateId, CancellationToken ct = default)
         {
             await using var connection = new SqlConnection(_connectionString);
-            var fromProfile = await connection.ExecuteScalarAsync<string?>(new CommandDefinition(@"
-SELECT TOP 1 COALESCE(fp.CityName, Ci.CityName)
-FROM dbo.FollowerProfiles fp
-LEFT JOIN dbo.Cities Ci ON Ci.CityID = fp.CityId
-WHERE fp.UserId = @UserId AND fp.IsActive = 1;",
+            // followerDelegateId == Users.UserID for UserType=متابع.
+            var fromUser = await connection.ExecuteScalarAsync<string?>(new CommandDefinition(@"
+SELECT TOP 1 Ci.CityName
+FROM dbo.UsersSelectedCities usc
+LEFT JOIN dbo.Cities Ci ON Ci.CityID = usc.CityID
+WHERE usc.UserID = @UserId;",
                 new { UserId = followerDelegateId }, cancellationToken: ct));
-            if (!string.IsNullOrWhiteSpace(fromProfile))
+            if (!string.IsNullOrWhiteSpace(fromUser))
             {
-                return fromProfile;
+                return fromUser;
             }
 
             return await connection.ExecuteScalarAsync<string?>(new CommandDefinition(@"

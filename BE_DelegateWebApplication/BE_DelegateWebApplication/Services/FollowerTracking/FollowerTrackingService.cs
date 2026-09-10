@@ -37,9 +37,9 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
 
         public async Task<FollowerShiftDto> StartAsync(FollowerUserIdentity follower, CancellationToken ct)
         {
-            if (!follower.IsActive)
+            if (!follower.IsActive || !FollowerUserType.IsFollowerType(follower.UserType))
             {
-                throw new FollowerTrackingException(403, "حساب المتابع غير مفعّل.");
+                throw new FollowerTrackingException(403, "غير مصرح — المستخدم ليس متابعًا.");
             }
 
             await _repo.EnsureSchemaAsync(ct);

@@ -283,8 +283,8 @@ function openAddDialog() {
 }
 
 async function openAddFollowerDialog() {
-  // Follower is a company User + FollowerProfile — not a Delegates row.
-  await router.push({ name: 'followers-admin' })
+  // Follower = Users.UserType متابع — manage from users-list only.
+  await router.push({ name: 'users-list' })
 }
 
 async function addFollower() {
@@ -479,7 +479,7 @@ onMounted(() => {
             prepend-icon="tabler-user-plus"
             @click="openAddFollowerDialog"
           >
-            إضافة متابع (من Users)
+            إضافة متابع (صفحة المستخدمين)
           </VBtn>
           <VBtn
             color="primary"
