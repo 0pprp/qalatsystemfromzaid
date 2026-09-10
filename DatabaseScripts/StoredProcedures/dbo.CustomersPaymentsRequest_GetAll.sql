@@ -3,11 +3,10 @@
     @DelegateID INT = NULL
 AS
 BEGIN
-    SELECT * 
+    SELECT *
     FROM View_CustomersPaymentsRequestFinal
-    WHERE 
+    WHERE
         (@CustomerName IS NULL OR CustomerName LIKE N'%' + @CustomerName + N'%')
         AND (@DelegateID IS NULL OR DelegateID = @DelegateID)
+        AND (ISNULL(AutoPostEnabled, 0) = 0)
 END
-
-

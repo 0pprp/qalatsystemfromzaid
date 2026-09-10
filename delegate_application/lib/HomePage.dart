@@ -1,12 +1,13 @@
-import 'dart:convert';
 import 'package:delegate_application/AsyncIdChecker.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:delegate_application/main.dart';
+import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:delegate_application/utils/Formatters.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'dart:convert';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -40,6 +41,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _initializeData() async {
     await _checkAndNavigate();
+    await DelegateDataRefreshService.instance.refreshIfPossible();
     await fetchData();
   }
 
@@ -202,9 +204,6 @@ class _HomePageState extends State<HomePage> {
       case 3: // Payments
         Navigator.pushNamed(context, '/AllReceipt');
         break;
-      case 4: // Sync
-        Navigator.pushNamed(context, '/Sync');
-        break;
     }
   }
 
@@ -246,12 +245,35 @@ class _HomePageState extends State<HomePage> {
 
           SafeArea(
             child: RefreshIndicator(
-              onRefresh: fetchData,
+              onRefresh: () async {
+                await DelegateDataRefreshService.instance.refreshIfPossible();
+                await fetchData();
+              },
               color: AppTheme.primaryColor,
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   children: [
+                    ValueListenableBuilder<String?>(
+                      valueListenable:
+                          DelegateDataRefreshService.instance.statusMessage,
+                      builder: (context, msg, _) {
+                        if (msg == null || msg.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Text(
+                            msg,
+                            style: TextStyle(
+                              fontFamily: 'Cairo',
+                              color: Colors.green[700],
+                              fontSize: 13,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
                     _buildHeader(),
                     const SizedBox(height: 30),
                     _buildSummaryCard(),
@@ -300,7 +322,6 @@ class _HomePageState extends State<HomePage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _buildNavItem(Icons.sync, "المزامنة", 4),
               _buildNavItem(
                   Icons.account_balance_wallet_outlined, "التسديدات", 3),
               const SizedBox(width: 40), // Space for FAB

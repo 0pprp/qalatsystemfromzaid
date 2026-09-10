@@ -1,8 +1,11 @@
+import 'package:delegate_application/config/app_env.dart';
+import 'package:delegate_application/config/login_city_catalog.dart';
+import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class Login extends StatefulWidget {
   const Login({super.key});
@@ -22,80 +25,83 @@ class _LoginState extends State<Login> {
 
   List<Map<String, String>> cityData = [];
 
-  // رابط API لجلب المدن
-  static const String _cityApiUrl = 'http://defaultdata.alsaaeidy.com/GetHaider';
-  // مفتاح تخزين بيانات المدن في SharedPreferences
-  static const String _cityCacheKey = 'cached_city_data';
-
   @override
   void initState() {
     super.initState();
     _fetchCityData();
   }
 
-  /// جلب قائمة المدن من الـ API الخارجي وتخزينها في SharedPreferences
-  /// في حالة فشل الاتصال يتم تحميل البيانات المخزنة آخر مرة
+  /// Demo: local نجف - DEMO only (never calls GetHaider).
+  /// Production: GetHaider + env-separated SharedPreferences cache.
   Future<void> _fetchCityData() async {
+    if (AppEnv.isDemo) {
+      if (!mounted) return;
+      setState(() {
+        cityData = LoginCityCatalog.demoCities();
+        _isLoadingCities = false;
+        _cityError = null;
+        _selectedGovernorate = cityData.first['name'];
+      });
+      return;
+    }
+
     try {
       final response = await http
-          .get(Uri.parse(_cityApiUrl))
+          .get(Uri.parse(LoginCityCatalog.productionCityApiUrl))
           .timeout(const Duration(seconds: 10));
 
       if (!mounted) return;
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
         final prefs = await SharedPreferences.getInstance();
-
-        // تخزين الـ JSON الخام في SharedPreferences كـ cache
-        await prefs.setString(_cityCacheKey, response.body);
+        await prefs.setString(
+            LoginCityCatalog.productionCacheKey, response.body);
 
         setState(() {
-          cityData = data.map((item) {
-            return {
-              'name': item['name']?.toString() ?? '',
-              'link': item['link']?.toString() ?? '',
-              'number': item['number']?.toString() ?? '',
-            };
-          }).toList();
+          cityData = LoginCityCatalog.parseCityJson(response.body);
           _isLoadingCities = false;
           _cityError = null;
         });
       } else {
-        // فشل الـ API، تحميل البيانات المخزنة من SharedPreferences
         await _loadCachedCities();
       }
     } catch (e) {
-      // خطأ في الاتصال، تحميل البيانات المخزنة من SharedPreferences
       if (mounted) {
         await _loadCachedCities();
       }
     }
   }
 
-  /// تحميل بيانات المدن المخزنة مسبقاً في SharedPreferences
+  /// Production-only cache load. Never used for demo branch of [_fetchCityData].
   Future<void> _loadCachedCities() async {
+    if (AppEnv.isDemo) {
+      if (!mounted) return;
+      setState(() {
+        cityData = LoginCityCatalog.demoCities();
+        _isLoadingCities = false;
+        _cityError = null;
+        _selectedGovernorate = cityData.first['name'];
+      });
+      return;
+    }
+
     try {
       final prefs = await SharedPreferences.getInstance();
-      final String? cachedJson = prefs.getString(_cityCacheKey);
+      final String? cachedJson = LoginCityCatalog.resolveCacheJson(
+        envName: AppEnv.name,
+        envSpecificCache: prefs.getString(LoginCityCatalog.productionCacheKey),
+        legacyCache: prefs.getString(LoginCityCatalog.legacyCacheKey),
+      );
 
       if (cachedJson != null && cachedJson.isNotEmpty) {
-        final List<dynamic> data = json.decode(cachedJson);
         if (mounted) {
           setState(() {
-            cityData = data.map((item) {
-              return {
-                'name': item['name']?.toString() ?? '',
-                'link': item['link']?.toString() ?? '',
-                'number': item['number']?.toString() ?? '',
-              };
-            }).toList();
+            cityData = LoginCityCatalog.parseCityJson(cachedJson);
             _isLoadingCities = false;
             _cityError = null;
           });
         }
       } else {
-        // لا توجد بيانات مخزنة مسبقاً
         if (mounted) {
           setState(() {
             _isLoadingCities = false;
@@ -119,6 +125,9 @@ class _LoginState extends State<Login> {
     await prefs.setString("DelegateID", delegateId);
     await prefs.setString("AsyncId", asyncId);
     await prefs.setString("LinkDelegate", apiUrl);
+    // Fire-and-forget master-data refresh after successful login.
+    // ignore: unawaited_futures
+    DelegateDataRefreshService.instance.refreshIfPossible();
   }
 
   Future<void> _login() async {
@@ -142,6 +151,11 @@ class _LoginState extends State<Login> {
         }
       }
 
+      // Force Demo API base so Sync/requests always hit the demo host.
+      if (AppEnv.isDemo) {
+        apiUrl = AppEnv.demoApiBaseUrl;
+      }
+
       if (apiUrl.isEmpty) {
         _showErrorDialog("لم يتم العثور على الرابط للمحافظة المختارة");
         setState(() {
@@ -163,7 +177,6 @@ class _LoginState extends State<Login> {
       if (response.statusCode == 200) {
         try {
           var data = json.decode(response.body);
-          // التأكد من وجود الحقول بأسماء مرنة (delegateId أو DelegateId)
           var delegateId = data['delegateId'] ?? data['DelegateId'];
           var asyncId = data['asyncId'] ?? data['AsyncId'];
 
@@ -184,7 +197,6 @@ class _LoginState extends State<Login> {
           _showErrorDialog("يوجد خلل في معالجة بيانات السيرفر");
         }
       } else if (response.statusCode == 401) {
-        // هذا ما يرسله الباك-ايند (Unauthorized) عند فشل تسجيل الدخول
         _showErrorDialog("الرمز الذي أدخلته غير صحيح");
       } else {
         _showErrorDialog("الرمز الذي أدخلته غير صحيح");
@@ -293,8 +305,6 @@ class _LoginState extends State<Login> {
                               fontFamily: 'Cairo', color: Colors.grey[600]),
                         ),
                         SizedBox(height: height * 0.05),
-
-                        // Dropdown
                         Container(
                           decoration: BoxDecoration(
                               color: Theme.of(context).cardColor,
@@ -310,7 +320,8 @@ class _LoginState extends State<Login> {
                                   padding: EdgeInsets.all(16.0),
                                   child: Center(
                                     child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
                                       children: [
                                         SizedBox(
                                           width: 20,
@@ -421,8 +432,6 @@ class _LoginState extends State<Login> {
                                         ),
                         ),
                         const SizedBox(height: 20),
-
-                        // Password
                         Container(
                           decoration: BoxDecoration(
                               color: Theme.of(context).cardColor,
@@ -457,8 +466,6 @@ class _LoginState extends State<Login> {
                           ),
                         ),
                         const SizedBox(height: 40),
-
-                        // Button
                         SizedBox(
                           width: double.infinity,
                           height: 55,

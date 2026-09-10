@@ -29,6 +29,7 @@ builder.Services.AddScoped<ICustomersSalesRepository, CustomersSalesRepository>(
 builder.Services.AddScoped<IDelegateRepository, DelegateRepository>();
 builder.Services.AddScoped<ITrustReceiptRepository, TrustReceiptRepository>();
 builder.Services.AddScoped<IFollowerActionsRepository, FollowerActionsRepository>();
+builder.Services.AddScoped<BE_DelegateWebApplication.Services.FollowerIdentity.IFollowerIdentityService, BE_DelegateWebApplication.Services.FollowerIdentity.FollowerIdentityService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.FollowerTracking.IFollowerTrackingRepository, BE_DelegateWebApplication.Services.FollowerTracking.FollowerTrackingRepository>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.FollowerTracking.IFollowerTrackingService, BE_DelegateWebApplication.Services.FollowerTracking.FollowerTrackingService>();
 

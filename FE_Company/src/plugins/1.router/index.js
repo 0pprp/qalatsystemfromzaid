@@ -81,7 +81,7 @@ router.beforeEach((to, from, next) => {
     return next(homePath())
   }
 
-  const followerTrackingPaths = ['/follower-tracking-map', '/follower-tracking-routes']
+  const followerTrackingPaths = ['/follower-tracking-map', '/follower-tracking-routes', '/followers-admin']
   if (followerTrackingPaths.includes(to.path) && userType !== 'محاسب رئيسي') {
     return next(homePath())
   }

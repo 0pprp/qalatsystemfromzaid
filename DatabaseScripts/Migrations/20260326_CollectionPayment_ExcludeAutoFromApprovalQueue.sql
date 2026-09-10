@@ -1,4 +1,30 @@
-﻿CREATE PROCEDURE [dbo].[CustomersPaymentsRequest_Approve]
+-- Exclude auto-accepted collection payments from manual accountant approval queue.
+-- Harden Approve to ignore AutoPostEnabled=1 (HostedService / catch-up posts them).
+-- Safe to re-run.
+
+IF OBJECT_ID('dbo.CustomersPaymentsRequest_GetAll', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.CustomersPaymentsRequest_GetAll;
+GO
+
+CREATE PROC [dbo].[CustomersPaymentsRequest_GetAll]
+    @CustomerName NVARCHAR(100) = NULL,
+    @DelegateID INT = NULL
+AS
+BEGIN
+    SELECT *
+    FROM View_CustomersPaymentsRequestFinal
+    WHERE
+        (@CustomerName IS NULL OR CustomerName LIKE N'%' + @CustomerName + N'%')
+        AND (@DelegateID IS NULL OR DelegateID = @DelegateID)
+        AND (ISNULL(AutoPostEnabled, 0) = 0)
+END
+GO
+
+IF OBJECT_ID('dbo.CustomersPaymentsRequest_Approve', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.CustomersPaymentsRequest_Approve;
+GO
+
+CREATE PROCEDURE [dbo].[CustomersPaymentsRequest_Approve]
     @CustomersPaymentsRequestID INT,
     @UserCreateID INT
 AS
@@ -18,7 +44,6 @@ BEGIN
         ON cpr.CustomersPaymentsRequestID = v.CustomersPaymentsRequestID
     WHERE cpr.CustomersPaymentsRequestID = @CustomersPaymentsRequestID;
 
-    -- Auto-accepted path is posted only by Eligible catch-up / HostedService.
     IF @AutoPost = 1
         RETURN;
 
@@ -33,3 +58,4 @@ BEGIN
         WHERE CustomersPaymentsRequestID = @CustomersPaymentsRequestID;
     END;
 END;
+GO

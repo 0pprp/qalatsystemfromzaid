@@ -1,5 +1,5 @@
-using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
+using BE_DelegateWebApplication.Services.FollowerIdentity;
 using Microsoft.Data.SqlClient;
 
 namespace BE_DelegateWebApplication.Services.FollowerTracking
@@ -12,36 +12,42 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
 
     public interface IFollowerTrackingService
     {
-        Task<FollowerShiftDto> StartAsync(DelegateGetDTO follower, CancellationToken ct);
-        Task<FollowerShiftDto> EndAsync(DelegateGetDTO follower, CancellationToken ct);
-        Task<FollowerShiftDto?> CurrentAsync(int followerId, CancellationToken ct);
-        Task<FollowerLocationBatchResultDto> IngestBatchAsync(DelegateGetDTO follower, FollowerLocationBatchRequestDto request, CancellationToken ct);
-        Task<FollowerLiveLocationDto> IngestLiveAsync(DelegateGetDTO follower, FollowerLiveLocationRequestDto request, CancellationToken ct);
-        Task RecordEventAsync(DelegateGetDTO follower, int? shiftId, string eventType, CancellationToken ct);
+        Task<FollowerShiftDto> StartAsync(FollowerUserIdentity follower, CancellationToken ct);
+        Task<FollowerShiftDto> EndAsync(FollowerUserIdentity follower, CancellationToken ct);
+        Task<FollowerShiftDto?> CurrentAsync(int followerUserId, CancellationToken ct);
+        Task<FollowerLocationBatchResultDto> IngestBatchAsync(FollowerUserIdentity follower, FollowerLocationBatchRequestDto request, CancellationToken ct);
+        Task<FollowerLiveLocationDto> IngestLiveAsync(FollowerUserIdentity follower, FollowerLiveLocationRequestDto request, CancellationToken ct);
+        Task RecordEventAsync(FollowerUserIdentity follower, int? shiftId, string eventType, CancellationToken ct);
         Task<IReadOnlyList<FollowerLiveLocationDto>> ListLiveAsync(CancellationToken ct);
-        Task<(FollowerShiftDto? Shift, IReadOnlyList<FollowerRoutePointDto> Points)> GetRouteAsync(int followerId, DateTime dateIraq, CancellationToken ct);
-        Task<IReadOnlyList<(int FollowerId, string FollowerName)>> ListFollowersAsync(CancellationToken ct);
+        Task<(FollowerShiftDto? Shift, IReadOnlyList<FollowerRoutePointDto> Points)> GetRouteAsync(int followerUserId, DateTime dateIraq, CancellationToken ct);
+        Task<IReadOnlyList<object>> ListFollowersAsync(CancellationToken ct);
     }
 
     public sealed class FollowerTrackingService : IFollowerTrackingService
     {
         private const int MaxBatch = 500;
         private readonly IFollowerTrackingRepository _repo;
-        private readonly IFollowerActionsRepository _followerActions;
+        private readonly IFollowerIdentityService _identity;
 
-        public FollowerTrackingService(IFollowerTrackingRepository repo, IFollowerActionsRepository followerActions)
+        public FollowerTrackingService(IFollowerTrackingRepository repo, IFollowerIdentityService identity)
         {
             _repo = repo;
-            _followerActions = followerActions;
+            _identity = identity;
         }
 
-        public async Task<FollowerShiftDto> StartAsync(DelegateGetDTO follower, CancellationToken ct)
+        public async Task<FollowerShiftDto> StartAsync(FollowerUserIdentity follower, CancellationToken ct)
         {
+            if (!follower.IsActive)
+            {
+                throw new FollowerTrackingException(403, "حساب المتابع غير مفعّل.");
+            }
+
             await _repo.EnsureSchemaAsync(ct);
             var utc = FollowerIraqTime.UtcNow;
             await _repo.CloseExpiredAsync(utc, ct);
 
-            var active = await _repo.GetActiveByFollowerAsync(follower.DelegateId, ct);
+            var userId = follower.UserId;
+            var active = await _repo.GetActiveByFollowerAsync(userId, ct);
             if (active != null && !FollowerIraqTime.IsExpired(active.CutoffAtUtc, utc))
             {
                 active.IsNew = false;
@@ -52,30 +58,31 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
             if (active != null)
             {
                 await _repo.CloseAsync(active.ShiftId, utc, "AutomaticCutoff", ct);
-                await _repo.EndLiveAsync(follower.DelegateId, ct);
+                await _repo.EndLiveAsync(userId, ct);
             }
 
             var iraq = FollowerIraqTime.ToIraq(utc);
-            var cityName = await _followerActions.GetFollowerCityNameAsync(follower.DelegateId, ct);
+            var cityName = follower.CityName;
+            var cityValue = follower.CityId?.ToString();
             try
             {
                 var created = await _repo.InsertActiveAsync(
-                    follower.DelegateId,
-                    follower.DelegateName ?? "",
-                    cityName,
+                    userId,
+                    follower.UserName ?? "",
+                    cityValue,
                     cityName,
                     utc,
                     iraq,
                     FollowerIraqTime.CutoffUtc(utc),
                     ct);
-                await _repo.InsertEventAsync(follower.DelegateId, created.ShiftId, "FOLLOWER_SHIFT_STARTED", utc, null, ct);
+                await _repo.InsertEventAsync(userId, created.ShiftId, "FOLLOWER_SHIFT_STARTED", utc, null, ct);
                 created.IsNew = true;
                 created.HasActiveShift = true;
                 return created;
             }
             catch (SqlException ex) when (ex.Number is 2601 or 2627)
             {
-                var existing = await _repo.GetActiveByFollowerAsync(follower.DelegateId, ct)
+                var existing = await _repo.GetActiveByFollowerAsync(userId, ct)
                                ?? throw new FollowerTrackingException(409, "تعذر بدء الدوام.");
                 existing.IsNew = false;
                 existing.HasActiveShift = true;
@@ -83,11 +90,11 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
             }
         }
 
-        public async Task<FollowerShiftDto> EndAsync(DelegateGetDTO follower, CancellationToken ct)
+        public async Task<FollowerShiftDto> EndAsync(FollowerUserIdentity follower, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var utc = FollowerIraqTime.UtcNow;
-            var active = await _repo.GetActiveByFollowerAsync(follower.DelegateId, ct);
+            var active = await _repo.GetActiveByFollowerAsync(follower.UserId, ct);
             if (active == null)
             {
                 return new FollowerShiftDto
@@ -101,27 +108,26 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
             }
 
             await _repo.CloseAsync(active.ShiftId, utc, "ManualEnd", ct);
-            await _repo.EndLiveAsync(follower.DelegateId, ct);
-            await _repo.InsertEventAsync(follower.DelegateId, active.ShiftId, "FOLLOWER_SHIFT_ENDED", utc, null, ct);
-            var closed = await _repo.GetByIdAsync(active.ShiftId, ct) ?? active;
-            closed.Status = "Closed";
-            closed.ClosedAtUtc = utc;
-            closed.CloseReason = "ManualEnd";
-            closed.HasActiveShift = false;
-            return closed;
+            await _repo.EndLiveAsync(follower.UserId, ct);
+            await _repo.InsertEventAsync(follower.UserId, active.ShiftId, "FOLLOWER_SHIFT_ENDED", utc, null, ct);
+            active.Status = "Closed";
+            active.ClosedAtUtc = utc;
+            active.CloseReason = "ManualEnd";
+            active.HasActiveShift = false;
+            return active;
         }
 
-        public async Task<FollowerShiftDto?> CurrentAsync(int followerId, CancellationToken ct)
+        public async Task<FollowerShiftDto?> CurrentAsync(int followerUserId, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var utc = FollowerIraqTime.UtcNow;
             await _repo.CloseExpiredAsync(utc, ct);
-            var active = await _repo.GetActiveByFollowerAsync(followerId, ct);
+            var active = await _repo.GetActiveByFollowerAsync(followerUserId, ct);
             if (active == null) return null;
             if (FollowerIraqTime.IsExpired(active.CutoffAtUtc, utc))
             {
                 await _repo.CloseAsync(active.ShiftId, utc, "AutomaticCutoff", ct);
-                await _repo.EndLiveAsync(followerId, ct);
+                await _repo.EndLiveAsync(followerUserId, ct);
                 return null;
             }
 
@@ -130,74 +136,27 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
         }
 
         public async Task<FollowerLocationBatchResultDto> IngestBatchAsync(
-            DelegateGetDTO follower,
-            FollowerLocationBatchRequestDto request,
-            CancellationToken ct)
+            FollowerUserIdentity follower, FollowerLocationBatchRequestDto request, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
-            request.Points ??= [];
             if (request.Points.Count > MaxBatch)
             {
                 throw new FollowerTrackingException(400, "عدد النقاط أكبر من الحد المسموح.");
             }
 
-            var utc = FollowerIraqTime.UtcNow;
             var shift = await _repo.GetByIdAsync(request.ShiftId, ct)
                         ?? throw new FollowerTrackingException(404, "الدوام غير موجود.");
-            if (shift.FollowerId != follower.DelegateId)
+            if (shift.FollowerId != follower.UserId)
             {
                 throw new FollowerTrackingException(403, "لا يمكنك إرسال موقع لدوام متابع آخر.");
             }
 
-            if (shift.Status == "Active" && FollowerIraqTime.IsExpired(shift.CutoffAtUtc, utc))
-            {
-                await _repo.CloseAsync(shift.ShiftId, utc, "AutomaticCutoff", ct);
-                shift.Status = "Closed";
-                shift.ClosedAtUtc = utc;
-            }
-
-            if (shift.Status != "Active" || shift.ClosedAtUtc != null)
-            {
-                throw new FollowerTrackingException(409, "الدوام مغلق.");
-            }
-
-            var result = new FollowerLocationBatchResultDto { ShiftId = shift.ShiftId, ShiftStatus = shift.Status };
-            foreach (var point in request.Points)
-            {
-                NormalizePoint(point);
-                if (!IsValidPoint(point, shift))
-                {
-                    result.Rejected++;
-                    continue;
-                }
-
-                var inserted = await _repo.TryInsertPointAsync(follower.DelegateId, shift.ShiftId, point, utc, ct);
-                if (inserted == 0) result.Duplicates++;
-                else result.Accepted++;
-            }
-
-            return result;
-        }
-
-        public async Task<FollowerLiveLocationDto> IngestLiveAsync(
-            DelegateGetDTO follower,
-            FollowerLiveLocationRequestDto request,
-            CancellationToken ct)
-        {
-            await _repo.EnsureSchemaAsync(ct);
             var utc = FollowerIraqTime.UtcNow;
-            var shift = await _repo.GetByIdAsync(request.ShiftId, ct)
-                        ?? throw new FollowerTrackingException(404, "الدوام غير موجود.");
-            if (shift.FollowerId != follower.DelegateId)
-            {
-                throw new FollowerTrackingException(403, "لا يمكنك إرسال موقع لدوام متابع آخر.");
-            }
-
             if (shift.Status == "Active" && FollowerIraqTime.IsExpired(shift.CutoffAtUtc, utc))
             {
                 await _repo.CloseAsync(shift.ShiftId, utc, "AutomaticCutoff", ct);
+                await _repo.EndLiveAsync(follower.UserId, ct);
                 shift.Status = "Closed";
-                shift.ClosedAtUtc = utc;
             }
 
             if (shift.Status != "Active")
@@ -205,17 +164,66 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
                 throw new FollowerTrackingException(409, "الدوام مغلق.");
             }
 
-            if (!IsValidLive(request))
+            var accepted = 0;
+            var duplicates = 0;
+            var rejected = 0;
+            foreach (var point in request.Points)
+            {
+                if (!IsValidPoint(point, shift))
+                {
+                    rejected++;
+                    continue;
+                }
+
+                var inserted = await _repo.TryInsertPointAsync(follower.UserId, shift.ShiftId, point, utc, ct);
+                if (inserted > 0) accepted++;
+                else duplicates++;
+            }
+
+            return new FollowerLocationBatchResultDto
+            {
+                ShiftId = shift.ShiftId,
+                ShiftStatus = shift.Status,
+                Accepted = accepted,
+                Duplicates = duplicates,
+                Rejected = rejected
+            };
+        }
+
+        public async Task<FollowerLiveLocationDto> IngestLiveAsync(
+            FollowerUserIdentity follower, FollowerLiveLocationRequestDto request, CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            var shift = await _repo.GetByIdAsync(request.ShiftId, ct)
+                        ?? throw new FollowerTrackingException(404, "الدوام غير موجود.");
+            if (shift.FollowerId != follower.UserId)
+            {
+                throw new FollowerTrackingException(403, "لا يمكنك إرسال موقع لدوام متابع آخر.");
+            }
+
+            var utc = FollowerIraqTime.UtcNow;
+            if (shift.Status == "Active" && FollowerIraqTime.IsExpired(shift.CutoffAtUtc, utc))
+            {
+                await _repo.CloseAsync(shift.ShiftId, utc, "AutomaticCutoff", ct);
+                await _repo.EndLiveAsync(follower.UserId, ct);
+                throw new FollowerTrackingException(409, "الدوام مغلق.");
+            }
+
+            if (shift.Status != "Active")
+            {
+                throw new FollowerTrackingException(409, "الدوام مغلق.");
+            }
+
+            if (request.Latitude is < -90 or > 90 || request.Longitude is < -180 or > 180)
             {
                 throw new FollowerTrackingException(400, "إحداثيات الموقع غير صالحة.");
             }
 
-            request.CapturedAtUtc = DateTime.SpecifyKind(request.CapturedAtUtc == default ? utc : request.CapturedAtUtc, DateTimeKind.Utc);
-            await _repo.UpsertLiveAsync(follower.DelegateId, follower.DelegateName ?? "", shift.ShiftId, request, utc, ct);
+            await _repo.UpsertLiveAsync(follower.UserId, follower.UserName ?? "", shift.ShiftId, request, utc, ct);
             return new FollowerLiveLocationDto
             {
-                FollowerId = follower.DelegateId,
-                FollowerName = follower.DelegateName ?? "",
+                FollowerId = follower.UserId,
+                FollowerName = follower.UserName ?? "",
                 ShiftId = shift.ShiftId,
                 Latitude = request.Latitude,
                 Longitude = request.Longitude,
@@ -227,80 +235,73 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
             };
         }
 
-        public async Task RecordEventAsync(DelegateGetDTO follower, int? shiftId, string eventType, CancellationToken ct)
+        public async Task RecordEventAsync(FollowerUserIdentity follower, int? shiftId, string eventType, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
-            if (shiftId is > 0)
+            if (shiftId is int sid)
             {
-                var shift = await _repo.GetByIdAsync(shiftId.Value, ct);
-                if (shift == null || shift.FollowerId != follower.DelegateId)
+                var shift = await _repo.GetByIdAsync(sid, ct);
+                if (shift == null || shift.FollowerId != follower.UserId)
                 {
                     throw new FollowerTrackingException(403, "لا يمكنك تسجيل حدث على دوام متابع آخر.");
                 }
             }
 
-            await _repo.InsertEventAsync(follower.DelegateId, shiftId, eventType, FollowerIraqTime.UtcNow, null, ct);
+            await _repo.InsertEventAsync(follower.UserId, shiftId, eventType, FollowerIraqTime.UtcNow, null, ct);
         }
 
-        public async Task<IReadOnlyList<FollowerLiveLocationDto>> ListLiveAsync(CancellationToken ct)
-        {
-            await _repo.EnsureSchemaAsync(ct);
-            return await _repo.ListLiveAsync(ct);
-        }
+        public Task<IReadOnlyList<FollowerLiveLocationDto>> ListLiveAsync(CancellationToken ct) =>
+            _repo.ListLiveAsync(ct);
 
         public async Task<(FollowerShiftDto? Shift, IReadOnlyList<FollowerRoutePointDto> Points)> GetRouteAsync(
-            int followerId, DateTime dateIraq, CancellationToken ct)
+            int followerUserId, DateTime dateIraq, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var day = dateIraq.Date;
-            var fromUtc = FollowerIraqTime.ToUtcFromIraq(day.Add(FollowerIraqTime.CutoffTime));
-            var toUtc = FollowerIraqTime.ToUtcFromIraq(day.AddDays(1).Add(FollowerIraqTime.CutoffTime));
-            var shift = await _repo.GetShiftForDayAsync(followerId, fromUtc, toUtc, ct);
-            var points = await _repo.GetRouteAsync(followerId, fromUtc, toUtc, ct);
+            var fromUtc = FollowerIraqTime.ToUtcFromIraq(day);
+            var toUtc = FollowerIraqTime.ToUtcFromIraq(day.AddDays(1));
+            var shift = await _repo.GetShiftForDayAsync(followerUserId, fromUtc, toUtc, ct);
+            var points = await _repo.GetRouteAsync(followerUserId, fromUtc, toUtc, ct);
             return (shift, points);
         }
 
-        public async Task<IReadOnlyList<(int FollowerId, string FollowerName)>> ListFollowersAsync(CancellationToken ct)
+        public async Task<IReadOnlyList<object>> ListFollowersAsync(CancellationToken ct)
         {
-            await _repo.EnsureSchemaAsync(ct);
-            return await _repo.ListFollowersWithShiftsAsync(ct);
-        }
-
-        private static void NormalizePoint(FollowerLocationPointDto point)
-        {
-            var slot = point.OfficialSlotUtc is DateTime o && o != default
-                ? DateTime.SpecifyKind(o, DateTimeKind.Utc)
-                : DateTime.SpecifyKind(point.CapturedAtUtc, DateTimeKind.Utc);
-            var actual = point.ActualCapturedAtUtc is DateTime a && a != default
-                ? DateTime.SpecifyKind(a, DateTimeKind.Utc)
-                : slot;
-            point.OfficialSlotUtc = slot;
-            point.CapturedAtUtc = slot;
-            point.ActualCapturedAtUtc = actual;
-            point.IsOfficial = true;
-            if (point.DeviceSequence <= 0)
+            var users = await _identity.ListActiveAsync(ct);
+            var live = await _repo.ListLiveAsync(ct);
+            var liveMap = live.ToDictionary(x => x.FollowerId, x => x);
+            return users.Select(u =>
             {
-                point.DeviceSequence = Math.Max(1, slot.Subtract(DateTime.UnixEpoch).Ticks / FollowerOfficialSlot.Length.Ticks);
-            }
+                liveMap.TryGetValue(u.UserId, out var loc);
+                return (object)new
+                {
+                    followerId = u.UserId,
+                    userId = u.UserId,
+                    followerName = u.UserName,
+                    cityName = u.CityName,
+                    cityId = u.CityId,
+                    hasActiveShift = loc != null,
+                    lastLatitude = loc?.Latitude,
+                    lastLongitude = loc?.Longitude,
+                    lastUpdatedAtUtc = loc?.UpdatedAtUtc,
+                };
+            }).ToList();
         }
 
         public static bool IsValidPoint(FollowerLocationPointDto point, FollowerShiftDto shift)
         {
-            if (point.DeviceSequence <= 0) return false;
             if (point.Latitude is < -90 or > 90 || point.Longitude is < -180 or > 180) return false;
-            if (Math.Abs(point.Latitude) < 0.000001 && Math.Abs(point.Longitude) < 0.000001) return false;
-            if (point.Accuracy is < 0 or > 5000) return false;
-            var slot = DateTime.SpecifyKind(point.OfficialSlotUtc ?? point.CapturedAtUtc, DateTimeKind.Utc);
-            if (!FollowerOfficialSlot.IsExactOfficialSlot(shift.StartedAtUtc, slot)) return false;
-            if (slot >= shift.CutoffAtUtc) return false;
-            return true;
-        }
+            var captured = point.CapturedAtUtc.Kind == DateTimeKind.Utc
+                ? point.CapturedAtUtc
+                : DateTime.SpecifyKind(point.CapturedAtUtc, DateTimeKind.Utc);
+            if (captured < shift.StartedAtUtc.AddMinutes(-2)) return false;
+            if (captured > FollowerIraqTime.UtcNow.AddMinutes(5)) return false;
+            if (point.IsOfficial)
+            {
+                var slot = point.OfficialSlotUtc ?? captured;
+                if (!FollowerOfficialSlot.IsExactOfficialSlot(shift.StartedAtUtc, slot)) return false;
+            }
 
-        private static bool IsValidLive(FollowerLiveLocationRequestDto point)
-        {
-            if (point.Latitude is < -90 or > 90 || point.Longitude is < -180 or > 180) return false;
-            if (Math.Abs(point.Latitude) < 0.000001 && Math.Abs(point.Longitude) < 0.000001) return false;
-            if (point.Accuracy is < 0 or > 5000) return false;
             return true;
         }
     }

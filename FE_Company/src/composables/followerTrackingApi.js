@@ -19,8 +19,14 @@ export function normalizeFollowerRows(data) {
         : []
 
   return list.map(row => ({
-    followerId: row.followerId ?? row.FollowerId,
-    followerName: row.followerName || row.FollowerName || '',
+    followerId: row.followerId ?? row.FollowerId ?? row.userId ?? row.UserId,
+    userId: row.userId ?? row.UserId ?? row.followerId ?? row.FollowerId,
+    followerName: row.followerName || row.FollowerName || row.userName || row.UserName || '',
+    cityName: row.cityName || row.CityName || '',
+    hasActiveShift: !!(row.hasActiveShift ?? row.HasActiveShift),
+    lastLatitude: row.lastLatitude ?? row.LastLatitude,
+    lastLongitude: row.lastLongitude ?? row.LastLongitude,
+    lastUpdatedAtUtc: row.lastUpdatedAtUtc ?? row.LastUpdatedAtUtc,
   }))
 }
 

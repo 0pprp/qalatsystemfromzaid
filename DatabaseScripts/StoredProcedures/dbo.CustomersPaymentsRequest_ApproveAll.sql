@@ -27,7 +27,8 @@ BEGIN
     FROM CustomersPaymentsRequest cpr
     JOIN View_CustomersPaymentsRequestFinal v 
         ON cpr.CustomersPaymentsRequestID = v.CustomersPaymentsRequestID
-    WHERE v.AmountRemaining > 0 AND v.AmountRemaining >= cpr.Amount;
+    WHERE v.AmountRemaining > 0 AND v.AmountRemaining >= cpr.Amount
+      AND ISNULL(cpr.AutoPostEnabled, 0) = 0;
 
     OPEN payment_cursor;
 

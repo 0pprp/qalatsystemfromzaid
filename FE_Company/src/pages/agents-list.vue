@@ -3,9 +3,12 @@ import { getAuthHeaders } from '@/services/tokenService'
 import AppTextField from '@core/components/app-form-elements/AppTextField.vue'
 import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+
+const router = useRouter()
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -280,9 +283,8 @@ function openAddDialog() {
 }
 
 async function openAddFollowerDialog() {
-  resetDelegateForm()
-  await fetchAvailableDelegates()
-  dialogFollower.value = true
+  // Follower is a company User + FollowerProfile — not a Delegates row.
+  await router.push({ name: 'followers-admin' })
 }
 
 async function addFollower() {
@@ -477,7 +479,7 @@ onMounted(() => {
             prepend-icon="tabler-user-plus"
             @click="openAddFollowerDialog"
           >
-            إضافة متابع
+            إضافة متابع (من Users)
           </VBtn>
           <VBtn
             color="primary"

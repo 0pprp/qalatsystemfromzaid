@@ -80,6 +80,7 @@ export default [
     title: 'متابعة المتابعين',
     icon: { icon: 'tabler-current-location', size: '25' },
     children: [
+      { title: 'إدارة المتابعين', to: { name: 'followers-admin' }, icon: { icon: 'tabler-user-check', size: '22' } },
       { title: 'الموقع المباشر', to: { name: 'follower-tracking-map' }, icon: { icon: 'tabler-map', size: '22' } },
       { title: 'المسارات', to: { name: 'follower-tracking-routes' }, icon: { icon: 'tabler-route', size: '22' } },
     ],

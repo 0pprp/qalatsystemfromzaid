@@ -1,5 +1,4 @@
-using BE_DelegateWebApplication.DTO;
-using BE_DelegateWebApplication.IRepository;
+using BE_DelegateWebApplication.Services.FollowerIdentity;
 using BE_DelegateWebApplication.Services.FollowerTracking;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,19 +9,44 @@ namespace BE_DelegateWebApplication.Controllers
     public sealed class FollowerTrackingController : ControllerBase
     {
         private readonly IFollowerTrackingService _tracking;
-        private readonly IDelegateRepository _delegates;
+        private readonly IFollowerIdentityService _identity;
 
-        public FollowerTrackingController(IFollowerTrackingService tracking, IDelegateRepository delegates)
+        public FollowerTrackingController(IFollowerTrackingService tracking, IFollowerIdentityService identity)
         {
             _tracking = tracking;
-            _delegates = delegates;
+            _identity = identity;
+        }
+
+        /// <summary>User-based follower login. Resolves Users.AsyncID + active FollowerProfile.</summary>
+        [HttpGet("Login")]
+        public async Task<IActionResult> Login([FromQuery] string asyncId, CancellationToken ct)
+        {
+            var follower = await _identity.ResolveByAsyncIdAsync(asyncId, ct);
+            if (follower == null)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "المستخدم ليس متابعًا مفعّلًا أو الجلسة غير صالحة." });
+            }
+
+            return Ok(new
+            {
+                userId = follower.UserId,
+                userName = follower.UserName,
+                asyncId = follower.AsyncId,
+                userType = follower.UserType,
+                cityId = follower.CityId,
+                cityName = follower.CityName,
+                isActive = follower.IsActive,
+                // Compat aliases for older Flutter session keys (identity is User, not Delegate).
+                delegateId = follower.UserId,
+                delegateName = follower.UserName,
+            });
         }
 
         [HttpPost("shifts/start")]
         public async Task<IActionResult> StartShift([FromQuery] string asyncId, CancellationToken ct)
         {
-            var follower = await Auth(asyncId);
-            if (follower == null) return Unauthorized();
+            var follower = await Auth(asyncId, ct);
+            if (follower == null) return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مصرح." });
             try
             {
                 return Ok(await _tracking.StartAsync(follower, ct));
@@ -36,8 +60,8 @@ namespace BE_DelegateWebApplication.Controllers
         [HttpPost("shifts/end")]
         public async Task<IActionResult> EndShift([FromQuery] string asyncId, CancellationToken ct)
         {
-            var follower = await Auth(asyncId);
-            if (follower == null) return Unauthorized();
+            var follower = await Auth(asyncId, ct);
+            if (follower == null) return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مصرح." });
             try
             {
                 return Ok(await _tracking.EndAsync(follower, ct));
@@ -51,17 +75,17 @@ namespace BE_DelegateWebApplication.Controllers
         [HttpGet("shifts/current")]
         public async Task<IActionResult> CurrentShift([FromQuery] string asyncId, CancellationToken ct)
         {
-            var follower = await Auth(asyncId);
-            if (follower == null) return Unauthorized();
-            var current = await _tracking.CurrentAsync(follower.DelegateId, ct);
+            var follower = await Auth(asyncId, ct);
+            if (follower == null) return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مصرح." });
+            var current = await _tracking.CurrentAsync(follower.UserId, ct);
             return Ok(current);
         }
 
         [HttpPost("location/batch")]
         public async Task<IActionResult> LocationBatch([FromQuery] string asyncId, [FromBody] FollowerLocationBatchRequestDto body, CancellationToken ct)
         {
-            var follower = await Auth(asyncId);
-            if (follower == null) return Unauthorized();
+            var follower = await Auth(asyncId, ct);
+            if (follower == null) return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مصرح." });
             try
             {
                 return Ok(await _tracking.IngestBatchAsync(follower, body, ct));
@@ -75,8 +99,8 @@ namespace BE_DelegateWebApplication.Controllers
         [HttpPost("location/live")]
         public async Task<IActionResult> LocationLive([FromQuery] string asyncId, [FromBody] FollowerLiveLocationRequestDto body, CancellationToken ct)
         {
-            var follower = await Auth(asyncId);
-            if (follower == null) return Unauthorized();
+            var follower = await Auth(asyncId, ct);
+            if (follower == null) return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مصرح." });
             try
             {
                 return Ok(await _tracking.IngestLiveAsync(follower, body, ct));
@@ -93,8 +117,8 @@ namespace BE_DelegateWebApplication.Controllers
             [FromBody] FollowerTrackingEventBody body,
             CancellationToken ct)
         {
-            var follower = await Auth(asyncId);
-            if (follower == null) return Unauthorized();
+            var follower = await Auth(asyncId, ct);
+            if (follower == null) return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مصرح." });
             try
             {
                 await _tracking.RecordEventAsync(follower, body.ShiftId, body.EventType ?? "", ct);
@@ -106,7 +130,6 @@ namespace BE_DelegateWebApplication.Controllers
             }
         }
 
-        /// <summary>Accountant/admin read — requires shared secret header X-Follower-Tracking-Key matching config.</summary>
         [HttpGet("tracking/live")]
         public async Task<IActionResult> LiveLocations([FromHeader(Name = "X-Follower-Tracking-Key")] string? key, CancellationToken ct)
         {
@@ -118,8 +141,7 @@ namespace BE_DelegateWebApplication.Controllers
         public async Task<IActionResult> Followers([FromHeader(Name = "X-Follower-Tracking-Key")] string? key, CancellationToken ct)
         {
             if (!IsAccountantKey(key)) return Forbid();
-            var rows = await _tracking.ListFollowersAsync(ct);
-            return Ok(rows.Select(r => new { followerId = r.FollowerId, followerName = r.FollowerName }));
+            return Ok(await _tracking.ListFollowersAsync(ct));
         }
 
         [HttpGet("tracking/followers/{followerId:int}/route")]
@@ -146,12 +168,8 @@ namespace BE_DelegateWebApplication.Controllers
             });
         }
 
-        private async Task<DelegateGetDTO?> Auth(string? asyncId)
-        {
-            if (string.IsNullOrWhiteSpace(asyncId)) return null;
-            var login = await _delegates.GetDelegateLogin(asyncId);
-            return login is { DelegateId: > 0 } ? login : null;
-        }
+        private async Task<FollowerUserIdentity?> Auth(string? asyncId, CancellationToken ct) =>
+            await _identity.ResolveByAsyncIdAsync(asyncId, ct);
 
         private bool IsAccountantKey(string? key)
         {

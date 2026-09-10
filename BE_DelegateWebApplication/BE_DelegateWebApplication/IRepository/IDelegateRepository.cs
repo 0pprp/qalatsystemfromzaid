@@ -8,6 +8,7 @@ namespace BE_DelegateWebApplication.IRepository
         Task<DelegateGetDTO?> GetDelegateCheckLogout(string? asyncID);
         Task<DelegateInfoGetDTO?> GetDelegateTitle(int? delegateId);
         Task<IEnumerable<SelectDelegateGetDTO>?> GetDelegateSelect(int? delegateId);
+        Task<IEnumerable<SelectDelegateGetDTO>?> GetFollowerCityLists(int followerUserId);
         Task<bool> IsFollowerListLinked(int fatherId, int childId);
     }
 }

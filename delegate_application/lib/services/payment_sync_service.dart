@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:delegate_application/services/payment_sync_status.dart';
 import 'package:delegate_application/services/payment_validation.dart';
 import 'package:flutter/widgets.dart';
@@ -20,6 +21,7 @@ class PaymentSyncService with WidgetsBindingObserver {
   Completer<void>? _syncLock;
   bool _started = false;
   bool _wasOffline = true;
+  bool _uploadedAnyThisRun = false;
 
   Future<void> start() async {
     if (_started) return;
@@ -64,6 +66,7 @@ class PaymentSyncService with WidgetsBindingObserver {
     }
     final lock = Completer<void>();
     _syncLock = lock;
+    _uploadedAnyThisRun = false;
     try {
       if (!await isOnline) {
         return;
@@ -139,6 +142,7 @@ class PaymentSyncService with WidgetsBindingObserver {
               .timeout(const Duration(seconds: 45));
 
           if (response.statusCode == 200 || response.statusCode == 201) {
+            _uploadedAnyThisRun = true;
             await db.update(
               'CustomerPayment',
               {
@@ -186,6 +190,10 @@ class PaymentSyncService with WidgetsBindingObserver {
             whereArgs: [row['id']],
           );
         }
+      }
+
+      if (_uploadedAnyThisRun) {
+        await DelegateDataRefreshService.instance.refreshIfPossible();
       }
     } finally {
       _syncLock = null;

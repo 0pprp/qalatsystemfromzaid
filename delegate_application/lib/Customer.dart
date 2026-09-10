@@ -672,40 +672,28 @@ class _CustomerState extends State<Customer> {
                               ],
                             ),
                             const SizedBox(height: 10),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton.icon(
-                                onPressed: isButtonDisabled
-                                    ? null
-                                    : () {
-                                        _checkAndNavigate();
-                                        _sendPayments(context);
-                                      },
-                                icon: isButtonDisabled
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                            color: Colors.white,
-                                            strokeWidth: 2))
-                                    : const Icon(Icons.send,
-                                        color: Colors.white),
-                                label: Text(
-                                    isButtonDisabled
-                                        ? 'جاري المزامنة...'
-                                        : 'إعادة مزامنة الآن (تلقائية)',
-                                    style: const TextStyle(
-                                        fontFamily: 'Cairo',
-                                        color: Colors.white)),
-                                style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppTheme.primaryColor,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 15),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(12))),
-                              ),
-                            ),
+                            Builder(builder: (_) {
+                              final pendingCount = payments
+                                  .where((p) => PaymentSyncStatus.needsSync(
+                                      p['SyncStatus']?.toString()))
+                                  .length;
+                              if (pendingCount == 0) {
+                                return const SizedBox.shrink();
+                              }
+                              return Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                child: Text(
+                                  'تسديدات بانتظار الإرسال التلقائي: $pendingCount',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontFamily: 'Cairo',
+                                    color: Colors.orange[800],
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              );
+                            }),
                           ],
                         ),
                       ),
@@ -899,55 +887,6 @@ class _CustomerState extends State<Customer> {
       whereArgs: [delegateId],
     );
     setState(() {});
-  }
-
-  Future<void> _sendPayments(BuildContext context) async {
-    await fetchPayments(int.parse(selectedRepresentative!));
-    if (!mounted) return;
-
-    final pending = payments
-        .where((p) => PaymentSyncStatus.needsSync(p['SyncStatus']?.toString()))
-        .toList();
-
-    if (pending.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('لا توجد تسديدات بانتظار المزامنة التلقائية')),
-      );
-      return;
-    }
-
-    setState(() => isButtonDisabled = true);
-    if (!await PaymentSyncService.instance.isOnline) {
-      if (!mounted) return;
-      setState(() => isButtonDisabled = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'لا يوجد إنترنت — ستُرسل التسديدات تلقائيًا عند عودة الاتصال')),
-      );
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('جاري المزامنة التلقائية...')),
-    );
-    await PaymentSyncService.instance.syncPendingPayments();
-    if (!mounted) return;
-    await fetchPayments(int.parse(selectedRepresentative!));
-    await _calculatePayments(int.parse(selectedRepresentative!));
-    setState(() => isButtonDisabled = false);
-
-    final stillPending = payments
-        .where((p) => PaymentSyncStatus.needsSync(p['SyncStatus']?.toString()))
-        .length;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(stillPending == 0
-            ? 'تمت مزامنة جميع التسديدات'
-            : 'تبقى $stillPending تسديد بانتظار إعادة المحاولة التلقائية'),
-      ),
-    );
   }
 
   double roundToNearestThousand(double value) {

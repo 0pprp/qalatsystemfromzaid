@@ -1,6 +1,7 @@
 using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
 using BE_DelegateWebApplication.Services;
+using BE_DelegateWebApplication.Services.FollowerIdentity;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BE_DelegateWebApplication.Controllers
@@ -12,6 +13,7 @@ namespace BE_DelegateWebApplication.Controllers
         private readonly IDelegateRepository _delegateRepository;
         private readonly ICustomersRepository _customersRepository;
         private readonly IFollowerActionsRepository _followerActions;
+        private readonly IFollowerIdentityService _followerIdentity;
         private readonly IWebHostEnvironment _env;
         private readonly IConfiguration _configuration;
         private readonly ILogger<FollowersController> _logger;
@@ -20,6 +22,7 @@ namespace BE_DelegateWebApplication.Controllers
             IDelegateRepository delegateRepository,
             ICustomersRepository customersRepository,
             IFollowerActionsRepository followerActions,
+            IFollowerIdentityService followerIdentity,
             IWebHostEnvironment env,
             IConfiguration configuration,
             ILogger<FollowersController> logger)
@@ -27,6 +30,7 @@ namespace BE_DelegateWebApplication.Controllers
             _delegateRepository = delegateRepository;
             _customersRepository = customersRepository;
             _followerActions = followerActions;
+            _followerIdentity = followerIdentity;
             _env = env;
             _configuration = configuration;
             _logger = logger;
@@ -43,7 +47,8 @@ namespace BE_DelegateWebApplication.Controllers
                     return Unauthorized(new { message = "رمز المتابع غير صحيح" });
                 }
 
-                var lists = await _delegateRepository.GetDelegateSelect(father.DelegateId) ?? Enumerable.Empty<SelectDelegateGetDTO>();
+                var lists = await _delegateRepository.GetFollowerCityLists(father.DelegateId)
+                            ?? Enumerable.Empty<SelectDelegateGetDTO>();
                 return Ok(lists);
             }
             catch (Exception ex)
@@ -576,18 +581,21 @@ namespace BE_DelegateWebApplication.Controllers
 
         private async Task<DelegateGetDTO?> AuthenticateFollower(string? asyncId)
         {
-            if (string.IsNullOrWhiteSpace(asyncId))
+            // User-based follower only (Users + active FollowerProfile). Never Delegates login.
+            var user = await _followerIdentity.ResolveByAsyncIdAsync(asyncId);
+            if (user == null || user.UserId <= 0 || !user.IsActive)
             {
                 return null;
             }
 
-            var login = await _delegateRepository.GetDelegateLogin(asyncId);
-            if (login == null || login.DelegateId <= 0)
+            // Compat DTO: DelegateId field carries UserId for existing list-scope call sites.
+            return new DelegateGetDTO
             {
-                return null;
-            }
-
-            return login;
+                DelegateId = user.UserId,
+                DelegateName = user.UserName,
+                AsyncId = user.AsyncId,
+                UserId = user.UserId,
+            };
         }
     }
 }

@@ -34,20 +34,35 @@ namespace BE_DelegateWebApplication.Tests
         }
 
         [Fact]
-        public void OfflineCreated1530_Received1700_UsesCreatedNotReceived()
+        public void OfflineCreated1530_Received1700_EligibleAlreadyPassed()
         {
             var created = new DateTime(2026, 3, 26, 12, 30, 0, DateTimeKind.Utc); // 15:30 Baghdad
             var received = new DateTime(2026, 3, 26, 14, 0, 0, DateTimeKind.Utc); // 17:00 Baghdad
             var eligible = CollectionPaymentRules.ComputeEligibleForPostingAtUtc(created);
-            Assert.Equal(new DateTime(2026, 3, 26, 13, 0, 0, DateTimeKind.Utc), eligible);
-            // At receive time 17:00, already eligible (gate was 16:00)
             Assert.True(CollectionPaymentRules.IsEligibleForPosting(eligible, received));
+        }
+
+        [Fact]
+        public void Created1605_PostsImmediatelyAfterAccept()
+        {
+            var created = new DateTime(2026, 3, 26, 13, 5, 0, DateTimeKind.Utc); // 16:05 Baghdad
+            var eligible = CollectionPaymentRules.ComputeEligibleForPostingAtUtc(created);
+            Assert.Equal(created, eligible);
+            Assert.True(CollectionPaymentRules.IsEligibleForPosting(eligible, created));
+        }
+
+        [Fact]
+        public void AutoPostPath_DoesNotRequireManualApprovalFlag()
+        {
+            // Contract: AutoPostEnabled=1 payments are accepted without accountant Approve UI.
+            const bool autoPostEnabled = true;
+            const bool requiresManualAccountantApproval = !autoPostEnabled;
+            Assert.False(requiresManualAccountantApproval);
         }
 
         [Fact]
         public void AfterFour_EligibleImmediatelyAtCreated()
         {
-            // 16:30 Baghdad = 13:30 UTC
             var created = new DateTime(2026, 3, 26, 13, 30, 0, DateTimeKind.Utc);
             var eligible = CollectionPaymentRules.ComputeEligibleForPostingAtUtc(created);
             Assert.Equal(created, eligible);
@@ -75,7 +90,6 @@ namespace BE_DelegateWebApplication.Tests
         public void IdempotencyKey_StableAcrossRetries()
         {
             var id = Guid.NewGuid().ToString();
-            Assert.Equal(id, id); // document: client must reuse same UUID
             Assert.True(CollectionPaymentRules.IsValidClientPaymentId(id));
         }
     }

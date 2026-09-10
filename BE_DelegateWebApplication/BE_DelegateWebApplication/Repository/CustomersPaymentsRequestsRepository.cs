@@ -192,6 +192,13 @@ VALUES
                         },
                         cancellationToken: ct));
 
+                // If already past 16:00 Baghdad eligibility (including late offline sync),
+                // attempt immediate box post via catch-up SP (idempotent).
+                if (CollectionPaymentRules.IsEligibleForPosting(eligibleAt, serverUtc))
+                {
+                    await TryPostEligibleCatchUpAsync(connection, ct);
+                }
+
                 return new PaymentIdempotentResultDTO
                 {
                     Success = true,
@@ -206,10 +213,19 @@ VALUES
                 // Unique violation → treat as idempotent success.
                 var again = await connection.QuerySingleOrDefaultAsync<dynamic>(
                     new CommandDefinition(@"
-SELECT TOP 1 CustomersPaymentsRequestID, ClientPaymentId
+SELECT TOP 1 CustomersPaymentsRequestID, ClientPaymentId, EligibleForPostingAtUtc
 FROM CustomersPaymentsRequest WHERE ClientPaymentId = @ClientPaymentId",
                         new { ClientPaymentId = clientPaymentId },
                         cancellationToken: ct));
+
+                if (again != null && again.EligibleForPostingAtUtc != null)
+                {
+                    DateTime eligibleExisting = again.EligibleForPostingAtUtc;
+                    if (CollectionPaymentRules.IsEligibleForPosting(eligibleExisting, DateTime.UtcNow))
+                    {
+                        await TryPostEligibleCatchUpAsync(connection, ct);
+                    }
+                }
 
                 return new PaymentIdempotentResultDTO
                 {
@@ -219,6 +235,26 @@ FROM CustomersPaymentsRequest WHERE ClientPaymentId = @ClientPaymentId",
                     ClientPaymentId = clientPaymentId,
                     Message = "التسديد مسجل مسبقًا"
                 };
+            }
+        }
+
+        private static async Task TryPostEligibleCatchUpAsync(SqlConnection connection, CancellationToken ct)
+        {
+            try
+            {
+                var p = new DynamicParameters();
+                p.Add("@UserCreateID", 1);
+                p.Add("@PostedCount", dbType: DbType.Int32, direction: ParameterDirection.Output);
+                await connection.ExecuteAsync(new CommandDefinition(
+                    "CustomersPaymentsRequest_PostEligible",
+                    p,
+                    commandType: CommandType.StoredProcedure,
+                    commandTimeout: 120,
+                    cancellationToken: ct));
+            }
+            catch (SqlException)
+            {
+                // SP may not be deployed yet; HostedService will catch up later.
             }
         }
 

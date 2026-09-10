@@ -159,15 +159,16 @@ class _LoginState extends State<Login> {
 
       for (final base in bases) {
         try {
-          final uri = Uri.parse(
-              '${base}Delegates/GetDelegateLogin/asyncId=$password');
+          final uri = Uri.parse('${base}Followers/Login').replace(
+            queryParameters: {'asyncId': password},
+          );
           final candidate = await http.get(
             uri,
             headers: {"Content-Type": "application/json"},
           ).timeout(const Duration(seconds: 8));
           apiUrl = base;
           response = candidate;
-          if (candidate.statusCode == 200) {
+          if (candidate.statusCode == 200 || candidate.statusCode == 403) {
             break;
           }
         } catch (_) {}
@@ -187,40 +188,49 @@ class _LoginState extends State<Login> {
         return;
       }
 
+      if (response.statusCode == 403) {
+        _showErrorDialog("هذا الحساب ليس متابعًا مفعّلًا");
+        return;
+      }
+
       if (response.statusCode == 200) {
         var data = json.decode(response.body);
-        var delegateId = data['delegateId'] ??
-            data['DelegateId'] ??
-            data['delegateID'];
+        var userId = data['userId'] ?? data['delegateId'] ?? data['DelegateId'];
         var asyncId = data['asyncId'] ??
             data['AsyncId'] ??
             data['asyncID'] ??
             password;
-        var delegateName = data['delegateName'] ?? data['DelegateName'] ?? '';
+        var userName = data['userName'] ??
+            data['delegateName'] ??
+            data['DelegateName'] ??
+            '';
 
-        if (delegateId != null && int.parse(delegateId.toString()) > 0) {
+        if (userId != null && int.parse(userId.toString()) > 0) {
           final listsUri = Uri.parse('${AppEnv.apiBase(fallback: apiUrl)}Followers/Lists').replace(
             queryParameters: {'asyncId': asyncId.toString()},
           );
           final listsRes = await http.get(listsUri).timeout(const Duration(seconds: 15));
           if (!mounted) return;
 
-          if (listsRes.statusCode != 200) {
-            _showErrorDialog("تعذر جلب القوائم المرتبطة");
+          if (listsRes.statusCode == 403 || listsRes.statusCode == 401) {
+            _showErrorDialog("هذا الحساب ليس متابعًا مفعّلًا");
             return;
           }
 
-          final lists = json.decode(listsRes.body);
-          if (lists is! List || lists.isEmpty) {
-            _showErrorDialog("هذا الحساب ليست لديه قوائم مرتبطة. تطبيق المتابع للقوائم المرتبطة فقط.");
-            return;
+          // Lists may be empty in some Demo setups; GPS/shift still allowed.
+          if (listsRes.statusCode == 200) {
+            final lists = json.decode(listsRes.body);
+            if (lists is List && lists.isNotEmpty) {
+              // ok
+            }
           }
 
           await AsyncIdChecker.login(
             asyncId: asyncId.toString(),
             linkDelegate: AppEnv.apiBase(fallback: apiUrl),
-            delegateId: delegateId.toString(),
-            delegateName: delegateName.toString(),
+            delegateId: userId.toString(),
+            delegateName: userName.toString(),
+            userId: userId.toString(),
           );
           if (!mounted) return;
           Navigator.pushReplacementNamed(context, '/HomePage');
