@@ -1,3 +1,7 @@
+﻿SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 -- Demo-safe / idempotent: Follower capability on company Users (not Delegates).
 -- Does NOT delete historical GPS rows keyed by old DelegateId.
 -- Going forward FollowerWorkShifts.FollowerId stores Users.UserID.
@@ -13,14 +17,33 @@ BEGIN
         CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_FollowerProfiles_CreatedAtUtc DEFAULT (SYSUTCDATETIME()),
         CreatedByUserId INT NULL,
         UpdatedAtUtc DATETIME2 NULL,
+
         CONSTRAINT UQ_FollowerProfiles_UserId UNIQUE (UserId),
-        CONSTRAINT FK_FollowerProfiles_Users FOREIGN KEY (UserId) REFERENCES dbo.Users(UserID)
+        CONSTRAINT FK_FollowerProfiles_Users
+            FOREIGN KEY (UserId)
+            REFERENCES dbo.Users(UserID)
     );
-    CREATE INDEX IX_FollowerProfiles_Active ON dbo.FollowerProfiles (IsActive) WHERE IsActive = 1;
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = N'IX_FollowerProfiles_Active'
+      AND object_id = OBJECT_ID(N'dbo.FollowerProfiles')
+)
+BEGIN
+    CREATE INDEX IX_FollowerProfiles_Active
+        ON dbo.FollowerProfiles (IsActive)
+        WHERE IsActive = 1;
 END
 GO
 
 -- Optional documentation column (non-breaking).
-IF COL_LENGTH('dbo.FollowerWorkShifts', 'IdentityNote') IS NULL
-    ALTER TABLE dbo.FollowerWorkShifts ADD IdentityNote NVARCHAR(100) NULL;
+IF OBJECT_ID(N'dbo.FollowerWorkShifts', N'U') IS NOT NULL
+   AND COL_LENGTH('dbo.FollowerWorkShifts', 'IdentityNote') IS NULL
+BEGIN
+    ALTER TABLE dbo.FollowerWorkShifts
+        ADD IdentityNote NVARCHAR(100) NULL;
+END
 GO
