@@ -1,6 +1,7 @@
 import 'package:delegate_application/config/app_env.dart';
 import 'package:delegate_application/config/login_city_catalog.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
+import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -244,11 +245,11 @@ class _LoginState extends State<Login> {
 
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Scaffold(
+      child: AppSafeScaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: SingleChildScrollView(
           child: SizedBox(
-            height: height,
+            height: height - MediaQuery.viewPaddingOf(context).vertical,
             child: Stack(
               children: [
                 Positioned(

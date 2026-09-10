@@ -524,7 +524,10 @@ namespace BE_DelegateWebApplication.Controllers
                 existingId,
                 cityValue,
                 cityName,
-                ct);
+                customerSourceType: "Follower",
+                saleRequestType: SaleRequestTypes.Normalize(body.SaleRequestType, existingId is > 0),
+                sourceListId: body.ListId,
+                ct: ct);
 
             return Ok(saved);
         }

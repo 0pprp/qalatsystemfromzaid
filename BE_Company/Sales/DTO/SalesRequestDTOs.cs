@@ -101,6 +101,9 @@ namespace BE_Company.Sales.DTO
         public string? CityValue { get; set; }
         public string? CityName { get; set; }
         public string CustomerSourceType { get; set; } = "NewCustomer";
+        /// <summary>New | Old — set by follower/delegate submit flows.</summary>
+        public string? SaleRequestType { get; set; }
+        public int? SourceListId { get; set; }
         public int? ExistingCustomerId { get; set; }
         public string? CustomerSourceCityValue { get; set; }
         public string CustomerName { get; set; } = string.Empty;

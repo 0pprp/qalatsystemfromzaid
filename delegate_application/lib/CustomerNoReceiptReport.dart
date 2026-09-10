@@ -1,4 +1,4 @@
-import 'package:delegate_application/Customer.dart';
+import 'package:delegate_application/client.dart';
 import 'package:delegate_application/utils/PdfAssetCache.dart';
 import 'package:delegate_application/utils/PrintUtils.dart';
 import 'package:flutter/material.dart';

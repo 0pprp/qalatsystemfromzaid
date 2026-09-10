@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/services/follower_auth_rules.dart';
+import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -149,7 +150,7 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Scaffold(
+      child: AppSafeScaffold(
         appBar: AppBar(
           title: Text(_isNew ? 'طلب مبيع جديد' : 'إرسال طلب مبيع', style: const TextStyle(fontFamily: 'Cairo')),
           backgroundColor: AppTheme.primaryColor,
@@ -157,7 +158,7 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
         body: Form(
           key: _form,
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: AppInsets.scrollPadding(context, horizontal: 16, top: 16, extraBottom: 24),
             children: [
               Text(
                 _isNew

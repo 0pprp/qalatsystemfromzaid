@@ -48,18 +48,53 @@ namespace BE_DelegateWebApplication.DTO
         public string? Notes { get; set; }
         /// <summary>Ignored.</summary>
         public int? CreatedByUserId { get; set; }
+        /// <summary>New | Old. Optional for follower (inferred from CustomerId).</summary>
+        public string? SaleRequestType { get; set; }
     }
 
     public sealed class FollowerSalesRequestResultDTO
     {
         public int Id { get; set; }
         public string CustomerSourceType { get; set; } = "Follower";
+        public string? SaleRequestType { get; set; }
         public string? CreatedByName { get; set; }
         public string? CreatedByUserType { get; set; }
         public int CreatedByUserId { get; set; }
         public string Status { get; set; } = "New";
         public DateTime CreatedAtUtc { get; set; }
         public int? ExistingCustomerId { get; set; }
+    }
+
+    /// <summary>Same payload shape as follower; SaleRequestType required for delegates (New|Old).</summary>
+    public sealed class DelegateSalesRequestCreateDTO
+    {
+        public string? AsyncId { get; set; }
+        /// <summary>Defaults to authenticated DelegateId when 0.</summary>
+        public int ListId { get; set; }
+        public int? CustomerId { get; set; }
+        public string? FullName { get; set; }
+        public string? Phone { get; set; }
+        /// <summary>Ignored — server sets from delegate/customer.</summary>
+        public string? Province { get; set; }
+        public string? Address { get; set; }
+        public string? Notes { get; set; }
+        /// <summary>Required: New (Home) or Old (customer card).</summary>
+        public string? SaleRequestType { get; set; }
+    }
+
+    public static class SaleRequestTypes
+    {
+        public const string New = "New";
+        public const string Old = "Old";
+
+        public static bool IsNew(string? v) =>
+            string.Equals(v, New, StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsOld(string? v) =>
+            string.Equals(v, Old, StringComparison.OrdinalIgnoreCase);
+
+        public static string Normalize(string? v, bool hasExistingCustomer) =>
+            IsOld(v) || (!IsNew(v) && hasExistingCustomer) ? Old : New;
     }
 
     public sealed class FollowerCustomerProfileDTO

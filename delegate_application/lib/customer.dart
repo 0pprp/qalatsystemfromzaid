@@ -4,9 +4,11 @@ import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:delegate_application/AllReceiptCustomer.dart';
 import 'package:delegate_application/AllSaleCustomer.dart';
 import 'package:delegate_application/AsyncIdChecker.dart';
+import 'package:delegate_application/client.dart';
 import 'package:delegate_application/CustomerNoReceiptReport.dart';
 import 'package:delegate_application/CustomerReceiptReport.dart';
 import 'package:delegate_application/ReportReceipt.dart';
+import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1016,7 +1018,7 @@ class _CustomerState extends State<Customer> {
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Scaffold(
+      child: AppSafeScaffold(
         backgroundColor: AppTheme.backgroundColor,
         appBar: AppBar(
           backgroundColor: AppTheme.primaryColor,
@@ -1488,6 +1490,43 @@ class ClientCard extends StatelessWidget {
                             const SizedBox(height: 10),
                             SizedBox(
                               width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.of(context).pop();
+                                  Navigator.pushNamed(
+                                    context,
+                                    '/DelegateSalesRequest',
+                                    arguments: {
+                                      'saleRequestType': 'Old',
+                                      'customer': {
+                                        'customerId': customerId,
+                                        'customerName':
+                                            customerData['customerName'],
+                                        'phoneNumber':
+                                            customerData['phoneNumber'],
+                                        'address': customerData['address'],
+                                      },
+                                    },
+                                  );
+                                },
+                                icon: const Icon(Icons.add_shopping_cart,
+                                    color: Colors.white),
+                                label: const Text('طلب مبيع',
+                                    style: TextStyle(
+                                        fontFamily: 'Cairo',
+                                        color: Colors.white)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.teal.shade700,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10)),
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
                               child: OutlinedButton.icon(
                                 onPressed: () {
                                   Navigator.of(context).pop();
@@ -1861,58 +1900,6 @@ class ClientCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class Client {
-  final String name;
-  final String phone;
-  final String address;
-  final String shopName;
-  final double salePrice;
-  final double receipt;
-  final double dailyInstallment;
-  final double remaining;
-  final String itemsNames;
-  final double amount1;
-  final double amount2;
-  final double amount3;
-  final double amount4;
-  final double amount5;
-  final double amount6;
-  final double amount7;
-  final String phoneNumberCompany;
-  final String countReceiptDevice;
-  final String numberOfDayPayment;
-  final String isLegal;
-  final String lastPaymentDate;
-  final String dateSaleDevice;
-  final int customerId;
-
-  Client({
-    required this.name,
-    required this.phone,
-    required this.address,
-    required this.shopName,
-    required this.salePrice,
-    required this.receipt,
-    required this.dailyInstallment,
-    required this.remaining,
-    required this.itemsNames,
-    required this.amount1,
-    required this.amount2,
-    required this.amount3,
-    required this.amount4,
-    required this.amount5,
-    required this.amount6,
-    required this.amount7,
-    required this.phoneNumberCompany,
-    required this.countReceiptDevice,
-    required this.numberOfDayPayment,
-    required this.isLegal,
-    required this.lastPaymentDate,
-    required this.dateSaleDevice,
-    required this.customerId,
-  });
 }
 
 class PaymentsList extends StatefulWidget {

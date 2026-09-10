@@ -1,17 +1,19 @@
 import 'package:delegate_application/all_receipt.dart';
 import 'package:delegate_application/AllSale.dart';
-import 'package:delegate_application/Customer.dart';
+import 'package:delegate_application/customer.dart';
 import 'package:delegate_application/HomePage.dart';
 import 'package:delegate_application/Login.dart';
 import 'package:delegate_application/Sync.dart';
 import 'package:delegate_application/WelcomePage.dart';
 import 'package:delegate_application/TrustReceiptsListPage.dart';
 import 'package:delegate_application/TrustReceiptFormPage.dart';
+import 'package:delegate_application/delegate_sales_request_page.dart';
 import 'package:delegate_application/config/app_env.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,6 +50,7 @@ class MyApp extends StatelessWidget {
             '/Customer': (context) => const Customer(),
             '/TrustReceiptsList': (context) => const TrustReceiptsListPage(),
             '/TrustReceiptForm': (context) => const TrustReceiptFormPage(),
+            '/DelegateSalesRequest': (context) => const DelegateSalesRequestPage(),
           },
           theme: ThemeData(fontFamily: 'Cairo', brightness: Brightness.light),
           darkTheme:

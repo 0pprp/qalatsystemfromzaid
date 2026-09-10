@@ -1,3 +1,4 @@
+import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:delegate_application/utils/PdfAssetCache.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
@@ -38,7 +39,7 @@ class _WelcomePage extends State<WelcomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppSafeScaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [

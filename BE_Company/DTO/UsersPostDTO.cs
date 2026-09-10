@@ -10,5 +10,7 @@
         public int? UserCreateID { get; set; }
         public string? UserType { get; set; }
         public IFormFile? UserImage { get; set; }
+        /// <summary>JSON array of Delegates.DelegateID when UserType is متابع.</summary>
+        public string? ListIdsJson { get; set; }
     }
 }

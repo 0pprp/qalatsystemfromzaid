@@ -386,6 +386,9 @@ ORDER BY CreatedAtUtc DESC;",
             int? existingCustomerId,
             string? cityValue,
             string? cityName,
+            string customerSourceType,
+            string saleRequestType,
+            int? sourceListId = null,
             CancellationToken ct = default)
         {
             await EnsureSchemaAsync(ct);
@@ -395,31 +398,39 @@ ORDER BY CreatedAtUtc DESC;",
 
             await connection.ExecuteAsync(new CommandDefinition(SalesRequestsEnsureSql, transaction: tx, cancellationToken: ct));
 
+            var sourceType = string.IsNullOrWhiteSpace(customerSourceType) ? "Follower" : customerSourceType.Trim();
+            var kind = SaleRequestTypes.Normalize(saleRequestType, existingCustomerId is > 0);
+            var actorType = meta.CreatedByUserType ?? sourceType;
+
             var id = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
 INSERT INTO dbo.SalesRequests
 (CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, TargetEmployeeName, CityValue, CityName,
  CustomerSourceType, ExistingCustomerId, CustomerSourceCityValue, CustomerName, CustomerPhone, CustomerProvince,
- CustomerAddress, Notes, Status, CreatedAtUtc, AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, ReturnNote)
+ CustomerAddress, Notes, Status, CreatedAtUtc, AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, ReturnNote,
+ SaleRequestType, SourceListId)
 OUTPUT INSERTED.Id
 VALUES
 (@CreatedByUserId, @CreatedByName, @CreatedByUserType, 0, NULL, @CityValue, @CityName,
  @CustomerSourceType, @ExistingCustomerId, NULL, @CustomerName, @Phone, @Province,
- @Address, @Notes, N'New', @CreatedAtUtc, NULL, NULL, NULL, NULL, NULL);",
+ @Address, @Notes, N'New', @CreatedAtUtc, NULL, NULL, NULL, NULL, NULL,
+ @SaleRequestType, @SourceListId);",
                 new
                 {
                     meta.CreatedByUserId,
                     meta.CreatedByName,
-                    CreatedByUserType = meta.CreatedByUserType ?? "Follower",
+                    CreatedByUserType = actorType,
                     CityValue = cityValue,
                     CityName = cityName,
-                    CustomerSourceType = "Follower",
+                    CustomerSourceType = sourceType,
                     ExistingCustomerId = existingCustomerId is > 0 ? existingCustomerId : null,
                     CustomerName = customerName,
                     Phone = phone,
                     Province = province,
                     Address = address,
                     Notes = notes,
-                    meta.CreatedAtUtc
+                    meta.CreatedAtUtc,
+                    SaleRequestType = kind,
+                    SourceListId = sourceListId is > 0 ? sourceListId : null
                 },
                 transaction: tx,
                 cancellationToken: ct));
@@ -428,12 +439,13 @@ VALUES
 INSERT INTO dbo.SalesRequestHistory
 (RequestId, EventType, PreviousStatus, Status, ActorUserId, ActorName, ActorType, EmployeeId, Note, CreatedAtUtc)
 VALUES
-(@RequestId, N'Created', NULL, N'New', @ActorUserId, @ActorName, N'Follower', NULL, @Note, @CreatedAtUtc);",
+(@RequestId, N'Created', NULL, N'New', @ActorUserId, @ActorName, @ActorType, NULL, @Note, @CreatedAtUtc);",
                 new
                 {
                     RequestId = id,
                     ActorUserId = meta.CreatedByUserId,
                     ActorName = meta.CreatedByName,
+                    ActorType = actorType,
                     Note = notes,
                     meta.CreatedAtUtc
                 },
@@ -442,7 +454,8 @@ VALUES
 
             tx.Commit();
             meta.Id = id;
-            meta.CustomerSourceType = "Follower";
+            meta.CustomerSourceType = sourceType;
+            meta.SaleRequestType = kind;
             meta.Status = "New";
             meta.ExistingCustomerId = existingCustomerId is > 0 ? existingCustomerId : null;
             return meta;
@@ -545,6 +558,10 @@ BEGIN
         Note NVARCHAR(MAX) NULL,
         CreatedAtUtc DATETIME2 NOT NULL
     );
-END";
+END
+IF COL_LENGTH(N'dbo.SalesRequests', N'SaleRequestType') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD SaleRequestType NVARCHAR(20) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'SourceListId') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD SourceListId INT NULL;";
     }
 }

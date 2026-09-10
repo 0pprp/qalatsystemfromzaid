@@ -107,9 +107,29 @@ function isFollowerSubmitted(row) {
   return source === 'Follower' || role === 'Follower' || role === 'متابع'
 }
 
+function isDelegateSubmitted(row) {
+  const source = pick(row, 'customerSourceType', 'CustomerSourceType')
+  const role = pick(row, 'createdByUserType', 'CreatedByUserType')
+  return source === 'Delegate' || role === 'مندوب' || role === 'Delegate'
+}
+
+function saleRequestTypeLabel(row) {
+  const t = pick(row, 'saleRequestType', 'SaleRequestType')
+  if (t === 'Old')
+    return 'مبيع قديم'
+  if (t === 'New')
+    return 'مبيع جديد'
+
+  // Fallback for older rows: existing customer id ⇒ قديم
+  const existingId = pick(row, 'existingCustomerId', 'ExistingCustomerId')
+  return existingId ? 'مبيع قديم' : 'مبيع جديد'
+}
+
 function requestSourceLabel(row) {
   if (isFollowerSubmitted(row))
     return 'المتابع'
+  if (isDelegateSubmitted(row))
+    return 'المندوب'
   if (isEmployeeSubmitted(row))
     return 'موظف المبيعات'
   return 'مدير المبيعات'
@@ -127,6 +147,8 @@ function isUnreadSent(row) {
 function submittedBy(row) {
   if (isFollowerSubmitted(row))
     return pick(row, 'createdByName', 'CreatedByName') || 'متابع'
+  if (isDelegateSubmitted(row))
+    return pick(row, 'createdByName', 'CreatedByName') || 'مندوب'
   return pick(row, 'createdByName', 'CreatedByName') || 'موظف مبيعات'
 }
 
@@ -136,8 +158,8 @@ function matchesTab(row, value = tab.value) {
     case 'unassigned':
       return isUnassigned(row)
     case 'sent':
-      // الطلبات المرسلة: متابع أو موظف مبيعات، والحالة New فقط (غير مسند).
-      return (isEmployeeSubmitted(row) || isFollowerSubmitted(row)) && s === 'New'
+      // الطلبات المرسلة: متابع أو مندوب أو موظف مبيعات، والحالة New فقط (غير مسند).
+      return (isEmployeeSubmitted(row) || isFollowerSubmitted(row) || isDelegateSubmitted(row)) && s === 'New'
     case 'incoming':
       return s === 'Assigned' || s === 'Viewed' || s === 'Returned'
     case 'prepared':
@@ -1221,13 +1243,26 @@ onUnmounted(() => {
               </VChip>
             </div>
             <strong>{{ row.customerName }}</strong>
+            <div>
+              نوع الطلب:
+              <VChip
+                size="x-small"
+                class="ms-1"
+                :color="saleRequestTypeLabel(row) === 'مبيع قديم' ? 'secondary' : 'primary'"
+              >
+                {{ saleRequestTypeLabel(row) }}
+              </VChip>
+            </div>
+            <div v-if="pick(row, 'existingCustomerId', 'ExistingCustomerId')">
+              رقم الزبون: {{ pick(row, 'existingCustomerId', 'ExistingCustomerId') }}
+            </div>
             <div>الهاتف: {{ row.customerPhone || row.CustomerPhone || '—' }}</div>
             <div>المحافظة: {{ displayCityName(row, branches) }}</div>
             <div>العنوان: {{ row.customerAddress || row.CustomerAddress || '—' }}</div>
             <div>الموظف: {{ isEmployeeSubmitted(row) ? submittedBy(row) : (row.targetEmployeeName || 'غير مسند') }}</div>
-            <div v-if="isFollowerSubmitted(row) || isEmployeeSubmitted(row)">
+            <div v-if="isFollowerSubmitted(row) || isDelegateSubmitted(row) || isEmployeeSubmitted(row)">
               المصدر: {{ requestSourceLabel(row) }}
-              <template v-if="isFollowerSubmitted(row)"> — أرسل بواسطة: {{ submittedBy(row) }}</template>
+              <template v-if="isFollowerSubmitted(row) || isDelegateSubmitted(row)"> — أرسل بواسطة: {{ submittedBy(row) }}</template>
             </div>
             <div>التاريخ: {{ formatIraqDate(row.createdAtUtc || row.CreatedAtUtc) }}</div>
             <div>الحالة: {{ statusText(row) }}</div>
@@ -1274,12 +1309,25 @@ onUnmounted(() => {
         <VCardTitle>طلب #{{ detail.id }}</VCardTitle>
         <VCardText>
           <div>الزبون: {{ detail.customerName }}</div>
+          <div>
+            نوع الطلب:
+            <VChip
+              size="x-small"
+              class="ms-1"
+              :color="saleRequestTypeLabel(detail) === 'مبيع قديم' ? 'secondary' : 'primary'"
+            >
+              {{ saleRequestTypeLabel(detail) }}
+            </VChip>
+          </div>
+          <div v-if="pick(detail, 'existingCustomerId', 'ExistingCustomerId')">
+            رقم الزبون: {{ pick(detail, 'existingCustomerId', 'ExistingCustomerId') }}
+          </div>
           <div>الهاتف: {{ detail.customerPhone || '—' }}</div>
           <div>العنوان: {{ detail.customerAddress || '—' }}</div>
           <div>الموظف: {{ isEmployeeSubmitted(detail) ? submittedBy(detail) : (detail.targetEmployeeName || 'غير مسند') }}</div>
-          <div v-if="isFollowerSubmitted(detail) || isEmployeeSubmitted(detail)">
+          <div v-if="isFollowerSubmitted(detail) || isDelegateSubmitted(detail) || isEmployeeSubmitted(detail)">
             المصدر: {{ requestSourceLabel(detail) }}
-            <template v-if="isFollowerSubmitted(detail)"> — أرسل بواسطة: {{ submittedBy(detail) }}</template>
+            <template v-if="isFollowerSubmitted(detail) || isDelegateSubmitted(detail)"> — أرسل بواسطة: {{ submittedBy(detail) }}</template>
           </div>
           <div>المحافظة: {{ displayCityName(detail, branches) }}</div>
           <div class="d-flex align-center gap-2 mt-1">

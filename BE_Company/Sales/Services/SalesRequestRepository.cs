@@ -31,12 +31,14 @@ namespace BE_Company.Sales.Services
 INSERT INTO dbo.SalesRequests
 (CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, TargetEmployeeName, CityValue, CityName,
  CustomerSourceType, ExistingCustomerId, CustomerSourceCityValue, CustomerName, CustomerPhone, CustomerProvince,
- CustomerAddress, Notes, Status, CreatedAtUtc, AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, ReturnNote)
+ CustomerAddress, Notes, Status, CreatedAtUtc, AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, ReturnNote,
+ SaleRequestType, SourceListId)
 OUTPUT INSERTED.Id
 VALUES
 (@CreatedByUserId, @CreatedByName, @CreatedByUserType, @TargetEmployeeId, @TargetEmployeeName, @CityValue, @CityName,
  @CustomerSourceType, @ExistingCustomerId, @CustomerSourceCityValue, @CustomerName, @CustomerPhone, @CustomerProvince,
- @CustomerAddress, @Notes, @Status, @CreatedAtUtc, @AssignedAtUtc, @AssignedByUserId, @AssignedByName, @PendingNote, @ReturnNote);",
+ @CustomerAddress, @Notes, @Status, @CreatedAtUtc, @AssignedAtUtc, @AssignedByUserId, @AssignedByName, @PendingNote, @ReturnNote,
+ @SaleRequestType, @SourceListId);",
                 row, cancellationToken: ct));
             row.Id = id;
             return row;
@@ -130,7 +132,8 @@ SELECT Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, 
  CityValue, CityName, CustomerSourceType, ExistingCustomerId, CustomerSourceCityValue,
  CustomerName, CustomerPhone, CustomerProvince, CustomerAddress, Notes, Status,
  CreatedAtUtc, ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
- AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc
+ AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc,
+ SaleRequestType, SourceListId
 FROM dbo.SalesRequests";
 
         private const string SchemaSql = @"
@@ -181,6 +184,10 @@ IF COL_LENGTH(N'dbo.SalesRequests', N'ReturnNote') IS NULL
     ALTER TABLE dbo.SalesRequests ADD ReturnNote NVARCHAR(1000) NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'ManagerReadAtUtc') IS NULL
     ALTER TABLE dbo.SalesRequests ADD ManagerReadAtUtc DATETIME NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'SaleRequestType') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD SaleRequestType NVARCHAR(20) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'SourceListId') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD SourceListId INT NULL;
 IF OBJECT_ID(N'dbo.SalesRequestHistory', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SalesRequestHistory (

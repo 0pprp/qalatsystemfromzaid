@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -99,7 +100,7 @@ class _AllSaleState extends State<AllSale> {
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Scaffold(
+      child: AppSafeScaffold(
         backgroundColor: AppTheme.backgroundColor,
         appBar: AppBar(
           backgroundColor: AppTheme.primaryColor,

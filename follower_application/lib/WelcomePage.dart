@@ -1,3 +1,4 @@
+import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -36,7 +37,7 @@ class _WelcomePage extends State<WelcomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppSafeScaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [

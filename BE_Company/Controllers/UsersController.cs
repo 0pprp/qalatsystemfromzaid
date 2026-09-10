@@ -1,6 +1,7 @@
 ﻿using BE_Company.DTO;
 using BE_Company.IRepository;
 using BE_Company.Repository;
+using BE_Company.Sales.Authorization;
 using BE_Company.Utilities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -10,6 +11,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Security.Claims;
+using System.Text.Json;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace BE_Company.Controllers
@@ -19,11 +21,16 @@ namespace BE_Company.Controllers
     public class UsersController : ControllerBase
     {
         private readonly IUsersRepository _usersRepository;
+        private readonly IFollowerUserListsRepository _followerLists;
         private readonly IConfiguration _configuration;
 
-        public UsersController(IUsersRepository usersRepository, IConfiguration configuration)
+        public UsersController(
+            IUsersRepository usersRepository,
+            IFollowerUserListsRepository followerLists,
+            IConfiguration configuration)
         {
             _usersRepository = usersRepository;
+            _followerLists = followerLists;
             _configuration = configuration;
         }
 
@@ -142,6 +149,10 @@ namespace BE_Company.Controllers
                 }
                 usersPostDTO.UserCreateID = userID;
                 var result = await _usersRepository.Users_Create(usersPostDTO);
+                if (result?.UserID is int newUserId)
+                {
+                    await SyncFollowerListsAsync(newUserId, usersPostDTO.UserType, usersPostDTO.ListIdsJson, usersPostDTO.Password);
+                }
                 return Ok(result);
             }
             catch (Exception ex)
@@ -167,11 +178,44 @@ namespace BE_Company.Controllers
                 }
                 usersPutDTO.UserUpdateID = authenticatedUserID; 
                 var result = await _usersRepository.Users_Update(userID, usersPutDTO);
+                if (userID is int uid)
+                {
+                    await SyncFollowerListsAsync(uid, usersPutDTO.UserType, usersPutDTO.ListIdsJson, usersPutDTO.Password);
+                }
                 return Ok(result);
             }
             catch (Exception ex)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+            }
+        }
+
+        private async Task SyncFollowerListsAsync(int userId, string? userType, string? listIdsJson, string? password)
+        {
+            if (SalesRoles.IsFollower(userType))
+            {
+                var ids = ParseListIds(listIdsJson);
+                await _followerLists.ReplaceAssignmentsAsync(userId, ids);
+                await _followerLists.AlignFollowerAsyncIdAsync(userId, password);
+            }
+            else
+            {
+                // Leaving متابع: clear ACL so access cannot linger after type change.
+                await _followerLists.ClearAssignmentsAsync(userId);
+            }
+        }
+
+        private static List<int> ParseListIds(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return [];
+            try
+            {
+                var ids = JsonSerializer.Deserialize<List<int>>(json);
+                return ids?.Where(x => x > 0).Distinct().ToList() ?? [];
+            }
+            catch
+            {
+                return [];
             }
         }
 

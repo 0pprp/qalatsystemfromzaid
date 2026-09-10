@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/services/follower_media_urls.dart';
+import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/utils/iraq_datetime.dart';
 import 'package:flutter/material.dart';
@@ -230,11 +231,10 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
     final p = _profile;
     final notes = (p?['notes'] ?? p?['Notes'] ?? []) as List? ?? [];
     final images = _normalizeImages(p);
-    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Scaffold(
+      child: AppSafeScaffold(
         appBar: AppBar(
           title: const Text('ملف الزبون', style: TextStyle(fontFamily: 'Cairo')),
           backgroundColor: AppTheme.primaryColor,
@@ -242,10 +242,7 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
             IconButton(onPressed: _loading ? null : () => _loadProfile(), icon: const Icon(Icons.refresh)),
           ],
         ),
-        body: SafeArea(
-          top: false,
-          bottom: true,
-          child: _loading
+        body: _loading
               ? const Center(child: CircularProgressIndicator())
               : _error != null
                   ? Center(
@@ -255,7 +252,7 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
                       ),
                     )
                   : ListView(
-                      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset.clamp(0, 24)),
+                      padding: AppInsets.scrollPadding(context, horizontal: 16, top: 16, extraBottom: 16),
                       children: [
                         Text(
                           _pick(p!, ['customerName', 'CustomerName']) ?? '',
@@ -346,7 +343,6 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
                           }),
                       ],
                     ),
-        ),
       ),
     );
   }

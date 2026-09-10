@@ -74,12 +74,13 @@ namespace BE_DelegateWebApplication.Repository
         }
 
         /// <summary>
-        /// Lists for a User-based follower (UserType=متابع): payment delegates in UsersSelectedCities,
-        /// or all payment delegates when no city is assigned.
+        /// Lists assigned to a User-based follower via dbo.FollowerUserLists (ListId = Delegates.DelegateID).
+        /// Empty assignment → empty list (login still allowed).
         /// </summary>
         public async Task<IEnumerable<SelectDelegateGetDTO>?> GetFollowerCityLists(int followerUserId)
         {
             using var connection = new SqlConnection(_connectionString);
+            await EnsureFollowerUserListsSchemaAsync(connection);
             return await connection.QueryAsync<SelectDelegateGetDTO>(@"
 DECLARE @IsFollower BIT = (
     SELECT TOP 1 CASE
@@ -93,9 +94,6 @@ BEGIN
     RETURN;
 END
 
-DECLARE @CityId INT = (
-    SELECT TOP 1 usc.CityID FROM dbo.UsersSelectedCities usc WHERE usc.UserID = @UserId
-);
 SELECT
     d.DelegateID AS DelegateId,
     d.DelegateID AS DelegateChildId,
@@ -104,9 +102,9 @@ SELECT
     CAST(ISNULL(d.UpdateReceipt, 0) AS BIT) AS UpdateReceipt,
     CAST(ISNULL(d.DeleteReceipt, 0) AS BIT) AS DeleteReceipt,
     CAST(ISNULL(d.DevicePaymentState, 0) AS BIT) AS DevicePaymentState
-FROM dbo.Delegates d
-WHERE ISNULL(d.DevicePaymentState, 0) = 1
-  AND (@CityId IS NULL OR d.CityID = @CityId)
+FROM dbo.FollowerUserLists ful
+INNER JOIN dbo.Delegates d ON d.DelegateID = ful.ListId
+WHERE ful.UserId = @UserId
 ORDER BY d.DelegateName;",
                 new { UserId = followerUserId });
         }
@@ -115,42 +113,59 @@ ORDER BY d.DelegateName;",
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                // User-based: fatherId is Users.UserID with UserType = متابع.
-                var follower = await connection.QueryFirstOrDefaultAsync<dynamic>(@"
-SELECT TOP 1
-    CAST(CASE WHEN ISNULL(u.UserState, 1) = 1 AND (u.UserType = N'متابع' OR u.UserType LIKE N'متابع%') THEN 1 ELSE 0 END AS BIT) AS Ok,
-    (SELECT TOP 1 usc.CityID FROM dbo.UsersSelectedCities usc WHERE usc.UserID = u.UserID) AS CityId
-FROM dbo.Users u
-WHERE u.UserID = @UserId;",
-                    new { UserId = fatherId });
+                await EnsureFollowerUserListsSchemaAsync(connection);
 
-                if (follower != null && Convert.ToBoolean(follower.Ok))
-                {
-                    int? cityId = follower.CityId as int?;
-                    if (cityId is null && follower.CityId != null)
-                    {
-                        cityId = Convert.ToInt32(follower.CityId);
-                    }
-                    if (cityId is null)
-                    {
-                        return true;
-                    }
-
-                    var sameCity = await connection.ExecuteScalarAsync<int?>(@"
+                // User-based ACL: fatherId = Users.UserID, childId = Delegates.DelegateID (ListId).
+                var allowed = await connection.ExecuteScalarAsync<int?>(@"
 SELECT TOP 1 1
-FROM dbo.Delegates d
-WHERE d.DelegateID = @ChildId AND d.CityID = @CityId;",
-                        new { ChildId = childId, CityId = cityId });
-                    return sameCity == 1;
+FROM dbo.Users u
+INNER JOIN dbo.FollowerUserLists ful ON ful.UserId = u.UserID AND ful.ListId = @ListId
+WHERE u.UserID = @UserId
+  AND ISNULL(u.UserState, 1) = 1
+  AND (u.UserType = N'متابع' OR u.UserType LIKE N'متابع%');",
+                    new { UserId = fatherId, ListId = childId });
+
+                if (allowed == 1)
+                {
+                    return true;
                 }
 
-                // Legacy Delegate-linked followers — keep for old data only.
+                // If the subject is an active follower user, deny when not in FollowerUserLists
+                // (do not fall through to legacy SelectDelegate — that would bypass ACL).
+                var isFollowerUser = await connection.ExecuteScalarAsync<int?>(@"
+SELECT TOP 1 1
+FROM dbo.Users u
+WHERE u.UserID = @UserId
+  AND ISNULL(u.UserState, 1) = 1
+  AND (u.UserType = N'متابع' OR u.UserType LIKE N'متابع%');",
+                    new { UserId = fatherId });
+                if (isFollowerUser == 1)
+                {
+                    return false;
+                }
+
+                // Legacy Delegate-linked followers only (pre User migration).
                 var result = await connection.QuerySingleOrDefaultAsync<LinkedFlagDTO>(
                     "Followers_IsLinked",
                     new { FatherID = fatherId, ChildID = childId },
                     commandType: CommandType.StoredProcedure);
                 return result != null && result.IsLinked == 1;
             }
+        }
+
+        private static async Task EnsureFollowerUserListsSchemaAsync(SqlConnection connection)
+        {
+            await connection.ExecuteAsync(@"
+IF OBJECT_ID(N'dbo.FollowerUserLists', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.FollowerUserLists (
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_FollowerUserLists PRIMARY KEY,
+        UserId INT NOT NULL,
+        ListId INT NOT NULL,
+        CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_FollowerUserLists_CreatedAtUtc DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT UQ_FollowerUserLists_User_List UNIQUE (UserId, ListId)
+    );
+END");
         }
     }
 }

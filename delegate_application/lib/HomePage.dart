@@ -2,6 +2,8 @@ import 'package:delegate_application/AsyncIdChecker.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:delegate_application/main.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
+import 'package:delegate_application/ui/app_safe_scaffold.dart';
+import 'package:delegate_application/ui/main_bottom_nav.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
@@ -209,49 +211,62 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.backgroundColor,
-      body: Stack(
-        children: [
-          // Background Elements (Wavy lines placeholder)
-          Positioned(
-            top: -50,
-            left: -50,
-            child: Container(
-              width: 200,
-              height: 200,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                    color: AppTheme.primaryColor.withValues(alpha: 0.05),
-                    width: 30),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AppSafeScaffold(
+        backgroundColor: AppTheme.backgroundColor,
+        extendBody: true,
+        safeBottom: false,
+        floatingActionButton: FloatingActionButton(
+          onPressed: () => _onItemTapped(2),
+          backgroundColor: AppTheme.primaryColor,
+          shape: const CircleBorder(),
+          elevation: 4,
+          child: const Icon(Icons.home, color: Colors.white, size: 30),
+        ),
+        floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+        bottomNavigationBar: MainBottomNavBar(
+          selectedIndex: _selectedIndex,
+          onTap: _onItemTapped,
+        ),
+        body: Stack(
+          children: [
+            Positioned(
+              top: -50,
+              left: -50,
+              child: Container(
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: AppTheme.primaryColor.withValues(alpha: 0.05),
+                      width: 30),
+                ),
               ),
             ),
-          ),
-          Positioned(
-            top: 50,
-            right: -80,
-            child: Container(
-              width: 300,
-              height: 300,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                    color: AppTheme.primaryColor.withValues(alpha: 0.05),
-                    width: 50),
+            Positioned(
+              top: 50,
+              right: -80,
+              child: Container(
+                width: 300,
+                height: 300,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: AppTheme.primaryColor.withValues(alpha: 0.05),
+                      width: 50),
+                ),
               ),
             ),
-          ),
-
-          SafeArea(
-            child: RefreshIndicator(
+            RefreshIndicator(
               onRefresh: () async {
                 await DelegateDataRefreshService.instance.refreshIfPossible();
                 await fetchData();
               },
               color: AppTheme.primaryColor,
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
+                padding: AppInsets.scrollPadding(context),
                 child: Column(
                   children: [
                     ValueListenableBuilder<String?>(
@@ -280,8 +295,32 @@ class _HomePageState extends State<HomePage> {
                     const SizedBox(height: 20),
                     _buildReportSection(),
                     const SizedBox(height: 20),
-                    // _buildTrustReceiptsButton(),
-                    // const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pushNamed(
+                            context,
+                            '/DelegateSalesRequest',
+                            arguments: {'saleRequestType': 'New'},
+                          );
+                        },
+                        icon: const Icon(Icons.add_shopping_cart,
+                            color: Colors.white),
+                        label: const Text(
+                          'طلب مبيع جديد',
+                          style: TextStyle(
+                              fontFamily: 'Cairo', color: Colors.white),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primaryColor,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
                     TextButton.icon(
                       onPressed: _logout,
                       icon: const Icon(Icons.logout, color: Colors.red),
@@ -291,73 +330,16 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 10),
                     const Text(
-                      "الإصدار 30",
+                      'الإصدار 30',
                       style: TextStyle(
                           fontFamily: 'Cairo',
                           color: Colors.grey,
                           fontSize: 12),
                     ),
-                    const SizedBox(height: 80), // Space for FAB
                   ],
                 ),
               ),
             ),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _onItemTapped(2),
-        backgroundColor: AppTheme.primaryColor,
-        shape: const CircleBorder(),
-        elevation: 4,
-        child: const Icon(Icons.home, color: Colors.white, size: 30),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      bottomNavigationBar: BottomAppBar(
-        shape: const CircularNotchedRectangle(),
-        notchMargin: 10,
-        color: Theme.of(context).cardColor,
-        child: SizedBox(
-          height: 60,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildNavItem(
-                  Icons.account_balance_wallet_outlined, "التسديدات", 3),
-              const SizedBox(width: 40), // Space for FAB
-              _buildNavItem(Icons.people_outline, "العملاء", 1),
-              _buildNavItem(Icons.monetization_on_outlined, "المبيعات", 0),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNavItem(IconData icon, String label, int index) {
-    bool isSelected = _selectedIndex == index;
-    return Expanded(
-      child: InkWell(
-        onTap: () => _onItemTapped(index),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              color: isSelected ? AppTheme.primaryColor : Colors.grey,
-              size: 24,
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                fontFamily: 'Cairo',
-                fontSize: 12,
-                color: isSelected ? AppTheme.primaryColor : Colors.grey,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              ),
-            )
           ],
         ),
       ),

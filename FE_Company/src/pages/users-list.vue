@@ -50,6 +50,81 @@ const formData = ref({
 })
 
 const selectedFile = ref(null)
+const availableLists = ref([])
+const selectedListIds = ref([])
+const listSearch = ref('')
+const listsLoading = ref(false)
+
+const isFollowerType = computed(() => {
+  const t = formData.value.userType || ''
+
+  return t === 'متابع' || t.startsWith('متابع')
+})
+
+const filteredLists = computed(() => {
+  const q = (listSearch.value || '').trim()
+  if (!q) return availableLists.value
+
+  return availableLists.value.filter(l =>
+    (l.listName || '').includes(q) || (l.receiptName || '').includes(q) || String(l.listId).includes(q),
+  )
+})
+
+const selectedListsCount = computed(() => selectedListIds.value.length)
+const totalListsCount = computed(() => availableLists.value.length)
+
+async function fetchAvailableLists() {
+  try {
+    listsLoading.value = true
+    const authHeader = getAuthHeaders()
+    const { data } = await axios.get(`${apiUrl}follower-lists/available`, { headers: authHeader })
+
+    availableLists.value = Array.isArray(data) ? data : []
+  } catch (error) {
+    console.error(error)
+    availableLists.value = []
+  } finally {
+    listsLoading.value = false
+  }
+}
+
+async function loadAssignedLists(userId) {
+  selectedListIds.value = []
+  if (!userId) return
+  try {
+    const authHeader = getAuthHeaders()
+    const { data } = await axios.get(`${apiUrl}follower-lists/${userId}`, { headers: authHeader })
+    selectedListIds.value = Array.isArray(data?.listIds) ? [...data.listIds] : []
+  } catch (error) {
+    console.error(error)
+    selectedListIds.value = []
+  }
+}
+
+function selectAllLists() {
+  selectedListIds.value = availableLists.value.map(l => l.listId)
+}
+
+function clearAllLists() {
+  selectedListIds.value = []
+}
+
+function toggleList(listId, checked) {
+  const id = Number(listId)
+  if (checked) {
+    if (!selectedListIds.value.includes(id)) selectedListIds.value = [...selectedListIds.value, id]
+  } else {
+    selectedListIds.value = selectedListIds.value.filter(x => x !== id)
+  }
+}
+
+function appendListIds(form) {
+  if (isFollowerType.value) {
+    form.append('ListIdsJson', JSON.stringify(selectedListIds.value || []))
+  } else {
+    form.append('ListIdsJson', '[]')
+  }
+}
 
 
 // خاصية المعاينة للصورة
@@ -98,11 +173,14 @@ function openAddDialog() {
     userImage: null, // إعادة تعيين الصورة عند فتح نافذة الإضافة
   }
   selectedFile.value = null
+  selectedListIds.value = []
+  listSearch.value = ''
   currentUserID.value = null
   addDialog.value = true
+  fetchAvailableLists()
 }
 
-function openEditDialog(userID) {
+async function openEditDialog(userID) {
   console.log(userID)
   currentUserID.value = userID
 
@@ -111,7 +189,15 @@ function openEditDialog(userID) {
     formData.value = { ...user }
     formData.value.password = ''
     selectedFile.value = null
+    listSearch.value = ''
     editDialog.value = true
+    await fetchAvailableLists()
+    const t = formData.value.userType || ''
+    if (t === 'متابع' || t.startsWith('متابع')) {
+      await loadAssignedLists(userID)
+    } else {
+      selectedListIds.value = []
+    }
   }
 }
 
@@ -138,6 +224,8 @@ async function addUser() {
       data.append('UserImage', file)
     }
   }
+
+  appendListIds(data)
 
   try {
     const response = await axios.postForm(url, data, { headers: { 'Content-Type': 'multipart/form-data', ...authHeader } })
@@ -168,6 +256,8 @@ async function updateUser() {
       data.append('UserImage', file)
     }
   }
+
+  appendListIds(data)
 
   try {
     await axios.putForm(url, data, { headers: { 'Content-Type': 'multipart/form-data', ...authHeader } })
@@ -528,6 +618,73 @@ onMounted(() => {
                   label="نوع المستخدم"
                 />
               </VCol>
+              <VCol
+                v-if="isFollowerType"
+                cols="12"
+              >
+                <VCard
+                  variant="outlined"
+                  class="pa-4"
+                >
+                  <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
+                    <div class="text-h6">
+                      القوائم المسموح بها
+                    </div>
+                    <div class="text-body-2 text-medium-emphasis">
+                      تم اختيار {{ selectedListsCount }} من {{ totalListsCount }}
+                    </div>
+                  </div>
+                  <div class="d-flex flex-wrap gap-2 mb-3">
+                    <VBtn
+                      size="small"
+                      variant="tonal"
+                      @click="selectAllLists"
+                    >
+                      تحديد الكل
+                    </VBtn>
+                    <VBtn
+                      size="small"
+                      variant="outlined"
+                      @click="clearAllLists"
+                    >
+                      مسح الكل
+                    </VBtn>
+                  </div>
+                  <AppTextField
+                    v-model="listSearch"
+                    class="mb-3"
+                    placeholder="بحث في القوائم..."
+                    prepend-inner-icon="tabler-search"
+                    density="compact"
+                  />
+                  <div
+                    style="max-block-size: 220px; overflow-y: auto;"
+                    class="d-flex flex-column gap-1"
+                  >
+                    <div
+                      v-if="listsLoading"
+                      class="text-center pa-4"
+                    >
+                      جاري التحميل...
+                    </div>
+                    <VCheckbox
+                      v-for="list in filteredLists"
+                      :key="list.listId"
+                      :model-value="selectedListIds.includes(list.listId)"
+                      :label="list.listName + (list.cityName ? ` — ${list.cityName}` : '')"
+                      density="compact"
+                      hide-details
+                      @update:model-value="v => toggleList(list.listId, v)"
+                    />
+                    <div
+                      v-if="!listsLoading && filteredLists.length === 0"
+                      class="text-medium-emphasis pa-2"
+                    >
+                      لا توجد قوائم مطابقة
+                    </div>
+                  </div>
+                </VCard>
+              </VCol>
               <!-- File Input for Image -->
               <VCol cols="12">
                 <VFileInput
@@ -693,6 +850,73 @@ onMounted(() => {
                   prepend-inner-icon="tabler-category"
                   label="نوع المستخدم"
                 />
+              </VCol>
+              <VCol
+                v-if="isFollowerType"
+                cols="12"
+              >
+                <VCard
+                  variant="outlined"
+                  class="pa-4"
+                >
+                  <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
+                    <div class="text-h6">
+                      القوائم المسموح بها
+                    </div>
+                    <div class="text-body-2 text-medium-emphasis">
+                      تم اختيار {{ selectedListsCount }} من {{ totalListsCount }}
+                    </div>
+                  </div>
+                  <div class="d-flex flex-wrap gap-2 mb-3">
+                    <VBtn
+                      size="small"
+                      variant="tonal"
+                      @click="selectAllLists"
+                    >
+                      تحديد الكل
+                    </VBtn>
+                    <VBtn
+                      size="small"
+                      variant="outlined"
+                      @click="clearAllLists"
+                    >
+                      مسح الكل
+                    </VBtn>
+                  </div>
+                  <AppTextField
+                    v-model="listSearch"
+                    class="mb-3"
+                    placeholder="بحث في القوائم..."
+                    prepend-inner-icon="tabler-search"
+                    density="compact"
+                  />
+                  <div
+                    style="max-block-size: 220px; overflow-y: auto;"
+                    class="d-flex flex-column gap-1"
+                  >
+                    <div
+                      v-if="listsLoading"
+                      class="text-center pa-4"
+                    >
+                      جاري التحميل...
+                    </div>
+                    <VCheckbox
+                      v-for="list in filteredLists"
+                      :key="'edit-' + list.listId"
+                      :model-value="selectedListIds.includes(list.listId)"
+                      :label="list.listName + (list.cityName ? ` — ${list.cityName}` : '')"
+                      density="compact"
+                      hide-details
+                      @update:model-value="v => toggleList(list.listId, v)"
+                    />
+                    <div
+                      v-if="!listsLoading && filteredLists.length === 0"
+                      class="text-medium-emphasis pa-2"
+                    >
+                      لا توجد قوائم مطابقة
+                    </div>
+                  </div>
+                </VCard>
               </VCol>
               <!-- File Input for Image -->
               <VCol cols="12">

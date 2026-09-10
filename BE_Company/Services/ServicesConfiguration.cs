@@ -17,6 +17,7 @@ public static class ServicesConfiguration
         services.AddScoped<IExchangesItemsRepository, ExchangesItemsRepository>();
         services.AddScoped<IStoresRepository, StoresRepository>();
         services.AddScoped<IUsersRepository, UsersRepository>();
+        services.AddScoped<IFollowerUserListsRepository, FollowerUserListsRepository>();
         services.AddScoped<IItemsRepository, ItemsRepository>();
         services.AddScoped<ISuppliersRepository, SuppliersRepository>();
         services.AddScoped<IStatisticsAppRepository, StatisticsAppRepository>();

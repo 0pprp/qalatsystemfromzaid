@@ -6,6 +6,7 @@ import 'package:follower_application/services/follower_tracking_repository.dart'
 import 'package:follower_application/tracking/follower_shift_debug.dart';
 import 'package:follower_application/tracking/shift_tracking_controller.dart';
 import 'package:follower_application/tracking/work_shift.dart';
+import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/utils/Formatters.dart';
 import 'package:follower_application/utils/iraq_datetime.dart';
@@ -381,14 +382,13 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Scaffold(
+      child: AppSafeScaffold(
         backgroundColor: AppTheme.backgroundColor,
-        body: SafeArea(
-          child: RefreshIndicator(
+        body: RefreshIndicator(
             onRefresh: _loadFollow,
             color: AppTheme.primaryColor,
             child: ListView(
-              padding: const EdgeInsets.all(20),
+              padding: AppInsets.scrollPadding(context),
               children: [
                 Row(
                   children: [
@@ -515,6 +515,22 @@ class _HomePageState extends State<HomePage> {
                     child: CircularProgressIndicator(color: AppTheme.primaryColor),
                   ))
                 else ...[
+                  if (_lists.isEmpty)
+                    _card(
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Text(
+                          'لا توجد قوائم مخصصة لك حاليًا',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ),
+                    )
+                  else ...[
                   _card(
                     child: DropdownButtonFormField<int>(
                       value: _selectedChildId,
@@ -564,6 +580,8 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ],
                   ),
+                  ],
+                  if (_lists.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   _card(
                     child: Row(
@@ -680,6 +698,7 @@ class _HomePageState extends State<HomePage> {
                     )
                   else
                     ..._visibleCustomers.map(_customerCard),
+                  ],
                   const SizedBox(height: 20),
                   TextButton.icon(
                     onPressed: _logout,
@@ -692,7 +711,6 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
         ),
-      ),
     );
   }
 

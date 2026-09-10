@@ -81,12 +81,25 @@ namespace BE_Company.Sales.Services
         public const string ExistingCustomer = "ExistingCustomer";
         public const string EmployeeSubmitted = "EmployeeSubmitted";
         public const string Follower = "Follower";
+        public const string Delegate = "Delegate";
 
         public static bool IsEmployeeSubmitted(string? source) =>
             string.Equals(source, EmployeeSubmitted, StringComparison.OrdinalIgnoreCase);
 
         public static bool IsFollower(string? source) =>
             string.Equals(source, Follower, StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsDelegate(string? source) =>
+            string.Equals(source, Delegate, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static class SaleRequestTypes
+    {
+        public const string New = "New";
+        public const string Old = "Old";
+
+        public static string ArabicLabel(string? type) =>
+            string.Equals(type, Old, StringComparison.OrdinalIgnoreCase) ? "مبيع قديم" : "مبيع جديد";
     }
 
     public static class SalesLocationStatuses
