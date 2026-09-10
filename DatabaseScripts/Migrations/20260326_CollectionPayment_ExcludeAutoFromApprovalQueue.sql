@@ -1,6 +1,7 @@
 SET QUOTED_IDENTIFIER ON;
 SET ANSI_NULLS ON;
 GO
+
 -- Exclude auto-accepted collection payments from manual accountant approval queue.
 -- Harden Approve to ignore AutoPostEnabled=1 (HostedService / catch-up posts them).
 -- Safe to re-run.
@@ -14,12 +15,19 @@ CREATE PROC [dbo].[CustomersPaymentsRequest_GetAll]
     @DelegateID INT = NULL
 AS
 BEGIN
-    SELECT *
-    FROM View_CustomersPaymentsRequestFinal
+    SET NOCOUNT ON;
+
+    SELECT v.*
+    FROM dbo.View_CustomersPaymentsRequestFinal AS v
     WHERE
-        (@CustomerName IS NULL OR CustomerName LIKE N'%' + @CustomerName + N'%')
-        AND (@DelegateID IS NULL OR DelegateID = @DelegateID)
-        AND (ISNULL(AutoPostEnabled, 0) = 0)
+        (@CustomerName IS NULL OR v.CustomerName LIKE N'%' + @CustomerName + N'%')
+        AND (@DelegateID IS NULL OR v.DelegateID = @DelegateID)
+        AND NOT EXISTS (
+            SELECT 1
+            FROM dbo.CustomersPaymentsRequest AS cpr
+            WHERE cpr.CustomersPaymentsRequestID = v.CustomersPaymentsRequestID
+              AND ISNULL(cpr.AutoPostEnabled, 0) = 1
+        );
 END
 GO
 
@@ -33,17 +41,24 @@ CREATE PROCEDURE [dbo].[CustomersPaymentsRequest_Approve]
 AS
 BEGIN
     SET NOCOUNT ON;
-    DECLARE  @CustomerID INT,  @DateCreate DATETIME, @Amount FLOAT, @AmountHash FLOAT,  @AmountRemaining FLOAT, @AutoPost BIT;
+
+    DECLARE
+        @CustomerID INT,
+        @DateCreate DATETIME,
+        @Amount FLOAT,
+        @AmountHash FLOAT,
+        @AmountRemaining FLOAT,
+        @AutoPost BIT;
 
     SELECT
-        @CustomerID    = cpr.CustomerID,
-        @DateCreate    = cpr.PaymentDate,
-        @Amount        = cpr.Amount,
-        @AmountHash    = cpr.Amount / 1448.0,
+        @CustomerID = cpr.CustomerID,
+        @DateCreate = cpr.PaymentDate,
+        @Amount = cpr.Amount,
+        @AmountHash = cpr.Amount / 1448.0,
         @AmountRemaining = v.AmountRemaining,
         @AutoPost = ISNULL(cpr.AutoPostEnabled, 0)
-    FROM CustomersPaymentsRequest cpr
-    JOIN View_CustomersPaymentsRequestFinal v
+    FROM dbo.CustomersPaymentsRequest AS cpr
+    JOIN dbo.View_CustomersPaymentsRequestFinal AS v
         ON cpr.CustomersPaymentsRequestID = v.CustomersPaymentsRequestID
     WHERE cpr.CustomersPaymentsRequestID = @CustomersPaymentsRequestID;
 
@@ -52,14 +67,14 @@ BEGIN
 
     IF (@AmountRemaining > 0 AND @AmountRemaining >= @Amount)
     BEGIN
-        EXEC CustomersPayments_Create
+        EXEC dbo.CustomersPayments_Create
             @UserID = @UserCreateID,
             @CustomerID = @CustomerID,
             @DateCreate = @DateCreate,
             @Amount = @AmountHash;
-        DELETE FROM CustomersPaymentsRequest
+
+        DELETE FROM dbo.CustomersPaymentsRequest
         WHERE CustomersPaymentsRequestID = @CustomersPaymentsRequestID;
     END;
 END;
 GO
-
