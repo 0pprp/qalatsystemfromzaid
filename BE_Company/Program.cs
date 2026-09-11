@@ -8,6 +8,7 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpContextAccessor();
 builder.Services.RegisterRepositories();
 builder.Services.AddSalesManagementModule();
+builder.Services.AddScoped<ISharedCustomerNotesService, SharedCustomerNotesService>();
 builder.Services.AddScoped<ICollectionPaymentPostingService, CollectionPaymentPostingService>();
 builder.Services.AddHostedService<CollectionPaymentPostingHostedService>();
 builder.Services.ConfigureJwt(builder.Configuration);

@@ -9,11 +9,11 @@ BEGIN
         N.CustomerID,
         N.UserID,
         N.NoteText,
-        N.CreatedDate,
-        U.UserName,
+        CAST(COALESCE(N.CreatedAtUtc, N.CreatedDate) AS DATETIME) AS CreatedDate,
+        COALESCE(NULLIF(LTRIM(RTRIM(N.CreatedByName)), N''), U.UserName, N'—') AS UserName,
         U.UserType
-    FROM CustomerNotes N
-    INNER JOIN Users U ON U.UserID = N.UserID
+    FROM dbo.CustomerNotes N
+    LEFT JOIN dbo.Users U ON U.UserID = N.UserID
     WHERE N.CustomerID = @CustomerID
-    ORDER BY N.CreatedDate DESC;
+    ORDER BY COALESCE(N.CreatedAtUtc, N.CreatedDate) DESC;
 END

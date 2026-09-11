@@ -123,6 +123,10 @@ namespace BE_SalesEmployee.Controllers
         public Task<IActionResult> CustomerProfileById(string cityValue, int customerId, CancellationToken ct) =>
             OneAsync(cityValue, $"sales-manager/customers/{customerId}/profile", ct);
 
+        [HttpGet("customers/{cityValue}/{customerId:int}/notes")]
+        public Task<IActionResult> ListSharedCustomerNotes(string cityValue, int customerId, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/customers/{customerId}/notes", ct);
+
         [HttpPut("customers/{cityValue}/profile")]
         public async Task<IActionResult> UpdateCustomerProfile(string cityValue, [FromBody] JsonElement body, CancellationToken ct)
         {

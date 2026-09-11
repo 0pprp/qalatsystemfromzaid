@@ -325,6 +325,13 @@ export function customerProfileApiPath(city, { customerId, name, phone } = {}) {
     : `customers/${encodeURIComponent(city)}/profile?${params}`
 }
 
+export function customerSharedNotesApiPath(city, customerId) {
+  if (isDemo() || !isCentralSalesManager())
+    return `customers/${customerId}/notes`
+
+  return `customers/${encodeURIComponent(city)}/${customerId}/notes`
+}
+
 export function managerCustomerUpdatePath(city) {
   if (isDemo() || !isCentralSalesManager())
     return 'customers/profile'

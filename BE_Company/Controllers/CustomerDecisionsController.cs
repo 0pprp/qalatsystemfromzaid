@@ -1,5 +1,6 @@
 using BE_Company.DTO;
 using BE_Company.IRepository;
+using BE_Company.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -11,10 +12,14 @@ namespace BE_Company.Controllers
     public class CustomerDecisionsController : ControllerBase
     {
         private readonly ICustomerDecisionsRepository _repository;
+        private readonly ISharedCustomerNotesService _notes;
 
-        public CustomerDecisionsController(ICustomerDecisionsRepository repository)
+        public CustomerDecisionsController(
+            ICustomerDecisionsRepository repository,
+            ISharedCustomerNotesService notes)
         {
             _repository = repository;
+            _notes = notes;
         }
 
         private int? GetAuthenticatedUserId()
@@ -35,6 +40,12 @@ namespace BE_Company.Controllers
         {
             var userType = GetUserType();
             return userType == "محاسب رئيسي" || userType == "مدير فرع";
+        }
+
+        private bool CanReadNotes()
+        {
+            var userType = GetUserType();
+            return userType is "محاسب رئيسي" or "مدير مبيعات" or "مدير فرع";
         }
 
         private string GetUserType()
@@ -146,12 +157,26 @@ namespace BE_Company.Controllers
         }
 
         [HttpGet("Notes/{customerID}")]
-        public async Task<ActionResult<IEnumerable<CustomerNoteGetDTO>>> Notes(int customerID)
+        public async Task<IActionResult> Notes(int customerID, CancellationToken ct)
         {
             try
             {
-                var result = await _repository.Customers_GetCustomerNotes(customerID);
-                return Ok(result);
+                if (!CanReadNotes())
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مسموح بقراءة ملاحظات الزبون" });
+                }
+
+                var rows = await _notes.ListAsync(customerID, ct);
+                return Ok(rows.Select(n => new CustomerNoteGetDTO
+                {
+                    NoteID = n.NoteId,
+                    CustomerID = n.CustomerId,
+                    UserID = n.CreatedByUserId,
+                    NoteText = n.NoteText,
+                    CreatedDate = n.CreatedDate ?? n.CreatedAtUtc,
+                    UserName = n.CreatedByName,
+                    UserType = n.UserType,
+                }));
             }
             catch (Exception ex)
             {
@@ -160,7 +185,7 @@ namespace BE_Company.Controllers
         }
 
         [HttpPost("Notes")]
-        public async Task<ActionResult<CustomerNoteGetDTO?>> PostNote([FromBody] CustomerNotePostDTO dto)
+        public async Task<IActionResult> PostNote([FromBody] CustomerNotePostDTO dto, CancellationToken ct)
         {
             try
             {
@@ -173,13 +198,26 @@ namespace BE_Company.Controllers
                 {
                     return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مسموح بكتابة ملاحظة" });
                 }
-                if (dto.CustomerID == null || string.IsNullOrWhiteSpace(dto.NoteText))
+                if (dto.CustomerID == null)
                 {
                     return BadRequest(new { message = "يجب تحديد الزبون ونص الملاحظة" });
                 }
 
-                var result = await _repository.Customers_PostCustomerNote(dto.CustomerID, userID, dto.NoteText);
-                return Ok(result);
+                var saved = await _notes.AddAsync(dto.CustomerID.Value, dto.NoteText ?? "", userID, null, ct);
+                return Ok(new CustomerNoteGetDTO
+                {
+                    NoteID = saved.NoteId,
+                    CustomerID = saved.CustomerId,
+                    UserID = saved.CreatedByUserId,
+                    NoteText = saved.NoteText,
+                    CreatedDate = saved.CreatedDate ?? saved.CreatedAtUtc,
+                    UserName = saved.CreatedByName,
+                    UserType = saved.UserType,
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
             }
             catch (Exception ex)
             {

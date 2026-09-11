@@ -46,23 +46,23 @@ void main() {
     expect(find.text('زبون اختبار'), findsOneWidget);
     expect(find.text('ملف الزبون'), findsOneWidget);
 
-    await tester.scrollUntilVisible(find.text('الملاحظات'), 300);
+    await tester.scrollUntilVisible(find.text('ملاحظات الزبون'), 300);
     await tester.pumpAndSettle();
     expect(find.text('ملاحظة موجودة'), findsOneWidget);
     expect(find.textContaining('التاريخ:'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('adding customer note keeps profile open (no full rebuild wipe)', (tester) async {
+  testWidgets('shared customer notes section is read-only', (tester) async {
     await pumpProfile(tester);
 
-    await tester.scrollUntilVisible(find.byType(TextField), 400);
+    await tester.scrollUntilVisible(find.text('ملاحظات الزبون'), 400);
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'ملاحظة جديدة محلية');
-    await tester.pump();
-
+    expect(find.text('ملاحظات الزبون'), findsOneWidget);
+    expect(find.text('ملاحظة موجودة'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('حفظ الملاحظة'), findsNothing);
     expect(find.text('ملف الزبون'), findsOneWidget);
-    expect(find.byType(TextField), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

@@ -34,4 +34,21 @@ class IraqDate {
       return '';
     }
   }
+
+  static String formatIraqDateTime(dynamic value) {
+    if (value == null) return '';
+    final raw = value is DateTime ? value.toUtc().toIso8601String() : '$value'.trim();
+    if (raw.isEmpty) return '';
+    try {
+      final iraq = DateTime.parse(raw).toUtc().add(iraqOffset);
+      final y = iraq.year.toString().padLeft(4, '0');
+      final mo = iraq.month.toString().padLeft(2, '0');
+      final d = iraq.day.toString().padLeft(2, '0');
+      final h = iraq.hour.toString().padLeft(2, '0');
+      final mi = iraq.minute.toString().padLeft(2, '0');
+      return '$y-$mo-$d $h:$mi';
+    } catch (_) {
+      return raw;
+    }
+  }
 }

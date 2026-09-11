@@ -1,6 +1,7 @@
 using BE_Company.Sales.Authorization;
 using BE_Company.Sales.DTO;
 using BE_Company.Sales.Services;
+using BE_Company.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -22,6 +23,7 @@ namespace BE_Company.Sales.Controllers
         private readonly ISalesCustomerDocumentService _customerDocs;
         private readonly ISalesPurchaseService _purchases;
         private readonly ISalesExcelCustomerSearchService _excelSearch;
+        private readonly ISharedCustomerNotesService _sharedNotes;
 
         public SalesManagerController(
             SalesDevelopmentGuard guard,
@@ -34,7 +36,8 @@ namespace BE_Company.Sales.Controllers
             ISalesCompleteService complete,
             ISalesCustomerDocumentService customerDocs,
             ISalesPurchaseService purchases,
-            ISalesExcelCustomerSearchService excelSearch)
+            ISalesExcelCustomerSearchService excelSearch,
+            ISharedCustomerNotesService sharedNotes)
         {
             _guard = guard;
             _identity = identity;
@@ -47,6 +50,7 @@ namespace BE_Company.Sales.Controllers
             _customerDocs = customerDocs;
             _purchases = purchases;
             _excelSearch = excelSearch;
+            _sharedNotes = sharedNotes;
         }
 
         [HttpGet("dashboard")]
@@ -311,6 +315,30 @@ namespace BE_Company.Sales.Controllers
             {
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
+        }
+
+        [HttpGet("customers/{customerId:int}/notes")]
+        public async Task<IActionResult> ListSharedCustomerNotes(int customerId, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            if (customerId <= 0)
+            {
+                return BadRequest(new { message = "الزبون مطلوب" });
+            }
+
+            var rows = await _sharedNotes.ListAsync(customerId, ct);
+            return Ok(rows.Select(n => new
+            {
+                noteId = n.NoteId,
+                customerId = n.CustomerId,
+                noteText = n.NoteText,
+                createdByUserId = n.CreatedByUserId,
+                createdByName = n.CreatedByName,
+                createdAtUtc = n.CreatedAtUtc,
+                userName = n.CreatedByName,
+                createdDate = n.CreatedDate ?? n.CreatedAtUtc,
+            }));
         }
 
         [HttpPost("customers/notes")]

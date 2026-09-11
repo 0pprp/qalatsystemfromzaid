@@ -57,13 +57,13 @@ const typeColor = type => {
 
 const timeline = computed(() => {
   const noteItems = (notes.value || [])
-    .filter(n => !isAutoDecisionNote(n.noteText))
+    .filter(n => !isAutoDecisionNote(n.noteText || n.NoteText))
     .map(n => ({
       kind: 'note',
-      date: n.createdDate,
-      userName: n.userName,
-      userType: n.userType,
-      text: n.noteText,
+      date: n.createdAtUtc || n.createdDate || n.CreatedDate,
+      userName: n.createdByName || n.userName || n.UserName,
+      userType: n.userType || n.UserType,
+      text: n.noteText || n.NoteText,
     }))
   const decisionItems = (decisions.value || []).map(d => ({
     kind: 'decision',

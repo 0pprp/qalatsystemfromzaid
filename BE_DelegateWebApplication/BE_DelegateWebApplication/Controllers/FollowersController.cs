@@ -14,6 +14,7 @@ namespace BE_DelegateWebApplication.Controllers
         private readonly ICustomersRepository _customersRepository;
         private readonly IFollowerActionsRepository _followerActions;
         private readonly IFollowerIdentityService _followerIdentity;
+        private readonly ISharedCustomerNotesService _sharedNotes;
         private readonly IWebHostEnvironment _env;
         private readonly IConfiguration _configuration;
         private readonly ILogger<FollowersController> _logger;
@@ -23,6 +24,7 @@ namespace BE_DelegateWebApplication.Controllers
             ICustomersRepository customersRepository,
             IFollowerActionsRepository followerActions,
             IFollowerIdentityService followerIdentity,
+            ISharedCustomerNotesService sharedNotes,
             IWebHostEnvironment env,
             IConfiguration configuration,
             ILogger<FollowersController> logger)
@@ -31,6 +33,7 @@ namespace BE_DelegateWebApplication.Controllers
             _customersRepository = customersRepository;
             _followerActions = followerActions;
             _followerIdentity = followerIdentity;
+            _sharedNotes = sharedNotes;
             _env = env;
             _configuration = configuration;
             _logger = logger;
@@ -118,7 +121,17 @@ namespace BE_DelegateWebApplication.Controllers
                 return NotFound(new { message = "الزبون غير موجود" });
             }
 
-            var notes = await _followerActions.ListCustomerNotesAsync(customerId, father.DelegateId, ct);
+            var sharedNotes = await _sharedNotes.ListAsync(customerId, ct);
+            var notes = sharedNotes.Select(n => new FollowerCustomerNoteDTO
+            {
+                Id = n.NoteId,
+                CustomerId = n.CustomerId,
+                NoteText = n.NoteText,
+                CreatedByUserId = n.CreatedByUserId ?? 0,
+                CreatedByName = n.CreatedByName,
+                CreatedByRole = "Shared",
+                CreatedAtUtc = n.CreatedAtUtc
+            }).ToList();
             var webRoot = _env.WebRootPath;
             var imagesBase = ImagesBaseUrl();
             var apiRoot = PublicApiRoot();
@@ -195,7 +208,7 @@ namespace BE_DelegateWebApplication.Controllers
                 ItemsNames = info.ItemsNames,
                 DateSaleDevice = info.DateSaleDevice,
                 CustomerSystemNotes = info.Notes,
-                Notes = notes.ToList(),
+                Notes = notes,
                 Images = images
             };
             return Ok(profile);
@@ -310,7 +323,8 @@ namespace BE_DelegateWebApplication.Controllers
                 return denied;
             }
 
-            var notes = await _followerActions.ListCustomerNotesAsync(customerId, father.DelegateId, ct);
+            var notes = (await _sharedNotes.ListAsync(customerId, ct))
+                .Select(SharedCustomerNotesMapper.ToApi);
             return Ok(notes);
         }
 
@@ -320,35 +334,11 @@ namespace BE_DelegateWebApplication.Controllers
             [FromBody] FollowerNoteCreateDTO body,
             CancellationToken ct)
         {
-            var father = await AuthenticateFollower(body.AsyncId);
-            if (father == null)
-            {
-                return Unauthorized(new { message = "رمز المتابع غير صحيح" });
-            }
-
-            if (string.IsNullOrWhiteSpace(body.NoteText))
-            {
-                return BadRequest(new { message = "نص الملاحظة مطلوب" });
-            }
-
-            var denied = await EnsureCustomerInScope(father.DelegateId, body.ListId, customerId, ct);
-            if (denied != null)
-            {
-                return denied;
-            }
-
-            _ = FollowerAuthorization.AcceptClientCreatedByUserId(body.CreatedByUserId, father.DelegateId);
-
-            var saved = await _followerActions.AddCustomerNoteAsync(new FollowerCustomerNoteDTO
-            {
-                CustomerId = customerId,
-                NoteText = body.NoteText.Trim(),
-                CreatedByUserId = FollowerAuthorization.ResolveCreatedByUserId(father.DelegateId, body.CreatedByUserId),
-                CreatedByName = father.DelegateName?.Trim() is { Length: > 0 } n ? n : "متابع",
-                CreatedByRole = FollowerAuthorization.RoleFollower,
-                CreatedAtUtc = DateTime.UtcNow
-            }, ct);
-            return Ok(saved);
+            // Shared customer notes are read-only for followers (same dbo.CustomerNotes record).
+            _ = customerId;
+            _ = body;
+            _ = ct;
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "المتابع يقرأ ملاحظات الزبون فقط" });
         }
 
         [HttpGet("Delegates/{delegateId:int}/notes")]

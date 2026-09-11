@@ -30,10 +30,8 @@ class CustomerProfilePage extends StatefulWidget {
 }
 
 class _CustomerProfilePageState extends State<CustomerProfilePage> {
-  final _noteController = TextEditingController();
   Map<String, dynamic>? _profile;
   bool _loading = true;
-  bool _saving = false;
   String? _error;
   int? _httpStatus;
   String _apiBase = '';
@@ -51,12 +49,6 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
     } else {
       _loadProfile();
     }
-  }
-
-  @override
-  void dispose() {
-    _noteController.dispose();
-    super.dispose();
   }
 
   Future<Map<String, String>> _session() async {
@@ -141,57 +133,6 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
           _error = 'تعذر تحميل بروفايل الزبون${_httpStatus != null ? ' (HTTP $_httpStatus)' : ''}';
         }
       });
-    }
-  }
-
-  Future<void> _saveNote() async {
-    final text = _noteController.text.trim();
-    if (text.isEmpty || _saving || _customerId <= 0) return;
-    setState(() => _saving = true);
-    try {
-      final session = await _session();
-      final uri = Uri.parse('${session['link']}Followers/Customers/$_customerId/notes');
-      final response = await http
-          .post(
-            uri,
-            headers: {'Content-Type': 'application/json'},
-            body: json.encode({
-              'asyncId': session['asyncId'],
-              'listId': widget.listId,
-              'noteText': text,
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
-      if (!mounted) return;
-      if (response.statusCode != 200) {
-        throw Exception(response.statusCode);
-      }
-      Map<String, dynamic>? saved;
-      try {
-        final decoded = json.decode(response.body);
-        if (decoded is Map) saved = Map<String, dynamic>.from(decoded);
-      } catch (_) {}
-      _noteController.clear();
-      if (saved != null) {
-        setState(() {
-          final notes = List<dynamic>.from((_profile?['notes'] ?? _profile?['Notes'] ?? []) as List? ?? []);
-          notes.insert(0, saved);
-          _profile = {
-            ...?_profile,
-            'notes': notes,
-            'Notes': notes,
-          };
-        });
-      }
-      await _loadProfile(silent: true);
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر حفظ الملاحظة', style: TextStyle(fontFamily: 'Cairo'))),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -300,25 +241,9 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
                           _placeholder('لا توجد صور للزبون')
                         else
                           ...images.map(_documentTile),
-                        const SizedBox(height: 24),
-                        const Text('الملاحظات', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16)),
+                        const SizedBox(height: 16),
+                        const Text('ملاحظات الزبون', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16)),
                         const SizedBox(height: 8),
-                        TextField(
-                          controller: _noteController,
-                          maxLines: 3,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            hintText: 'أضف ملاحظة جديدة...',
-                            hintStyle: TextStyle(fontFamily: 'Cairo'),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        ElevatedButton(
-                          onPressed: _saving ? null : _saveNote,
-                          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryColor),
-                          child: Text(_saving ? '...' : 'حفظ الملاحظة', style: const TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-                        ),
-                        const SizedBox(height: 12),
                         if (notes.isEmpty)
                           const Text('لا توجد ملاحظات', style: TextStyle(fontFamily: 'Cairo', color: Colors.grey))
                         else
@@ -334,7 +259,6 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
                                     Text('${n['noteText'] ?? n['NoteText'] ?? ''}', style: const TextStyle(fontFamily: 'Cairo')),
                                     const SizedBox(height: 8),
                                     Text('الكاتب: ${n['createdByName'] ?? n['CreatedByName'] ?? ''}', style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey)),
-                                    const Text('الصفة: متابع', style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey)),
                                     Text('التاريخ: ${_iraqClock(n['createdAtUtc'] ?? n['CreatedAtUtc'])}', style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey)),
                                   ],
                                 ),

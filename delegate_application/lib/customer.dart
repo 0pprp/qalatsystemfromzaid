@@ -19,6 +19,7 @@ import 'package:delegate_application/services/payment_sync_status.dart';
 import 'package:delegate_application/services/payment_validation.dart';
 import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/utils/Formatters.dart';
+import 'package:delegate_application/utils/iraq_date.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
@@ -1459,12 +1460,118 @@ class ClientCard extends StatelessWidget {
       Map<String, dynamic> customerData = await _fetchCustomerData(customerId);
       if (!context.mounted) return;
 
+      final prefs = await SharedPreferences.getInstance();
+      final linkDelegate = prefs.getString('LinkDelegate') ?? '';
+      final asyncId = prefs.getString('AsyncId') ?? '';
+      var notes = <Map<String, dynamic>>[];
+      try {
+        final notesRes = await http
+            .get(Uri.parse(
+                '${linkDelegate}customers/$customerId/notes?asyncId=${Uri.encodeQueryComponent(asyncId)}'))
+            .timeout(const Duration(seconds: 15));
+        if (notesRes.statusCode == 200) {
+          final decoded = json.decode(notesRes.body);
+          if (decoded is List) {
+            notes = decoded
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          }
+        }
+      } catch (_) {}
+
+      if (!context.mounted) return;
+
       showDialog(
         context: context,
         builder: (BuildContext context) {
           return Directionality(
             textDirection: TextDirection.rtl,
-            child: Dialog(
+            child: StatefulBuilder(
+              builder: (context, setDialogState) {
+                Future<void> addNote() async {
+                  final controller = TextEditingController();
+                  final ok = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => Directionality(
+                      textDirection: TextDirection.rtl,
+                      child: AlertDialog(
+                        title: const Text('إضافة ملاحظة',
+                            style: TextStyle(fontFamily: 'Cairo')),
+                        content: TextField(
+                          controller: controller,
+                          maxLines: 4,
+                          maxLength: 2000,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            hintText: 'نص الملاحظة',
+                            hintStyle: TextStyle(fontFamily: 'Cairo'),
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('إلغاء',
+                                style: TextStyle(fontFamily: 'Cairo')),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('حفظ',
+                                style: TextStyle(fontFamily: 'Cairo')),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                  if (ok != true) return;
+                  final text = controller.text.trim();
+                  if (text.isEmpty) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('نص الملاحظة مطلوب',
+                                style: TextStyle(fontFamily: 'Cairo'))),
+                      );
+                    }
+                    return;
+                  }
+                  try {
+                    final res = await http
+                        .post(
+                          Uri.parse(
+                              '${linkDelegate}customers/$customerId/notes'),
+                          headers: {'Content-Type': 'application/json'},
+                          body: json.encode({
+                            'asyncId': asyncId,
+                            'noteText': text,
+                          }),
+                        )
+                        .timeout(const Duration(seconds: 20));
+                    if (res.statusCode != 200) {
+                      throw Exception(res.statusCode);
+                    }
+                    Map<String, dynamic>? row;
+                    try {
+                      final decoded = json.decode(res.body);
+                      if (decoded is Map) {
+                        row = Map<String, dynamic>.from(decoded);
+                      }
+                    } catch (_) {}
+                    setDialogState(() {
+                      if (row != null) notes = [row, ...notes];
+                    });
+                  } catch (_) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('تعذر حفظ الملاحظة',
+                                style: TextStyle(fontFamily: 'Cairo'))),
+                      );
+                    }
+                  }
+                }
+
+                return Dialog(
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20)),
               insetPadding: const EdgeInsets.all(15),
@@ -1573,6 +1680,74 @@ class ClientCard extends StatelessWidget {
                                         client.lastPaymentDate)
                                     : 'لا يوجد',
                                 context),
+
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'ملاحظات الزبون',
+                                    style: TextStyle(
+                                      fontFamily: 'Cairo',
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ),
+                                TextButton.icon(
+                                  onPressed: addNote,
+                                  icon: const Icon(Icons.add, size: 18),
+                                  label: const Text('+ إضافة ملاحظة',
+                                      style: TextStyle(fontFamily: 'Cairo')),
+                                ),
+                              ],
+                            ),
+                            if (notes.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: Text('لا توجد ملاحظات',
+                                    style: TextStyle(
+                                        fontFamily: 'Cairo',
+                                        color: Colors.grey)),
+                              )
+                            else
+                              ...notes.map((n) {
+                                final text =
+                                    '${n['noteText'] ?? n['NoteText'] ?? ''}';
+                                final author =
+                                    '${n['createdByName'] ?? n['CreatedByName'] ?? '—'}';
+                                final at = n['createdAtUtc'] ??
+                                    n['CreatedAtUtc'] ??
+                                    n['createdDate'];
+                                return Card(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(text,
+                                            style: const TextStyle(
+                                                fontFamily: 'Cairo')),
+                                        const SizedBox(height: 6),
+                                        Text('الكاتب: $author',
+                                            style: const TextStyle(
+                                                fontFamily: 'Cairo',
+                                                fontSize: 12,
+                                                color: Colors.grey)),
+                                        Text(
+                                          'التاريخ: ${IraqDate.formatIraqDateTime(at)}',
+                                          style: const TextStyle(
+                                              fontFamily: 'Cairo',
+                                              fontSize: 12,
+                                              color: Colors.grey),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }),
 
                             const SizedBox(height: 20),
                             Row(
@@ -1701,6 +1876,8 @@ class ClientCard extends StatelessWidget {
                   ],
                 ),
               ),
+            );
+              },
             ),
           );
         },

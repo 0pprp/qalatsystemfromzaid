@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   customerProfileApiPath,
+  customerSharedNotesApiPath,
   displayCityName,
   managerCustomerDocumentDeletePath,
   managerCustomerDocumentFilePath,
@@ -28,6 +29,7 @@ const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const profile = ref(null)
+const sharedNotes = ref([])
 const shopUrls = ref({})
 const kycUrls = ref({})
 const kycOpen = ref(false)
@@ -125,6 +127,7 @@ async function load() {
   const city = cityValue.value
   if (!city && !customerId.value && !customerName.value && !customerPhone.value) {
     profile.value = null
+    sharedNotes.value = []
 
     return
   }
@@ -137,13 +140,30 @@ async function load() {
     }))
     await loadShopImages()
     await loadCustomerDocuments()
+    await loadSharedNotes()
   }
   catch (err) {
     profile.value = null
+    sharedNotes.value = []
     toast.error(err?.response?.data?.message || 'تعذر فتح بروفايل الزبون')
   }
   finally {
     loading.value = false
+  }
+}
+
+async function loadSharedNotes() {
+  sharedNotes.value = []
+  const id = pick(profile.value, 'customerId', 'CustomerId') || customerId.value
+  const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
+  if (!id)
+    return
+  try {
+    const rows = await smGet(customerSharedNotesApiPath(city, id))
+    sharedNotes.value = Array.isArray(rows) ? rows : []
+  }
+  catch {
+    sharedNotes.value = []
   }
 }
 
@@ -431,6 +451,33 @@ onUnmounted(() => {
             القائمة/المندوب: {{ pick(profile, 'delegateName', 'DelegateName', 'customerListName', 'CustomerListName') || '—' }}
           </VCol>
         </VRow>
+      </VCard>
+
+      <VCard class="mb-6 pa-6">
+        <h5 class="mb-4">
+          ملاحظات الزبون
+        </h5>
+        <div
+          v-if="!sharedNotes.length"
+          class="text-medium-emphasis"
+        >
+          لا توجد ملاحظات.
+        </div>
+        <div
+          v-for="(note, idx) in sharedNotes"
+          :key="pick(note, 'noteId', 'NoteId', 'noteID') || idx"
+          class="mb-3 pa-3"
+          style="border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: 8px;"
+        >
+          <div class="mb-2">
+            {{ pick(note, 'noteText', 'NoteText') || '—' }}
+          </div>
+          <div class="text-caption text-medium-emphasis">
+            الكاتب: {{ pick(note, 'createdByName', 'CreatedByName', 'userName', 'UserName') || '—' }}
+            —
+            {{ formatIraqDate(pick(note, 'createdAtUtc', 'CreatedAtUtc', 'createdDate', 'CreatedDate')) }}
+          </div>
+        </div>
       </VCard>
 
       <VCard class="mb-6 pa-6">
