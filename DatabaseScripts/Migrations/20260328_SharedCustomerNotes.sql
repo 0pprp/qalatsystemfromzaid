@@ -35,6 +35,7 @@ BEGIN
     ALTER TABLE dbo.CustomerNotes WITH NOCHECK
     ADD CONSTRAINT FK_CustomerNotes_Users FOREIGN KEY (UserID) REFERENCES dbo.Users (UserID);
 END
+GO
 
 UPDATE dbo.CustomerNotes
 SET CreatedAtUtc = CAST(CreatedDate AS DATETIME2)
