@@ -5,10 +5,14 @@ import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/customer_profile_page.dart';
 import 'package:follower_application/follower_sales_request_page.dart';
 import 'package:follower_application/services/follower_tracking_repository.dart';
+import 'package:follower_application/start_shift_page.dart';
+import 'package:follower_application/tracking/shift_gate_observer.dart';
 import 'package:follower_application/tracking/shift_tracking_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
+
+final GlobalKey<NavigatorState> followerNavigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,10 +42,13 @@ class MyApp extends StatelessWidget {
       builder: (_, ThemeMode currentMode, __) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
+          navigatorKey: followerNavigatorKey,
+          navigatorObservers: [ShiftGateObserver()],
           initialRoute: '/',
           routes: {
             '/': (context) => const WelcomePage(),
             '/Login': (context) => const Login(),
+            '/StartShift': (context) => const StartShiftPage(),
             '/HomePage': (context) => const HomePage(),
             '/CustomerProfile': (context) {
               final args = ModalRoute.of(context)!.settings.arguments as Map;
@@ -50,7 +57,8 @@ class MyApp extends StatelessWidget {
                 listId: int.tryParse('${args['listId'] ?? 0}') ?? 0,
               );
             },
-            '/FollowerSalesRequest': (context) => const FollowerSalesRequestPage(),
+            '/FollowerSalesRequest': (context) =>
+                const FollowerSalesRequestPage(),
           },
           theme: ThemeData(fontFamily: 'Cairo', brightness: Brightness.light),
           darkTheme:

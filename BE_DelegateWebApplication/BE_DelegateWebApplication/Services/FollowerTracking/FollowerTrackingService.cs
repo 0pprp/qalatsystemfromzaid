@@ -250,8 +250,11 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
             await _repo.InsertEventAsync(follower.UserId, shiftId, eventType, FollowerIraqTime.UtcNow, null, ct);
         }
 
-        public Task<IReadOnlyList<FollowerLiveLocationDto>> ListLiveAsync(CancellationToken ct) =>
-            _repo.ListLiveAsync(ct);
+        public async Task<IReadOnlyList<FollowerLiveLocationDto>> ListLiveAsync(CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            return await _repo.ListLiveAsync(ct);
+        }
 
         public async Task<(FollowerShiftDto? Shift, IReadOnlyList<FollowerRoutePointDto> Points)> GetRouteAsync(
             int followerUserId, DateTime dateIraq, CancellationToken ct)
@@ -268,7 +271,18 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
         public async Task<IReadOnlyList<object>> ListFollowersAsync(CancellationToken ct)
         {
             var users = await _identity.ListActiveAsync(ct);
-            var live = await _repo.ListLiveAsync(ct);
+            IReadOnlyList<FollowerLiveLocationDto> live = Array.Empty<FollowerLiveLocationDto>();
+            try
+            {
+                await _repo.EnsureSchemaAsync(ct);
+                live = await _repo.ListLiveAsync(ct);
+            }
+            catch
+            {
+                // Missing GPS tables / empty live must not break follower directory.
+                live = Array.Empty<FollowerLiveLocationDto>();
+            }
+
             var liveMap = live.ToDictionary(x => x.FollowerId, x => x);
             return users.Select(u =>
             {

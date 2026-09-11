@@ -39,6 +39,8 @@ class _HomePageState extends State<HomePage> {
   int _selectedIndex = 2; // Default to Home
   final GlobalKey<TodayPaymentsPageState> _todayKey =
       GlobalKey<TodayPaymentsPageState>();
+  final GlobalKey<CustomerPageState> _customerKey =
+      GlobalKey<CustomerPageState>();
 
   @override
   void initState() {
@@ -49,6 +51,9 @@ class _HomePageState extends State<HomePage> {
   Future<void> _initializeData() async {
     await _checkAndNavigate();
     await DelegateDataRefreshService.instance.refreshIfPossible();
+    // Customer tab may have loaded empty SelectDelegate during IndexedStack build.
+    await _customerKey.currentState
+        ?.reloadLists(attemptNetworkRefreshIfEmpty: false);
     await fetchData();
   }
 
@@ -194,6 +199,11 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _selectedIndex = index;
     });
+    if (index == 1) {
+      // IndexedStack may have created Customer before SelectDelegate was filled.
+      _customerKey.currentState
+          ?.reloadLists(attemptNetworkRefreshIfEmpty: true);
+    }
     if (index == 2) {
       fetchData();
     }
@@ -331,7 +341,7 @@ class _HomePageState extends State<HomePage> {
           index: _selectedIndex,
           children: [
             const AllSale(embedded: true),
-            const Customer(embedded: true),
+            Customer(key: _customerKey, embedded: true),
             _buildHomeDashboard(),
             TodayPaymentsPage(key: _todayKey, embedded: true),
           ],

@@ -567,7 +567,7 @@ class LocationForegroundService : Service() {
             if (point.hasSpeed()) body.put("speed", point.speed.toDouble())
             if (point.hasBearing()) body.put("heading", point.bearing.toDouble())
             body.put("capturedAtUtc", utcIso(point.time.takeIf { it > 0 } ?: System.currentTimeMillis()))
-            val url = followerUrl(base, "/Followers/location/live", auth)
+            val url = followerUrl(base, "/Followers/locations/live", auth)
             log("FOLLOWER_LIVE_UPLOAD_START url=$url lat=${point.latitude} lng=${point.longitude}")
             val conn = url.openConnection() as java.net.HttpURLConnection
             try {
@@ -696,7 +696,7 @@ class LocationForegroundService : Service() {
             val body = JSONObject()
             body.put("shiftId", sid)
             body.put("points", points)
-            val url = followerUrl(base, "/Followers/location/batch", auth)
+            val url = followerUrl(base, "/Followers/locations/batch", auth)
             log("FOLLOWER_ROUTE_UPLOAD_START count=${points.length()} url=$url")
             val conn = url.openConnection() as java.net.HttpURLConnection
             try {

@@ -39,7 +39,7 @@ class ApiFollowerTrackingRepository implements FollowerTrackingRepository {
   @override
   Future<LocationBatchResult> uploadLocationBatch(
       int shiftId, List<LocalLocationPoint> points) async {
-    final raw = await FollowerTrackingApi.post('Followers/location/batch', body: {
+    final raw = await FollowerTrackingApi.post('Followers/locations/batch', body: {
       'shiftId': shiftId,
       'points': points.map((e) => e.toBatchJson()).toList(),
     });

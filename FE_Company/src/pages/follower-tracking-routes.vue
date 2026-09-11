@@ -233,8 +233,14 @@ async function loadLocations() {
       timeLabel: formatIraqClock(point.t),
     }))
 
-    if (!points.value.length)
-      emptyMessage.value = 'لا توجد نقاط موقع مسجلة لهذا اليوم'
+    if (!points.value.length) {
+      const hasShiftFlag = !!(payload?.hasShift ?? payload?.HasShift)
+      const serverMsg = payload?.message || payload?.Message || ''
+      if (hasShiftFlag === false || !shift)
+        emptyMessage.value = serverMsg || 'لا يوجد دوام مسجل لهذا التاريخ'
+      else
+        emptyMessage.value = serverMsg || 'لا توجد نقاط موقع لهذا التاريخ'
+    }
 
     if (!await ensureMap()) {
       toast.error('مفتاح الخريطة غير مهيأ')

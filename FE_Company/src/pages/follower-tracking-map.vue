@@ -4,6 +4,7 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import {
   followerRowKey,
+  ftGetFollowers,
   ftGetLiveLocations,
   locationStatusLabel,
   shiftStatusLabel,
@@ -94,15 +95,40 @@ function syncMarkers(list) {
 }
 
 async function load() {
-  const latest = (await ftGetLiveLocations())
-    .filter(e => e.lastLatitude != null && e.lastLongitude != null)
+  // Directory always from Users; live GPS is enrichment only.
+  const directory = await ftGetFollowers()
+  let live = []
+  try {
+    live = await ftGetLiveLocations()
+  }
+  catch {
+    live = []
+  }
+  const liveById = new Map(live.map(row => [followerRowKey(row), row]))
+  const merged = directory.map(row => {
+    const key = followerRowKey(row)
+    const liveRow = liveById.get(key)
+    if (!liveRow) {
+      return {
+        ...row,
+        locationStatus: row.hasActiveShift ? 'NoLocation' : 'NoShift',
+        shiftStatus: row.hasActiveShift ? 'Active' : 'Closed',
+        lastLatitude: row.lastLatitude ?? null,
+        lastLongitude: row.lastLongitude ?? null,
+        lastLocationAt: row.lastUpdatedAtUtc ?? null,
+      }
+    }
 
-  followers.value = latest
+    return { ...row, ...liveRow }
+  })
+
+  followers.value = merged
+  const withCoords = merged.filter(e => e.lastLatitude != null && e.lastLongitude != null)
   if (selected.value) {
-    const next = latest.find(e => followerRowKey(e) === followerRowKey(selected.value))
+    const next = merged.find(e => followerRowKey(e) === followerRowKey(selected.value))
     selected.value = next || null
   }
-  syncMarkers(latest)
+  syncMarkers(withCoords)
 }
 
 onMounted(async () => {

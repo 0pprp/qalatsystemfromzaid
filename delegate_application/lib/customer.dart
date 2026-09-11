@@ -12,6 +12,7 @@ import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
 import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:delegate_application/services/payment_sync_status.dart';
@@ -28,10 +29,12 @@ class Customer extends StatefulWidget {
   final bool embedded;
 
   @override
-  State<Customer> createState() => _CustomerState();
+  CustomerPageState createState() => CustomerPageState();
 }
 
-class _CustomerState extends State<Customer> {
+enum _ListsLoadState { loading, ready, empty, error }
+
+class CustomerPageState extends State<Customer> {
   // late Database _db;
   List<Map<String, dynamic>> representatives = [];
   List<Client> clients = [];
@@ -44,6 +47,8 @@ class _CustomerState extends State<Customer> {
 
   bool isButtonDisabled = false;
   String customerType = 'العملاء المستمرين';
+  _ListsLoadState _listsState = _ListsLoadState.loading;
+  bool _listsRetrying = false;
 
   bool isContinuous(String? lastPaymentDate, String? dateSaleDevice) {
     bool isLastPaymentRecent = false;
@@ -73,10 +78,23 @@ class _CustomerState extends State<Customer> {
   @override
   void initState() {
     super.initState();
-    // _initDatabase();
+    DelegateDataRefreshService.instance.dataRevision
+        .addListener(_onMasterDataRevised);
     _loadInitialData();
     _checkAndNavigate();
     _loadSettings();
+  }
+
+  @override
+  void dispose() {
+    DelegateDataRefreshService.instance.dataRevision
+        .removeListener(_onMasterDataRevised);
+    super.dispose();
+  }
+
+  void _onMasterDataRevised() {
+    // IndexedStack creates this page early; reload when refresh fills SelectDelegate.
+    reloadLists(attemptNetworkRefreshIfEmpty: false);
   }
 
   Future<void> _loadSettings() async {
@@ -108,8 +126,67 @@ class _CustomerState extends State<Customer> {
   }
 
   Future<void> _loadInitialData() async {
-    await _loadRepresentatives();
+    await reloadLists(attemptNetworkRefreshIfEmpty: true);
     await loadDateWeek();
+  }
+
+  /// Public so HomePage IndexedStack can force reload when the Customers tab opens.
+  Future<void> reloadLists({bool attemptNetworkRefreshIfEmpty = true}) async {
+    if (!mounted) return;
+    setState(() {
+      _listsState = _ListsLoadState.loading;
+    });
+
+    try {
+      var reps = await _querySelectDelegates();
+      if (reps.isEmpty && attemptNetworkRefreshIfEmpty) {
+        // Do not clear cache on network failure — refresh only replaces on success.
+        await DelegateDataRefreshService.instance.refreshIfPossible();
+        reps = await _querySelectDelegates();
+      }
+
+      if (!mounted) return;
+      setState(() {
+        representatives = reps;
+        if (reps.isEmpty) {
+          _listsState = _ListsLoadState.empty;
+          selectedRepresentative = null;
+        } else {
+          _listsState = _ListsLoadState.ready;
+          final stillValid = selectedRepresentative != null &&
+              reps.any((r) =>
+                  r['DelegateId'].toString() == selectedRepresentative);
+          if (!stillValid) {
+            selectedRepresentative = null;
+          }
+        }
+      });
+      assert(() {
+        debugPrint('SelectDelegate local count=${reps.length}');
+        return true;
+      }());
+    } catch (e, st) {
+      debugPrint('reloadLists failed: $e\n$st');
+      if (!mounted) return;
+      setState(() {
+        _listsState = _ListsLoadState.error;
+      });
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _querySelectDelegates() async {
+    final db = await DatabaseHelper().database;
+    return db.query('SelectDelegate');
+  }
+
+  Future<void> _retryLoadLists() async {
+    setState(() => _listsRetrying = true);
+    try {
+      await DelegateDataRefreshService.instance.refreshIfPossible();
+      await reloadLists(attemptNetworkRefreshIfEmpty: false);
+    } finally {
+      if (mounted) setState(() => _listsRetrying = false);
+    }
   }
 
   // Load the data from the DateWeek table into the lastSevenDays list
@@ -180,15 +257,6 @@ class _CustomerState extends State<Customer> {
   }
 
   List<String> lastSevenDays = [];
-
-  // تحميل المندوبين من جدول SelectDelegate
-  Future<void> _loadRepresentatives() async {
-    final db = await DatabaseHelper().database;
-    final List<Map<String, dynamic>> reps = await db.query('SelectDelegate');
-    setState(() {
-      representatives = reps;
-    });
-  }
 
   // تحميل العملاء بناءً على المندوب المختار
   Future<void> _loadClients(int delegateId) async {
@@ -1018,6 +1086,45 @@ class _CustomerState extends State<Customer> {
     );
   }
 
+  Widget _buildListsMessage({
+    required String message,
+    required bool showRetry,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        children: [
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontFamily: 'Cairo',
+              color: Colors.white,
+              fontSize: 14,
+            ),
+          ),
+          if (showRetry)
+            TextButton(
+              onPressed: _listsRetrying ? null : _retryLoadLists,
+              child: const Text(
+                'إعادة المحاولة',
+                style: TextStyle(
+                  fontFamily: 'Cairo',
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -1046,7 +1153,32 @@ class _CustomerState extends State<Customer> {
               ),
               child: Column(
                 children: [
-                  DropdownButtonFormField<String>(
+                  if (_listsState == _ListsLoadState.loading || _listsRetrying)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    )
+                  else if (_listsState == _ListsLoadState.error)
+                    _buildListsMessage(
+                      message: 'تعذر تحميل القوائم',
+                      showRetry: true,
+                    )
+                  else if (_listsState == _ListsLoadState.empty)
+                    _buildListsMessage(
+                      message: 'لا توجد قوائم متاحة',
+                      showRetry: true,
+                    )
+                  else
+                    DropdownButtonFormField<String>(
                     decoration: InputDecoration(
                       filled: true,
                       fillColor: Theme.of(context).cardColor,

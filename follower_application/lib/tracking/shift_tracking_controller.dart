@@ -273,6 +273,11 @@ class ShiftTrackingController {
     _cutoffTimer?.cancel();
     await _netSub?.cancel();
     _netSub = null;
+
+    // 1) Backend end first (source of truth).
+    await _repo.endShift();
+
+    // 2) Stop GPS / foreground tracking.
     try {
       await _flushThenStopNative();
     } catch (_) {
@@ -280,10 +285,8 @@ class ShiftTrackingController {
         await _stopNative();
       } catch (_) {}
     }
-    try {
-      await _trySync();
-    } catch (_) {}
-    await _repo.endShift();
+
+    // 3) Clear local active-shift state (session login remains).
     activeShift = null;
     try {
       await FollowerTrackingSession.setGpsStoppedByUser(true);

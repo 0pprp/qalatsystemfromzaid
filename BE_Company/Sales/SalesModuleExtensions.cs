@@ -44,6 +44,7 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesLocationBroadcaster, SignalRSalesLocationBroadcaster>();
             services.AddHostedService<SalesShiftCutoffHostedService>();
             services.AddHostedService<SalesPostingHostedService>();
+            services.AddScoped<IFollowerDirectoryService, FollowerDirectoryService>();
             services.AddSingleton<IAuthorizationHandler, SalesRoleHandler>();
             services.AddAuthorization(options =>
             {

@@ -1,4 +1,4 @@
-import 'package:follower_application/AsyncIdChecker.dart';
+import 'package:follower_application/tracking/shift_gate_coordinator.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
@@ -13,30 +13,16 @@ class _WelcomePage extends State<WelcomePage> {
   @override
   void initState() {
     super.initState();
-    checkData();
+    _boot();
   }
 
-  Future<void> checkData() async {
-    await Future.delayed(const Duration(milliseconds: 800));
+  Future<void> _boot() async {
+    await Future.delayed(const Duration(milliseconds: 600));
     if (!mounted) return;
-
-    final hasLocal = await AsyncIdChecker.isLoggedIn();
-    if (!hasLocal) {
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/Login');
-      return;
-    }
-
-    final sessionOk = await AsyncIdChecker.checkAsyncId();
+    final dest = await ShiftGateCoordinator().resolve(attachIfActive: true);
     if (!mounted) return;
-    if (!sessionOk) {
-      await AsyncIdChecker.logout();
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/Login');
-      return;
-    }
-
-    Navigator.pushReplacementNamed(context, '/HomePage');
+    final route = ShiftGateCoordinator.routeFor(dest);
+    Navigator.pushNamedAndRemoveUntil(context, route, (r) => false);
   }
 
   @override
@@ -86,7 +72,7 @@ class _WelcomePage extends State<WelcomePage> {
                 const SizedBox(height: 30),
                 const CircularProgressIndicator(color: AppTheme.primaryColor),
                 const SizedBox(height: 20),
-                const Text('جاري التحميل...',
+                const Text('جاري التحقق من الجلسة والدوام...',
                     style: TextStyle(fontFamily: 'Cairo', color: Colors.grey))
               ],
             ),

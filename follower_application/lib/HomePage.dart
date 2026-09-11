@@ -1,9 +1,5 @@
-import 'dart:convert';
-import 'package:follower_application/AsyncIdChecker.dart';
-import 'package:follower_application/config/app_env.dart';
-import 'package:follower_application/main.dart';
-import 'package:follower_application/services/follower_tracking_repository.dart';
 import 'package:follower_application/tracking/follower_shift_debug.dart';
+import 'package:follower_application/tracking/shift_gate_coordinator.dart';
 import 'package:follower_application/tracking/shift_tracking_controller.dart';
 import 'package:follower_application/tracking/work_shift.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
@@ -13,6 +9,12 @@ import 'package:follower_application/utils/iraq_datetime.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:follower_application/AsyncIdChecker.dart';
+import 'package:follower_application/config/app_env.dart';
+import 'package:follower_application/main.dart';
+import 'package:follower_application/services/follower_tracking_repository.dart';
+import 'dart:convert';
+
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -54,25 +56,22 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _boot() async {
-    final loggedIn = await AsyncIdChecker.isLoggedIn();
-    if (!loggedIn) {
-      if (mounted) Navigator.pushReplacementNamed(context, '/Login');
+    final dest = await ShiftGateCoordinator(tracking: _tracking)
+        .resolve(attachIfActive: true);
+    if (!mounted) return;
+    if (dest != ShiftGateDestination.home) {
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        ShiftGateCoordinator.routeFor(dest),
+        (r) => false,
+      );
       return;
     }
-    final sessionOk = await AsyncIdChecker.checkAsyncId();
-    if (!sessionOk) {
-      await AsyncIdChecker.logout();
-      if (mounted) Navigator.pushReplacementNamed(context, '/Login');
-      return;
+    if (mounted) {
+      setState(() {
+        _activeShift = _tracking.activeShift;
+      });
     }
-    try {
-      await _tracking.restoreIfNeeded();
-      if (mounted) {
-        setState(() {
-          _activeShift = _tracking.activeShift;
-        });
-      }
-    } catch (_) {}
     await _loadLists();
   }
 
@@ -110,6 +109,7 @@ class _HomePageState extends State<HomePage> {
         _shiftBusy = false;
         _activeShift = null;
       });
+      Navigator.pushNamedAndRemoveUntil(context, '/StartShift', (r) => false);
     } catch (e) {
       if (!mounted) return;
       setState(() {

@@ -2,6 +2,7 @@ import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/AsyncIdChecker.dart';
 import 'package:follower_application/LocalLabApi.dart';
 import 'package:follower_application/config/app_env.dart';
+import 'package:follower_application/tracking/shift_gate_coordinator.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -284,7 +285,14 @@ class _LoginState extends State<Login> {
           cityName: data['cityName']?.toString() ?? _selectedGovernorate,
         );
         if (!mounted) return;
-        Navigator.pushReplacementNamed(context, '/HomePage');
+        final dest =
+            await ShiftGateCoordinator().resolve(attachIfActive: true);
+        if (!mounted) return;
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          ShiftGateCoordinator.routeFor(dest),
+          (r) => false,
+        );
       } else {
         _showErrorDialog(serverMessage.isNotEmpty
             ? serverMessage

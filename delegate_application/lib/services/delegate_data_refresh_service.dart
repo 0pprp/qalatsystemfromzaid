@@ -27,6 +27,9 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
 
   final ValueNotifier<String?> statusMessage = ValueNotifier<String?>(null);
 
+  /// Bumps after a successful SQLite replace so tabs (e.g. Customer) can reload.
+  final ValueNotifier<int> dataRevision = ValueNotifier<int>(0);
+
   DateTime? get lastSuccessAt => _lastSuccessAt;
   String? get lastError => _lastError;
   bool get isRefreshing => _refreshLock != null;
@@ -122,6 +125,7 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
       await _replaceLocalAtomically(snapshot);
       _lastSuccessAt = DateTime.now().toUtc();
       _lastError = null;
+      dataRevision.value++;
       statusMessage.value = 'تم تحديث البيانات';
       // Clear soft indicator after a short delay.
       Future<void>.delayed(const Duration(seconds: 3), () {
@@ -148,9 +152,18 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
           headers: {'Content-Type': 'application/json'},
         )
         .timeout(const Duration(seconds: 30));
+    assert(() {
+      debugPrint(
+          'GetDelegateSelect status=${selectRes.statusCode} path=Delegates/GetDelegateSelect/$delegateId');
+      return true;
+    }());
     if (selectRes.statusCode != 200) return null;
 
     final List<dynamic> delegates = jsonDecode(selectRes.body) as List<dynamic>;
+    assert(() {
+      debugPrint('GetDelegateSelect count=${delegates.length}');
+      return true;
+    }());
     if (delegates.isEmpty) return null;
 
     final weekRes = await http

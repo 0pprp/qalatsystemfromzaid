@@ -206,9 +206,13 @@ namespace BE_DelegateWebApplication.Controllers
             {
                 shift,
                 points,
+                hasShift = shift != null,
                 count = points.Count,
                 first = points.FirstOrDefault()?.CapturedAt,
                 last = points.LastOrDefault()?.CapturedAt,
+                message = shift == null
+                    ? "لا يوجد دوام مسجل لهذا التاريخ"
+                    : (points.Count == 0 ? "لا توجد نقاط موقع لهذا التاريخ" : null),
             });
         }
 
