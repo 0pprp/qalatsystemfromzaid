@@ -1,7 +1,7 @@
+import 'package:follower_application/AsyncIdChecker.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
@@ -17,22 +17,26 @@ class _WelcomePage extends State<WelcomePage> {
   }
 
   Future<void> checkData() async {
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(const Duration(milliseconds: 800));
     if (!mounted) return;
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String delegateIdString = prefs.getString('DelegateID') ?? '0';
-    try {
-      double delegateId = double.parse(delegateIdString);
-      if (!mounted) return;
-      if (delegateId > 0) {
-        Navigator.pushReplacementNamed(context, '/HomePage');
-      } else {
-        Navigator.pushReplacementNamed(context, '/Login');
-      }
-    } catch (e) {
+
+    final hasLocal = await AsyncIdChecker.isLoggedIn();
+    if (!hasLocal) {
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/Login');
+      return;
     }
+
+    final sessionOk = await AsyncIdChecker.checkAsyncId();
+    if (!mounted) return;
+    if (!sessionOk) {
+      await AsyncIdChecker.logout();
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/Login');
+      return;
+    }
+
+    Navigator.pushReplacementNamed(context, '/HomePage');
   }
 
   @override
@@ -82,7 +86,7 @@ class _WelcomePage extends State<WelcomePage> {
                 const SizedBox(height: 30),
                 const CircularProgressIndicator(color: AppTheme.primaryColor),
                 const SizedBox(height: 20),
-                const Text("جاري التحميل...",
+                const Text('جاري التحميل...',
                     style: TextStyle(fontFamily: 'Cairo', color: Colors.grey))
               ],
             ),

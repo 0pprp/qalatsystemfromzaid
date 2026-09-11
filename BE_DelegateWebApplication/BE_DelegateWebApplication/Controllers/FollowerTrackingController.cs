@@ -18,21 +18,49 @@ namespace BE_DelegateWebApplication.Controllers
         }
 
         /// <summary>
-        /// Follower login: Users.AsyncID where UserType = متابع and UserState active.
-        /// No FollowerProfiles gate.
+        /// Session / legacy validate by AsyncID (internal token). Prefer POST Login for UI auth.
         /// </summary>
         [HttpGet("Login")]
         public async Task<IActionResult> Login([FromQuery] string asyncId, CancellationToken ct)
         {
-            var follower = await _identity.ResolveByAsyncIdAsync(asyncId, ct);
-            if (follower == null)
+            var outcome = await _identity.ResolveSessionByAsyncIdAsync(asyncId, ct);
+            return ToLoginResult(outcome, sessionMode: true);
+        }
+
+        /// <summary>
+        /// Follower app login: UserName + Password. Backend enforces UserType = متابع.
+        /// Password must be in the body — never query string.
+        /// </summary>
+        [HttpPost("Login")]
+        public async Task<IActionResult> LoginPost([FromBody] FollowerLoginRequestDto? body, CancellationToken ct)
+        {
+            var outcome = await _identity.AuthenticateByCredentialsAsync(body?.UserName, body?.Password, ct);
+            return ToLoginResult(outcome, sessionMode: false);
+        }
+
+        private IActionResult ToLoginResult(FollowerAuthOutcome outcome, bool sessionMode)
+        {
+            if (outcome.Failure == FollowerAuthFailure.InvalidCredentials)
             {
-                return StatusCode(StatusCodes.Status403Forbidden, new
+                return Unauthorized(new
                 {
-                    message = "المستخدم ليس من نوع متابع أو الحساب غير فعال."
+                    message = sessionMode
+                        ? FollowerAuthMessages.InvalidSession
+                        : FollowerAuthMessages.InvalidCredentials
                 });
             }
 
+            if (outcome.Failure == FollowerAuthFailure.NotFollower)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = FollowerAuthMessages.NotFollower });
+            }
+
+            if (outcome.Failure == FollowerAuthFailure.Inactive)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = FollowerAuthMessages.Inactive });
+            }
+
+            var follower = outcome.Identity!;
             return Ok(new
             {
                 userId = follower.UserId,
@@ -198,5 +226,11 @@ namespace BE_DelegateWebApplication.Controllers
     {
         public int? ShiftId { get; set; }
         public string? EventType { get; set; }
+    }
+
+    public sealed class FollowerLoginRequestDto
+    {
+        public string? UserName { get; set; }
+        public string? Password { get; set; }
     }
 }

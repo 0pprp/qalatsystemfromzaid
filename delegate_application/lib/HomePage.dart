@@ -1,7 +1,10 @@
 import 'package:delegate_application/AsyncIdChecker.dart';
+import 'package:delegate_application/AllSale.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:delegate_application/main.dart';
+import 'package:delegate_application/customer.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
+import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:delegate_application/ui/main_bottom_nav.dart';
 import 'package:flutter/material.dart';
@@ -15,7 +18,7 @@ class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
   @override
-  _HomePageState createState() => _HomePageState();
+  State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
@@ -34,6 +37,8 @@ class _HomePageState extends State<HomePage> {
   bool isLoading = true;
 
   int _selectedIndex = 2; // Default to Home
+  final GlobalKey<TodayPaymentsPageState> _todayKey =
+      GlobalKey<TodayPaymentsPageState>();
 
   @override
   void initState() {
@@ -82,8 +87,8 @@ class _HomePageState extends State<HomePage> {
             setState(() {
               delegateName = data['delegateName'] ?? 'No Name';
               receiptName = data['receiptName'] ?? 'Delegate';
-              phone = data['phone'] ?? ''; // Guessing key
-              city = data['city'] ?? ''; // Guessing key
+              phone = data['phone'] ?? '';
+              city = data['city'] ?? '';
               numberOfCustomer = data['numberOfCustomer'] ?? 0;
               numberOfCustomerIsLegal = data['numberOfCustomerIsLegal'] ?? 0;
               numberOfCustomerIsNotZero =
@@ -139,7 +144,6 @@ class _HomePageState extends State<HomePage> {
                             borderRadius: BorderRadius.circular(10)),
                       ),
                       onPressed: () async {
-                        // حذف البيانات وقاعدة البيانات
                         await DatabaseHelper().clearAllTables();
                         await AsyncIdChecker.logout();
                         if (context.mounted) {
@@ -162,7 +166,6 @@ class _HomePageState extends State<HomePage> {
                             borderRadius: BorderRadius.circular(10)),
                       ),
                       onPressed: () async {
-                        // فقط تسجيل الخروج (مسح SharedPreferences)
                         await AsyncIdChecker.logout();
                         if (context.mounted) {
                           Navigator.of(context).pop();
@@ -191,22 +194,125 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _selectedIndex = index;
     });
-
-    // Navigation logic matching the bottom bar
-    switch (index) {
-      case 0: // Sales
-        Navigator.pushNamed(context, '/AllSale');
-        break;
-      case 1: // Customers
-        Navigator.pushNamed(context, '/Customer');
-        break;
-      case 2: // Home (Refresh)
-        fetchData();
-        break;
-      case 3: // Payments
-        Navigator.pushNamed(context, '/AllReceipt');
-        break;
+    if (index == 2) {
+      fetchData();
     }
+    if (index == 3) {
+      _todayKey.currentState?.reload();
+    }
+  }
+
+  Widget _buildHomeDashboard() {
+    return Stack(
+      children: [
+        Positioned(
+          top: -50,
+          left: -50,
+          child: Container(
+            width: 200,
+            height: 200,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.05),
+                  width: 30),
+            ),
+          ),
+        ),
+        Positioned(
+          top: 50,
+          right: -80,
+          child: Container(
+            width: 300,
+            height: 300,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.05),
+                  width: 50),
+            ),
+          ),
+        ),
+        RefreshIndicator(
+          onRefresh: () async {
+            await DelegateDataRefreshService.instance.refreshIfPossible();
+            await fetchData();
+          },
+          color: AppTheme.primaryColor,
+          child: SingleChildScrollView(
+            padding: AppInsets.scrollPadding(context),
+            child: Column(
+              children: [
+                ValueListenableBuilder<String?>(
+                  valueListenable:
+                      DelegateDataRefreshService.instance.statusMessage,
+                  builder: (context, msg, _) {
+                    if (msg == null || msg.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        msg,
+                        style: TextStyle(
+                          fontFamily: 'Cairo',
+                          color: Colors.green[700],
+                          fontSize: 13,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                _buildHeader(),
+                const SizedBox(height: 30),
+                _buildSummaryCard(),
+                const SizedBox(height: 20),
+                _buildReportSection(),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pushNamed(
+                        context,
+                        '/DelegateSalesRequest',
+                        arguments: {'saleRequestType': 'New'},
+                      );
+                    },
+                    icon: const Icon(Icons.add_shopping_cart,
+                        color: Colors.white),
+                    label: const Text(
+                      'طلب مبيع جديد',
+                      style:
+                          TextStyle(fontFamily: 'Cairo', color: Colors.white),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                TextButton.icon(
+                  onPressed: _logout,
+                  icon: const Icon(Icons.logout, color: Colors.red),
+                  label: const Text('تسجيل الخروج',
+                      style: TextStyle(fontFamily: 'Cairo', color: Colors.red)),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'الإصدار 30',
+                  style: TextStyle(
+                      fontFamily: 'Cairo', color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -215,131 +321,19 @@ class _HomePageState extends State<HomePage> {
       textDirection: TextDirection.rtl,
       child: AppSafeScaffold(
         backgroundColor: AppTheme.backgroundColor,
-        extendBody: true,
+        extendBody: false,
         safeBottom: false,
-        floatingActionButton: FloatingActionButton(
-          onPressed: () => _onItemTapped(2),
-          backgroundColor: AppTheme.primaryColor,
-          shape: const CircleBorder(),
-          elevation: 4,
-          child: const Icon(Icons.home, color: Colors.white, size: 30),
-        ),
-        floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
         bottomNavigationBar: MainBottomNavBar(
           selectedIndex: _selectedIndex,
           onTap: _onItemTapped,
         ),
-        body: Stack(
+        body: IndexedStack(
+          index: _selectedIndex,
           children: [
-            Positioned(
-              top: -50,
-              left: -50,
-              child: Container(
-                width: 200,
-                height: 200,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.05),
-                      width: 30),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 50,
-              right: -80,
-              child: Container(
-                width: 300,
-                height: 300,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.05),
-                      width: 50),
-                ),
-              ),
-            ),
-            RefreshIndicator(
-              onRefresh: () async {
-                await DelegateDataRefreshService.instance.refreshIfPossible();
-                await fetchData();
-              },
-              color: AppTheme.primaryColor,
-              child: SingleChildScrollView(
-                padding: AppInsets.scrollPadding(context),
-                child: Column(
-                  children: [
-                    ValueListenableBuilder<String?>(
-                      valueListenable:
-                          DelegateDataRefreshService.instance.statusMessage,
-                      builder: (context, msg, _) {
-                        if (msg == null || msg.isEmpty) {
-                          return const SizedBox.shrink();
-                        }
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: Text(
-                            msg,
-                            style: TextStyle(
-                              fontFamily: 'Cairo',
-                              color: Colors.green[700],
-                              fontSize: 13,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    _buildHeader(),
-                    const SizedBox(height: 30),
-                    _buildSummaryCard(),
-                    const SizedBox(height: 20),
-                    _buildReportSection(),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.pushNamed(
-                            context,
-                            '/DelegateSalesRequest',
-                            arguments: {'saleRequestType': 'New'},
-                          );
-                        },
-                        icon: const Icon(Icons.add_shopping_cart,
-                            color: Colors.white),
-                        label: const Text(
-                          'طلب مبيع جديد',
-                          style: TextStyle(
-                              fontFamily: 'Cairo', color: Colors.white),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.primaryColor,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    TextButton.icon(
-                      onPressed: _logout,
-                      icon: const Icon(Icons.logout, color: Colors.red),
-                      label: const Text('تسجيل الخروج',
-                          style: TextStyle(
-                              fontFamily: 'Cairo', color: Colors.red)),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'الإصدار 30',
-                      style: TextStyle(
-                          fontFamily: 'Cairo',
-                          color: Colors.grey,
-                          fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            const AllSale(embedded: true),
+            const Customer(embedded: true),
+            _buildHomeDashboard(),
+            TodayPaymentsPage(key: _todayKey, embedded: true),
           ],
         ),
       ),
@@ -377,10 +371,6 @@ class _HomePageState extends State<HomePage> {
             },
           ),
         ),
-
-        // Logo/Title in Center
-// Logo removed
-
         Row(
           children: [
             Column(
@@ -486,17 +476,16 @@ class _HomePageState extends State<HomePage> {
   Widget _buildReportSection() {
     return Container(
       decoration: BoxDecoration(
-        color: AppTheme.primaryColor
-            .withValues(alpha: 0.05), // Light Green background
+        color: AppTheme.primaryColor.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(25),
       ),
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
-          Row(
+          const Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              const Text(
+              Text(
                 "التقرير المالي",
                 style: TextStyle(
                     fontFamily: 'Cairo',
@@ -507,20 +496,18 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           const SizedBox(height: 20),
-          _buildStatCard("سعر البيع", "مجموع سعر القائمة", amountTotal,
-              delay: 0),
-          _buildStatCard("الأقساط", "مجموع سعر الأقساط", amountDay, delay: 100),
-          _buildStatCard("الواصل", "مجموع الأموال المستلمة", amountRecever,
-              delay: 300),
+          _buildStatCard("سعر البيع", "مجموع سعر القائمة", amountTotal),
+          _buildStatCard("الأقساط", "مجموع سعر الأقساط", amountDay),
+          _buildStatCard("الواصل", "مجموع الأموال المستلمة", amountRecever),
           _buildStatCard("الباقي", "مجموع الأموال المتبقية", amountRemaining,
-              isTotal: true, delay: 400),
+              isTotal: true),
         ],
       ),
     );
   }
 
   Widget _buildStatCard(String title, String subtitle, double value,
-      {bool isTotal = false, int delay = 0}) {
+      {bool isTotal = false}) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -591,32 +578,4 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
-  // Widget _buildTrustReceiptsButton() {
-  //   return SizedBox(
-  //     width: double.infinity,
-  //     child: ElevatedButton.icon(
-  //       onPressed: () {
-  //         Navigator.pushNamed(context, '/TrustReceiptsList');
-  //       },
-  //       icon: const Icon(Icons.receipt_long, color: Colors.white),
-  //       label: const Text(
-  //         "وصولات الأمانة",
-  //         style: TextStyle(
-  //           fontFamily: 'Cairo',
-  //           color: Colors.white,
-  //           fontWeight: FontWeight.bold,
-  //           fontSize: 16,
-  //         ),
-  //       ),
-  //       style: ElevatedButton.styleFrom(
-  //         backgroundColor: AppTheme.primaryColor,
-  //         padding: const EdgeInsets.symmetric(vertical: 15),
-  //         shape: RoundedRectangleBorder(
-  //           borderRadius: BorderRadius.circular(15),
-  //         ),
-  //       ),
-  //     ),
-  //   );
-  // }
 }

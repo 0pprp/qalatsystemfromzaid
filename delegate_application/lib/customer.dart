@@ -16,13 +16,16 @@ import 'package:delegate_application/services/DatabaseHelper.dart';
 import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:delegate_application/services/payment_sync_status.dart';
 import 'package:delegate_application/services/payment_validation.dart';
+import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/utils/Formatters.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 class Customer extends StatefulWidget {
-  const Customer({super.key});
+  const Customer({super.key, this.embedded = false});
+
+  final bool embedded;
 
   @override
   State<Customer> createState() => _CustomerState();
@@ -416,6 +419,7 @@ class _CustomerState extends State<Customer> {
 
     // Auto-sync if online; offline stays PendingSync for later.
     await PaymentSyncService.instance.syncPendingPayments();
+    TodayPaymentsRefresh.notify();
     if (mounted) {
       await _calculatePayments(int.parse(selectedRepresentative!));
     }
@@ -1020,6 +1024,7 @@ class _CustomerState extends State<Customer> {
       textDirection: TextDirection.rtl,
       child: AppSafeScaffold(
         backgroundColor: AppTheme.backgroundColor,
+        safeBottom: !widget.embedded,
         appBar: AppBar(
           backgroundColor: AppTheme.primaryColor,
           elevation: 0,

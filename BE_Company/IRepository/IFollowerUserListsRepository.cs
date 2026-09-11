@@ -9,6 +9,5 @@ namespace BE_Company.IRepository
         Task<IReadOnlyList<int>> GetAssignedListIdsAsync(int userId, CancellationToken ct = default);
         Task ReplaceAssignmentsAsync(int userId, IEnumerable<int> listIds, CancellationToken ct = default);
         Task ClearAssignmentsAsync(int userId, CancellationToken ct = default);
-        Task AlignFollowerAsyncIdAsync(int userId, string? password, CancellationToken ct = default);
     }
 }

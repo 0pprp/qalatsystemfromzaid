@@ -115,21 +115,5 @@ AND NOT EXISTS (SELECT 1 FROM dbo.FollowerUserLists WHERE UserId = @UserId AND L
                 new { UserId = userId },
                 cancellationToken: ct));
         }
-
-        /// <summary>
-        /// Follower app logs in with Users.AsyncID. Align AsyncID to the account password when set.
-        /// </summary>
-        public async Task AlignFollowerAsyncIdAsync(int userId, string? password, CancellationToken ct = default)
-        {
-            if (userId <= 0 || string.IsNullOrWhiteSpace(password)) return;
-            await using var c = new SqlConnection(_cs);
-            await c.ExecuteAsync(new CommandDefinition(@"
-UPDATE dbo.Users
-SET AsyncID = @Password
-WHERE UserID = @UserId
-  AND (UserType = N'متابع' OR UserType LIKE N'متابع%');",
-                new { UserId = userId, Password = password.Trim() },
-                cancellationToken: ct));
-        }
     }
 }

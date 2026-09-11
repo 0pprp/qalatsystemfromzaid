@@ -15,7 +15,7 @@ namespace BE_DelegateWebApplication.Services.FollowerIdentity
         public string? UserType { get; set; }
         public int? CityId { get; set; }
         public string? CityName { get; set; }
-        /// <summary>True when UserType is متابع and UserState is active.</summary>
+        /// <summary>True when UserState is active (bit 1 / null treated as active).</summary>
         public bool IsActive { get; set; }
     }
 
@@ -29,27 +29,45 @@ namespace BE_DelegateWebApplication.Services.FollowerIdentity
                 || userType.StartsWith(Arabic, StringComparison.Ordinal));
     }
 
+    public enum FollowerAuthFailure
+    {
+        None = 0,
+        InvalidCredentials = 1,
+        NotFollower = 2,
+        Inactive = 3,
+    }
+
+    public sealed class FollowerAuthOutcome
+    {
+        public FollowerUserIdentity? Identity { get; init; }
+        public FollowerAuthFailure Failure { get; init; }
+
+        public static FollowerAuthOutcome Ok(FollowerUserIdentity identity) =>
+            new() { Identity = identity, Failure = FollowerAuthFailure.None };
+
+        public static FollowerAuthOutcome Fail(FollowerAuthFailure failure) =>
+            new() { Failure = failure };
+    }
+
+    public static class FollowerAuthMessages
+    {
+        public const string InvalidCredentials = "اسم المستخدم أو كلمة المرور غير صحيحة";
+        public const string NotFollower = "هذا الحساب غير مخول لتطبيق المتابع";
+        public const string Inactive = "هذا الحساب غير فعال";
+        public const string InvalidSession = "الجلسة غير صالحة";
+    }
+
     public interface IFollowerIdentityService
     {
         Task<FollowerUserIdentity?> ResolveByAsyncIdAsync(string? asyncId, CancellationToken ct = default);
+        Task<FollowerAuthOutcome> ResolveSessionByAsyncIdAsync(string? asyncId, CancellationToken ct = default);
+        Task<FollowerAuthOutcome> AuthenticateByCredentialsAsync(string? userName, string? password, CancellationToken ct = default);
         Task<IReadOnlyList<FollowerUserIdentity>> ListActiveAsync(CancellationToken ct = default);
     }
 
     public sealed class FollowerIdentityService : IFollowerIdentityService
     {
-        private readonly string _cs;
-
-        public FollowerIdentityService(IConfiguration configuration)
-        {
-            _cs = configuration.GetConnectionString("DataBaseConnection")
-                  ?? throw new InvalidOperationException("DataBaseConnection missing.");
-        }
-
-        public async Task<FollowerUserIdentity?> ResolveByAsyncIdAsync(string? asyncId, CancellationToken ct = default)
-        {
-            if (string.IsNullOrWhiteSpace(asyncId)) return null;
-            await using var c = new SqlConnection(_cs);
-            var row = await c.QueryFirstOrDefaultAsync<FollowerUserIdentity>(new CommandDefinition(@"
+        private const string UserSelectSql = @"
 SELECT TOP 1
     u.UserID AS UserId,
     u.UserName,
@@ -64,17 +82,59 @@ OUTER APPLY (
     FROM dbo.UsersSelectedCities usc
     LEFT JOIN dbo.Cities ci ON ci.CityID = usc.CityID
     WHERE usc.UserID = u.UserID
-) city
-WHERE LTRIM(RTRIM(u.AsyncID)) = LTRIM(RTRIM(@AsyncId))
-  AND (
-        u.UserType = N'متابع'
-        OR u.UserType LIKE N'متابع%'
-      );",
-                new { AsyncId = asyncId.Trim().TrimEnd('/') }, cancellationToken: ct));
+) city";
 
-            if (row is null || row.UserId <= 0 || !row.IsActive) return null;
-            if (!FollowerUserType.IsFollowerType(row.UserType)) return null;
-            return row;
+        private readonly string _cs;
+
+        public FollowerIdentityService(IConfiguration configuration)
+        {
+            _cs = configuration.GetConnectionString("DataBaseConnection")
+                  ?? throw new InvalidOperationException("DataBaseConnection missing.");
+        }
+
+        public async Task<FollowerUserIdentity?> ResolveByAsyncIdAsync(string? asyncId, CancellationToken ct = default)
+        {
+            var outcome = await ResolveSessionByAsyncIdAsync(asyncId, ct);
+            return outcome.Failure == FollowerAuthFailure.None ? outcome.Identity : null;
+        }
+
+        public async Task<FollowerAuthOutcome> ResolveSessionByAsyncIdAsync(string? asyncId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(asyncId))
+            {
+                return FollowerAuthOutcome.Fail(FollowerAuthFailure.InvalidCredentials);
+            }
+
+            await using var c = new SqlConnection(_cs);
+            var row = await c.QueryFirstOrDefaultAsync<FollowerUserIdentity>(new CommandDefinition(
+                UserSelectSql + @"
+WHERE LTRIM(RTRIM(u.AsyncID)) = LTRIM(RTRIM(@AsyncId));",
+                new { AsyncId = asyncId.Trim().TrimEnd('/') },
+                cancellationToken: ct));
+
+            return EvaluateRow(row);
+        }
+
+        public async Task<FollowerAuthOutcome> AuthenticateByCredentialsAsync(
+            string? userName,
+            string? password,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrWhiteSpace(password))
+            {
+                return FollowerAuthOutcome.Fail(FollowerAuthFailure.InvalidCredentials);
+            }
+
+            await using var c = new SqlConnection(_cs);
+            // Same credential model as dbo.Users_GetUserLogin (plain Password match).
+            var row = await c.QueryFirstOrDefaultAsync<FollowerUserIdentity>(new CommandDefinition(
+                UserSelectSql + @"
+WHERE LTRIM(RTRIM(u.UserName)) = LTRIM(RTRIM(@UserName))
+  AND u.Password = @Password;",
+                new { UserName = userName.Trim(), Password = password },
+                cancellationToken: ct));
+
+            return EvaluateRow(row);
         }
 
         public async Task<IReadOnlyList<FollowerUserIdentity>> ListActiveAsync(CancellationToken ct = default)
@@ -103,6 +163,26 @@ WHERE ISNULL(u.UserState, 1) = 1
       )
 ORDER BY u.UserName;", cancellationToken: ct));
             return rows.ToList();
+        }
+
+        private static FollowerAuthOutcome EvaluateRow(FollowerUserIdentity? row)
+        {
+            if (row is null || row.UserId <= 0)
+            {
+                return FollowerAuthOutcome.Fail(FollowerAuthFailure.InvalidCredentials);
+            }
+
+            if (!FollowerUserType.IsFollowerType(row.UserType))
+            {
+                return FollowerAuthOutcome.Fail(FollowerAuthFailure.NotFollower);
+            }
+
+            if (!row.IsActive)
+            {
+                return FollowerAuthOutcome.Fail(FollowerAuthFailure.Inactive);
+            }
+
+            return FollowerAuthOutcome.Ok(row);
         }
     }
 }

@@ -8,12 +8,12 @@ import 'package:delegate_application/WelcomePage.dart';
 import 'package:delegate_application/TrustReceiptsListPage.dart';
 import 'package:delegate_application/TrustReceiptFormPage.dart';
 import 'package:delegate_application/delegate_sales_request_page.dart';
+import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/config/app_env.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,11 +46,13 @@ class MyApp extends StatelessWidget {
             '/HomePage': (context) => const HomePage(),
             '/Sync': (context) => const Sync(),
             '/AllSale': (context) => const AllSale(),
-            '/AllReceipt': (context) => const AllReceipt(),
+            '/AllReceipt': (context) => const TodayPaymentsPage(),
             '/Customer': (context) => const Customer(),
             '/TrustReceiptsList': (context) => const TrustReceiptsListPage(),
             '/TrustReceiptForm': (context) => const TrustReceiptFormPage(),
-            '/DelegateSalesRequest': (context) => const DelegateSalesRequestPage(),
+            '/DelegateSalesRequest': (context) =>
+                const DelegateSalesRequestPage(),
+            '/AllReceiptSearch': (context) => const AllReceipt(),
           },
           theme: ThemeData(fontFamily: 'Cairo', brightness: Brightness.light),
           darkTheme:

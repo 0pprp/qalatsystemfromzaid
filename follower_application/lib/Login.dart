@@ -8,18 +8,26 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Builds POST Followers/Login URI — password never goes in the query string.
+Uri followerLoginUri(String apiBase) {
+  final base = apiBase.endsWith('/') ? apiBase : '$apiBase/';
+  return Uri.parse('${base}Followers/Login');
+}
+
 class Login extends StatefulWidget {
   const Login({super.key});
 
   @override
-  _LoginState createState() => _LoginState();
+  State<Login> createState() => _LoginState();
 }
 
 class _LoginState extends State<Login> {
   String? _selectedGovernorate;
-  String _password = "";
+  final TextEditingController _userNameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _isLoadingCities = true;
+  bool _obscurePassword = true;
   String? _cityError;
 
   List<Map<String, String>> cityData = [];
@@ -33,6 +41,13 @@ class _LoginState extends State<Login> {
     _fetchCityData();
   }
 
+  @override
+  void dispose() {
+    _userNameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
   Future<void> _fetchCityData() async {
     if (AppEnv.isDemo || AppEnv.isLocal) {
       if (!mounted) return;
@@ -44,6 +59,7 @@ class _LoginState extends State<Login> {
             'number': '',
           },
         ];
+        _selectedGovernorate = cityData.first['name'];
         _isLoadingCities = false;
         _cityError = null;
       });
@@ -120,10 +136,13 @@ class _LoginState extends State<Login> {
   }
 
   Future<void> _login() async {
+    final userName = _userNameController.text.trim();
+    final password = _passwordController.text;
     if (_selectedGovernorate == null ||
         _selectedGovernorate!.isEmpty ||
-        _password.isEmpty) {
-      _showErrorDialog("لا يمكن ترك أي شيء فارغ");
+        userName.isEmpty ||
+        password.isEmpty) {
+      _showErrorDialog('لا يمكن ترك أي شيء فارغ');
       return;
     }
 
@@ -132,7 +151,7 @@ class _LoginState extends State<Login> {
     });
 
     try {
-      String productionUrl = "";
+      String productionUrl = '';
       for (var city in cityData) {
         if (city['name'] == _selectedGovernorate) {
           productionUrl = city['link']!;
@@ -144,11 +163,10 @@ class _LoginState extends State<Login> {
           !LocalLabApi.enabled &&
           !AppEnv.isDemo &&
           !AppEnv.isLocal) {
-        _showErrorDialog("لم يتم العثور على الرابط للمحافظة المختارة");
+        _showErrorDialog('لم يتم العثور على الرابط للمحافظة المختارة');
         return;
       }
 
-      final password = _password.trim();
       final bases = AppEnv.isDemo
           ? [AppEnv.demoApiBaseUrl]
           : AppEnv.isLocal
@@ -160,16 +178,22 @@ class _LoginState extends State<Login> {
 
       for (final base in bases) {
         try {
-          final uri = Uri.parse('${base}Followers/Login').replace(
-            queryParameters: {'asyncId': password},
-          );
-          final candidate = await http.get(
-            uri,
-            headers: {"Content-Type": "application/json"},
-          ).timeout(const Duration(seconds: 8));
+          final uri = followerLoginUri(base);
+          final candidate = await http
+              .post(
+                uri,
+                headers: const {'Content-Type': 'application/json'},
+                body: json.encode({
+                  'userName': userName,
+                  'password': password,
+                }),
+              )
+              .timeout(const Duration(seconds: 8));
           apiUrl = base;
           response = candidate;
-          if (candidate.statusCode == 200 || candidate.statusCode == 403) {
+          if (candidate.statusCode == 200 ||
+              candidate.statusCode == 401 ||
+              candidate.statusCode == 403) {
             break;
           }
         } catch (_) {}
@@ -183,67 +207,92 @@ class _LoginState extends State<Login> {
 
       if (response == null) {
         _showErrorDialog(
-            AppEnv.isDemo
-                ? "لا يوجد اتصال بالإنترنت أو السيرفر غير متاح"
-                : "تعذر الاتصال بالسيرفر المحلي على المنفذ 5080. تأكد أن الجهاز على نفس الواي فاي.");
+          AppEnv.isDemo
+              ? 'لا يوجد اتصال بالإنترنت أو السيرفر غير متاح'
+              : 'تعذر الاتصال بالسيرفر. تأكد من الشبكة أو المنفذ المحلي.',
+        );
+        return;
+      }
+
+      String serverMessage = '';
+      try {
+        final body = json.decode(response.body);
+        if (body is Map && body['message'] != null) {
+          serverMessage = body['message'].toString();
+        }
+      } catch (_) {}
+
+      if (response.statusCode == 401) {
+        _showErrorDialog(serverMessage.isNotEmpty
+            ? serverMessage
+            : 'اسم المستخدم أو كلمة المرور غير صحيحة');
         return;
       }
 
       if (response.statusCode == 403) {
-        _showErrorDialog("هذا الحساب ليس من نوع متابع");
+        _showErrorDialog(serverMessage.isNotEmpty
+            ? serverMessage
+            : 'هذا الحساب غير مخول لتطبيق المتابع');
         return;
       }
 
       if (response.statusCode == 200) {
-        var data = json.decode(response.body);
-        var userId = data['userId'] ?? data['delegateId'] ?? data['DelegateId'];
-        var asyncId = data['asyncId'] ??
-            data['AsyncId'] ??
-            data['asyncID'] ??
-            password;
-        var userName = data['userName'] ??
+        final data = json.decode(response.body);
+        final userId = data['userId'] ?? data['delegateId'] ?? data['DelegateId'];
+        final asyncId = data['asyncId'] ?? data['AsyncId'] ?? data['asyncID'];
+        final displayName = data['userName'] ??
             data['delegateName'] ??
             data['DelegateName'] ??
-            '';
+            userName;
 
-        if (userId != null && int.parse(userId.toString()) > 0) {
-          final listsUri = Uri.parse('${AppEnv.apiBase(fallback: apiUrl)}Followers/Lists').replace(
+        if (userId == null ||
+            int.tryParse(userId.toString()) == null ||
+            int.parse(userId.toString()) <= 0 ||
+            asyncId == null ||
+            asyncId.toString().trim().isEmpty) {
+          _showErrorDialog('فشل تسجيل الدخول — استجابة غير مكتملة من السيرفر');
+          return;
+        }
+
+        final link = AppEnv.apiBase(fallback: apiUrl);
+
+        // Prefetch lists; empty list is allowed (not a login failure).
+        try {
+          final listsUri = Uri.parse('${link}Followers/Lists').replace(
             queryParameters: {'asyncId': asyncId.toString()},
           );
-          final listsRes = await http.get(listsUri).timeout(const Duration(seconds: 15));
+          final listsRes =
+              await http.get(listsUri).timeout(const Duration(seconds: 15));
           if (!mounted) return;
-
-          if (listsRes.statusCode == 403 || listsRes.statusCode == 401) {
-            _showErrorDialog("هذا الحساب ليس من نوع متابع");
+          if (listsRes.statusCode == 401 || listsRes.statusCode == 403) {
+            _showErrorDialog(serverMessage.isNotEmpty
+                ? serverMessage
+                : 'هذا الحساب غير مخول لتطبيق المتابع');
             return;
           }
-
-          // Lists may be empty in some Demo setups; GPS/shift still allowed.
-          if (listsRes.statusCode == 200) {
-            final lists = json.decode(listsRes.body);
-            if (lists is List && lists.isNotEmpty) {
-              // ok
-            }
-          }
-
-          await AsyncIdChecker.login(
-            asyncId: asyncId.toString(),
-            linkDelegate: AppEnv.apiBase(fallback: apiUrl),
-            delegateId: userId.toString(),
-            delegateName: userName.toString(),
-            userId: userId.toString(),
-          );
-          if (!mounted) return;
-          Navigator.pushReplacementNamed(context, '/HomePage');
-        } else {
-          _showErrorDialog("الرمز الذي أدخلته غير صحيح");
+        } catch (_) {
+          // Lists prefetch failure should not block login; HomePage reloads.
         }
+
+        await AsyncIdChecker.login(
+          asyncId: asyncId.toString(),
+          linkDelegate: link,
+          delegateId: userId.toString(),
+          delegateName: displayName.toString(),
+          userId: userId.toString(),
+          cityId: data['cityId']?.toString(),
+          cityName: data['cityName']?.toString() ?? _selectedGovernorate,
+        );
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/HomePage');
       } else {
-        _showErrorDialog("الرمز الذي أدخلته غير صحيح");
+        _showErrorDialog(serverMessage.isNotEmpty
+            ? serverMessage
+            : 'تعذر تسجيل الدخول (${response.statusCode})');
       }
     } catch (e) {
       if (mounted) {
-        _showErrorDialog("لا يوجد اتصال بالإنترنت أو السيرفر غير متاح");
+        _showErrorDialog('لا يوجد اتصال بالإنترنت أو السيرفر غير متاح');
       }
     } finally {
       if (mounted) {
@@ -258,17 +307,55 @@ class _LoginState extends State<Login> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("خطأ", style: TextStyle(fontFamily: 'Cairo')),
+        title: const Text('خطأ', style: TextStyle(fontFamily: 'Cairo')),
         content: Text(message, style: const TextStyle(fontFamily: 'Cairo')),
         actions: <Widget>[
           TextButton(
-            child: const Text("موافق", style: TextStyle(fontFamily: 'Cairo')),
+            child: const Text('موافق', style: TextStyle(fontFamily: 'Cairo')),
             onPressed: () {
               Navigator.of(ctx).pop();
             },
           )
         ],
       ),
+    );
+  }
+
+  InputDecoration _fieldDecoration({
+    required String hint,
+    required IconData icon,
+    Widget? suffix,
+  }) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(fontFamily: 'Cairo'),
+      filled: true,
+      fillColor: Theme.of(context).cardColor,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(15),
+        borderSide: BorderSide.none,
+      ),
+      prefixIcon: Icon(icon, color: AppTheme.primaryColor),
+      suffixIcon: suffix,
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+    );
+  }
+
+  Widget _cardShell({required Widget child}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          )
+        ],
+      ),
+      child: child,
     );
   }
 
@@ -307,7 +394,7 @@ class _LoginState extends State<Login> {
                           tag: 'logo',
                           child: Image.asset(
                             'assets/icons/LogoCompany.png',
-                            height: height * 0.16,
+                            height: height * 0.14,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -322,27 +409,18 @@ class _LoginState extends State<Login> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'اختر المحافظة ثم أدخل رمز المتابع',
+                          'المحافظة · اسم المستخدم · كلمة المرور',
                           style: TextStyle(
                               fontFamily: 'Cairo', color: Colors.grey[600]),
                         ),
-                        SizedBox(height: height * 0.04),
-                        Container(
-                          decoration: BoxDecoration(
-                              color: Theme.of(context).cardColor,
-                              borderRadius: BorderRadius.circular(15),
-                              boxShadow: [
-                                BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.05),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 5))
-                              ]),
+                        SizedBox(height: height * 0.035),
+                        _cardShell(
                           child: _isLoadingCities
                               ? const Padding(
                                   padding: EdgeInsets.all(16.0),
                                   child: Center(
                                     child: Text(
-                                      "جاري تحميل الفروع...",
+                                      'جاري تحميل الفروع...',
                                       style: TextStyle(
                                         fontFamily: 'Cairo',
                                         color: Colors.grey,
@@ -371,39 +449,36 @@ class _LoginState extends State<Login> {
                                               });
                                               _fetchCityData();
                                             },
-                                            child: const Text("إعادة المحاولة",
-                                                style: TextStyle(
-                                                    fontFamily: 'Cairo')),
+                                            child: const Text(
+                                              'إعادة المحاولة',
+                                              style:
+                                                  TextStyle(fontFamily: 'Cairo'),
+                                            ),
                                           ),
                                         ],
                                       ),
                                     )
                                   : DropdownButtonFormField<String>(
-                                      decoration: InputDecoration(
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                                horizontal: 20, vertical: 5),
-                                        border: OutlineInputBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(15),
-                                            borderSide: BorderSide.none),
-                                        prefixIcon: const Icon(
-                                            Icons.location_city,
-                                            color: AppTheme.primaryColor),
+                                      decoration: _fieldDecoration(
+                                        hint: 'المحافظة',
+                                        icon: Icons.location_city,
                                       ),
                                       alignment: Alignment.centerRight,
                                       value: _selectedGovernorate,
-                                      hint: const Text("اختر المحافظة",
-                                          style: TextStyle(
-                                              fontFamily: 'Cairo')),
+                                      hint: const Text(
+                                        'اختر المحافظة',
+                                        style: TextStyle(fontFamily: 'Cairo'),
+                                      ),
                                       items: cityData.map((city) {
                                         return DropdownMenuItem(
                                           value: city['name'],
                                           child: Align(
                                             alignment: Alignment.centerRight,
-                                            child: Text(city['name']!,
-                                                style: const TextStyle(
-                                                    fontFamily: 'Cairo')),
+                                            child: Text(
+                                              city['name']!,
+                                              style: const TextStyle(
+                                                  fontFamily: 'Cairo'),
+                                            ),
                                           ),
                                         );
                                       }).toList(),
@@ -414,41 +489,48 @@ class _LoginState extends State<Login> {
                                       },
                                     ),
                         ),
-                        const SizedBox(height: 20),
-                        Container(
-                          decoration: BoxDecoration(
-                              color: Theme.of(context).cardColor,
-                              borderRadius: BorderRadius.circular(15),
-                              boxShadow: [
-                                BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.05),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 5))
-                              ]),
+                        const SizedBox(height: 16),
+                        _cardShell(
                           child: TextField(
+                            controller: _userNameController,
                             style: const TextStyle(fontFamily: 'Cairo'),
-                            obscureText: true,
-                            textInputAction: TextInputAction.done,
-                            onSubmitted: (_) => _login(),
-                            decoration: InputDecoration(
-                                hintText: 'كلمة السر',
-                                hintStyle: const TextStyle(fontFamily: 'Cairo'),
-                                filled: true,
-                                fillColor: Theme.of(context).cardColor,
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(15),
-                                  borderSide: BorderSide.none,
-                                ),
-                                prefixIcon: const Icon(Icons.lock_outline,
-                                    color: AppTheme.primaryColor),
-                                contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 20, vertical: 15)),
-                            onChanged: (value) {
-                              _password = value;
-                            },
+                            textInputAction: TextInputAction.next,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            decoration: _fieldDecoration(
+                              hint: 'اسم المستخدم',
+                              icon: Icons.person_outline,
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 40),
+                        const SizedBox(height: 16),
+                        _cardShell(
+                          child: TextField(
+                            controller: _passwordController,
+                            style: const TextStyle(fontFamily: 'Cairo'),
+                            obscureText: _obscurePassword,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => _login(),
+                            decoration: _fieldDecoration(
+                              hint: 'كلمة المرور',
+                              icon: Icons.lock_outline,
+                              suffix: IconButton(
+                                icon: Icon(
+                                  _obscurePassword
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                  color: Colors.grey,
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    _obscurePassword = !_obscurePassword;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 36),
                         SizedBox(
                           width: double.infinity,
                           height: 55,

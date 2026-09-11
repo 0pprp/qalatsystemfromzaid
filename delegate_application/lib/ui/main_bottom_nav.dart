@@ -1,8 +1,9 @@
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
 
-/// RTL bottom bar: المبيعات | العملاء | [Home FAB] | التسديدات
-/// Indices match [HomePage] navigation: 0 sales, 1 customers, 2 home, 3 payments.
+/// RTL bottom bar — equal tabs (no FAB):
+/// المبيعات | العملاء | الرئيسية | التسديدات
+/// Indices: 0 sales, 1 customers, 2 home, 3 payments.
 class MainBottomNavBar extends StatelessWidget {
   const MainBottomNavBar({
     super.key,
@@ -13,58 +14,76 @@ class MainBottomNavBar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onTap;
 
-  static const double barHeight = 64;
-  static const double fabGap = 56;
+  static const double barHeight = 68;
+
+  static const _items = <_NavSpec>[
+    _NavSpec(0, Icons.monetization_on_outlined, Icons.monetization_on, 'المبيعات'),
+    _NavSpec(1, Icons.people_outline, Icons.people, 'العملاء'),
+    _NavSpec(2, Icons.home_outlined, Icons.home, 'الرئيسية'),
+    _NavSpec(3, Icons.account_balance_wallet_outlined, Icons.account_balance_wallet,
+        'التسديدات'),
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: BottomAppBar(
-        shape: const CircularNotchedRectangle(),
-        notchMargin: 8,
+      child: Material(
         elevation: 8,
-        padding: EdgeInsets.zero,
         color: Theme.of(context).cardColor,
         child: SizedBox(
           height: barHeight,
-          child: Row(
-            children: [
-              // RTL: first child = rightmost
-              Expanded(
-                child: _NavItem(
-                  icon: Icons.monetization_on_outlined,
-                  selectedIcon: Icons.monetization_on,
-                  label: 'المبيعات',
-                  selected: selectedIndex == 0,
-                  onTap: () => onTap(0),
-                ),
-              ),
-              Expanded(
-                child: _NavItem(
-                  icon: Icons.people_outline,
-                  selectedIcon: Icons.people,
-                  label: 'العملاء',
-                  selected: selectedIndex == 1,
-                  onTap: () => onTap(1),
-                ),
-              ),
-              const SizedBox(width: fabGap),
-              Expanded(
-                child: _NavItem(
-                  icon: Icons.account_balance_wallet_outlined,
-                  selectedIcon: Icons.account_balance_wallet,
-                  label: 'التسديدات',
-                  selected: selectedIndex == 3,
-                  onTap: () => onTap(3),
-                ),
-              ),
-            ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final tabW = constraints.maxWidth / _items.length;
+              return Stack(
+                children: [
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic,
+                    // RTL Stack: left=0 is visual left; index 0 is rightmost.
+                    right: selectedIndex * tabW + tabW * 0.18,
+                    left: null,
+                    top: 8,
+                    width: tabW * 0.64,
+                    height: 52,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(26),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      for (final item in _items)
+                        Expanded(
+                          child: _NavItem(
+                            icon: item.icon,
+                            selectedIcon: item.selectedIcon,
+                            label: item.label,
+                            selected: selectedIndex == item.index,
+                            onTap: () => onTap(item.index),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),
     );
   }
+}
+
+class _NavSpec {
+  const _NavSpec(this.index, this.icon, this.selectedIcon, this.label);
+  final int index;
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
 }
 
 class _NavItem extends StatelessWidget {
@@ -89,12 +108,20 @@ class _NavItem extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(selected ? selectedIcon : icon, color: color, size: 24),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: Icon(
+                selected ? selectedIcon : icon,
+                key: ValueKey(selected),
+                color: color,
+                size: 24,
+              ),
+            ),
             const SizedBox(height: 2),
             Flexible(
               child: Text(

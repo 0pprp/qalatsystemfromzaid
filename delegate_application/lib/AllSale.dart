@@ -6,7 +6,9 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AllSale extends StatefulWidget {
-  const AllSale({super.key});
+  const AllSale({super.key, this.embedded = false});
+
+  final bool embedded;
 
   @override
   _AllSaleState createState() => _AllSaleState();
@@ -102,6 +104,7 @@ class _AllSaleState extends State<AllSale> {
       textDirection: TextDirection.rtl,
       child: AppSafeScaffold(
         backgroundColor: AppTheme.backgroundColor,
+        safeBottom: !widget.embedded,
         appBar: AppBar(
           backgroundColor: AppTheme.primaryColor,
           elevation: 0,

@@ -5,7 +5,13 @@ import 'package:http/http.dart' as http;
 
 /// Session for User-based followers (Users.UserType = متابع).
 /// Pref keys keep DelegateID name for older screens; value is UserId.
+/// AsyncId is an internal session token from the server — never shown in UI.
 class AsyncIdChecker {
+  static const _cityIdKey = 'CityId';
+  static const _cityNameKey = 'CityName';
+
+  /// Validates stored session with Backend (GET Login by AsyncID).
+  /// Returns false when UserType is no longer متابع or UserState inactive.
   static Future<bool> checkAsyncId() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String asyncId = prefs.getString('AsyncId') ?? '';
@@ -27,11 +33,38 @@ class AsyncIdChecker {
         int userId = int.tryParse(
                 (data['userId'] ?? data['delegateId'] ?? '0').toString()) ??
             0;
-        return userId != 0;
+        final userType = (data['userType'] ?? '').toString();
+        final isActive = data['isActive'] == true ||
+            data['isActive']?.toString().toLowerCase() == 'true';
+        if (userId == 0) return false;
+        if (userType.isNotEmpty && !userType.startsWith('متابع')) {
+          return false;
+        }
+        if (data.containsKey('isActive') && !isActive) {
+          return false;
+        }
+        // Refresh identity fields when present.
+        final name = (data['userName'] ?? data['delegateName'] ?? '').toString();
+        if (name.isNotEmpty) {
+          await prefs.setString('UserName', name);
+          await prefs.setString('DelegateName', name);
+        }
+        await prefs.setString('UserId', userId.toString());
+        await prefs.setString('DelegateID', userId.toString());
+        final cityId = data['cityId'];
+        if (cityId != null) {
+          await prefs.setString(_cityIdKey, cityId.toString());
+        }
+        final cityName = data['cityName']?.toString();
+        if (cityName != null && cityName.isNotEmpty) {
+          await prefs.setString(_cityNameKey, cityName);
+        }
+        return true;
       }
       if (response.statusCode == 403 || response.statusCode == 401) {
         return false;
       }
+      // Transient server errors: keep local session (offline-friendly).
       return response.statusCode >= 500;
     } catch (e) {
       return true;
@@ -44,6 +77,8 @@ class AsyncIdChecker {
     required String delegateId,
     required String delegateName,
     String? userId,
+    String? cityId,
+    String? cityName,
   }) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString('AsyncId', asyncId);
@@ -53,6 +88,12 @@ class AsyncIdChecker {
     await prefs.setString('UserId', id);
     await prefs.setString('DelegateName', delegateName);
     await prefs.setString('UserName', delegateName);
+    if (cityId != null && cityId.isNotEmpty) {
+      await prefs.setString(_cityIdKey, cityId);
+    }
+    if (cityName != null && cityName.isNotEmpty) {
+      await prefs.setString(_cityNameKey, cityName);
+    }
   }
 
   static Future<void> logout() async {
@@ -64,6 +105,8 @@ class AsyncIdChecker {
     await prefs.remove('UserId');
     await prefs.remove('UserName');
     await prefs.remove('SelectedChildId');
+    await prefs.remove(_cityIdKey);
+    await prefs.remove(_cityNameKey);
   }
 
   static Future<bool> isLoggedIn() async {

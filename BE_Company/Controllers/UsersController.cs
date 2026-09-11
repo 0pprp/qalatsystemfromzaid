@@ -151,7 +151,7 @@ namespace BE_Company.Controllers
                 var result = await _usersRepository.Users_Create(usersPostDTO);
                 if (result?.UserID is int newUserId)
                 {
-                    await SyncFollowerListsAsync(newUserId, usersPostDTO.UserType, usersPostDTO.ListIdsJson, usersPostDTO.Password);
+                    await SyncFollowerListsAsync(newUserId, usersPostDTO.UserType, usersPostDTO.ListIdsJson);
                 }
                 return Ok(result);
             }
@@ -180,7 +180,7 @@ namespace BE_Company.Controllers
                 var result = await _usersRepository.Users_Update(userID, usersPutDTO);
                 if (userID is int uid)
                 {
-                    await SyncFollowerListsAsync(uid, usersPutDTO.UserType, usersPutDTO.ListIdsJson, usersPutDTO.Password);
+                    await SyncFollowerListsAsync(uid, usersPutDTO.UserType, usersPutDTO.ListIdsJson);
                 }
                 return Ok(result);
             }
@@ -190,13 +190,14 @@ namespace BE_Company.Controllers
             }
         }
 
-        private async Task SyncFollowerListsAsync(int userId, string? userType, string? listIdsJson, string? password)
+        private async Task SyncFollowerListsAsync(int userId, string? userType, string? listIdsJson)
         {
             if (SalesRoles.IsFollower(userType))
             {
                 var ids = ParseListIds(listIdsJson);
                 await _followerLists.ReplaceAssignmentsAsync(userId, ids);
-                await _followerLists.AlignFollowerAsyncIdAsync(userId, password);
+                // AsyncID stays a separate session token (Users_Create NEWID / existing value).
+                // Do not overwrite AsyncID with Password.
             }
             else
             {

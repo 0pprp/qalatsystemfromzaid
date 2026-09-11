@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 /// Shared safe-area + scaffold helpers (no double padding).
 class AppInsets {
-  /// Extra scroll space so content clears a center-docked FAB / BottomAppBar.
-  static const double bottomNavContentClearance = 88;
+  /// Extra scroll space so content clears the bottom navigation bar.
+  static const double bottomNavContentClearance = 72;
 
   static EdgeInsets scrollPadding(
     BuildContext context, {

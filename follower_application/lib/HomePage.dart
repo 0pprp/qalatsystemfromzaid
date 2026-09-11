@@ -59,6 +59,12 @@ class _HomePageState extends State<HomePage> {
       if (mounted) Navigator.pushReplacementNamed(context, '/Login');
       return;
     }
+    final sessionOk = await AsyncIdChecker.checkAsyncId();
+    if (!sessionOk) {
+      await AsyncIdChecker.logout();
+      if (mounted) Navigator.pushReplacementNamed(context, '/Login');
+      return;
+    }
     try {
       await _tracking.restoreIfNeeded();
       if (mounted) {
