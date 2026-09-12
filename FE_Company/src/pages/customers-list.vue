@@ -8,6 +8,7 @@ import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+import { ratingChipColor } from '@/composables/useCustomerRating'
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -152,6 +153,7 @@ const headers = [
   { title: 'تسديد', key: 'addReceipt' },
   { title: 'نقل', key: 'move' },
   { title: 'القانونية', key: 'isLegal' },
+  { title: 'التقييم', key: 'rating' },
   { title: 'الملف', key: 'profile' },
   { title: 'العميل', key: 'customerName' },
   { title: 'الحالة', key: 'status' },
@@ -276,11 +278,37 @@ async function fetchCustomers() {
     const showType = filters.value.showType || 'الجميع'
     const response = await axios.get(`${apiUrl}Customers/Customers_GetAll/${delegateID}&&${textSearch}&&${showType}`, { headers: authHeader })
 
-    customersData.value = response.data
+    customersData.value = response.data || []
+    await enrichCustomerRatings(authHeader)
   } catch (error) {
     console.error(error)
   } finally {
     loading.value = false
+  }
+}
+
+async function enrichCustomerRatings(authHeader) {
+  const ids = (customersData.value || [])
+    .map(c => c.customerID)
+    .filter(id => id > 0)
+  if (!ids.length) return
+
+  try {
+    const { data } = await axios.post(`${apiUrl}Ratings/customers/summary`, { ids }, { headers: authHeader })
+    const map = new Map((data || []).map(r => [r.customerId, r]))
+    customersData.value = customersData.value.map(c => {
+      const rating = map.get(c.customerID)
+      if (!rating) return c
+
+      return {
+        ...c,
+        ratingLabel: rating.rating,
+        ratingScore: rating.score,
+        ratingReasonShort: rating.reasonShort,
+      }
+    })
+  } catch (error) {
+    console.error('Failed to load customer ratings', error)
   }
 }
 
@@ -987,6 +1015,18 @@ onMounted(() => {
             <div>
               {{ item.customerName }}
             </div>
+          </template>
+          <template #item.rating="{ item }">
+            <VChip
+              v-if="item.ratingLabel"
+              size="small"
+              :color="ratingChipColor(item.ratingLabel)"
+              :title="item.ratingReasonShort || ''"
+            >
+              {{ item.ratingLabel }}
+              <span class="ms-1">({{ item.ratingScore }})</span>
+            </VChip>
+            <span v-else class="text-medium-emphasis">—</span>
           </template>
           <template #item.profile="{ item }">
             <VBtn

@@ -1,4 +1,5 @@
 using BE_Company.Sales.Authorization;
+using BE_Company.Sales.Rating;
 using BE_Company.Sales.Services;
 using Microsoft.AspNetCore.Authorization;
 
@@ -34,6 +35,8 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesRequestService, SalesRequestService>();
             services.AddScoped<Filtering.ISalesFilterRepository, Filtering.SalesFilterRepository>();
             services.AddScoped<Filtering.ISalesFilterService, Filtering.SalesFilterService>();
+            services.AddScoped<IRatingDataSource, RatingDataSource>();
+            services.AddScoped<IRatingService, RatingService>();
             services.AddScoped<ISalesManagerReadRepository, SalesManagerReadRepository>();
             services.AddSingleton(sp =>
             {

@@ -5,6 +5,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useUserRole } from '@/composables/useUserRole'
+import { ratingChipColor } from '@/composables/useCustomerRating'
 
 const apiUrl = localStorage.getItem('LinkCity')
 const route = useRoute()
@@ -13,6 +14,7 @@ const { canWriteNotes } = useUserRole()
 
 const customerID = computed(() => Number(route.query.customerID) || 0)
 const customer = ref(null)
+const ratingDetail = ref(null)
 const notes = ref([])
 const decisions = ref([])
 const loading = ref(false)
@@ -86,7 +88,7 @@ async function fetchProfile() {
     loading.value = true
     const authHeader = getAuthHeaders()
 
-    const [infoSettled, notesRes, decisionsRes, payersRes] = await Promise.allSettled([
+    const [infoSettled, notesRes, decisionsRes, payersRes, ratingRes] = await Promise.allSettled([
       axios.get(`${apiUrl}Customers/Customers_InfoSimple/${customerID.value}`, { headers: authHeader }),
       axios.get(`${apiUrl}CustomerDecisions/Notes/${customerID.value}`, { headers: authHeader }),
       axios.get(`${apiUrl}CustomerDecisions/Decisions`, {
@@ -94,6 +96,7 @@ async function fetchProfile() {
         params: { customerID: customerID.value },
       }),
       axios.get(`${apiUrl}CustomerDecisions/WeakWeekPayers`, { headers: authHeader }),
+      axios.get(`${apiUrl}Ratings/customers/${customerID.value}`, { headers: authHeader }),
     ])
 
     const info = infoSettled.status === 'fulfilled' ? infoSettled.value.data : null
@@ -105,6 +108,7 @@ async function fetchProfile() {
 
     notes.value = notesRes.status === 'fulfilled' ? (notesRes.value.data || []) : []
     decisions.value = decisionsRes.status === 'fulfilled' ? (decisionsRes.value.data || []) : []
+    ratingDetail.value = ratingRes.status === 'fulfilled' ? ratingRes.value.data : null
   } catch (error) {
     console.error(error)
     toast.error('تعذر جلب ملف الزبون')
@@ -166,7 +170,38 @@ onMounted(fetchProfile)
             المندوب: {{ customer?.delegateName || '—' }}
           </div>
         </div>
+        <VSpacer />
+        <VChip
+          v-if="ratingDetail"
+          size="large"
+          :color="ratingChipColor(ratingDetail.rating)"
+          class="font-weight-bold"
+        >
+          {{ ratingDetail.rating }} ({{ ratingDetail.score }})
+        </VChip>
       </div>
+
+      <VAlert
+        v-if="ratingDetail"
+        class="mb-6"
+        variant="tonal"
+        :color="ratingChipColor(ratingDetail.rating)"
+      >
+        <div class="font-weight-medium mb-1">{{ ratingDetail.reason }}</div>
+        <div class="text-body-2">
+          قانونية: {{ ratingDetail.isLegal ? 'نعم' : 'لا' }}
+          · مصفر: {{ ratingDetail.isSettled ? 'نعم' : 'لا' }}
+          <template v-if="ratingDetail.daysToSettle != null">
+            · أيام الإغلاق: {{ ratingDetail.daysToSettle }}
+          </template>
+          <template v-if="ratingDetail.daysSinceSale != null">
+            · أيام منذ البيع: {{ ratingDetail.daysSinceSale }}
+          </template>
+          <template v-if="ratingDetail.paymentRate != null">
+            · معدل التسديد: {{ Number(ratingDetail.paymentRate).toFixed(2) }}%
+          </template>
+        </div>
+      </VAlert>
 
       <VRow class="mb-6">
         <VCol cols="12" sm="6" md="3">

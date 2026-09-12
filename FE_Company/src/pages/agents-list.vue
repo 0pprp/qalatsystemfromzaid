@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+import { ratingChipColor, riskChipColor, riskLabelAr } from '@/composables/useCustomerRating'
 
 const router = useRouter()
 
@@ -70,6 +71,9 @@ const formattedNumber = num => {
 // تعريف أعمدة جدول المندوبين
 const headers = [
   { title: 'المندوب', key: 'delegateName' },
+  { title: 'تقييم القائمة', key: 'listRatingOverall' },
+  { title: 'تقييم حديث', key: 'listRatingRecent' },
+  { title: 'خطر قانونية', key: 'listRisk' },
   { title: 'كلمة السر', key: 'asyncID' },
   { title: 'عدد العملاء', key: 'numberOfCustomer' },
   { title: 'عدد المصفرين', key: 'numberOfCustomerIsZero' },
@@ -99,11 +103,39 @@ async function fetchDelegates() {
     const { textSearch } = filters.value
     const response = await axios.get(`${apiUrl}Delegates/Delegates_GetAll/${textSearch || 'null'}`, { headers: authHeader })
 
-    delegatesData.value = response.data
+    delegatesData.value = response.data || []
+    await enrichListRatings(authHeader)
   } catch (error) {
     console.error(error)
   } finally {
     loading.value = false
+  }
+}
+
+async function enrichListRatings(authHeader) {
+  const ids = (delegatesData.value || [])
+    .map(d => d.delegateID)
+    .filter(id => id > 0)
+  if (!ids.length) return
+
+  try {
+    const { data } = await axios.post(`${apiUrl}Ratings/lists/summary`, { ids }, { headers: authHeader })
+    const map = new Map((data || []).map(r => [r.listId, r]))
+    delegatesData.value = delegatesData.value.map(d => {
+      const rating = map.get(d.delegateID)
+      if (!rating) return d
+
+      return {
+        ...d,
+        listOverallRating: rating.overallRating,
+        listOverallAverage: rating.overallAverageScore,
+        listRecentRating: rating.recentRating,
+        listRecentAverage: rating.recentAverageScore,
+        listRiskIndicator: rating.riskIndicator,
+      }
+    })
+  } catch (error) {
+    console.error('Failed to load list ratings', error)
   }
 }
 
@@ -514,6 +546,38 @@ onMounted(() => {
             <div class="font-weight-medium">
               {{ item.delegateName || 'لا يوجد' }}
             </div>
+          </template>
+          <template #item.listRatingOverall="{ item }">
+            <VChip
+              v-if="item.listOverallRating"
+              size="small"
+              :color="ratingChipColor(item.listOverallRating)"
+            >
+              {{ item.listOverallRating }}
+              <span class="ms-1">({{ item.listOverallAverage ?? 0 }})</span>
+            </VChip>
+            <span v-else class="text-medium-emphasis">—</span>
+          </template>
+          <template #item.listRatingRecent="{ item }">
+            <VChip
+              v-if="item.listRecentRating"
+              size="small"
+              :color="ratingChipColor(item.listRecentRating)"
+            >
+              {{ item.listRecentRating }}
+              <span class="ms-1">({{ item.listRecentAverage ?? 0 }})</span>
+            </VChip>
+            <span v-else class="text-medium-emphasis">—</span>
+          </template>
+          <template #item.listRisk="{ item }">
+            <VChip
+              v-if="item.listRiskIndicator"
+              size="small"
+              :color="riskChipColor(item.listRiskIndicator)"
+            >
+              {{ riskLabelAr(item.listRiskIndicator) }}
+            </VChip>
+            <span v-else class="text-medium-emphasis">—</span>
           </template>
           <template #item.numberOfCustomer="{ item }">
             <VChip
