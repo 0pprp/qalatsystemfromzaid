@@ -150,6 +150,43 @@ namespace BE_SalesEmployee.Services
             return await _http.SendAsync(request, ct);
         }
 
+        /// <summary>
+        /// Trusted gateway call into BE_Company sales-filter endpoints.
+        /// Never reuses a home-branch employee JWT on another city.
+        /// </summary>
+        public async Task<HttpResponseMessage> SendFilterAsync(
+            string cityLink,
+            string relativePath,
+            HttpMethod method,
+            string? jsonBody,
+            string? filterUserName,
+            string? externalUserId,
+            CancellationToken ct)
+        {
+            var url = $"{AdminCitiesService.NormalizeLink(cityLink)}{relativePath.TrimStart('/')}";
+            var request = new HttpRequestMessage(method, url);
+            var key = _configuration["InternalApiKey"] ?? "";
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                request.Headers.TryAddWithoutValidation("X-Sales-Gateway-Key", key);
+            }
+            if (!string.IsNullOrWhiteSpace(filterUserName))
+            {
+                var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(filterUserName));
+                request.Headers.TryAddWithoutValidation("X-Sales-Filter-User-Name-B64", b64);
+            }
+            if (!string.IsNullOrWhiteSpace(externalUserId))
+            {
+                request.Headers.TryAddWithoutValidation("X-Sales-Filter-External-User-Id", externalUserId);
+            }
+            request.Headers.TryAddWithoutValidation("X-Sales-Filter-Role", "SalesFilterEmployee");
+            if (jsonBody != null)
+            {
+                request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+            }
+            return await _http.SendAsync(request, ct);
+        }
+
         public async Task<HttpResponseMessage> SendGatewayKeyAsync(
             string cityLink,
             string relativePath,

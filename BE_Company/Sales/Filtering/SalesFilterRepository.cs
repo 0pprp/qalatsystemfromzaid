@@ -24,7 +24,8 @@ namespace BE_Company.Sales.Filtering
             int id,
             string expectedStatus,
             string newStatus,
-            int userId,
+            int? userId,
+            string? changedByUserName,
             string? note,
             string? reason,
             CancellationToken ct = default);
@@ -222,7 +223,8 @@ WHERE R.Id = @Id;",
             int id,
             string expectedStatus,
             string newStatus,
-            int userId,
+            int? userId,
+            string? changedByUserName,
             string? note,
             string? reason,
             CancellationToken ct = default)
@@ -251,6 +253,7 @@ WHERE R.Id = @Id;",
 UPDATE dbo.SalesRequests SET
     FilterStatus = @NewStatus,
     FilteredByUserId = @UserId,
+    FilteredByUserName = @UserName,
     FilterNote = @Note,
     FilterRejectReason = CASE WHEN @NewStatus = N'Rejected' THEN @Reason ELSE FilterRejectReason END,
     FilteredAtUtc = SYSUTCDATETIME(),
@@ -267,6 +270,7 @@ WHERE Id = @Id AND FilterStatus = @ExpectedStatus;",
                     NewStatus = newStatus,
                     ExpectedStatus = expectedStatus,
                     UserId = userId,
+                    UserName = Truncate(changedByUserName, 200),
                     Note = note,
                     Reason = reason,
                 },
@@ -284,14 +288,15 @@ WHERE Id = @Id AND FilterStatus = @ExpectedStatus;",
 
             await c.ExecuteAsync(new CommandDefinition(@"
 INSERT INTO dbo.SalesFilterHistory
-(SaleRequestId, PreviousStatus, NewStatus, ChangedByUserId, Note, Reason, ChangedAtUtc)
-VALUES (@Id, @Previous, @NewStatus, @UserId, @Note, @Reason, SYSUTCDATETIME());",
+(SaleRequestId, PreviousStatus, NewStatus, ChangedByUserId, ChangedByUserName, Note, Reason, ChangedAtUtc)
+VALUES (@Id, @Previous, @NewStatus, @UserId, @UserName, @Note, @Reason, SYSUTCDATETIME());",
                 new
                 {
                     Id = id,
                     Previous = expectedStatus,
                     NewStatus = newStatus,
                     UserId = userId,
+                    UserName = Truncate(changedByUserName, 200),
                     Note = note,
                     Reason = reason,
                 },
@@ -302,12 +307,23 @@ VALUES (@Id, @Previous, @NewStatus, @UserId, @Note, @Reason, SYSUTCDATETIME());"
             return (true, newStatus);
         }
 
+        private static string? Truncate(string? value, int max)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            var trimmed = value.Trim();
+            return trimmed.Length <= max ? trimmed : trimmed[..max];
+        }
+
         public async Task<IReadOnlyList<SalesFilterHistoryDTO>> ListHistoryAsync(int saleRequestId, CancellationToken ct = default)
         {
             await EnsureSchemaAsync(ct);
             await using var c = new SqlConnection(RequireCs());
             var rows = await c.QueryAsync<SalesFilterHistoryDTO>(new CommandDefinition(@"
-SELECT Id, SaleRequestId, PreviousStatus, NewStatus, ChangedByUserId, Note, Reason, ChangedAtUtc
+SELECT Id, SaleRequestId, PreviousStatus, NewStatus, ChangedByUserId, ChangedByUserName, Note, Reason, ChangedAtUtc
 FROM dbo.SalesFilterHistory
 WHERE SaleRequestId = @Id
 ORDER BY ChangedAtUtc ASC, Id ASC;",
@@ -329,10 +345,19 @@ BEGIN
     CREATE INDEX IX_SalesFilterUserCities_User ON dbo.SalesFilterUserCities (UserId);
 END
 
+IF OBJECT_ID(N'dbo.Users', N'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_SalesFilterUserCities_Users')
+BEGIN
+    ALTER TABLE dbo.SalesFilterUserCities WITH NOCHECK
+    ADD CONSTRAINT FK_SalesFilterUserCities_Users FOREIGN KEY (UserId) REFERENCES dbo.Users (UserID);
+END
+
 IF COL_LENGTH(N'dbo.SalesRequests', N'FilterStatus') IS NULL
     ALTER TABLE dbo.SalesRequests ADD FilterStatus NVARCHAR(30) NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'FilteredByUserId') IS NULL
     ALTER TABLE dbo.SalesRequests ADD FilteredByUserId INT NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'FilteredByUserName') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD FilteredByUserName NVARCHAR(200) NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'FilterNote') IS NULL
     ALTER TABLE dbo.SalesRequests ADD FilterNote NVARCHAR(1000) NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'FilterRejectReason') IS NULL
@@ -372,12 +397,17 @@ BEGIN
         PreviousStatus NVARCHAR(30) NULL,
         NewStatus NVARCHAR(30) NOT NULL,
         ChangedByUserId INT NULL,
+        ChangedByUserName NVARCHAR(200) NULL,
         Note NVARCHAR(1000) NULL,
         Reason NVARCHAR(400) NULL,
         ChangedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_SalesFilterHistory_At DEFAULT (SYSUTCDATETIME())
     );
     CREATE INDEX IX_SalesFilterHistory_Request ON dbo.SalesFilterHistory (SaleRequestId, ChangedAtUtc, Id);
 END
+
+IF OBJECT_ID(N'dbo.SalesFilterHistory', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.SalesFilterHistory', N'ChangedByUserName') IS NULL
+    ALTER TABLE dbo.SalesFilterHistory ADD ChangedByUserName NVARCHAR(200) NULL;
 ";
     }
 }

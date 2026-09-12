@@ -17,6 +17,7 @@ builder.Services.AddHttpClient<BranchProxyService>(client =>
 });
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<SalesManagerAccountService>();
+builder.Services.AddScoped<SalesFilterLoginService>();
 builder.Services.AddSingleton<SalesDevelopmentGuard>();
 builder.Services.AddScoped<IGlobalCustomerSearchService, GatewayGlobalCustomerSearchService>();
 builder.Services.AddScoped<ISalesManagerBranchAggregator, SalesManagerBranchAggregator>();
@@ -30,6 +31,8 @@ builder.Services.AddAuthorization(options =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesEmployee)));
     options.AddPolicy(SalesPolicies.SalesManager, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
+    options.AddPolicy(SalesPolicies.SalesFilterEmployee, p =>
+        p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesFilterEmployee)));
     options.AddPolicy(SalesPolicies.ReadGps, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
     options.AddPolicy(SalesPolicies.ReadOtherSalesEmployees, p =>

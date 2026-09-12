@@ -17,6 +17,13 @@ BEGIN
     CREATE INDEX IX_SalesFilterUserCities_User ON dbo.SalesFilterUserCities (UserId);
 END
 
+IF OBJECT_ID(N'dbo.Users', N'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_SalesFilterUserCities_Users')
+BEGIN
+    ALTER TABLE dbo.SalesFilterUserCities WITH NOCHECK
+    ADD CONSTRAINT FK_SalesFilterUserCities_Users FOREIGN KEY (UserId) REFERENCES dbo.Users (UserID);
+END
+
 IF COL_LENGTH(N'dbo.SalesRequests', N'FilterStatus') IS NULL
     ALTER TABLE dbo.SalesRequests ADD FilterStatus NVARCHAR(30) NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'FilteredByUserId') IS NULL

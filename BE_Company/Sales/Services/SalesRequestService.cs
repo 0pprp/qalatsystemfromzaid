@@ -326,12 +326,10 @@ namespace BE_Company.Sales.Services
         public async Task<IReadOnlyList<SalesRequestDTO>> ListForEmployeeAsync(int employeeId, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
-            var rows = await _repo.ListAsync(employeeId, null, null, null, ct);
+            // Server-side gate: only ReadyForSale reaches the sales employee app.
+            var rows = await _repo.ListAsync(employeeId, null, null, null, ct, SalesFilterStatuses.ReadyForSale);
             var result = new List<SalesRequestDTO>();
-            foreach (var row in rows.Where(r =>
-                         r.TargetEmployeeId == employeeId
-                         && r.TargetEmployeeId > 0
-                         && SalesFilterStatuses.IsVisibleToSalesEmployee(r.FilterStatus)))
+            foreach (var row in rows.Where(r => r.TargetEmployeeId == employeeId && r.TargetEmployeeId > 0))
             {
                 result.Add(await HydrateAsync(row, ct));
             }

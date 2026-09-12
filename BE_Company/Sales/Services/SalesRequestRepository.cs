@@ -52,17 +52,18 @@ VALUES
                 SelectSql + " WHERE Id = @Id", new { Id = id }, cancellationToken: ct));
         }
 
-        public async Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct)
+        public async Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null)
         {
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
             var sql = SelectSql + @" WHERE (@TargetEmployeeId IS NULL OR TargetEmployeeId = @TargetEmployeeId)
 AND (@Status IS NULL OR Status = @Status)
+AND (@FilterStatus IS NULL OR FilterStatus = @FilterStatus)
 AND (@FromUtc IS NULL OR CreatedAtUtc >= @FromUtc)
 AND (@ToUtc IS NULL OR CreatedAtUtc <= @ToUtc)
 ORDER BY CreatedAtUtc DESC";
             var rows = await connection.QueryAsync<SalesRequestDTO>(new CommandDefinition(sql,
-                new { TargetEmployeeId = targetEmployeeId, Status = status, FromUtc = fromUtc, ToUtc = toUtc },
+                new { TargetEmployeeId = targetEmployeeId, Status = status, FilterStatus = filterStatus, FromUtc = fromUtc, ToUtc = toUtc },
                 cancellationToken: ct));
             return rows.ToList();
         }

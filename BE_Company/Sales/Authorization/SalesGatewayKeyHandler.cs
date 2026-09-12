@@ -7,8 +7,8 @@ using Microsoft.Extensions.Options;
 namespace BE_Company.Sales.Authorization
 {
     /// <summary>
-    /// Authenticates BE_SalesEmployee as a central sales manager using the
-    /// existing X-Sales-Gateway-Key. This is not a city employee JWT.
+    /// Authenticates BE_SalesEmployee using X-Sales-Gateway-Key.
+    /// Supports central sales manager OR sales-filter employee identity headers.
     /// </summary>
     public sealed class SalesGatewayKeyHandler : AuthenticationHandler<AuthenticationSchemeOptions>
     {
@@ -16,8 +16,12 @@ namespace BE_Company.Sales.Authorization
         public const string HeaderName = "X-Sales-Gateway-Key";
         public const string ManagerNameHeader = "X-Sales-Manager-Name";
         public const string ManagerNameB64Header = "X-Sales-Manager-Name-B64";
+        public const string FilterUserNameB64Header = "X-Sales-Filter-User-Name-B64";
+        public const string FilterExternalUserIdHeader = "X-Sales-Filter-External-User-Id";
+        public const string FilterRoleHeader = "X-Sales-Filter-Role";
         public const string AuthSourceClaim = "AuthSource";
         public const string AuthSourceGateway = "Gateway";
+        public const string ExternalUserIdClaim = "ExternalUserId";
 
         private readonly IConfiguration _configuration;
 
@@ -47,18 +51,66 @@ namespace BE_Company.Sales.Authorization
                 return Task.FromResult(AuthenticateResult.Fail("Invalid sales gateway key."));
             }
 
-            var name = ResolveManagerName(Request.Headers);
+            var isFilter = IsFilterRequest(Request.Headers);
+            var name = isFilter
+                ? ResolveFilterName(Request.Headers)
+                : ResolveManagerName(Request.Headers);
+            var externalId = isFilter ? ResolveExternalUserId(Request.Headers) : "";
 
-            var claims = new[]
+            var claims = new List<Claim>
             {
-                new Claim("UserID", "0"),
-                new Claim("UserName", name),
-                new Claim("UserType", SalesRoles.UserTypeSalesManager),
-                new Claim(AuthSourceClaim, AuthSourceGateway)
+                new("UserID", "0"),
+                new("UserName", name),
+                new("UserType", isFilter
+                    ? SalesRoles.UserTypeSalesFilterEmployee
+                    : SalesRoles.UserTypeSalesManager),
+                new(AuthSourceClaim, AuthSourceGateway)
             };
+            if (!string.IsNullOrWhiteSpace(externalId))
+            {
+                claims.Add(new Claim(ExternalUserIdClaim, externalId));
+            }
+
             var identity = new ClaimsIdentity(claims, Scheme.Name);
             var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name);
             return Task.FromResult(AuthenticateResult.Success(ticket));
+        }
+
+        private static bool IsFilterRequest(IHeaderDictionary headers) =>
+            headers.ContainsKey(FilterUserNameB64Header)
+            || headers.ContainsKey(FilterRoleHeader)
+            || headers.ContainsKey(FilterExternalUserIdHeader);
+
+        private static string ResolveExternalUserId(IHeaderDictionary headers)
+        {
+            if (headers.TryGetValue(FilterExternalUserIdHeader, out var id) &&
+                !string.IsNullOrWhiteSpace(id))
+            {
+                return id.ToString().Trim();
+            }
+
+            return "";
+        }
+
+        private static string ResolveFilterName(IHeaderDictionary headers)
+        {
+            if (headers.TryGetValue(FilterUserNameB64Header, out var b64) &&
+                !string.IsNullOrWhiteSpace(b64))
+            {
+                try
+                {
+                    var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(b64.ToString().Trim()));
+                    if (!string.IsNullOrWhiteSpace(decoded))
+                    {
+                        return decoded;
+                    }
+                }
+                catch (FormatException)
+                {
+                }
+            }
+
+            return "SalesFilterEmployee";
         }
 
         private static string ResolveManagerName(IHeaderDictionary headers)

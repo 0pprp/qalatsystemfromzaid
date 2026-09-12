@@ -57,7 +57,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       if (!mounted) return;
       setState(() {
         _cities = cities;
-        _city = cities.isEmpty ? null : cities.first.cityValue;
+        // Single city: auto-select. Multiple: force explicit choice.
+        _city = cities.length == 1 ? cities.first.cityValue : null;
         _loadingCities = false;
       });
       await _loadList();
@@ -84,7 +85,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     });
     try {
       final status = FilterStatuses.tabs[_tabs.index].$1;
-      final rows = await _repo.list(status: status, city: _city);
+      final rows = await _repo.list(status: status, cityValue: _city);
       if (!mounted) return;
       setState(() {
         _items = rows;
@@ -109,10 +110,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _open(FilterRequest row) async {
+    final city = _city;
+    if (city == null || city.isEmpty) return;
     final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => DetailScreen(
           requestId: row.id,
+          cityValue: city,
           repository: _repo,
           dialer: widget.dialer ?? _defaultDial,
         ),
@@ -149,11 +153,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 child: DropdownButtonFormField<String>(
+                  key: ValueKey('city-$_city-${_cities.length}'),
                   value: _city,
                   decoration: const InputDecoration(
                     labelText: 'المحافظة',
                     border: OutlineInputBorder(),
                   ),
+                  hint: const Text('اختر المحافظة', style: TextStyle(fontFamily: 'Cairo')),
                   items: [
                     ..._cities.map(
                       (c) => DropdownMenuItem(value: c.cityValue, child: Text(c.label, style: const TextStyle(fontFamily: 'Cairo'))),

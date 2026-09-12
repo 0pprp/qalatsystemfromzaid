@@ -12,17 +12,20 @@ namespace BE_SalesEmployee.Controllers
         private readonly BranchProxyService _proxy;
         private readonly TokenService _tokens;
         private readonly SalesManagerAccountService _managerAccount;
+        private readonly SalesFilterLoginService _filterLogin;
 
         public AuthController(
             AdminCitiesService cities,
             BranchProxyService proxy,
             TokenService tokens,
-            SalesManagerAccountService managerAccount)
+            SalesManagerAccountService managerAccount,
+            SalesFilterLoginService filterLogin)
         {
             _cities = cities;
             _proxy = proxy;
             _tokens = tokens;
             _managerAccount = managerAccount;
+            _filterLogin = filterLogin;
         }
 
         public class LoginRequest
@@ -118,6 +121,30 @@ namespace BE_SalesEmployee.Controllers
             return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة، أو الحساب ليس موظف مبيعات" });
         }
 
+        [HttpPost("LoginSalesFilter")]
+        public async Task<IActionResult> LoginSalesFilter([FromBody] LoginRequest request, CancellationToken ct)
+        {
+            var result = await _filterLogin.LoginAsync(request.UserName ?? "", request.Password ?? "", ct);
+            if (!result.Ok)
+            {
+                return BadRequest(new { message = result.Message });
+            }
+
+            return Ok(new
+            {
+                token = result.Token,
+                expiration = result.Expiration,
+                userId = result.UserId,
+                userName = result.UserName,
+                userType = result.UserType,
+                homeCityValue = result.HomeCityValue,
+                cityValue = result.HomeCityValue,
+                allowedFilterCities = result.AllowedFilterCities,
+                cities = result.Cities,
+                central = true
+            });
+        }
+
         [Authorize]
         [HttpGet("Me")]
         public IActionResult Me()
@@ -130,6 +157,8 @@ namespace BE_SalesEmployee.Controllers
                 user.UserType,
                 user.CityName,
                 user.CityValue,
+                homeCityValue = user.CityValue,
+                allowedFilterCities = user.AllowedFilterCities,
                 central = user.IsCentral
             });
         }

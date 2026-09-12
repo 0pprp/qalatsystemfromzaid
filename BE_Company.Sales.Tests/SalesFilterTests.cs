@@ -65,7 +65,7 @@ namespace BE_Company.Sales.Tests
         }
 
         public Task<(bool Ok, string? CurrentStatus)> TryTransitionAsync(
-            int id, string expectedStatus, string newStatus, int userId, string? note, string? reason, CancellationToken ct = default)
+            int id, string expectedStatus, string newStatus, int? userId, string? changedByUserName, string? note, string? reason, CancellationToken ct = default)
         {
             var r = Requests.FirstOrDefault(x => x.Id == id);
             if (r == null) return Task.FromResult<(bool, string?)>((false, null));
@@ -89,6 +89,7 @@ namespace BE_Company.Sales.Tests
                 PreviousStatus = previous,
                 NewStatus = newStatus,
                 ChangedByUserId = userId,
+                ChangedByUserName = changedByUserName,
                 Note = note,
                 Reason = reason,
                 ChangedAtUtc = DateTime.UtcNow,
@@ -336,6 +337,50 @@ namespace BE_Company.Sales.Tests
             }, default);
             Assert.Equal(SalesFilterStatuses.PendingFilter, updated.FilterStatus);
             Assert.Equal(77, updated.TargetEmployeeId);
+        }
+
+        [Fact]
+        public async Task GatewayFilter_Ready_KeepsLocalUserIdNull_AndStoresName()
+        {
+            var repo = new FakeSalesFilterRepository();
+            repo.Requests.Add(new SalesRequestDTO
+            {
+                Id = 20, TargetEmployeeId = 5, CityValue = "najaf",
+                CustomerName = "G", Status = SalesRequestStatuses.Assigned,
+                FilterStatus = SalesFilterStatuses.PendingFilter, CreatedAtUtc = DateTime.UtcNow,
+            });
+            var svc = new SalesFilterService(repo);
+            var actor = new SalesIdentity
+            {
+                EmployeeId = 0,
+                EmployeeName = "فلتر-مركزي",
+                UserType = SalesRoles.UserTypeSalesFilterEmployee,
+                Role = SalesRoles.SalesFilterEmployee,
+                IsGateway = true,
+                ExternalUserId = "999",
+            };
+            await svc.ReadyAsync(actor, 20, "ok", default);
+            Assert.Null(repo.Requests[0].FilteredByUserId);
+            Assert.Null(repo.History[0].ChangedByUserId);
+            Assert.Equal("فلتر-مركزي", repo.History[0].ChangedByUserName);
+            Assert.Equal(SalesFilterStatuses.ReadyForSale, repo.Requests[0].FilterStatus);
+        }
+
+        [Fact]
+        public async Task GatewayFilter_ListRequiresCity()
+        {
+            var svc = new SalesFilterService(new FakeSalesFilterRepository());
+            var actor = new SalesIdentity
+            {
+                EmployeeId = 0,
+                EmployeeName = "فلتر",
+                UserType = SalesRoles.UserTypeSalesFilterEmployee,
+                Role = SalesRoles.SalesFilterEmployee,
+                IsGateway = true,
+            };
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+                svc.ListAsync(actor, null, SalesFilterStatuses.PendingFilter, null, 1, 30, default));
+            Assert.Equal(400, ex.StatusCode);
         }
     }
 }

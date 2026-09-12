@@ -7,11 +7,13 @@ class DetailScreen extends StatefulWidget {
   const DetailScreen({
     super.key,
     required this.requestId,
+    required this.cityValue,
     required this.repository,
     required this.dialer,
   });
 
   final int requestId;
+  final String cityValue;
   final FilterRepository repository;
   final Future<bool> Function(String tel) dialer;
 
@@ -44,7 +46,7 @@ class _DetailScreenState extends State<DetailScreen> {
       _error = null;
     });
     try {
-      final row = await widget.repository.get(widget.requestId);
+      final row = await widget.repository.get(widget.cityValue, widget.requestId);
       if (!mounted) return;
       setState(() {
         _row = row;
@@ -62,13 +64,13 @@ class _DetailScreenState extends State<DetailScreen> {
   Future<void> _hold() async {
     final ok = await _confirm('تعليق الطلب؟');
     if (ok != true) return;
-    await _run(() => widget.repository.hold(widget.requestId, note: _note.text.trim().isEmpty ? null : _note.text.trim()));
+    await _run(() => widget.repository.hold(widget.cityValue, widget.requestId, note: _note.text.trim().isEmpty ? null : _note.text.trim()));
   }
 
   Future<void> _ready() async {
     final ok = await _confirm('هل تريد تحويل الطلب إلى جاهز للبيع؟ بعد ذلك سيظهر لموظف المبيعات المختص.');
     if (ok != true) return;
-    await _run(() => widget.repository.ready(widget.requestId, note: _note.text.trim().isEmpty ? null : _note.text.trim()));
+    await _run(() => widget.repository.ready(widget.cityValue, widget.requestId, note: _note.text.trim().isEmpty ? null : _note.text.trim()));
   }
 
   Future<void> _reject() async {
@@ -103,6 +105,7 @@ class _DetailScreenState extends State<DetailScreen> {
       return;
     }
     await _run(() => widget.repository.reject(
+          widget.cityValue,
           widget.requestId,
           reason: reason,
           note: _note.text.trim().isEmpty ? null : _note.text.trim(),

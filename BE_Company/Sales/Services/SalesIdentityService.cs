@@ -32,14 +32,16 @@ namespace BE_Company.Sales.Services
             var userIdRaw = http.Items["UserID"] as string ?? http.User.FindFirst("UserID")?.Value;
             _ = int.TryParse(userIdRaw, out var employeeId);
             var authSource = http.User.FindFirst(SalesGatewayKeyHandler.AuthSourceClaim)?.Value;
-            var isGatewayManager = string.Equals(authSource, SalesGatewayKeyHandler.AuthSourceGateway, StringComparison.Ordinal)
-                                   && SalesRoles.IsSalesManager(userType);
-            if (employeeId <= 0 && !isGatewayManager)
+            var isGateway = string.Equals(authSource, SalesGatewayKeyHandler.AuthSourceGateway, StringComparison.Ordinal);
+            var isGatewayManager = isGateway && SalesRoles.IsSalesManager(userType);
+            var isGatewayFilter = isGateway && SalesRoles.IsSalesFilterEmployee(userType);
+            if (employeeId <= 0 && !isGatewayManager && !isGatewayFilter)
             {
                 return null;
             }
 
             var employeeName = http.User.FindFirst("UserName")?.Value ?? string.Empty;
+            var externalUserId = http.User.FindFirst(SalesGatewayKeyHandler.ExternalUserIdClaim)?.Value;
             var requireDemo = _configuration.GetValue("SalesManagement:RequireDemoDatabase", true);
             var branchId = _configuration["SalesManagement:BranchId"];
             var branchName = _configuration["SalesManagement:BranchName"];
@@ -63,7 +65,9 @@ namespace BE_Company.Sales.Services
                 BranchName = branchName,
                 Role = role,
                 UserType = userType,
-                IsSalesShiftStarted = null
+                IsSalesShiftStarted = null,
+                IsGateway = isGateway,
+                ExternalUserId = externalUserId
             };
         }
     }

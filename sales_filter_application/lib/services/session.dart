@@ -5,9 +5,7 @@ class Session {
   static String? apiBase;
   static String? userName;
   static String? userType;
-  static String? cityLink;
-  static String? cityValue;
-  static String? cityName;
+  static String? homeCityValue;
 
   static bool get isLoggedIn => (token ?? '').isNotEmpty && (apiBase ?? '').isNotEmpty;
 
@@ -17,9 +15,7 @@ class Session {
     apiBase = p.getString('apiBase');
     userName = p.getString('userName');
     userType = p.getString('userType');
-    cityLink = p.getString('cityLink');
-    cityValue = p.getString('cityValue');
-    cityName = p.getString('cityName');
+    homeCityValue = p.getString('homeCityValue');
   }
 
   static Future<void> save({
@@ -27,30 +23,24 @@ class Session {
     required String base,
     required String name,
     required String type,
-    String? link,
-    String? branchValue,
-    String? branchName,
+    String? homeCityValue,
   }) async {
     final p = await SharedPreferences.getInstance();
     token = tokenValue;
     apiBase = base;
     userName = name;
     userType = type;
-    cityLink = link;
-    cityValue = branchValue;
-    cityName = branchName;
+    Session.homeCityValue = homeCityValue;
     await p.setString('token', tokenValue);
     await p.setString('apiBase', base);
     await p.setString('userName', name);
     await p.setString('userType', type);
-    await p.setString('cityLink', link ?? '');
-    await p.setString('cityValue', branchValue ?? '');
-    await p.setString('cityName', branchName ?? '');
+    await p.setString('homeCityValue', homeCityValue ?? '');
   }
 
   static Future<void> clear() async {
     final p = await SharedPreferences.getInstance();
     await p.clear();
-    token = apiBase = userName = userType = cityLink = cityValue = cityName = null;
+    token = apiBase = userName = userType = homeCityValue = null;
   }
 }

@@ -2,6 +2,7 @@ using System.Reflection;
 using BE_Company.Sales.Authorization;
 using BE_Company.Sales.Controllers;
 using BE_Company.Sales.DTO;
+using BE_Company.Sales.Filtering;
 using BE_Company.Sales.Models;
 using BE_Company.Sales.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -30,11 +31,12 @@ namespace BE_Company.Sales.Tests
         public Task<SalesRequestDTO?> GetByIdAsync(int id, CancellationToken ct) =>
             Task.FromResult(Rows.FirstOrDefault(r => r.Id == id));
 
-        public Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct)
+        public Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null)
         {
             IEnumerable<SalesRequestDTO> q = Rows;
             if (targetEmployeeId != null) q = q.Where(r => r.TargetEmployeeId == targetEmployeeId);
             if (!string.IsNullOrWhiteSpace(status)) q = q.Where(r => r.Status == status);
+            if (!string.IsNullOrWhiteSpace(filterStatus)) q = q.Where(r => r.FilterStatus == filterStatus);
             if (fromUtc != null) q = q.Where(r => r.CreatedAtUtc >= fromUtc);
             if (toUtc != null) q = q.Where(r => r.CreatedAtUtc <= toUtc);
             return Task.FromResult<IReadOnlyList<SalesRequestDTO>>(q.ToList());
@@ -142,7 +144,10 @@ namespace BE_Company.Sales.Tests
         private static async Task<SalesRequestDTO> AssignedAsync(SalesRequestService svc, int employeeId = 1, string name = "أ")
         {
             var created = await svc.CreateAsync(Manager(), new() { Customer = new() { FullName = name } }, CancellationToken.None);
-            return await svc.AssignAsync(Manager(), created.Id, new SalesRequestAssignDTO { EmployeeId = employeeId }, CancellationToken.None);
+            var assigned = await svc.AssignAsync(Manager(), created.Id, new SalesRequestAssignDTO { EmployeeId = employeeId }, CancellationToken.None);
+            // Employee workflows assume filter approval already happened.
+            assigned.FilterStatus = SalesFilterStatuses.ReadyForSale;
+            return assigned;
         }
 
         [Fact]
@@ -316,6 +321,18 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(1, marked);
             Assert.Equal(0, await svc.CountUnreadEmployeeSubmittedAsync(CancellationToken.None));
             Assert.Equal(SalesRequestSources.NewCustomer, repo.Rows.Single(r => r.CreatedByUserId == 90).CustomerSourceType);
+        }
+
+        [Fact]
+        public async Task Employee_DoesNotSeePendingFilter()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await svc.CreateAsync(Manager(), new() { Customer = new() { FullName = "أ" } }, CancellationToken.None);
+            await svc.AssignAsync(Manager(), created.Id, new SalesRequestAssignDTO { EmployeeId = 1 }, CancellationToken.None);
+            Assert.Empty(await svc.ListForEmployeeAsync(1, CancellationToken.None));
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => svc.GetForEmployeeAsync(created.Id, 1, CancellationToken.None));
+            Assert.Equal(404, ex.StatusCode);
         }
 
         [Fact]

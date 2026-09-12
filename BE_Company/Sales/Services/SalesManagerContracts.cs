@@ -180,7 +180,7 @@ namespace BE_Company.Sales.Services
         Task EnsureSchemaAsync(CancellationToken ct);
         Task<SalesRequestDTO> InsertAsync(SalesRequestDTO row, CancellationToken ct);
         Task<SalesRequestDTO?> GetByIdAsync(int id, CancellationToken ct);
-        Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct);
+        Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null);
         Task UpdateAsync(SalesRequestDTO row, CancellationToken ct);
         Task<int> CountByStatusAsync(string status, CancellationToken ct);
         Task InsertHistoryAsync(SalesRequestHistoryDTO row, CancellationToken ct);

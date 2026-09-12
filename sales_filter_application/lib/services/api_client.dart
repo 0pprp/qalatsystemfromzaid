@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:sales_filter_application/config/app_env.dart';
 import 'package:sales_filter_application/services/session.dart';
 
 class ApiException implements Exception {
@@ -12,12 +13,15 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  static String get _base {
-    var b = (Session.apiBase ?? '').trim();
-    if (b.isEmpty) return '';
-    if (!b.endsWith('/')) b = '$b/';
-    return b;
+  static String resolveBase() {
+    final session = Session.apiBase;
+    if (session != null && session.isNotEmpty) {
+      return AppEnv.normalizeBase(session);
+    }
+    return AppEnv.apiBase();
   }
+
+  static String get _base => resolveBase();
 
   static Map<String, String> get _headers {
     final h = <String, String>{
@@ -34,7 +38,11 @@ class ApiClient {
     while (p.toLowerCase().startsWith('api/')) {
       p = p.substring(4);
     }
-    return Uri.parse('$_base$p').replace(queryParameters: query);
+    final base = _base;
+    if (base.isEmpty) {
+      throw ApiException('عنوان بوابة المبيعات غير مضبوط');
+    }
+    return Uri.parse('$base$p').replace(queryParameters: query);
   }
 
   static String _msg(http.Response r) {
@@ -77,21 +85,23 @@ class ApiClient {
     }
   }
 
-  static Future<Map<String, dynamic>> login({
-    required String baseUrl,
+  /// Central gateway login — never talks to BE_Company directly.
+  static Future<Map<String, dynamic>> loginSalesFilter({
     required String userName,
     required String password,
   }) async {
-    var base = baseUrl.trim();
-    if (!base.endsWith('/')) base = '$base/';
+    final base = AppEnv.apiBase();
+    if (base.isEmpty) {
+      throw ApiException('عنوان بوابة المبيعات غير مضبوط');
+    }
     try {
       final r = await http
           .post(
-            Uri.parse('${base}Users/Users_LoginEmployee'),
+            Uri.parse('${base}Auth/LoginSalesFilter'),
             headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
             body: jsonEncode({'userName': userName, 'password': password}),
           )
-          .timeout(const Duration(seconds: 25));
+          .timeout(const Duration(seconds: 45));
       if (r.statusCode < 200 || r.statusCode >= 300) {
         throw ApiException(_msg(r), statusCode: r.statusCode);
       }

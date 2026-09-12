@@ -21,6 +21,7 @@ namespace BE_Company.Sales.Filtering
         public string? FilterNote { get; set; }
         public string? RejectReason { get; set; }
         public int? FilteredByUserId { get; set; }
+        public string? FilteredByUserName { get; set; }
         public int TargetEmployeeId { get; set; }
         public string? TargetEmployeeName { get; set; }
     }
@@ -49,6 +50,7 @@ namespace BE_Company.Sales.Filtering
         public string? PreviousStatus { get; set; }
         public string NewStatus { get; set; } = "";
         public int? ChangedByUserId { get; set; }
+        public string? ChangedByUserName { get; set; }
         public string? Note { get; set; }
         public string? Reason { get; set; }
         public DateTime ChangedAtUtc { get; set; }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:sales_filter_application/config/app_env.dart';
 import 'package:sales_filter_application/screens/home_screen.dart';
 import 'package:sales_filter_application/screens/login_screen.dart';
 import 'package:sales_filter_application/services/session.dart';
@@ -6,6 +7,7 @@ import 'package:sales_filter_application/theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  AppEnv.logIfDebug();
   await Session.load();
   runApp(const SalesFilterApp());
 }
