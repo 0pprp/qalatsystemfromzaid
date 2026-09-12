@@ -129,7 +129,7 @@ WHERE UserID = @UserID;
                 return await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_Create",
                 new
                 {
-                    UserName = usersPostDTO.UserName,
+                    UserName = usersPostDTO.UserName?.Trim(),
                     Email = usersPostDTO.Email,
                     Password = usersPostDTO.Password,
                     PhoneNumber = usersPostDTO.PhoneNumber,
@@ -140,6 +140,25 @@ WHERE UserID = @UserID;
                 },
                 commandType: CommandType.StoredProcedure);
             }
+        }
+
+        public async Task<bool> UserNameExistsAsync(string userName, int? excludeUserId = null, CancellationToken ct = default)
+        {
+            var normalized = (userName ?? string.Empty).Trim();
+            if (normalized.Length == 0)
+            {
+                return false;
+            }
+
+            await using var connection = new SqlConnection(_connectionString);
+            var count = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
+SELECT COUNT(1)
+FROM dbo.Users
+WHERE LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName)
+  AND (@ExcludeUserId IS NULL OR UserID <> @ExcludeUserId);",
+                new { UserName = normalized, ExcludeUserId = excludeUserId },
+                cancellationToken: ct));
+            return count > 0;
         }
 
         public async Task<UsersGetDTO?> Users_Update(int? userID, UsersPutDTO usersPutDTO)
@@ -160,7 +179,7 @@ WHERE UserID = @UserID;
                 new
                 {
                     UserID = userID,
-                    UserName = usersPutDTO.UserName,
+                    UserName = usersPutDTO.UserName?.Trim(),
                     Email = usersPutDTO.Email,
                     Password = CheckPasswordValidation(usersPutDTO.Password, user?.Password),
                     PhoneNumber = usersPutDTO.PhoneNumber,

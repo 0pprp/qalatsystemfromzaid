@@ -151,6 +151,19 @@ namespace BE_Company.Controllers
                 {
                     return Unauthorized("User is not authenticated.");
                 }
+
+                var userName = usersPostDTO.UserName?.Trim();
+                if (string.IsNullOrWhiteSpace(userName))
+                {
+                    return BadRequest(new { message = "اسم المستخدم مطلوب" });
+                }
+
+                usersPostDTO.UserName = userName;
+                if (await _usersRepository.UserNameExistsAsync(userName))
+                {
+                    return Conflict(new { message = "اسم المستخدم مستخدم مسبقاً" });
+                }
+
                 usersPostDTO.UserCreateID = userID;
                 var result = await _usersRepository.Users_Create(usersPostDTO);
                 if (result?.UserID is int newUserId)
@@ -181,6 +194,19 @@ namespace BE_Company.Controllers
                 {
                     return Unauthorized("User is not authenticated.");
                 }
+
+                var userName = usersPutDTO.UserName?.Trim();
+                if (string.IsNullOrWhiteSpace(userName))
+                {
+                    return BadRequest(new { message = "اسم المستخدم مطلوب" });
+                }
+
+                usersPutDTO.UserName = userName;
+                if (await _usersRepository.UserNameExistsAsync(userName, excludeUserId: userID))
+                {
+                    return Conflict(new { message = "اسم المستخدم مستخدم مسبقاً" });
+                }
+
                 usersPutDTO.UserUpdateID = authenticatedUserID; 
                 var result = await _usersRepository.Users_Update(userID, usersPutDTO);
                 if (userID is int uid)
