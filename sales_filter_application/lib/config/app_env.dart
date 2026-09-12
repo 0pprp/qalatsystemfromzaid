@@ -9,7 +9,7 @@ class AppEnv {
   static const String _apiBaseUrlDefine = String.fromEnvironment('API_BASE_URL');
   static const String _apiBaseDefine = String.fromEnvironment('API_BASE');
 
-  static const String demoHostFallback = 'http://169.58.236.52:8080/api/';
+  static const String demoHostFallback = 'http://169.58.236.52:8080/sales-gw/api/';
   static const String localApiBaseUrl = 'http://127.0.0.1:5280/api/';
 
   static bool get isDemo => name.toLowerCase() == 'demo';
