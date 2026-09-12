@@ -35,6 +35,8 @@ IF COL_LENGTH(N'dbo.SalesRequests', N'FilterRejectReason') IS NULL
 IF COL_LENGTH(N'dbo.SalesRequests', N'FilteredAtUtc') IS NULL
     ALTER TABLE dbo.SalesRequests ADD FilteredAtUtc DATETIME2 NULL;
 
+GO
+
 UPDATE dbo.SalesRequests
 SET FilterStatus = N'ReadyForSale'
 WHERE FilterStatus IS NULL
