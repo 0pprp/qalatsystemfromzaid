@@ -160,7 +160,7 @@ async function fetchFilterCitiesCatalog() {
   try {
     const rows = await fetchCities()
     availableFilterCities.value = (rows || []).map(c => ({
-      value: c.value || c.Value || '',
+      value: String(c.value || c.Value || ''),
       name: c.name || c.Name || c.value || '',
     })).filter(c => c.value)
   }
@@ -179,22 +179,11 @@ async function loadAssignedFilterCities(userId) {
     const { data } = await axios.get(`${apiUrl}Users/Users_FilterCities/${userId}`, { headers: authHeader })
     const cities = Array.isArray(data?.cities) ? data.cities : []
     selectedFilterCityValues.value = cities
-      .map(c => c.cityValue || c.CityValue || c.value)
+      .map(c => String(c.cityValue || c.CityValue || c.value || ''))
       .filter(Boolean)
   }
   catch {
     selectedFilterCityValues.value = []
-  }
-}
-
-function toggleFilterCity(value, checked) {
-  const v = String(value)
-  if (checked) {
-    if (!selectedFilterCityValues.value.includes(v))
-      selectedFilterCityValues.value = [...selectedFilterCityValues.value, v]
-  }
-  else {
-    selectedFilterCityValues.value = selectedFilterCityValues.value.filter(x => x !== v)
   }
 }
 
@@ -819,11 +808,12 @@ onMounted(() => {
                     <VCheckbox
                       v-for="city in availableFilterCities"
                       :key="city.value"
-                      :model-value="selectedFilterCityValues.includes(city.value)"
+                      v-model="selectedFilterCityValues"
+                      :value="city.value"
                       :label="city.name"
+                      color="primary"
                       density="compact"
                       hide-details
-                      @update:model-value="v => toggleFilterCity(city.value, v)"
                     />
                     <div
                       v-if="!filterCitiesLoading && availableFilterCities.length === 0"
@@ -1112,11 +1102,12 @@ onMounted(() => {
                     <VCheckbox
                       v-for="city in availableFilterCities"
                       :key="'edit-city-' + city.value"
-                      :model-value="selectedFilterCityValues.includes(city.value)"
+                      v-model="selectedFilterCityValues"
+                      :value="city.value"
                       :label="city.name"
+                      color="primary"
                       density="compact"
                       hide-details
-                      @update:model-value="v => toggleFilterCity(city.value, v)"
                     />
                     <div
                       v-if="!filterCitiesLoading && availableFilterCities.length === 0"

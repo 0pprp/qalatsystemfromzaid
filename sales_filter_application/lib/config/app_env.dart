@@ -6,11 +6,15 @@ class AppEnv {
   static const String name =
       String.fromEnvironment('APP_ENV', defaultValue: 'production');
 
-  static const String _apiBaseUrlDefine = String.fromEnvironment('API_BASE_URL');
+  static const String _apiBaseUrlDefine =
+      String.fromEnvironment('API_BASE_URL');
   static const String _apiBaseDefine = String.fromEnvironment('API_BASE');
 
-  static const String demoHostFallback = 'http://169.58.236.52:8080/sales-gw/api/';
+  static const String demoHostFallback =
+      'http://169.58.236.52:8080/sales-gw/api/';
   static const String localApiBaseUrl = 'http://127.0.0.1:5280/api/';
+  static const String productionHostFallback =
+      'https://admincompany.alsaaeidy.com/sales-gw/api/';
 
   static bool get isDemo => name.toLowerCase() == 'demo';
   static bool get isLocal => name.toLowerCase() == 'local';
@@ -20,16 +24,17 @@ class AppEnv {
     if (isDemo) return normalizeBase(demoHostFallback);
     if (isLocal) return normalizeBase(localApiBaseUrl);
 
-    final explicit = _apiBaseDefine.isNotEmpty ? _apiBaseDefine : _apiBaseUrlDefine;
+    final explicit =
+        _apiBaseDefine.isNotEmpty ? _apiBaseDefine : _apiBaseUrlDefine;
     if (explicit.isNotEmpty && !_isDemoHost(explicit)) {
       return normalizeBase(explicit);
     }
 
     final session = Session.apiBase;
-    if (session != null && session.isNotEmpty) {
+    if (session != null && session.isNotEmpty && !_isDemoHost(session)) {
       return normalizeBase(session);
     }
-    return '';
+    return normalizeBase(productionHostFallback);
   }
 
   static void logIfDebug() {
@@ -44,7 +49,6 @@ class AppEnv {
     var value = url.trim();
     if (value.isEmpty) return value;
     value = value.replaceAll('\\', '/');
-    value = value.replaceAll(RegExp(r'/sales-gw/?', caseSensitive: false), '/');
     while (value.contains('/api/api')) {
       value = value.replaceAll('/api/api', '/api');
     }

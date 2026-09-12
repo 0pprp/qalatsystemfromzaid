@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:sales_filter_application/config/app_env.dart';
 import 'package:sales_filter_application/services/session.dart';
@@ -48,7 +49,8 @@ class ApiClient {
   static String _msg(http.Response r) {
     try {
       final body = jsonDecode(r.body);
-      if (body is Map && body['message'] != null) return body['message'].toString();
+      if (body is Map && body['message'] != null)
+        return body['message'].toString();
     } catch (_) {}
     if (r.statusCode == 401) return 'انتهت الجلسة، سجّل الدخول مجددًا';
     if (r.statusCode == 403) return 'غير مصرح بهذا الإجراء';
@@ -59,8 +61,11 @@ class ApiClient {
 
   static Future<dynamic> get(String path, [Map<String, String>? query]) async {
     try {
-      final r = await http.get(_uri(path, query), headers: _headers).timeout(const Duration(seconds: 25));
-      if (r.statusCode < 200 || r.statusCode >= 300) throw ApiException(_msg(r), statusCode: r.statusCode);
+      final r = await http
+          .get(_uri(path, query), headers: _headers)
+          .timeout(const Duration(seconds: 25));
+      if (r.statusCode < 200 || r.statusCode >= 300)
+        throw ApiException(_msg(r), statusCode: r.statusCode);
       if (r.body.isEmpty) return null;
       return jsonDecode(r.body);
     } on ApiException {
@@ -73,9 +78,11 @@ class ApiClient {
   static Future<dynamic> post(String path, {Object? body}) async {
     try {
       final r = await http
-          .post(_uri(path), headers: _headers, body: body == null ? null : jsonEncode(body))
+          .post(_uri(path),
+              headers: _headers, body: body == null ? null : jsonEncode(body))
           .timeout(const Duration(seconds: 25));
-      if (r.statusCode < 200 || r.statusCode >= 300) throw ApiException(_msg(r), statusCode: r.statusCode);
+      if (r.statusCode < 200 || r.statusCode >= 300)
+        throw ApiException(_msg(r), statusCode: r.statusCode);
       if (r.body.isEmpty) return null;
       return jsonDecode(r.body);
     } on ApiException {
@@ -94,11 +101,16 @@ class ApiClient {
     if (base.isEmpty) {
       throw ApiException('عنوان بوابة المبيعات غير مضبوط');
     }
+    final uri = Uri.parse('${base}Auth/LoginSalesFilter');
+    debugPrint('LOGIN URL: $uri');
     try {
       final r = await http
           .post(
-            Uri.parse('${base}Auth/LoginSalesFilter'),
-            headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
             body: jsonEncode({'userName': userName, 'password': password}),
           )
           .timeout(const Duration(seconds: 45));
@@ -110,8 +122,11 @@ class ApiClient {
       return Map<String, dynamic>.from(decoded);
     } on ApiException {
       rethrow;
-    } catch (_) {
-      throw ApiException('تعذر الاتصال بالإنترنت');
+    } catch (e, st) {
+      debugPrint('LOGIN ERROR type: ${e.runtimeType}');
+      debugPrint('LOGIN ERROR message: $e');
+      debugPrint('LOGIN ERROR stack:\n$st');
+      throw ApiException('تعذر الاتصال بالخادم: ${e.runtimeType}: $e');
     }
   }
 }
