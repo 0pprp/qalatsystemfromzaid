@@ -40,18 +40,19 @@ namespace BE_SalesEmployee.Controllers
                 return BadRequest(new { message = "اسم المستخدم وكلمة المرور مطلوبان" });
             }
 
-            if (!_managerAccount.TryAuthenticate(request.UserName, request.Password))
+            if (!_managerAccount.TryAuthenticate(request.UserName, request.Password, out var identity) ||
+                identity == null)
             {
                 return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
             }
 
-            var token = _tokens.CreateCentralManagerToken(_managerAccount.DisplayName, out var expiration);
+            var token = _tokens.CreateCentralManagerToken(identity.DisplayName, out var expiration);
             return Ok(new
             {
                 token,
                 expiration,
                 userId = 0,
-                userName = _managerAccount.DisplayName,
+                userName = identity.DisplayName,
                 userType = "مدير مبيعات",
                 cityLink = "",
                 cityName = "كل المحافظات",
