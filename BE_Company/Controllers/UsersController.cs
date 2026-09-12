@@ -2,6 +2,7 @@
 using BE_Company.IRepository;
 using BE_Company.Repository;
 using BE_Company.Sales.Authorization;
+using BE_Company.Sales.Filtering;
 using BE_Company.Utilities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -22,15 +23,18 @@ namespace BE_Company.Controllers
     {
         private readonly IUsersRepository _usersRepository;
         private readonly IFollowerUserListsRepository _followerLists;
+        private readonly ISalesFilterService _salesFilter;
         private readonly IConfiguration _configuration;
 
         public UsersController(
             IUsersRepository usersRepository,
             IFollowerUserListsRepository followerLists,
+            ISalesFilterService salesFilter,
             IConfiguration configuration)
         {
             _usersRepository = usersRepository;
             _followerLists = followerLists;
+            _salesFilter = salesFilter;
             _configuration = configuration;
         }
 
@@ -152,6 +156,7 @@ namespace BE_Company.Controllers
                 if (result?.UserID is int newUserId)
                 {
                     await SyncFollowerListsAsync(newUserId, usersPostDTO.UserType, usersPostDTO.ListIdsJson);
+                    await SyncFilterCitiesAsync(newUserId, usersPostDTO.UserType, usersPostDTO.FilterCitiesJson);
                 }
                 return Ok(result);
             }
@@ -181,8 +186,75 @@ namespace BE_Company.Controllers
                 if (userID is int uid)
                 {
                     await SyncFollowerListsAsync(uid, usersPutDTO.UserType, usersPutDTO.ListIdsJson);
+                    await SyncFilterCitiesAsync(uid, usersPutDTO.UserType, usersPutDTO.FilterCitiesJson);
                 }
                 return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+            }
+        }
+
+        private async Task SyncFilterCitiesAsync(int userId, string? userType, string? filterCitiesJson)
+        {
+            if (SalesRoles.IsSalesFilterEmployee(userType))
+            {
+                var cities = ParseFilterCities(filterCitiesJson);
+                await _salesFilter.ReplaceUserCitiesAsync(userId, cities);
+            }
+            else
+            {
+                await _salesFilter.ClearUserCitiesAsync(userId);
+            }
+        }
+
+        private static List<(string CityValue, string? CityName)> ParseFilterCities(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return [];
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
+                var list = new List<(string, string?)>();
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    if (el.ValueKind == JsonValueKind.String)
+                    {
+                        var v = el.GetString();
+                        if (!string.IsNullOrWhiteSpace(v)) list.Add((v.Trim(), null));
+                        continue;
+                    }
+
+                    if (el.ValueKind != JsonValueKind.Object) continue;
+                    var value = el.TryGetProperty("cityValue", out var cv) ? cv.GetString()
+                        : el.TryGetProperty("CityValue", out var cv2) ? cv2.GetString()
+                        : el.TryGetProperty("value", out var cv3) ? cv3.GetString() : null;
+                    var name = el.TryGetProperty("cityName", out var cn) ? cn.GetString()
+                        : el.TryGetProperty("CityName", out var cn2) ? cn2.GetString()
+                        : el.TryGetProperty("name", out var cn3) ? cn3.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        list.Add((value.Trim(), name));
+                    }
+                }
+
+                return list;
+            }
+            catch
+            {
+                return [];
+            }
+        }
+
+        [Authorize]
+        [HttpGet("Users_FilterCities/{userId:int}")]
+        public async Task<IActionResult> Users_FilterCities(int userId, CancellationToken ct)
+        {
+            try
+            {
+                var cities = await _salesFilter.ListUserCitiesAsync(userId, ct);
+                return Ok(new { cities });
             }
             catch (Exception ex)
             {

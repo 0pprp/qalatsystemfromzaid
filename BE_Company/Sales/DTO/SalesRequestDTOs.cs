@@ -127,6 +127,12 @@ namespace BE_Company.Sales.DTO
         public string? ReturnNote { get; set; }
         public DateTime? ManagerReadAtUtc { get; set; }
         public bool IsManagerRead => ManagerReadAtUtc != null;
+        /// <summary>Filter gate: PendingFilter | OnHold | ReadyForSale | Rejected</summary>
+        public string? FilterStatus { get; set; }
+        public int? FilteredByUserId { get; set; }
+        public string? FilterNote { get; set; }
+        public string? FilterRejectReason { get; set; }
+        public DateTime? FilteredAtUtc { get; set; }
         public List<SalesRequestTimelineItemDTO> Timeline { get; set; } = [];
         public List<SalesRequestHistoryDTO> History { get; set; } = [];
     }

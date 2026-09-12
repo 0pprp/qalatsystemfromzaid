@@ -32,6 +32,8 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesLocationIngestService, SalesLocationIngestService>();
             services.AddScoped<ISalesRequestRepository, SalesRequestRepository>();
             services.AddScoped<ISalesRequestService, SalesRequestService>();
+            services.AddScoped<Filtering.ISalesFilterRepository, Filtering.SalesFilterRepository>();
+            services.AddScoped<Filtering.ISalesFilterService, Filtering.SalesFilterService>();
             services.AddScoped<ISalesManagerReadRepository, SalesManagerReadRepository>();
             services.AddSingleton(sp =>
             {
@@ -76,6 +78,8 @@ namespace BE_Company.Sales
                             ctx.User.FindFirst("UserType")?.Value,
                             SalesRoles.UserTypeMainAccountant,
                             StringComparison.Ordinal)));
+                options.AddPolicy(SalesPolicies.SalesFilterEmployee, p =>
+                    p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesFilterEmployee)));
             });
             return services;
         }

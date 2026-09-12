@@ -32,13 +32,13 @@ INSERT INTO dbo.SalesRequests
 (CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, TargetEmployeeName, CityValue, CityName,
  CustomerSourceType, ExistingCustomerId, CustomerSourceCityValue, CustomerName, CustomerPhone, CustomerProvince,
  CustomerAddress, Notes, Status, CreatedAtUtc, AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, ReturnNote,
- SaleRequestType, SourceListId)
+ SaleRequestType, SourceListId, FilterStatus)
 OUTPUT INSERTED.Id
 VALUES
 (@CreatedByUserId, @CreatedByName, @CreatedByUserType, @TargetEmployeeId, @TargetEmployeeName, @CityValue, @CityName,
  @CustomerSourceType, @ExistingCustomerId, @CustomerSourceCityValue, @CustomerName, @CustomerPhone, @CustomerProvince,
  @CustomerAddress, @Notes, @Status, @CreatedAtUtc, @AssignedAtUtc, @AssignedByUserId, @AssignedByName, @PendingNote, @ReturnNote,
- @SaleRequestType, @SourceListId);",
+ @SaleRequestType, @SourceListId, @FilterStatus);",
                 row, cancellationToken: ct));
             row.Id = id;
             return row;
@@ -83,7 +83,9 @@ UPDATE dbo.SalesRequests SET
  ConvertedToSaleId = @ConvertedToSaleId, CompletedAtUtc = @CompletedAtUtc,
  RejectedAtUtc = @RejectedAtUtc, RejectionReason = @RejectionReason,
  AssignedAtUtc = @AssignedAtUtc, AssignedByUserId = @AssignedByUserId, AssignedByName = @AssignedByName,
- PendingNote = @PendingNote, PreparedForSaleNote = @PreparedForSaleNote, ReturnNote = @ReturnNote, ManagerReadAtUtc = @ManagerReadAtUtc
+ PendingNote = @PendingNote, PreparedForSaleNote = @PreparedForSaleNote, ReturnNote = @ReturnNote, ManagerReadAtUtc = @ManagerReadAtUtc,
+ FilterStatus = @FilterStatus, FilteredByUserId = @FilteredByUserId, FilterNote = @FilterNote,
+ FilterRejectReason = @FilterRejectReason, FilteredAtUtc = @FilteredAtUtc
 WHERE Id = @Id", row, cancellationToken: ct));
         }
 
@@ -133,7 +135,8 @@ SELECT Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, 
  CustomerName, CustomerPhone, CustomerProvince, CustomerAddress, Notes, Status,
  CreatedAtUtc, ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
  AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc,
- SaleRequestType, SourceListId
+ SaleRequestType, SourceListId,
+ FilterStatus, FilteredByUserId, FilterNote, FilterRejectReason, FilteredAtUtc
 FROM dbo.SalesRequests";
 
         private const string SchemaSql = @"
@@ -188,6 +191,34 @@ IF COL_LENGTH(N'dbo.SalesRequests', N'SaleRequestType') IS NULL
     ALTER TABLE dbo.SalesRequests ADD SaleRequestType NVARCHAR(20) NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'SourceListId') IS NULL
     ALTER TABLE dbo.SalesRequests ADD SourceListId INT NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'FilterStatus') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD FilterStatus NVARCHAR(30) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'FilteredByUserId') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD FilteredByUserId INT NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'FilterNote') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD FilterNote NVARCHAR(1000) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'FilterRejectReason') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD FilterRejectReason NVARCHAR(400) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'FilteredAtUtc') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD FilteredAtUtc DATETIME2 NULL;
+-- Legacy: keep pre-filter assigned work visible to sales employees.
+UPDATE dbo.SalesRequests
+SET FilterStatus = N'ReadyForSale'
+WHERE FilterStatus IS NULL
+  AND TargetEmployeeId > 0
+  AND [Status] IN (N'Assigned', N'Viewed', N'PreparedForSale', N'Pending', N'InProgress',
+                   N'ConvertedToSale', N'Inspected', N'Completed', N'Returned', N'Rejected');
+UPDATE dbo.SalesRequests SET FilterStatus = N'PendingFilter' WHERE FilterStatus IS NULL;
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_SalesRequests_FilterStatus' AND object_id = OBJECT_ID(N'dbo.SalesRequests')
+)
+    CREATE INDEX IX_SalesRequests_FilterStatus ON dbo.SalesRequests (FilterStatus);
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_SalesRequests_City_FilterStatus' AND object_id = OBJECT_ID(N'dbo.SalesRequests')
+)
+    CREATE INDEX IX_SalesRequests_City_FilterStatus ON dbo.SalesRequests (CityValue, FilterStatus);
 IF OBJECT_ID(N'dbo.SalesRequestHistory', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SalesRequestHistory (

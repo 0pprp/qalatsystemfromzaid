@@ -14,6 +14,7 @@ namespace BE_Company.Sales.Authorization
         public const string ReadAllBranchSales = "Sales.ReadAllBranchSales";
         public const string MainAccountant = "Sales.MainAccountant";
         public const string ReadFollowerGps = "Sales.ReadFollowerGps";
+        public const string SalesFilterEmployee = "Sales.FilterEmployee";
     }
 
     public sealed class SalesRoleRequirement : IAuthorizationRequirement

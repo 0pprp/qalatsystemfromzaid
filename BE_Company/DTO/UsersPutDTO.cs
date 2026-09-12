@@ -13,5 +13,7 @@
         public IFormFile? UserImage { get; set; }
         /// <summary>JSON array of Delegates.DelegateID when UserType is متابع.</summary>
         public string? ListIdsJson { get; set; }
+        /// <summary>JSON array of { cityValue, cityName } when UserType is موظف فلترة المبيعات.</summary>
+        public string? FilterCitiesJson { get; set; }
     }
 }

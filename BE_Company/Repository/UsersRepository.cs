@@ -54,7 +54,7 @@ namespace BE_Company.Repository
                 commandType: CommandType.StoredProcedure);
                 if (result != null)
                 {
-                    if (result.UserType == "محاسب فرعي" || result.UserType == "مدير فرع" || result.UserType == "موظف مبيعات" || result.UserType == "مدير مبيعات")
+                    if (result.UserType == "محاسب فرعي" || result.UserType == "مدير فرع" || result.UserType == "موظف مبيعات" || result.UserType == "مدير مبيعات" || result.UserType == "موظف فلترة المبيعات")
                     {
                         return result;
                     }

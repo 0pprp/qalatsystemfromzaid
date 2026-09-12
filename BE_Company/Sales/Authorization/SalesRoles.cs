@@ -8,9 +8,11 @@ namespace BE_Company.Sales.Authorization
     {
         public const string SalesEmployee = "SalesEmployee";
         public const string SalesManager = "SalesManager";
+        public const string SalesFilterEmployee = "SalesFilterEmployee";
 
         public const string UserTypeSalesEmployee = "موظف مبيعات";
         public const string UserTypeSalesManager = "مدير مبيعات";
+        public const string UserTypeSalesFilterEmployee = "موظف فلترة المبيعات";
 
         public const string UserTypeMainAccountant = "محاسب رئيسي";
         public const string UserTypeSubAccountant = "محاسب فرعي";
@@ -24,6 +26,9 @@ namespace BE_Company.Sales.Authorization
 
         public static bool IsSalesManager(string? userType) =>
             string.Equals(userType, UserTypeSalesManager, StringComparison.Ordinal);
+
+        public static bool IsSalesFilterEmployee(string? userType) =>
+            string.Equals(userType, UserTypeSalesFilterEmployee, StringComparison.Ordinal);
 
         public static bool IsBranchManager(string? userType) =>
             string.Equals(userType, UserTypeBranchManager, StringComparison.Ordinal);
@@ -54,6 +59,10 @@ namespace BE_Company.Sales.Authorization
             if (IsSalesManager(userType))
             {
                 return SalesManager;
+            }
+            if (IsSalesFilterEmployee(userType))
+            {
+                return SalesFilterEmployee;
             }
             if (CanCreateSalesRequest(userType))
             {

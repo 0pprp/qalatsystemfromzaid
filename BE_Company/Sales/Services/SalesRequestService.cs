@@ -1,5 +1,6 @@
 using BE_Company.Sales.Authorization;
 using BE_Company.Sales.DTO;
+using BE_Company.Sales.Filtering;
 using BE_Company.Sales.Models;
 
 namespace BE_Company.Sales.Services
@@ -74,6 +75,7 @@ namespace BE_Company.Sales.Services
                 CustomerAddress = request.Customer?.Address,
                 Notes = request.Notes,
                 Status = SalesRequestStatuses.New,
+                FilterStatus = SalesFilterStatuses.PendingFilter,
                 CreatedAtUtc = _clock.UtcNow
             };
             if (string.IsNullOrWhiteSpace(row.CustomerName))
@@ -137,6 +139,7 @@ namespace BE_Company.Sales.Services
                 CustomerAddress = address,
                 Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(),
                 Status = SalesRequestStatuses.New,
+                FilterStatus = SalesFilterStatuses.PendingFilter,
                 CreatedAtUtc = _clock.UtcNow
             };
             var saved = await _repo.InsertAsync(row, ct);
@@ -249,6 +252,7 @@ namespace BE_Company.Sales.Services
                 row.Status = SalesRequestStatuses.PreparedForSale;
                 row.ProcessingAtUtc = _clock.UtcNow;
                 row.ViewedAtUtc ??= row.ProcessingAtUtc;
+                row.FilterStatus = SalesFilterStatuses.ReadyForSale;
                 if (trimmed != null)
                 {
                     row.PreparedForSaleNote = trimmed;
@@ -324,7 +328,10 @@ namespace BE_Company.Sales.Services
             await _repo.EnsureSchemaAsync(ct);
             var rows = await _repo.ListAsync(employeeId, null, null, null, ct);
             var result = new List<SalesRequestDTO>();
-            foreach (var row in rows.Where(r => r.TargetEmployeeId == employeeId && r.TargetEmployeeId > 0))
+            foreach (var row in rows.Where(r =>
+                         r.TargetEmployeeId == employeeId
+                         && r.TargetEmployeeId > 0
+                         && SalesFilterStatuses.IsVisibleToSalesEmployee(r.FilterStatus)))
             {
                 result.Add(await HydrateAsync(row, ct));
             }
@@ -545,6 +552,12 @@ namespace BE_Company.Sales.Services
             row.AssignedAtUtc = _clock.UtcNow;
             row.AssignedByUserId = manager.EmployeeId;
             row.AssignedByName = string.IsNullOrWhiteSpace(manager.EmployeeName) ? "مدير المبيعات" : manager.EmployeeName;
+            // New assignments enter filter queue — not visible to sales employee until ReadyForSale.
+            row.FilterStatus = SalesFilterStatuses.PendingFilter;
+            row.FilteredByUserId = null;
+            row.FilterNote = null;
+            row.FilterRejectReason = null;
+            row.FilteredAtUtc = null;
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(row, SalesRequestEvents.Assigned, manager, null, ct);
             return await HydrateAsync(row, ct);
@@ -576,6 +589,8 @@ namespace BE_Company.Sales.Services
             var previous = row.Status;
             row.Status = SalesRequestStatuses.Returned;
             row.ReturnNote = trimmed;
+            // Returned work must be visible again to the assigned sales employee.
+            row.FilterStatus = SalesFilterStatuses.ReadyForSale;
             await _repo.UpdateAsync(row, ct);
             if (!string.Equals(row.RejectionReason, previousReason, StringComparison.Ordinal))
             {
@@ -722,6 +737,11 @@ namespace BE_Company.Sales.Services
             if (row.TargetEmployeeId <= 0 || row.TargetEmployeeId != employeeId)
             {
                 throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكنك الوصول إلى طلب موظف آخر.");
+            }
+
+            if (!SalesFilterStatuses.IsVisibleToSalesEmployee(row.FilterStatus))
+            {
+                throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
             }
 
             return row;

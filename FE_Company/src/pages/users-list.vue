@@ -5,6 +5,7 @@ import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
+import { fetchCities } from '@/composables/useCities'
 import * as XLSX from 'xlsx'
 
 const apiUrl = localStorage.getItem('LinkCity')
@@ -13,6 +14,14 @@ const currentUserID = ref(0)
 const usersData = ref([])
 const loading = ref(false)
 const userCount = ref(0)
+const userTypeOptions = [
+  'محاسب رئيسي',
+  'محاسب فرعي',
+  'مدير فرع',
+  'موظف مبيعات',
+  'موظف فلترة المبيعات',
+  'متابع',
+]
 
 const filters = ref({
   textSearch: '',
@@ -54,12 +63,17 @@ const availableLists = ref([])
 const selectedListIds = ref([])
 const listSearch = ref('')
 const listsLoading = ref(false)
+const availableFilterCities = ref([])
+const selectedFilterCityValues = ref([])
+const filterCitiesLoading = ref(false)
 
 const isFollowerType = computed(() => {
   const t = formData.value.userType || ''
 
   return t === 'متابع' || t.startsWith('متابع')
 })
+
+const isSalesFilterType = computed(() => formData.value.userType === 'موظف فلترة المبيعات')
 
 const filteredLists = computed(() => {
   const q = (listSearch.value || '').trim()
@@ -69,6 +83,9 @@ const filteredLists = computed(() => {
     (l.listName || '').includes(q) || (l.receiptName || '').includes(q) || String(l.listId).includes(q),
   )
 })
+
+const selectedFilterCitiesCount = computed(() => selectedFilterCityValues.value.length)
+const totalFilterCitiesCount = computed(() => availableFilterCities.value.length)
 
 const selectedListsCount = computed(() => selectedListIds.value.length)
 const totalListsCount = computed(() => availableLists.value.length)
@@ -126,6 +143,68 @@ function appendListIds(form) {
   }
 }
 
+function appendFilterCities(form) {
+  if (isSalesFilterType.value) {
+    const payload = availableFilterCities.value
+      .filter(c => selectedFilterCityValues.value.includes(c.value))
+      .map(c => ({ cityValue: c.value, cityName: c.name }))
+
+    form.append('FilterCitiesJson', JSON.stringify(payload))
+  } else {
+    form.append('FilterCitiesJson', '[]')
+  }
+}
+
+async function fetchFilterCitiesCatalog() {
+  filterCitiesLoading.value = true
+  try {
+    const rows = await fetchCities()
+    availableFilterCities.value = (rows || []).map(c => ({
+      value: c.value || c.Value || '',
+      name: c.name || c.Name || c.value || '',
+    })).filter(c => c.value)
+  }
+  catch {
+    availableFilterCities.value = []
+  }
+  finally {
+    filterCitiesLoading.value = false
+  }
+}
+
+async function loadAssignedFilterCities(userId) {
+  selectedFilterCityValues.value = []
+  try {
+    const authHeader = getAuthHeaders()
+    const { data } = await axios.get(`${apiUrl}Users/Users_FilterCities/${userId}`, { headers: authHeader })
+    const cities = Array.isArray(data?.cities) ? data.cities : []
+    selectedFilterCityValues.value = cities
+      .map(c => c.cityValue || c.CityValue || c.value)
+      .filter(Boolean)
+  }
+  catch {
+    selectedFilterCityValues.value = []
+  }
+}
+
+function toggleFilterCity(value, checked) {
+  const v = String(value)
+  if (checked) {
+    if (!selectedFilterCityValues.value.includes(v))
+      selectedFilterCityValues.value = [...selectedFilterCityValues.value, v]
+  }
+  else {
+    selectedFilterCityValues.value = selectedFilterCityValues.value.filter(x => x !== v)
+  }
+}
+
+function selectAllFilterCities() {
+  selectedFilterCityValues.value = availableFilterCities.value.map(c => c.value)
+}
+
+function clearAllFilterCities() {
+  selectedFilterCityValues.value = []
+}
 
 // خاصية المعاينة للصورة
 const imagePreview = computed(() => {
@@ -175,9 +254,11 @@ function openAddDialog() {
   selectedFile.value = null
   selectedListIds.value = []
   listSearch.value = ''
+  selectedFilterCityValues.value = []
   currentUserID.value = null
   addDialog.value = true
   fetchAvailableLists()
+  fetchFilterCitiesCatalog()
 }
 
 async function openEditDialog(userID) {
@@ -192,11 +273,17 @@ async function openEditDialog(userID) {
     listSearch.value = ''
     editDialog.value = true
     await fetchAvailableLists()
+    await fetchFilterCitiesCatalog()
     const t = formData.value.userType || ''
     if (t === 'متابع' || t.startsWith('متابع')) {
       await loadAssignedLists(userID)
     } else {
       selectedListIds.value = []
+    }
+    if (t === 'موظف فلترة المبيعات') {
+      await loadAssignedFilterCities(userID)
+    } else {
+      selectedFilterCityValues.value = []
     }
   }
 }
@@ -226,6 +313,7 @@ async function addUser() {
   }
 
   appendListIds(data)
+  appendFilterCities(data)
 
   try {
     const response = await axios.postForm(url, data, { headers: { 'Content-Type': 'multipart/form-data', ...authHeader } })
@@ -258,6 +346,7 @@ async function updateUser() {
   }
 
   appendListIds(data)
+  appendFilterCities(data)
 
   try {
     await axios.putForm(url, data, { headers: { 'Content-Type': 'multipart/form-data', ...authHeader } })
@@ -612,7 +701,7 @@ onMounted(() => {
               >
                 <VAutocomplete
                   v-model="formData.userType"
-                  :items="['محاسب رئيسي', 'محاسب فرعي', 'مدير فرع', 'موظف مبيعات', 'متابع']"
+                  :items="userTypeOptions"
                   placeholder="نوع المستخدم"
                   prepend-inner-icon="tabler-category"
                   label="نوع المستخدم"
@@ -681,6 +770,66 @@ onMounted(() => {
                       class="text-medium-emphasis pa-2"
                     >
                       لا توجد قوائم مطابقة
+                    </div>
+                  </div>
+                </VCard>
+              </VCol>
+              <VCol
+                v-if="isSalesFilterType"
+                cols="12"
+              >
+                <VCard
+                  variant="outlined"
+                  class="pa-4"
+                >
+                  <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
+                    <div class="text-h6">
+                      المحافظات المسموح بها
+                    </div>
+                    <div class="text-body-2 text-medium-emphasis">
+                      تم اختيار {{ selectedFilterCitiesCount }} من {{ totalFilterCitiesCount }}
+                    </div>
+                  </div>
+                  <div class="d-flex flex-wrap gap-2 mb-3">
+                    <VBtn
+                      size="small"
+                      variant="tonal"
+                      @click="selectAllFilterCities"
+                    >
+                      تحديد الكل
+                    </VBtn>
+                    <VBtn
+                      size="small"
+                      variant="outlined"
+                      @click="clearAllFilterCities"
+                    >
+                      مسح الكل
+                    </VBtn>
+                  </div>
+                  <div
+                    style="max-block-size: 220px; overflow-y: auto;"
+                    class="d-flex flex-column gap-1"
+                  >
+                    <div
+                      v-if="filterCitiesLoading"
+                      class="text-center pa-4"
+                    >
+                      جاري التحميل...
+                    </div>
+                    <VCheckbox
+                      v-for="city in availableFilterCities"
+                      :key="city.value"
+                      :model-value="selectedFilterCityValues.includes(city.value)"
+                      :label="city.name"
+                      density="compact"
+                      hide-details
+                      @update:model-value="v => toggleFilterCity(city.value, v)"
+                    />
+                    <div
+                      v-if="!filterCitiesLoading && availableFilterCities.length === 0"
+                      class="text-medium-emphasis pa-2"
+                    >
+                      لا توجد محافظات
                     </div>
                   </div>
                 </VCard>
@@ -845,7 +994,7 @@ onMounted(() => {
               >
                 <VAutocomplete
                   v-model="formData.userType"
-                  :items="['محاسب رئيسي', 'محاسب فرعي', 'مدير فرع', 'موظف مبيعات', 'متابع']"
+                  :items="userTypeOptions"
                   placeholder="نوع المستخدم"
                   prepend-inner-icon="tabler-category"
                   label="نوع المستخدم"
@@ -914,6 +1063,66 @@ onMounted(() => {
                       class="text-medium-emphasis pa-2"
                     >
                       لا توجد قوائم مطابقة
+                    </div>
+                  </div>
+                </VCard>
+              </VCol>
+              <VCol
+                v-if="isSalesFilterType"
+                cols="12"
+              >
+                <VCard
+                  variant="outlined"
+                  class="pa-4"
+                >
+                  <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
+                    <div class="text-h6">
+                      المحافظات المسموح بها
+                    </div>
+                    <div class="text-body-2 text-medium-emphasis">
+                      تم اختيار {{ selectedFilterCitiesCount }} من {{ totalFilterCitiesCount }}
+                    </div>
+                  </div>
+                  <div class="d-flex flex-wrap gap-2 mb-3">
+                    <VBtn
+                      size="small"
+                      variant="tonal"
+                      @click="selectAllFilterCities"
+                    >
+                      تحديد الكل
+                    </VBtn>
+                    <VBtn
+                      size="small"
+                      variant="outlined"
+                      @click="clearAllFilterCities"
+                    >
+                      مسح الكل
+                    </VBtn>
+                  </div>
+                  <div
+                    style="max-block-size: 220px; overflow-y: auto;"
+                    class="d-flex flex-column gap-1"
+                  >
+                    <div
+                      v-if="filterCitiesLoading"
+                      class="text-center pa-4"
+                    >
+                      جاري التحميل...
+                    </div>
+                    <VCheckbox
+                      v-for="city in availableFilterCities"
+                      :key="'edit-city-' + city.value"
+                      :model-value="selectedFilterCityValues.includes(city.value)"
+                      :label="city.name"
+                      density="compact"
+                      hide-details
+                      @update:model-value="v => toggleFilterCity(city.value, v)"
+                    />
+                    <div
+                      v-if="!filterCitiesLoading && availableFilterCities.length === 0"
+                      class="text-medium-emphasis pa-2"
+                    >
+                      لا توجد محافظات
                     </div>
                   </div>
                 </VCard>
