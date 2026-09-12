@@ -8,6 +8,16 @@ class FilterRepository {
     return list.whereType<Map>().map((e) => FilterCity.fromJson(Map<String, dynamic>.from(e))).toList();
   }
 
+  Future<Map<String, int>> counts({required String cityValue}) async {
+    final raw = await ApiClient.get('sales-filter/counts', {'cityValue': cityValue});
+    if (raw is! Map) return {};
+    final map = <String, int>{};
+    raw.forEach((k, v) {
+      map['$k'] = int.tryParse('$v') ?? 0;
+    });
+    return map;
+  }
+
   Future<List<FilterRequest>> list({
     required String status,
     String? cityValue,
@@ -32,7 +42,7 @@ class FilterRepository {
     return FilterRequest.fromJson(Map<String, dynamic>.from(raw as Map));
   }
 
-  Future<FilterRequest> hold(String cityValue, int id, {String? note}) async {
+  Future<FilterRequest> hold(String cityValue, int id, {required String note}) async {
     final raw = await ApiClient.post('sales-filter/requests/$cityValue/$id/hold', body: {'note': note});
     return FilterRequest.fromJson(Map<String, dynamic>.from(raw as Map));
   }

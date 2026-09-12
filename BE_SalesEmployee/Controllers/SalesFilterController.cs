@@ -87,6 +87,20 @@ namespace BE_SalesEmployee.Controllers
             return await ProxyAsync(user, city, qs.ToString(), HttpMethod.Get, null, ct);
         }
 
+        [HttpGet("counts")]
+        public async Task<IActionResult> Counts([FromQuery] string? cityValue, CancellationToken ct = default)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (city, error) = await ResolveAllowedCityAsync(user, cityValue, requireValue: true, ct);
+            if (error != null)
+            {
+                return error;
+            }
+
+            var path = $"sales-filter/counts?city={Uri.EscapeDataString(city!.Value)}";
+            return await ProxyAsync(user, city, path, HttpMethod.Get, null, ct);
+        }
+
         [HttpGet("requests/{cityValue}/{id:int}")]
         public Task<IActionResult> Get(string cityValue, int id, CancellationToken ct) =>
             ProxyByCityAsync(cityValue, $"sales-filter/requests/{id}", HttpMethod.Get, null, ct);

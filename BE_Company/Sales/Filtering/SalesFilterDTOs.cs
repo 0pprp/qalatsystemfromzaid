@@ -9,17 +9,17 @@ namespace BE_Company.Sales.Filtering
         public string? CityName { get; set; }
         public string? CustomerProvince { get; set; }
         public string? CustomerAddress { get; set; }
-        /// <summary>شنو يريد — maps to SalesRequests.Notes</summary>
+        /// <summary>نوع المبيع — maps to SalesRequests.Notes</summary>
         public string? WantedDescription { get; set; }
         public string FilterStatus { get; set; } = SalesFilterStatuses.PendingFilter;
+        public string? FilterNote { get; set; }
+        public string? RejectReason { get; set; }
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? FilteredAtUtc { get; set; }
     }
 
     public class SalesFilterDetailDTO : SalesFilterListItemDTO
     {
-        public string? FilterNote { get; set; }
-        public string? RejectReason { get; set; }
         public int? FilteredByUserId { get; set; }
         public string? FilteredByUserName { get; set; }
         public int TargetEmployeeId { get; set; }

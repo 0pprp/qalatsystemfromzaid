@@ -56,6 +56,19 @@ namespace BE_Company.Sales.Filtering
             }
         }
 
+        [HttpGet("counts")]
+        public async Task<IActionResult> Counts([FromQuery] string? city, CancellationToken ct = default)
+        {
+            try
+            {
+                return Ok(await _service.CountsAsync(RequireActor(), city, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
         [HttpGet("requests/{id:int}")]
         public async Task<IActionResult> Get(int id, CancellationToken ct)
         {

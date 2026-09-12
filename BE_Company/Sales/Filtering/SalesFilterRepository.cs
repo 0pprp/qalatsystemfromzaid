@@ -12,12 +12,19 @@ namespace BE_Company.Sales.Filtering
         Task<IReadOnlyList<SalesFilterCityDTO>> ListUserCitiesAsync(int userId, CancellationToken ct = default);
         Task<bool> UserHasCityAsync(int userId, string cityValue, CancellationToken ct = default);
         Task<(IReadOnlyList<SalesFilterListItemDTO> Items, int Total)> ListRequestsAsync(
-            IReadOnlyList<string> allowedCityValues,
-            string? cityValue,
+            SalesFilterCityScope scope,
             string filterStatus,
             string? search,
             int page,
             int pageSize,
+            bool ownByActor,
+            int? actorUserId,
+            string? actorUserName,
+            CancellationToken ct = default);
+        Task<IReadOnlyDictionary<string, int>> CountByStatusAsync(
+            SalesFilterCityScope scope,
+            int? actorUserId,
+            string? actorUserName,
             CancellationToken ct = default);
         Task<SalesFilterDetailDTO?> GetRequestAsync(int id, CancellationToken ct = default);
         Task<(bool Ok, string? CurrentStatus)> TryTransitionAsync(
@@ -116,48 +123,69 @@ WHERE UserId = @UserId AND CityValue = @CityValue;",
         }
 
         public async Task<(IReadOnlyList<SalesFilterListItemDTO> Items, int Total)> ListRequestsAsync(
-            IReadOnlyList<string> allowedCityValues,
-            string? cityValue,
+            SalesFilterCityScope scope,
             string filterStatus,
             string? search,
             int page,
             int pageSize,
+            bool ownByActor,
+            int? actorUserId,
+            string? actorUserName,
             CancellationToken ct = default)
         {
             await EnsureSchemaAsync(ct);
-            if (allowedCityValues.Count == 0)
+            if (!scope.TrustEntireBranch && scope.CityValues.Count == 0)
             {
                 return ([], 0);
             }
 
             page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize, 1, 100);
-            var cities = allowedCityValues
+            var cities = scope.CityValues
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Select(x => x.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            if (!string.IsNullOrWhiteSpace(cityValue))
+            if (!scope.TrustEntireBranch && cities.Count == 0)
             {
-                cities = cities
-                    .Where(c => string.Equals(c, cityValue.Trim(), StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                if (cities.Count == 0)
-                {
-                    return ([], 0);
-                }
+                return ([], 0);
             }
 
             var q = string.IsNullOrWhiteSpace(search) ? null : $"%{search.Trim()}%";
+            var actorName = string.IsNullOrWhiteSpace(actorUserName) ? null : actorUserName.Trim();
             await using var c = new SqlConnection(RequireCs());
+            var args = new
+            {
+                FilterStatus = filterStatus,
+                Cities = cities.Count == 0 ? new List<string> { "__none__" } : cities,
+                TrustBranch = scope.TrustEntireBranch,
+                OwnByActor = ownByActor,
+                ActorUserId = actorUserId,
+                ActorUserName = actorName,
+                Q = q,
+                Skip = (page - 1) * pageSize,
+                Take = pageSize,
+            };
+
             var total = await c.ExecuteScalarAsync<int>(new CommandDefinition(@"
 SELECT COUNT(1)
 FROM dbo.SalesRequests R
 WHERE R.FilterStatus = @FilterStatus
-  AND R.CityValue IN @Cities
   AND R.TargetEmployeeId > 0
+  AND (@TrustBranch = 1 OR R.CityValue IN @Cities)
+  AND (
+        @OwnByActor = 0
+        OR (
+            (@ActorUserId IS NOT NULL AND R.FilteredByUserId = @ActorUserId)
+            OR (
+                @ActorUserName IS NOT NULL
+                AND R.FilteredByUserName IS NOT NULL
+                AND LOWER(LTRIM(RTRIM(R.FilteredByUserName))) = LOWER(@ActorUserName)
+            )
+        )
+      )
   AND (@Q IS NULL OR R.CustomerName LIKE @Q OR R.CustomerPhone LIKE @Q OR R.CustomerAddress LIKE @Q OR R.Notes LIKE @Q);",
-                new { FilterStatus = filterStatus, Cities = cities, Q = q }, cancellationToken: ct));
+                args, cancellationToken: ct));
 
             var items = (await c.QueryAsync<SalesFilterListItemDTO>(new CommandDefinition(@"
 SELECT
@@ -170,26 +198,99 @@ SELECT
     R.CustomerAddress,
     R.Notes AS WantedDescription,
     R.FilterStatus,
+    R.FilterNote,
+    R.FilterRejectReason AS RejectReason,
     R.CreatedAtUtc,
     R.FilteredAtUtc
 FROM dbo.SalesRequests R
 WHERE R.FilterStatus = @FilterStatus
-  AND R.CityValue IN @Cities
   AND R.TargetEmployeeId > 0
+  AND (@TrustBranch = 1 OR R.CityValue IN @Cities)
+  AND (
+        @OwnByActor = 0
+        OR (
+            (@ActorUserId IS NOT NULL AND R.FilteredByUserId = @ActorUserId)
+            OR (
+                @ActorUserName IS NOT NULL
+                AND R.FilteredByUserName IS NOT NULL
+                AND LOWER(LTRIM(RTRIM(R.FilteredByUserName))) = LOWER(@ActorUserName)
+            )
+        )
+      )
   AND (@Q IS NULL OR R.CustomerName LIKE @Q OR R.CustomerPhone LIKE @Q OR R.CustomerAddress LIKE @Q OR R.Notes LIKE @Q)
 ORDER BY R.CreatedAtUtc DESC
 OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;",
-                new
-                {
-                    FilterStatus = filterStatus,
-                    Cities = cities,
-                    Q = q,
-                    Skip = (page - 1) * pageSize,
-                    Take = pageSize,
-                },
-                cancellationToken: ct))).ToList();
+                args, cancellationToken: ct))).ToList();
 
             return (items, total);
+        }
+
+        public async Task<IReadOnlyDictionary<string, int>> CountByStatusAsync(
+            SalesFilterCityScope scope,
+            int? actorUserId,
+            string? actorUserName,
+            CancellationToken ct = default)
+        {
+            await EnsureSchemaAsync(ct);
+            var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                [SalesFilterStatuses.PendingFilter] = 0,
+                [SalesFilterStatuses.OnHold] = 0,
+                [SalesFilterStatuses.ReadyForSale] = 0,
+                [SalesFilterStatuses.Rejected] = 0,
+            };
+            if (!scope.TrustEntireBranch && scope.CityValues.Count == 0)
+            {
+                return result;
+            }
+
+            var cities = scope.CityValues
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (!scope.TrustEntireBranch && cities.Count == 0)
+            {
+                return result;
+            }
+
+            var actorName = string.IsNullOrWhiteSpace(actorUserName) ? null : actorUserName.Trim();
+            await using var c = new SqlConnection(RequireCs());
+            var rows = await c.QueryAsync<(string FilterStatus, int Cnt)>(new CommandDefinition(@"
+SELECT R.FilterStatus, COUNT(1) AS Cnt
+FROM dbo.SalesRequests R
+WHERE R.TargetEmployeeId > 0
+  AND (@TrustBranch = 1 OR R.CityValue IN @Cities)
+  AND (
+        R.FilterStatus = N'PendingFilter'
+        OR (
+            (@ActorUserId IS NOT NULL AND R.FilteredByUserId = @ActorUserId)
+            OR (
+                @ActorUserName IS NOT NULL
+                AND R.FilteredByUserName IS NOT NULL
+                AND LOWER(LTRIM(RTRIM(R.FilteredByUserName))) = LOWER(@ActorUserName)
+            )
+        )
+      )
+GROUP BY R.FilterStatus;",
+                new
+                {
+                    Cities = cities.Count == 0 ? new List<string> { "__none__" } : cities,
+                    TrustBranch = scope.TrustEntireBranch,
+                    ActorUserId = actorUserId,
+                    ActorUserName = actorName,
+                },
+                cancellationToken: ct));
+
+            foreach (var row in rows)
+            {
+                if (!string.IsNullOrWhiteSpace(row.FilterStatus))
+                {
+                    result[row.FilterStatus] = row.Cnt;
+                }
+            }
+
+            return result;
         }
 
         public async Task<SalesFilterDetailDTO?> GetRequestAsync(int id, CancellationToken ct = default)
@@ -212,6 +313,7 @@ SELECT
     R.FilterNote,
     R.FilterRejectReason AS RejectReason,
     R.FilteredByUserId,
+    R.FilteredByUserName,
     R.TargetEmployeeId,
     R.TargetEmployeeName
 FROM dbo.SalesRequests R

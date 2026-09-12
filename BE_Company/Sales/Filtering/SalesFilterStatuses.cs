@@ -65,6 +65,22 @@ namespace BE_Company.Sales.Filtering
             return t;
         }
 
+        public static string RequireHoldNote(string? note)
+        {
+            var t = (note ?? string.Empty).Trim();
+            if (t.Length == 0)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "ملاحظة التعليق مطلوبة.");
+            }
+
+            if (t.Length > NoteMaxLength)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, $"الملاحظة أطول من {NoteMaxLength} حرف.");
+            }
+
+            return t;
+        }
+
         public static string RequireRejectReason(string? reason)
         {
             var t = (reason ?? string.Empty).Trim();

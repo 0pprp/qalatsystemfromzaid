@@ -1,5 +1,5 @@
 name: sales_filter_application
-description: تطبيق موظف فلترة المبيعات.
+description: تطبيق فلترة المبيعات.
 
 publish_to: "none"
 version: 1.0.0+1
@@ -18,9 +18,20 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/icons/logo_company.png
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: assets/icons/logo_company.png
+  remove_alpha_ios: true
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icons/logo_company.png
   fonts:
     - family: Cairo
       fonts:

@@ -130,6 +130,7 @@ namespace BE_Company.Sales.DTO
         /// <summary>Filter gate: PendingFilter | OnHold | ReadyForSale | Rejected</summary>
         public string? FilterStatus { get; set; }
         public int? FilteredByUserId { get; set; }
+        public string? FilteredByUserName { get; set; }
         public string? FilterNote { get; set; }
         public string? FilterRejectReason { get; set; }
         public DateTime? FilteredAtUtc { get; set; }
