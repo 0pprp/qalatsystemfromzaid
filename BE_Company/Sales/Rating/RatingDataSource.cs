@@ -1,3 +1,4 @@
+using BE_Company.Sales;
 using Dapper;
 using Microsoft.Data.SqlClient;
 
@@ -45,13 +46,15 @@ OUTER APPLY (
     public async Task<IReadOnlyList<CustomerRatingFacts>> GetFactsByCustomerIdsAsync(
         IReadOnlyList<int> customerIds, CancellationToken ct = default)
     {
-        if (customerIds.Count == 0) return [];
-        await using var connection = new SqlConnection(_connectionString);
-        var rows = await connection.QueryAsync<CustomerRatingFactsRow>(new CommandDefinition(
+        if (customerIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await QueryFactsInBatchesAsync(
+            customerIds,
             FactsSelect + " WHERE C.CustomerID IN @Ids;",
-            new { Ids = customerIds.ToArray() },
-            cancellationToken: ct));
-        return rows.Select(Map).ToList();
+            ct);
     }
 
     public async Task<CustomerRatingFacts?> GetFactByCustomerIdAsync(int customerId, CancellationToken ct = default)
@@ -63,13 +66,44 @@ OUTER APPLY (
     public async Task<IReadOnlyList<CustomerRatingFacts>> GetFactsByListIdsAsync(
         IReadOnlyList<int> listIds, CancellationToken ct = default)
     {
-        if (listIds.Count == 0) return [];
-        await using var connection = new SqlConnection(_connectionString);
-        var rows = await connection.QueryAsync<CustomerRatingFactsRow>(new CommandDefinition(
+        if (listIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await QueryFactsInBatchesAsync(
+            listIds,
             FactsSelect + " WHERE C.DelegateID IN @Ids;",
-            new { Ids = listIds.ToArray() },
-            cancellationToken: ct));
-        return rows.Select(Map).ToList();
+            ct);
+    }
+
+    private async Task<IReadOnlyList<CustomerRatingFacts>> QueryFactsInBatchesAsync(
+        IReadOnlyList<int> ids,
+        string sql,
+        CancellationToken ct)
+    {
+        var merged = new List<CustomerRatingFacts>();
+        var seen = new HashSet<int>();
+        await using var connection = new SqlConnection(_connectionString);
+        foreach (var chunk in SqlInClauseBatch.Chunk(ids))
+        {
+            ct.ThrowIfCancellationRequested();
+            var rows = await connection.QueryAsync<CustomerRatingFactsRow>(new CommandDefinition(
+                sql,
+                new { Ids = chunk },
+                cancellationToken: ct));
+            foreach (var row in rows)
+            {
+                if (!seen.Add(row.CustomerId))
+                {
+                    continue;
+                }
+
+                merged.Add(Map(row));
+            }
+        }
+
+        return merged;
     }
 
     private static CustomerRatingFacts Map(CustomerRatingFactsRow row) =>

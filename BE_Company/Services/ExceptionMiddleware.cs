@@ -11,18 +11,35 @@ public static class ExceptionMiddleware
             var exceptionHandlerFeature = context.Features.Get<IExceptionHandlerFeature>();
             var exception = exceptionHandlerFeature?.Error;
 
-            if (exception != null)
+            if (exception is null)
             {
-                var error = new Error
+                return;
+            }
+
+            // Persistence must never mask or replace the original failure (e.g. missing Errors_Create on Demo).
+            try
+            {
+                var repository = context.RequestServices.GetRequiredService<IErrorsRepository>();
+                await repository.Create(new Error
                 {
                     Date = DateTime.UtcNow,
                     ErrorMessage = exception.Message,
                     StackTrace = exception.StackTrace
-                };
+                });
+            }
+            catch (Exception persistEx)
+            {
+                var logger = context.RequestServices
+                    .GetService<ILoggerFactory>()
+                    ?.CreateLogger("GlobalExceptionHandler");
+                logger?.LogError(
+                    persistEx,
+                    "Failed to persist exception to Errors store. Original: {OriginalMessage}",
+                    exception.Message);
+            }
 
-                var repository = context.RequestServices.GetRequiredService<IErrorsRepository>();
-                await repository.Create(error);
-
+            if (!context.Response.HasStarted)
+            {
                 context.Response.StatusCode = StatusCodes.Status500InternalServerError;
                 await context.Response.WriteAsJsonAsync(new
                 {
