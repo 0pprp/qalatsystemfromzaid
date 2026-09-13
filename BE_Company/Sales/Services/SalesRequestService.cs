@@ -88,6 +88,75 @@ namespace BE_Company.Sales.Services
             return await HydrateAsync(saved, ct);
         }
 
+        public async Task<SalesRequestImportResultDTO> ImportRowsAsync(
+            SalesIdentity actor,
+            IReadOnlyList<SalesRequestImportRowDTO> rows,
+            CancellationToken ct)
+        {
+            if (SalesRoles.IsSalesEmployee(actor.UserType)
+                || (!SalesRoles.CanCreateSalesRequest(actor.UserType)
+                    && !string.Equals(actor.Role, SalesRoles.SalesManager, StringComparison.Ordinal)))
+            {
+                throw new SalesCompleteException(StatusCodes.Status403Forbidden, "غير مصرح.");
+            }
+
+            rows ??= [];
+            var result = new SalesRequestImportResultDTO { Total = rows.Count };
+            foreach (var row in rows)
+            {
+                var rowNumber = row.RowNumber > 0 ? row.RowNumber : result.Saved + result.Failed + 1;
+                try
+                {
+                    var name = row.CustomerName?.Trim();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اسم الزبون مطلوب.");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(row.Phone))
+                    {
+                        throw new SalesCompleteException(StatusCodes.Status400BadRequest, "رقم الهاتف مطلوب.");
+                    }
+
+                    // BE is the sole authority for storage form (leading 0, scientific, +964…).
+                    SalesPhoneNormalizer.RequireValidIfPresent(row.Phone);
+                    var phone = SalesPhoneNormalizer.ForStorage(row.Phone);
+                    if (string.IsNullOrWhiteSpace(phone) || !SalesIraqPhone.IsValid(phone))
+                    {
+                        throw new SalesCompleteException(StatusCodes.Status400BadRequest, SalesIraqPhone.Message);
+                    }
+
+                    var notes = string.IsNullOrWhiteSpace(row.SaleType)
+                        ? null
+                        : $"نوع المبيع: {row.SaleType.Trim()}";
+
+                    await CreateAsync(actor, new SalesRequestCreateDTO
+                    {
+                        Customer = new SalesRequestCustomerDTO
+                        {
+                            FullName = name,
+                            Phone = phone,
+                            Province = row.Province,
+                            Address = row.Address
+                        },
+                        Notes = notes
+                    }, ct, validateIraqPhone: true);
+                    result.Saved++;
+                }
+                catch (SalesCompleteException ex)
+                {
+                    result.Failed++;
+                    result.Errors.Add(new SalesRequestImportErrorDTO
+                    {
+                        RowNumber = rowNumber,
+                        Message = ex.Message
+                    });
+                }
+            }
+
+            return result;
+        }
+
         public async Task<SalesRequestDTO> SubmitByEmployeeAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct)
         {
             if (!SalesRoles.IsSalesEmployee(actor.UserType)

@@ -40,6 +40,8 @@ import {
   requestIdOf,
   settlementDaysDisplay,
 } from '@/composables/salesRequestEvaluationMap'
+import { parseSalesRequestExcel } from '@/composables/salesRequestExcelImport'
+import { normalizeIraqPhone } from '@core/utils/validators'
 
 const toast = useToast()
 const router = useRouter()
@@ -1457,50 +1459,6 @@ function foldAr(value) {
     .replace(/\s+/g, ' ')
 }
 
-function headerKey(value) {
-  const t = foldAr(value).replace(/[_\-]/g, ' ').toLowerCase()
-  if (['اسم الزبون', 'اسم العميل', 'customername', 'fullname', 'name', 'الاسم'].includes(t))
-    return 'name'
-  if (['الهاتف', 'هاتف', 'phone', 'phonenumber', 'mobile'].includes(t))
-    return 'phone'
-  if (t === 'المحافظة' || t === 'المحافظه' || t === 'المدينة' || t === 'المدينه' || ['province', 'city', 'governorate'].includes(t))
-    return 'province'
-  if (['العنوان', 'address'].includes(t))
-    return 'address'
-  if (['نوع المبيع', 'نوع البيع', 'saletype', 'sale type'].includes(t))
-    return 'saleType'
-
-  return ''
-}
-
-function cellText(value) {
-  if (value == null)
-    return ''
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    // Excel numeric phones lose leading zero — keep as integer string.
-    return String(Math.trunc(value))
-  }
-
-  return String(value).trim()
-}
-
-function normalizeImportedPhone(raw) {
-  const text = cellText(raw)
-  if (!text)
-    return ''
-  const digits = text.replace(/\D/g, '')
-  if (digits.length === 10 && digits.startsWith('7'))
-    return `0${digits}`
-  if (digits.length === 11 && digits.startsWith('07'))
-    return digits
-  try {
-    return normalizeIraqPhone(text) || text
-  }
-  catch {
-    return text
-  }
-}
-
 function resolveCity(provinceText) {
   const text = foldAr(provinceText)
   if (text) {
@@ -1544,7 +1502,10 @@ function onExcelPicked(event) {
   const reader = new FileReader()
   reader.onload = e => {
     try {
-      importPreview.value = parseExcel(e.target.result)
+      importPreview.value = parseSalesRequestExcel(e.target.result, {
+        XLSX,
+        resolveCity,
+      })
       importOpen.value = true
     }
     catch (err) {
@@ -1552,63 +1513,6 @@ function onExcelPicked(event) {
     }
   }
   reader.readAsArrayBuffer(file)
-}
-
-function parseExcel(buffer) {
-  const workbook = XLSX.read(buffer, { type: 'array' })
-  const sheet = workbook.Sheets[workbook.SheetNames[0]]
-  if (!sheet)
-    throw new Error('الملف لا يحتوي على ورقة')
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false })
-  if (!rows.length)
-    throw new Error('الملف فارغ')
-  const map = {}
-  ;(rows[0] || []).forEach((header, index) => {
-    const key = headerKey(header)
-    if (key && map[key] == null)
-      map[key] = index
-  })
-  if (map.name == null)
-    throw new Error('عمود اسم الزبون مطلوب في الصف الأول')
-  const valid = []
-  const errors = []
-  let total = 0
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i] || []
-    const name = cellText(row[map.name])
-    const phone = normalizeImportedPhone(map.phone != null ? row[map.phone] : '')
-    const province = cellText(map.province != null ? row[map.province] : '')
-    const address = cellText(map.address != null ? row[map.address] : '')
-    const saleType = cellText(map.saleType != null ? row[map.saleType] : '')
-    if (![name, phone, province, address, saleType].some(Boolean))
-      continue
-    total++
-    const excelRow = i + 1
-    if (!name) {
-      errors.push({ rowNumber: excelRow, message: 'اسم الزبون مطلوب' })
-      continue
-    }
-    const city = resolveCity(province)
-    if (!city) {
-      errors.push({
-        rowNumber: excelRow,
-        message: province ? `المحافظة غير معروفة بعد التطبيع: ${province}` : 'المحافظة مطلوبة أو حددها من الفلتر',
-      })
-      continue
-    }
-    valid.push({
-      rowNumber: excelRow,
-      customerName: name,
-      phone,
-      province: province || city.cityName,
-      address,
-      saleType,
-      cityValue: city.cityValue,
-      cityName: city.cityName,
-    })
-  }
-
-  return { total, valid, errors }
 }
 
 async function confirmImport() {

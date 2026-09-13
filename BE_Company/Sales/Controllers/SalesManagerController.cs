@@ -651,47 +651,14 @@ namespace BE_Company.Sales.Controllers
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
             var identity = _identity.FromAuthenticatedUser();
-            var rows = body?.Rows ?? [];
-            var result = new SalesRequestImportResultDTO { Total = rows.Count };
-            foreach (var row in rows)
+            try
             {
-                var rowNumber = row.RowNumber > 0 ? row.RowNumber : result.Saved + result.Failed + 1;
-                try
-                {
-                    var name = row.CustomerName?.Trim();
-                    if (string.IsNullOrWhiteSpace(name))
-                    {
-                        throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اسم الزبون مطلوب.");
-                    }
-
-                    var notes = string.IsNullOrWhiteSpace(row.SaleType)
-                        ? null
-                        : $"نوع المبيع: {row.SaleType.Trim()}";
-                    await _requests.CreateAsync(identity!, new SalesRequestCreateDTO
-                    {
-                        Customer = new SalesRequestCustomerDTO
-                        {
-                            FullName = name,
-                            Phone = row.Phone,
-                            Province = row.Province,
-                            Address = row.Address
-                        },
-                        Notes = notes
-                    }, ct, validateIraqPhone: false);
-                    result.Saved++;
-                }
-                catch (SalesCompleteException ex)
-                {
-                    result.Failed++;
-                    result.Errors.Add(new SalesRequestImportErrorDTO
-                    {
-                        RowNumber = rowNumber,
-                        Message = ex.Message
-                    });
-                }
+                return Ok(await _requests.ImportRowsAsync(identity!, body?.Rows ?? [], ct));
             }
-
-            return Ok(result);
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
         }
 
         [HttpPost("sales-requests/{id:int}/assign")]

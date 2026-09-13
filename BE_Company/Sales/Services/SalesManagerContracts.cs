@@ -216,6 +216,7 @@ namespace BE_Company.Sales.Services
     public interface ISalesRequestService
     {
         Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct, bool validateIraqPhone = true);
+        Task<SalesRequestImportResultDTO> ImportRowsAsync(SalesIdentity actor, IReadOnlyList<SalesRequestImportRowDTO> rows, CancellationToken ct);
         Task<SalesRequestDTO> SubmitByEmployeeAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForManagerAsync(string? status, int? employeeId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListEmployeeSubmittedAsync(CancellationToken ct);
