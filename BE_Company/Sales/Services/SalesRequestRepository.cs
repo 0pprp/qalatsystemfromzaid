@@ -49,6 +49,14 @@ VALUES
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
             return await connection.QueryFirstOrDefaultAsync<SalesRequestDTO>(new CommandDefinition(
+                SelectSql + " WHERE Id = @Id AND ISNULL(IsDeleted, 0) = 0", new { Id = id }, cancellationToken: ct));
+        }
+
+        public async Task<SalesRequestDTO?> GetByIdIncludingDeletedAsync(int id, CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            return await connection.QueryFirstOrDefaultAsync<SalesRequestDTO>(new CommandDefinition(
                 SelectSql + " WHERE Id = @Id", new { Id = id }, cancellationToken: ct));
         }
 
@@ -56,7 +64,8 @@ VALUES
         {
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
-            var sql = SelectSql + @" WHERE (@TargetEmployeeId IS NULL OR TargetEmployeeId = @TargetEmployeeId)
+            var sql = SelectSql + @" WHERE ISNULL(IsDeleted, 0) = 0
+AND (@TargetEmployeeId IS NULL OR TargetEmployeeId = @TargetEmployeeId)
 AND (@Status IS NULL OR Status = @Status)
 AND (@FilterStatus IS NULL OR FilterStatus = @FilterStatus)
 AND (@FromUtc IS NULL OR CreatedAtUtc >= @FromUtc)
@@ -86,7 +95,8 @@ UPDATE dbo.SalesRequests SET
  AssignedAtUtc = @AssignedAtUtc, AssignedByUserId = @AssignedByUserId, AssignedByName = @AssignedByName,
  PendingNote = @PendingNote, PreparedForSaleNote = @PreparedForSaleNote, ReturnNote = @ReturnNote, ManagerReadAtUtc = @ManagerReadAtUtc,
  FilterStatus = @FilterStatus, FilteredByUserId = @FilteredByUserId, FilterNote = @FilterNote,
- FilterRejectReason = @FilterRejectReason, FilteredAtUtc = @FilteredAtUtc
+ FilterRejectReason = @FilterRejectReason, FilteredAtUtc = @FilteredAtUtc,
+ IsDeleted = @IsDeleted, DeletedAtUtc = @DeletedAtUtc, DeletedByUserId = @DeletedByUserId, DeletedByName = @DeletedByName
 WHERE Id = @Id", row, cancellationToken: ct));
         }
 
@@ -95,7 +105,7 @@ WHERE Id = @Id", row, cancellationToken: ct));
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
             return await connection.ExecuteScalarAsync<int>(new CommandDefinition(
-                "SELECT COUNT(1) FROM dbo.SalesRequests WHERE Status = @Status",
+                "SELECT COUNT(1) FROM dbo.SalesRequests WHERE Status = @Status AND ISNULL(IsDeleted, 0) = 0",
                 new { Status = status }, cancellationToken: ct));
         }
 
@@ -180,8 +190,8 @@ UPDATE dbo.SalesRequests WITH (UPDLOCK, ROWLOCK) SET
  ViewedAtUtc = NULL,
  AssignedAtUtc = @AssignedAtUtc,
  FilterStatus = @FilterStatus
-WHERE Id = @Id
-  AND TargetEmployeeId = @ExpectedFromEmployeeId
+WHERE Id = @Id AND TargetEmployeeId = @ExpectedFromEmployeeId
+  AND ISNULL(IsDeleted, 0) = 0
   AND [Status] NOT IN (N'Completed', N'Rejected')",
                     new
                     {
@@ -222,7 +232,8 @@ SELECT Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, 
  CreatedAtUtc, ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
  AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc,
  SaleRequestType, SourceListId,
- FilterStatus, FilteredByUserId, FilterNote, FilterRejectReason, FilteredAtUtc
+ FilterStatus, FilteredByUserId, FilterNote, FilterRejectReason, FilteredAtUtc,
+ ISNULL(IsDeleted, 0) AS IsDeleted, DeletedAtUtc, DeletedByUserId, DeletedByName
 FROM dbo.SalesRequests";
 
         private const string SchemaSql = @"
@@ -344,6 +355,19 @@ IF NOT EXISTS (
       AND object_id = OBJECT_ID(N'dbo.SalesRequestNameTransfers')
 )
     CREATE INDEX IX_SalesRequestNameTransfers_SaleRequestId
-        ON dbo.SalesRequestNameTransfers (SaleRequestId, TransferredAtUtc, Id);";
+        ON dbo.SalesRequestNameTransfers (SaleRequestId, TransferredAtUtc, Id);
+IF COL_LENGTH(N'dbo.SalesRequests', N'IsDeleted') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD IsDeleted BIT NOT NULL CONSTRAINT DF_SalesRequests_IsDeleted DEFAULT (0);
+IF COL_LENGTH(N'dbo.SalesRequests', N'DeletedAtUtc') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD DeletedAtUtc DATETIME2 NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'DeletedByUserId') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD DeletedByUserId INT NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'DeletedByName') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD DeletedByName NVARCHAR(200) NULL;
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_SalesRequests_IsDeleted' AND object_id = OBJECT_ID(N'dbo.SalesRequests')
+)
+    CREATE INDEX IX_SalesRequests_IsDeleted ON dbo.SalesRequests (IsDeleted);";
     }
 }

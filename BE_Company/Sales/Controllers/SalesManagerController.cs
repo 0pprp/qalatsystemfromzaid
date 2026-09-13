@@ -23,6 +23,7 @@ namespace BE_Company.Sales.Controllers
         private readonly ISalesCustomerDocumentService _customerDocs;
         private readonly ISalesPurchaseService _purchases;
         private readonly ISalesExcelCustomerSearchService _excelSearch;
+        private readonly ISalesRequestEvaluationService _evaluation;
         private readonly ISharedCustomerNotesService _sharedNotes;
 
         public SalesManagerController(
@@ -37,6 +38,7 @@ namespace BE_Company.Sales.Controllers
             ISalesCustomerDocumentService customerDocs,
             ISalesPurchaseService purchases,
             ISalesExcelCustomerSearchService excelSearch,
+            ISalesRequestEvaluationService evaluation,
             ISharedCustomerNotesService sharedNotes)
         {
             _guard = guard;
@@ -50,6 +52,7 @@ namespace BE_Company.Sales.Controllers
             _customerDocs = customerDocs;
             _purchases = purchases;
             _excelSearch = excelSearch;
+            _evaluation = evaluation;
             _sharedNotes = sharedNotes;
         }
 
@@ -716,6 +719,148 @@ namespace BE_Company.Sales.Controllers
             try
             {
                 return Ok(await _requests.ReturnAsync(identity!, id, body.Note ?? body.Reason ?? string.Empty, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("sales-requests/evaluate")]
+        public async Task<IActionResult> EvaluateRequests([FromBody] SalesRequestEvaluationBatchRequestDTO? body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _evaluation.EvaluateBatchAsync(identity!, body ?? new SalesRequestEvaluationBatchRequestDTO(), ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("sales-requests/{id:int}/evaluation-hits")]
+        public async Task<IActionResult> EvaluationHits(
+            int id,
+            [FromQuery] string category,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 30,
+            CancellationToken ct = default)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _evaluation.ListHitsAsync(identity!, id, category, page, pageSize, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("sales-requests/evaluation-hits")]
+        public async Task<IActionResult> EvaluationHitsByPayload(
+            [FromBody] SalesRequestEvaluationHitsRequestDTO? body,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _evaluation.ListHitsByPayloadAsync(identity!, body ?? new SalesRequestEvaluationHitsRequestDTO(), ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("sales-requests/accept-province-transfer")]
+        public async Task<IActionResult> AcceptProvinceTransfer(
+            [FromBody] SalesRequestAcceptTransferDTO? body,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _requests.AcceptProvinceTransferAsync(identity!, body ?? new SalesRequestAcceptTransferDTO(), ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("sales-requests/{id:int}/mark-province-transferred-out")]
+        public async Task<IActionResult> MarkProvinceTransferredOut(
+            int id,
+            [FromBody] SalesRequestMarkTransferredOutDTO? body,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                await _requests.MarkProvinceTransferredOutAsync(identity!, id, body ?? new SalesRequestMarkTransferredOutDTO(), ct);
+                return Ok(new { message = "تم أرشفة الطلب في الفرع المصدر بعد النقل." });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPut("sales-requests/{id:int}")]
+        public async Task<IActionResult> UpdateRequest(int id, [FromBody] SalesRequestManagerUpdateDTO body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _requests.ManagerUpdateAsync(identity!, id, body ?? new SalesRequestManagerUpdateDTO(), ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("sales-requests/{id:int}/reassign")]
+        public async Task<IActionResult> ReassignRequest(int id, [FromBody] SalesRequestManagerReassignDTO body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _requests.ManagerReassignAsync(identity!, id, body ?? new SalesRequestManagerReassignDTO(), ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [HttpDelete("sales-requests/{id:int}")]
+        public async Task<IActionResult> DeleteRequest(int id, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                await _requests.SoftDeleteAsync(identity!, id, ct);
+                return Ok(new { message = "تم حذف الطلب." });
             }
             catch (SalesCompleteException ex)
             {

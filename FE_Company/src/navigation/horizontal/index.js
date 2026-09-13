@@ -95,7 +95,6 @@ export default [
       { title: 'المبيعات', to: { name: 'sales-manager-sales' }, icon: { icon: 'tabler-receipt', size: '22' } },
       { title: 'طلبات البيع', to: { name: 'sales-manager-requests' }, icon: { icon: 'tabler-send', size: '22' } },
       { title: 'إدخال شراء المخزن', to: { name: 'sales-manager-purchases' }, icon: { icon: 'tabler-shopping-cart', size: '22' } },
-      { title: 'بحث الزبائن من Excel', to: { name: 'sales-manager-excel-search' }, icon: { icon: 'tabler-file-search', size: '22' } },
     ],
   },
   {

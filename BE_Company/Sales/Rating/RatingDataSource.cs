@@ -23,7 +23,8 @@ SELECT
     P.LastPaymentDate,
     CAST(ISNULL(S.AmountTotalSales, 0) AS float) AS AmountTotalSales,
     CAST(ISNULL(P.ReceiptsTotal, 0) AS float) AS ReceiptsTotal,
-    CAST(ROUND(ISNULL(S.AmountTotalSales, 0) - ISNULL(P.ReceiptsTotal, 0), -3) AS float) AS AmountRemaining
+    CAST(ROUND(ISNULL(S.AmountTotalSales, 0) - ISNULL(P.ReceiptsTotal, 0), -3) AS float) AS AmountRemaining,
+    CAST(ISNULL(P.ReceiptCount, 0) AS int) AS ReceiptCount
 FROM dbo.Customers C
 OUTER APPLY (
     SELECT
@@ -35,7 +36,8 @@ OUTER APPLY (
 OUTER APPLY (
     SELECT
         MAX(V.PaymentDate) AS LastPaymentDate,
-        ROUND(ISNULL(SUM(V.AmountDenar), 0), -3) AS ReceiptsTotal
+        ROUND(ISNULL(SUM(V.AmountDenar), 0), -3) AS ReceiptsTotal,
+        COUNT(V.CustomerPaymentID) AS ReceiptCount
     FROM dbo.View_CustomersPaymentsDelegate V
     WHERE V.CustomerID = C.CustomerID
 ) P";
@@ -80,7 +82,8 @@ OUTER APPLY (
             row.LastPaymentDate,
             row.AmountTotalSales,
             row.ReceiptsTotal,
-            row.AmountRemaining);
+            row.AmountRemaining,
+            row.ReceiptCount);
 
     private sealed class CustomerRatingFactsRow
     {
@@ -93,5 +96,6 @@ OUTER APPLY (
         public double AmountTotalSales { get; init; }
         public double ReceiptsTotal { get; init; }
         public double AmountRemaining { get; init; }
+        public int ReceiptCount { get; init; }
     }
 }

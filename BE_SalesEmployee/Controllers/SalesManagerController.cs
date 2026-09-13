@@ -378,6 +378,89 @@ namespace BE_SalesEmployee.Controllers
             return StatusCode(status, payload);
         }
 
+        [HttpPost("sales-requests/{cityValue}/evaluate")]
+        public async Task<IActionResult> Evaluate(string cityValue, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, "sales-manager/sales-requests/evaluate", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
+        /// <summary>
+        /// Cross-branch evaluation across all ACL-allowed sales branches.
+        /// Prefer payload items (name/phone/key) so matching is not limited to the request's home branch catalog.
+        /// </summary>
+        [HttpPost("sales-requests/evaluate")]
+        public async Task<IActionResult> EvaluateAcrossBranches([FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.EvaluateAcrossBranchesAsync(user, body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpGet("sales-requests/{cityValue}/{id:int}/evaluation-hits")]
+        public Task<IActionResult> EvaluationHits(
+            string cityValue,
+            int id,
+            [FromQuery] string category,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 30,
+            CancellationToken ct = default)
+        {
+            var q = $"?category={Uri.EscapeDataString(category ?? "")}&page={page}&pageSize={pageSize}";
+            return OneAsync(cityValue, $"sales-manager/sales-requests/{id}/evaluation-hits{q}", ct);
+        }
+
+        [HttpPost("sales-requests/evaluation-hits")]
+        public async Task<IActionResult> EvaluationHitsAcrossBranches([FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.EvaluationHitsAcrossBranchesAsync(user, body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/{cityValue}/{id:int}/transfer-province")]
+        public async Task<IActionResult> TransferProvince(
+            string cityValue,
+            int id,
+            [FromBody] JsonElement body,
+            CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.TransferProvinceAsync(
+                user, cityValue, id, body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPut("sales-requests/{cityValue}/{id:int}")]
+        public async Task<IActionResult> UpdateRequest(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            using var content = new StringContent(body.GetRawText(), System.Text.Encoding.UTF8, "application/json");
+            var (status, payload) = await _aggregator.SendContentAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}", HttpMethod.Put, content, ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/{cityValue}/{id:int}/reassign")]
+        public async Task<IActionResult> Reassign(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/reassign", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpDelete("sales-requests/{cityValue}/{id:int}")]
+        public async Task<IActionResult> DeleteRequest(string cityValue, int id, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.SendContentAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}", HttpMethod.Delete, null, ct);
+            return StatusCode(status, payload);
+        }
+
         [HttpGet("purchases")]
         public Task<IActionResult> Purchases(
             [FromQuery] string? cityValue,

@@ -26,6 +26,7 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesPurchaseService, SalesPurchaseService>();
             services.AddScoped<ISalesExcelCustomerSearchCatalog, SalesExcelCustomerSearchCatalog>();
             services.AddScoped<ISalesExcelCustomerSearchService, SalesExcelCustomerSearchService>();
+            services.AddScoped<ISalesRequestEvaluationService, SalesRequestEvaluationService>();
             services.AddScoped<SalesDraftService>();
             services.AddSingleton<IIraqClock, SystemIraqClock>();
             services.AddScoped<ISalesTrackingRepository, SalesTrackingRepository>();

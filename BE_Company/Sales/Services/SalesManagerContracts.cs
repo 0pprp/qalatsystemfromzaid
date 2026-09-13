@@ -80,6 +80,12 @@ namespace BE_Company.Sales.Services
         public const string EmployeeSubmitted = "EmployeeSubmitted";
         public const string ManagerViewed = "ManagerViewed";
         public const string NameTransferred = "NameTransferred";
+        public const string ManagerRequestCreated = "ManagerRequestCreated";
+        public const string ManagerRequestEdited = "ManagerRequestEdited";
+        public const string ManagerRequestReassigned = "ManagerRequestReassigned";
+        public const string ManagerRequestDeleted = "ManagerRequestDeleted";
+        public const string ManagerProvinceChanged = "ManagerProvinceChanged";
+        public const string ProvinceTransferred = "ProvinceTransferred";
     }
 
     public static class SalesRequestSources
@@ -187,6 +193,7 @@ namespace BE_Company.Sales.Services
         Task EnsureSchemaAsync(CancellationToken ct);
         Task<SalesRequestDTO> InsertAsync(SalesRequestDTO row, CancellationToken ct);
         Task<SalesRequestDTO?> GetByIdAsync(int id, CancellationToken ct);
+        Task<SalesRequestDTO?> GetByIdIncludingDeletedAsync(int id, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null);
         Task UpdateAsync(SalesRequestDTO row, CancellationToken ct);
         Task<int> CountByStatusAsync(string status, CancellationToken ct);
@@ -234,6 +241,11 @@ namespace BE_Company.Sales.Services
         Task MarkCompletedBySaleIdAsync(int saleId, DateTime utcNow, CancellationToken ct);
         Task<IReadOnlyList<SalesTransferPeerDTO>> ListTransferPeersAsync(SalesIdentity actor, CancellationToken ct);
         Task<SalesRequestDTO> TransferNameAsync(SalesIdentity actor, int requestId, SalesRequestTransferDTO request, CancellationToken ct);
+        Task<SalesRequestDTO> ManagerUpdateAsync(SalesIdentity manager, int id, SalesRequestManagerUpdateDTO body, CancellationToken ct);
+        Task<SalesRequestDTO> ManagerReassignAsync(SalesIdentity manager, int id, SalesRequestManagerReassignDTO body, CancellationToken ct);
+        Task SoftDeleteAsync(SalesIdentity manager, int id, CancellationToken ct);
+        Task<SalesRequestDTO> AcceptProvinceTransferAsync(SalesIdentity manager, SalesRequestAcceptTransferDTO body, CancellationToken ct);
+        Task MarkProvinceTransferredOutAsync(SalesIdentity manager, int id, SalesRequestMarkTransferredOutDTO body, CancellationToken ct);
     }
 
     public interface ISalesManagerReadRepository

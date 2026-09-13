@@ -39,16 +39,16 @@ namespace BE_Company.Sales.Services
             string? phone;
             if (validateIraqPhone)
             {
-                SalesIraqPhone.RequireIfPresent(request.Customer?.Phone);
+                SalesPhoneNormalizer.RequireValidIfPresent(request.Customer?.Phone);
                 phone = string.IsNullOrWhiteSpace(request.Customer?.Phone)
                     ? request.Customer?.Phone
-                    : SalesIraqPhone.Normalize(request.Customer.Phone);
+                    : SalesPhoneNormalizer.ForStorage(request.Customer.Phone);
             }
             else
             {
                 phone = string.IsNullOrWhiteSpace(request.Customer?.Phone)
                     ? request.Customer?.Phone
-                    : request.Customer.Phone.Trim();
+                    : SalesPhoneNormalizer.ForStorage(request.Customer.Phone);
             }
 
             await _repo.EnsureSchemaAsync(ct);
@@ -845,6 +845,295 @@ namespace BE_Company.Sales.Services
                 ct,
                 previous);
             return await HydrateAsync(row, ct);
+        }
+
+        public async Task<SalesRequestDTO> ManagerUpdateAsync(
+            SalesIdentity manager,
+            int id,
+            SalesRequestManagerUpdateDTO body,
+            CancellationToken ct)
+        {
+            EnsureManager(manager);
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "الطلب غير موجود.");
+            EnsureNotSold(row);
+
+            var previousProvince = row.CustomerProvince;
+            var notes = new List<string>();
+
+            if (body.CustomerName is not null)
+            {
+                var name = body.CustomerName.Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اسم الزبون مطلوب.");
+                }
+
+                if (!string.Equals(row.CustomerName, name, StringComparison.Ordinal))
+                {
+                    notes.Add($"الاسم: {row.CustomerName} ← {name}");
+                    row.CustomerName = name;
+                }
+            }
+
+            if (body.Phone is not null)
+            {
+                if (string.IsNullOrWhiteSpace(body.Phone))
+                {
+                    row.CustomerPhone = null;
+                }
+                else
+                {
+                    SalesPhoneNormalizer.RequireValidIfPresent(body.Phone);
+                    var phone = SalesPhoneNormalizer.ForStorage(body.Phone);
+                    if (!string.Equals(row.CustomerPhone, phone, StringComparison.Ordinal))
+                    {
+                        notes.Add($"الهاتف: {row.CustomerPhone} ← {phone}");
+                        row.CustomerPhone = phone;
+                    }
+                }
+            }
+
+            if (body.Address is not null)
+            {
+                row.CustomerAddress = string.IsNullOrWhiteSpace(body.Address) ? null : body.Address.Trim();
+            }
+
+            if (body.Notes is not null)
+            {
+                row.Notes = string.IsNullOrWhiteSpace(body.Notes) ? null : body.Notes.Trim();
+            }
+
+            if (body.SaleType is not null)
+            {
+                var saleType = body.SaleType.Trim();
+                row.Notes = string.IsNullOrWhiteSpace(saleType)
+                    ? row.Notes
+                    : (row.Notes?.Contains("نوع المبيع:", StringComparison.Ordinal) == true
+                        ? row.Notes
+                        : string.IsNullOrWhiteSpace(row.Notes) ? $"نوع المبيع: {saleType}" : $"{row.Notes}\nنوع المبيع: {saleType}");
+            }
+
+            if (body.Province is not null)
+            {
+                row.CustomerProvince = string.IsNullOrWhiteSpace(body.Province) ? null : body.Province.Trim();
+            }
+
+            // CityValue is the branch tenancy stamp. Cross-branch moves must use province transfer.
+            if (!string.IsNullOrWhiteSpace(body.CityValue))
+            {
+                var city = body.CityValue.Trim();
+                if (!string.Equals(row.CityValue, city, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new SalesCompleteException(
+                        StatusCodes.Status409Conflict,
+                        "لا يمكن تغيير محافظة الطلب داخل نفس قاعدة الفرع. استخدم نقل المحافظة إلى فرع آخر.");
+                }
+            }
+
+            if (body.CityName is not null)
+            {
+                row.CityName = string.IsNullOrWhiteSpace(body.CityName) ? row.CityName : body.CityName.Trim();
+            }
+
+            await _repo.UpdateAsync(row, ct);
+            var provinceLabelChanged = !string.Equals(previousProvince, row.CustomerProvince, StringComparison.OrdinalIgnoreCase);
+            var eventType = provinceLabelChanged
+                ? SalesRequestEvents.ManagerProvinceChanged
+                : SalesRequestEvents.ManagerRequestEdited;
+            await AppendHistoryAsync(
+                row,
+                eventType,
+                manager,
+                notes.Count == 0
+                    ? (provinceLabelChanged
+                        ? $"المحافظة: {previousProvince} ← {row.CustomerProvince}"
+                        : "تعديل طلب البيع")
+                    : string.Join(" | ", notes),
+                ct,
+                row.Status);
+
+            return await HydrateAsync(row, ct);
+        }
+
+        public async Task<SalesRequestDTO> AcceptProvinceTransferAsync(
+            SalesIdentity manager,
+            SalesRequestAcceptTransferDTO body,
+            CancellationToken ct)
+        {
+            EnsureManager(manager);
+            if (body.FromRequestId <= 0 || string.IsNullOrWhiteSpace(body.FromCityValue))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "بيانات النقل غير مكتملة.");
+            }
+
+            var name = body.CustomerName?.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اسم الزبون مطلوب.");
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+
+            var assignEmployeeId = body.ToEmployeeId is > 0 ? body.ToEmployeeId.Value : 0;
+            string? assignEmployeeName = null;
+            if (assignEmployeeId > 0)
+            {
+                if (_employees is null)
+                {
+                    throw new SalesCompleteException(StatusCodes.Status503ServiceUnavailable, "تعذر التحقق من موظفي الفرع الهدف.");
+                }
+
+                var peers = await _employees.ListActiveSalesEmployeesAsync(ct);
+                var peer = peers.FirstOrDefault(e => e.EmployeeId == assignEmployeeId)
+                           ?? throw new SalesCompleteException(StatusCodes.Status400BadRequest, "الموظف المحدد غير موجود في الفرع الهدف.");
+                assignEmployeeName = string.IsNullOrWhiteSpace(body.ToEmployeeName) ? peer.EmployeeName : body.ToEmployeeName.Trim();
+            }
+
+            string? phone = null;
+            if (!string.IsNullOrWhiteSpace(body.CustomerPhone))
+            {
+                SalesPhoneNormalizer.RequireValidIfPresent(body.CustomerPhone);
+                phone = SalesPhoneNormalizer.ForStorage(body.CustomerPhone);
+            }
+
+            var now = _clock.UtcNow;
+            var row = new SalesRequestDTO
+            {
+                CreatedByUserId = manager.EmployeeId,
+                CreatedByName = string.IsNullOrWhiteSpace(body.CreatedByName) ? manager.EmployeeName : body.CreatedByName,
+                CreatedByUserType = string.IsNullOrWhiteSpace(body.CreatedByUserType) ? manager.UserType : body.CreatedByUserType,
+                TargetEmployeeId = assignEmployeeId,
+                TargetEmployeeName = assignEmployeeId > 0 ? assignEmployeeName : null,
+                CityValue = manager.BranchId,
+                CityName = string.IsNullOrWhiteSpace(body.CityName) ? manager.BranchName : body.CityName.Trim(),
+                CustomerSourceType = string.IsNullOrWhiteSpace(body.CustomerSourceType)
+                    ? SalesRequestSources.NewCustomer
+                    : body.CustomerSourceType.Trim(),
+                ExistingCustomerId = body.ExistingCustomerId is > 0 ? body.ExistingCustomerId : null,
+                CustomerSourceCityValue = body.CustomerSourceCityValue,
+                CustomerName = name,
+                CustomerPhone = phone,
+                CustomerProvince = string.IsNullOrWhiteSpace(body.CustomerProvince) ? manager.BranchName : body.CustomerProvince.Trim(),
+                CustomerAddress = string.IsNullOrWhiteSpace(body.CustomerAddress) ? null : body.CustomerAddress.Trim(),
+                Notes = string.IsNullOrWhiteSpace(body.Notes) ? null : body.Notes.Trim(),
+                SaleRequestType = body.SaleRequestType,
+                SourceListId = body.SourceListId,
+                Status = assignEmployeeId > 0 ? SalesRequestStatuses.Assigned : SalesRequestStatuses.New,
+                FilterStatus = SalesFilterStatuses.PendingFilter,
+                AssignedAtUtc = assignEmployeeId > 0 ? now : null,
+                CreatedAtUtc = now
+            };
+
+            var saved = await _repo.InsertAsync(row, ct);
+            await AppendHistoryAsync(
+                saved,
+                SalesRequestEvents.ProvinceTransferred,
+                manager,
+                $"نقل وارد من {body.FromCityValue}#{body.FromRequestId} إلى {saved.CityValue}#{saved.Id}"
+                + (string.IsNullOrWhiteSpace(body.FromCityName) ? "" : $" ({body.FromCityName})"),
+                ct);
+            return await HydrateAsync(saved, ct);
+        }
+
+        public async Task MarkProvinceTransferredOutAsync(
+            SalesIdentity manager,
+            int id,
+            SalesRequestMarkTransferredOutDTO body,
+            CancellationToken ct)
+        {
+            EnsureManager(manager);
+            if (string.IsNullOrWhiteSpace(body.ToCityValue) || body.ToRequestId <= 0)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "بيانات وجهة النقل مطلوبة.");
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdIncludingDeletedAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "الطلب غير موجود.");
+
+            if (SalesRequestStatuses.IsSold(row.Status) || row.ConvertedToSaleId is > 0)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status409Conflict,
+                    "لا يمكن نقل طلب مرتبط بعملية بيع مكتملة أو محوّلة.");
+            }
+
+            if (row.IsDeleted)
+            {
+                // Idempotent: already archived after a prior successful transfer.
+                return;
+            }
+
+            var fromCity = row.CityValue;
+            var previousAssignee = row.TargetEmployeeId;
+            var previousAssigneeName = row.TargetEmployeeName;
+            row.TargetEmployeeId = 0;
+            row.TargetEmployeeName = null;
+            row.AssignedAtUtc = null;
+            row.IsDeleted = true;
+            row.DeletedAtUtc = _clock.UtcNow;
+            row.DeletedByUserId = manager.EmployeeId;
+            row.DeletedByName = manager.EmployeeName;
+            await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(
+                row,
+                SalesRequestEvents.ProvinceTransferred,
+                manager,
+                $"ProvinceTransferred FromCity={fromCity} ToCity={body.ToCityValue.Trim()} "
+                + $"OriginalRequestId={id} DestinationRequestId={body.ToRequestId} "
+                + $"ClearedAssignee={previousAssignee}:{previousAssigneeName}",
+                ct,
+                row.Status);
+        }
+
+        public async Task<SalesRequestDTO> ManagerReassignAsync(
+            SalesIdentity manager,
+            int id,
+            SalesRequestManagerReassignDTO body,
+            CancellationToken ct)
+        {
+            EnsureManager(manager);
+            if (body.EmployeeId <= 0)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "يجب اختيار موظف المبيعات.");
+            }
+
+            // Reuse AssignAsync business rules (PendingFilter gate, history, ownership).
+            return await AssignAsync(manager, id, new SalesRequestAssignDTO
+            {
+                EmployeeId = body.EmployeeId,
+                EmployeeName = body.EmployeeName
+            }, ct);
+        }
+
+        public async Task SoftDeleteAsync(SalesIdentity manager, int id, CancellationToken ct)
+        {
+            EnsureManager(manager);
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "الطلب غير موجود.");
+
+            if (SalesRequestStatuses.IsSold(row.Status) || row.ConvertedToSaleId is > 0)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status409Conflict,
+                    "لا يمكن حذف طلب مرتبط بعملية بيع مكتملة أو محوّلة. استخدم الأرشفة فقط للطلبات غير المالية.");
+            }
+
+            row.IsDeleted = true;
+            row.DeletedAtUtc = _clock.UtcNow;
+            row.DeletedByUserId = manager.EmployeeId;
+            row.DeletedByName = manager.EmployeeName;
+            await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(
+                row,
+                SalesRequestEvents.ManagerRequestDeleted,
+                manager,
+                "حذف ناعم لطلب البيع",
+                ct,
+                row.Status);
         }
 
         private static void EnsureSalesEmployee(SalesIdentity actor)

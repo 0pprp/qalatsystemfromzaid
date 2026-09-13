@@ -29,11 +29,14 @@ namespace BE_Company.Sales.Tests
         }
 
         public Task<SalesRequestDTO?> GetByIdAsync(int id, CancellationToken ct) =>
+            Task.FromResult(Rows.FirstOrDefault(r => r.Id == id && !r.IsDeleted));
+
+        public Task<SalesRequestDTO?> GetByIdIncludingDeletedAsync(int id, CancellationToken ct) =>
             Task.FromResult(Rows.FirstOrDefault(r => r.Id == id));
 
         public Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null)
         {
-            IEnumerable<SalesRequestDTO> q = Rows;
+            IEnumerable<SalesRequestDTO> q = Rows.Where(r => !r.IsDeleted);
             if (targetEmployeeId != null) q = q.Where(r => r.TargetEmployeeId == targetEmployeeId);
             if (!string.IsNullOrWhiteSpace(status)) q = q.Where(r => r.Status == status);
             if (!string.IsNullOrWhiteSpace(filterStatus)) q = q.Where(r => r.FilterStatus == filterStatus);
@@ -45,7 +48,7 @@ namespace BE_Company.Sales.Tests
         public Task UpdateAsync(SalesRequestDTO row, CancellationToken ct) => Task.CompletedTask;
 
         public Task<int> CountByStatusAsync(string status, CancellationToken ct) =>
-            Task.FromResult(Rows.Count(r => r.Status == status));
+            Task.FromResult(Rows.Count(r => !r.IsDeleted && r.Status == status));
 
         public Task InsertHistoryAsync(SalesRequestHistoryDTO row, CancellationToken ct)
         {

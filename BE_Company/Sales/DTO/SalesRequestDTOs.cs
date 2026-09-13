@@ -134,6 +134,10 @@ namespace BE_Company.Sales.DTO
         public string? FilterNote { get; set; }
         public string? FilterRejectReason { get; set; }
         public DateTime? FilteredAtUtc { get; set; }
+        public bool IsDeleted { get; set; }
+        public DateTime? DeletedAtUtc { get; set; }
+        public int? DeletedByUserId { get; set; }
+        public string? DeletedByName { get; set; }
         public List<SalesRequestTimelineItemDTO> Timeline { get; set; } = [];
         public List<SalesRequestHistoryDTO> History { get; set; } = [];
         public List<SalesRequestNameTransferDTO> NameTransfers { get; set; } = [];

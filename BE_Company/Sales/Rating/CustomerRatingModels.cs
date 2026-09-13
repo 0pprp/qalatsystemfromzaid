@@ -45,7 +45,8 @@ public sealed record CustomerRatingFacts(
     DateTime? LastPaymentDate,
     double AmountTotalSales,
     double ReceiptsTotal,
-    double AmountRemaining);
+    double AmountRemaining,
+    int ReceiptCount = 0);
 
 public sealed record CustomerRatingResult(
     int CustomerId,
@@ -59,7 +60,8 @@ public sealed record CustomerRatingResult(
     int? DaysToSettle,
     int? DaysSinceSale,
     double? PaymentRate,
-    DateTime? DateSaleDevice);
+    DateTime? DateSaleDevice,
+    int ReceiptCount = 0);
 
 public static class CustomerRatingCalculator
 {
@@ -167,5 +169,6 @@ public static class CustomerRatingCalculator
             daysToSettle,
             daysSinceSale,
             paymentRate,
-            facts.DateSaleDevice);
+            facts.DateSaleDevice,
+            facts.ReceiptCount);
 }

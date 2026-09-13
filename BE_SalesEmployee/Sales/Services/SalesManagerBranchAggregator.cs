@@ -17,6 +17,14 @@ namespace BE_SalesEmployee.Sales.Services
         Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, string? cityValue, CancellationToken ct);
         Task<(int Status, object? Body)> ExcelSearchAsync(GatewayUser user, string? cityValue, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct);
+        Task<(int Status, object? Body)> EvaluateAcrossBranchesAsync(GatewayUser user, string jsonBody, CancellationToken ct);
+        Task<(int Status, object? Body)> EvaluationHitsAcrossBranchesAsync(GatewayUser user, string jsonBody, CancellationToken ct);
+        Task<(int Status, object? Body)> TransferProvinceAsync(
+            GatewayUser user,
+            string fromCityValue,
+            int requestId,
+            string jsonBody,
+            CancellationToken ct);
     }
 
     /// <summary>
@@ -468,6 +476,304 @@ namespace BE_SalesEmployee.Sales.Services
             return (200, totals);
         }
 
+        public async Task<(int Status, object? Body)> EvaluateAcrossBranchesAsync(
+            GatewayUser user,
+            string jsonBody,
+            CancellationToken ct)
+        {
+            var targets = await GetTargetsAsync(null, ct);
+            if (targets.Count == 0)
+            {
+                return (400, new { message = "لا توجد محافظات مسموحة للتقييم." });
+            }
+
+            var chunks = await Task.WhenAll(targets.Select(city =>
+                FetchJsonPostAsync(user, city, "sales-manager/sales-requests/evaluate", jsonBody, ct)));
+            var ok = chunks.Count(c => c is not null);
+            if (ok == 0)
+            {
+                return (502, new { message = "تعذر تقييم الطلبات عبر الفروع المسموحة." });
+            }
+
+            return (200, SalesRequestCrossBranchEvaluationMerger.MergeSummaries(chunks));
+        }
+
+        public async Task<(int Status, object? Body)> EvaluationHitsAcrossBranchesAsync(
+            GatewayUser user,
+            string jsonBody,
+            CancellationToken ct)
+        {
+            var targets = await GetTargetsAsync(null, ct);
+            if (targets.Count == 0)
+            {
+                return (400, new { message = "لا توجد محافظات مسموحة للبحث." });
+            }
+
+            var page = 1;
+            var pageSize = 30;
+            try
+            {
+                var node = JsonNode.Parse(string.IsNullOrWhiteSpace(jsonBody) ? "{}" : jsonBody) as JsonObject;
+                page = node?["page"]?.GetValue<int>()
+                       ?? node?["Page"]?.GetValue<int>()
+                       ?? 1;
+                pageSize = node?["pageSize"]?.GetValue<int>()
+                           ?? node?["PageSize"]?.GetValue<int>()
+                           ?? 30;
+            }
+            catch
+            {
+                // keep defaults
+            }
+
+            // Fetch a wide first window per branch then merge/page server-side (no N+1 per hit).
+            var fetchBody = jsonBody;
+            try
+            {
+                var obj = JsonNode.Parse(string.IsNullOrWhiteSpace(jsonBody) ? "{}" : jsonBody) as JsonObject
+                          ?? new JsonObject();
+                obj["page"] = 1;
+                obj["pageSize"] = Math.Clamp(pageSize * Math.Max(1, targets.Count), 1, 200);
+                fetchBody = obj.ToJsonString();
+            }
+            catch
+            {
+                // use original
+            }
+
+            var chunks = await Task.WhenAll(targets.Select(async city =>
+            {
+                var body = await FetchJsonPostAsync(
+                    user, city, "sales-manager/sales-requests/evaluation-hits", fetchBody, ct);
+                return (city.Value, city.Name, body);
+            }));
+
+            if (chunks.All(c => c.body is null))
+            {
+                return (502, new { message = "تعذر تحميل نتائج التقييم من الفروع." });
+            }
+
+            return (200, SalesRequestCrossBranchEvaluationMerger.MergeHitsPages(chunks, page, pageSize));
+        }
+
+        public async Task<(int Status, object? Body)> TransferProvinceAsync(
+            GatewayUser user,
+            string fromCityValue,
+            int requestId,
+            string jsonBody,
+            CancellationToken ct)
+        {
+            var fromCity = await FindAsync(fromCityValue, ct);
+            if (fromCity == null)
+            {
+                return (404, new { message = "محافظة المصدر غير موجودة أو غير مسموحة." });
+            }
+
+            JsonObject? body;
+            try
+            {
+                body = JsonNode.Parse(string.IsNullOrWhiteSpace(jsonBody) ? "{}" : jsonBody) as JsonObject;
+            }
+            catch
+            {
+                return (400, new { message = "جسم الطلب غير صالح." });
+            }
+
+            var toCityValue = body?["toCityValue"]?.ToString()
+                              ?? body?["ToCityValue"]?.ToString()
+                              ?? "";
+            var toCityName = body?["toCityName"]?.ToString()
+                             ?? body?["ToCityName"]?.ToString();
+            var toEmployeeId = ReadNullableIntNode(body, "toEmployeeId", "ToEmployeeId");
+            var toEmployeeName = body?["toEmployeeName"]?.ToString()
+                                 ?? body?["ToEmployeeName"]?.ToString();
+
+            if (string.IsNullOrWhiteSpace(toCityValue))
+            {
+                return (400, new { message = "المحافظة الهدف مطلوبة." });
+            }
+
+            if (string.Equals(fromCity.Value, toCityValue, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fromCity.Name, toCityValue, StringComparison.OrdinalIgnoreCase))
+            {
+                return (400, new { message = "المحافظة الهدف يجب أن تختلف عن المصدر." });
+            }
+
+            var toCity = await FindAsync(toCityValue, ct);
+            if (toCity == null)
+            {
+                return (404, new { message = "المحافظة الهدف غير موجودة أو غير مسموحة." });
+            }
+
+            // Load source request (ACL: fromCity must be in GetSalesBranches).
+            using (var getCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                getCts.CancelAfter(BranchTimeout);
+                using var getResponse = await _proxy.SendManagerAsync(
+                    fromCity.Link,
+                    $"sales-manager/sales-requests/{requestId}",
+                    HttpMethod.Get,
+                    null,
+                    user.UserName,
+                    getCts.Token);
+                var getRaw = await getResponse.Content.ReadAsStringAsync(ct);
+                if (!getResponse.IsSuccessStatusCode)
+                {
+                    return ((int)getResponse.StatusCode,
+                        string.IsNullOrWhiteSpace(getRaw) ? null : BranchProxyService.TryParseJson(getRaw));
+                }
+
+                var source = JsonNode.Parse(string.IsNullOrWhiteSpace(getRaw) ? "{}" : getRaw) as JsonObject;
+                if (source is null)
+                {
+                    return (502, new { message = "تعذر قراءة الطلب المصدر." });
+                }
+
+                var status = source["status"]?.ToString() ?? source["Status"]?.ToString() ?? "";
+                var converted = ReadNullableIntNode(source, "convertedToSaleId", "ConvertedToSaleId");
+                if (string.Equals(status, "Completed", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(status, "ConvertedToSale", StringComparison.OrdinalIgnoreCase)
+                    || converted is > 0)
+                {
+                    return (409, new
+                    {
+                        message = "لا يمكن نقل طلب مكتمل أو مرتبط بمبيع. غيّر المحافظة مرفوض للحفاظ على سلامة البيانات المالية."
+                    });
+                }
+
+                var accept = new JsonObject
+                {
+                    ["fromRequestId"] = requestId,
+                    ["fromCityValue"] = fromCity.Value,
+                    ["fromCityName"] = fromCity.Name,
+                    ["customerName"] = body?["customerName"] ?? body?["CustomerName"]
+                                       ?? source["customerName"] ?? source["CustomerName"],
+                    ["customerPhone"] = body?["customerPhone"] ?? body?["CustomerPhone"]
+                                        ?? source["customerPhone"] ?? source["CustomerPhone"],
+                    ["customerProvince"] = toCityName ?? toCity.Name,
+                    ["customerAddress"] = body?["customerAddress"] ?? body?["CustomerAddress"]
+                                         ?? source["customerAddress"] ?? source["CustomerAddress"],
+                    ["notes"] = body?["notes"] ?? body?["Notes"]
+                                ?? source["notes"] ?? source["Notes"],
+                    ["customerSourceType"] = source["customerSourceType"] ?? source["CustomerSourceType"],
+                    ["existingCustomerId"] = source["existingCustomerId"] ?? source["ExistingCustomerId"],
+                    ["customerSourceCityValue"] = source["customerSourceCityValue"] ?? source["CustomerSourceCityValue"],
+                    ["saleRequestType"] = source["saleRequestType"] ?? source["SaleRequestType"],
+                    ["sourceListId"] = source["sourceListId"] ?? source["SourceListId"],
+                    ["createdByName"] = source["createdByName"] ?? source["CreatedByName"],
+                    ["createdByUserType"] = source["createdByUserType"] ?? source["CreatedByUserType"],
+                    ["cityName"] = toCityName ?? toCity.Name
+                };
+
+                // Old-branch assignee cannot remain on the destination branch.
+                if (toEmployeeId is > 0)
+                {
+                    accept["toEmployeeId"] = toEmployeeId.Value;
+                    accept["toEmployeeName"] = toEmployeeName;
+                }
+
+                using var acceptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                acceptCts.CancelAfter(BranchTimeout);
+                using var acceptResponse = await _proxy.SendManagerAsync(
+                    toCity.Link,
+                    "sales-manager/sales-requests/accept-province-transfer",
+                    HttpMethod.Post,
+                    accept.ToJsonString(),
+                    user.UserName,
+                    acceptCts.Token);
+                var acceptRaw = await acceptResponse.Content.ReadAsStringAsync(ct);
+                if (!acceptResponse.IsSuccessStatusCode)
+                {
+                    return ((int)acceptResponse.StatusCode,
+                        string.IsNullOrWhiteSpace(acceptRaw) ? null : BranchProxyService.TryParseJson(acceptRaw));
+                }
+
+                var created = JsonNode.Parse(string.IsNullOrWhiteSpace(acceptRaw) ? "{}" : acceptRaw) as JsonObject;
+                var toRequestId = created?["id"]?.GetValue<int>()
+                                  ?? created?["Id"]?.GetValue<int>()
+                                  ?? 0;
+                if (toRequestId <= 0)
+                {
+                    return (502, new
+                    {
+                        message = "تم إنشاء الطلب في الفرع الهدف لكن المعرّف غير معروف — راجع الفرع الهدف يدوياً. المصدر لم يُؤرشف.",
+                        destination = Stamp(acceptRaw, toCity)
+                    });
+                }
+
+                var mark = new JsonObject
+                {
+                    ["toCityValue"] = toCity.Value,
+                    ["toCityName"] = toCity.Name,
+                    ["toRequestId"] = toRequestId
+                };
+                using var markCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                markCts.CancelAfter(BranchTimeout);
+                using var markResponse = await _proxy.SendManagerAsync(
+                    fromCity.Link,
+                    $"sales-manager/sales-requests/{requestId}/mark-province-transferred-out",
+                    HttpMethod.Post,
+                    mark.ToJsonString(),
+                    user.UserName,
+                    markCts.Token);
+                if (!markResponse.IsSuccessStatusCode)
+                {
+                    var markRaw = await markResponse.Content.ReadAsStringAsync(ct);
+                    return (502, new
+                    {
+                        message = "تم إنشاء الطلب في الفرع الهدف لكن أرشفة المصدر فشلت. المصدر ما زال موجوداً — لا تفقد البيانات. أعد المحاولة أو أرشف يدوياً.",
+                        destinationRequestId = toRequestId,
+                        destinationCityValue = toCity.Value,
+                        sourceRequestId = requestId,
+                        sourceCityValue = fromCity.Value,
+                        archiveError = string.IsNullOrWhiteSpace(markRaw) ? null : BranchProxyService.TryParseJson(markRaw)
+                    });
+                }
+
+                if (created is not null)
+                {
+                    StampObject(created, toCity);
+                }
+
+                return (200, new JsonObject
+                {
+                    ["fromCityValue"] = fromCity.Value,
+                    ["fromRequestId"] = requestId,
+                    ["toCityValue"] = toCity.Value,
+                    ["toRequestId"] = toRequestId,
+                    ["assigneeCleared"] = toEmployeeId is null or <= 0,
+                    ["request"] = created
+                });
+            }
+        }
+
+        private async Task<JsonNode?> FetchJsonPostAsync(
+            GatewayUser user,
+            AdminCity city,
+            string companyPath,
+            string jsonBody,
+            CancellationToken ct)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(ExcelSearchTimeout);
+                using var response = await _proxy.SendManagerAsync(
+                    city.Link, companyPath, HttpMethod.Post, jsonBody, user.UserName, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                var raw = await response.Content.ReadAsStringAsync(ct);
+                return JsonNode.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private static readonly TimeSpan ExcelSearchTimeout = TimeSpan.FromSeconds(90);
 
         private async Task<(AdminCity City, JsonNode? Node)> FetchExcelSearchAsync(
@@ -677,13 +983,46 @@ namespace BE_SalesEmployee.Sales.Services
                     return n;
                 }
 
-                if (int.TryParse(prop.Value.ToString(), out var parsed))
+                if (prop.Value.ValueKind == JsonValueKind.String
+                    && int.TryParse(prop.Value.GetString(), out var parsed))
                 {
                     return parsed;
                 }
             }
 
             return 0;
+        }
+
+        private static int? ReadNullableIntNode(JsonObject? obj, params string[] names)
+        {
+            if (obj is null)
+            {
+                return null;
+            }
+
+            foreach (var name in names)
+            {
+                if (!obj.TryGetPropertyValue(name, out var node) || node is null
+                    || node.GetValueKind() == JsonValueKind.Null)
+                {
+                    continue;
+                }
+
+                if (node is JsonValue value)
+                {
+                    if (value.TryGetValue<int>(out var i))
+                    {
+                        return i;
+                    }
+
+                    if (int.TryParse(value.ToString(), out var parsed))
+                    {
+                        return parsed;
+                    }
+                }
+            }
+
+            return null;
         }
 
         private static void ShapeCustomer(JsonObject obj)

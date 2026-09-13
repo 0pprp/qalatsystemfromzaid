@@ -15,6 +15,8 @@ import {
   smGetBlob,
   smGetEmployees,
   smPost,
+  smPut,
+  smDelete,
   withCityQuery,
   displayCityName,
 } from '@/composables/salesManagerApi'
@@ -55,6 +57,33 @@ const importOpen = ref(false)
 const importBusy = ref(false)
 const importPreview = ref(null)
 const intakeQuery = ref('')
+const evaluations = ref({})
+const evaluationsBusy = ref(false)
+const hitsOpen = ref(false)
+const hitsBusy = ref(false)
+const hitsTitle = ref('')
+const hitsRows = ref([])
+const hitsMeta = ref({ requestId: 0, category: '', city: '', page: 1, total: 0 })
+const editOpen = ref(false)
+const editBusy = ref(false)
+const editForm = ref({
+  customerName: '',
+  phone: '',
+  province: '',
+  cityValue: '',
+  toEmployeeId: null,
+  address: '',
+  notes: '',
+})
+const editOriginalCity = ref('')
+const editTransferBlockedReason = ref('')
+const editEmployees = ref([])
+const editCityChanged = computed(() =>
+  !!editForm.value.cityValue
+  && String(editForm.value.cityValue) !== String(editOriginalCity.value || ''))
+const deleteOpen = ref(false)
+const deleteBusy = ref(false)
+const deleteTarget = ref(null)
 const intakeCustomers = ref([])
 const intakeSelected = ref(null)
 const intakeForm = ref({
@@ -248,8 +277,254 @@ function tabCount(value) {
 async function load() {
   rows.value = await smGet(withCityQuery('sales-requests', cityValue.value)) || []
   await refreshSalesRequestUnread(cityValue.value)
+  await loadEvaluations(rows.value)
   if (selected.value)
     await openDetails(selected.value, false)
+}
+
+function evaluationKey(row) {
+  return `${row.cityValue || ''}:${row.id}`
+}
+
+function evaluationOf(row) {
+  return evaluations.value[evaluationKey(row)] || null
+}
+
+function ratingColor(label) {
+  const t = String(label || '')
+  if (t.includes('قانونية'))
+    return 'error'
+  if (t.includes('مرفوض'))
+    return 'warning'
+  if (t.includes('ضعيف'))
+    return 'secondary'
+  if (t.includes('جيد'))
+    return 'info'
+  if (t.includes('ممتاز'))
+    return 'success'
+
+  return 'default'
+}
+
+function categoryDto(evalRow, key) {
+  if (!evalRow)
+    return null
+  const map = {
+    tripleName: evalRow.tripleName || evalRow.TripleName,
+    phone: evalRow.phone || evalRow.Phone,
+    fatherGrandfather: evalRow.fatherGrandfather || evalRow.FatherGrandfather,
+  }
+
+  return map[key] || null
+}
+
+async function loadEvaluations(list) {
+  evaluationsBusy.value = true
+  try {
+    const items = []
+    for (const row of list || []) {
+      const id = Number(row.id || row.Id || 0)
+      if (!id)
+        continue
+      items.push({
+        requestId: id,
+        sourceCityValue: String(row.cityValue || row.CityValue || ''),
+        customerName: pick(row, 'customerName', 'CustomerName') || '',
+        customerPhone: pick(row, 'customerPhone', 'CustomerPhone') || '',
+      })
+    }
+    const next = {}
+    if (items.length) {
+      // Cross-branch evaluation across all ACL-allowed provinces (gateway merge).
+      const res = await smPost('sales-requests/evaluate', { items })
+      const evalItems = res?.items || res?.Items || []
+      for (const item of evalItems) {
+        const key = item.key || item.Key
+          || `${item.sourceCityValue || item.SourceCityValue || ''}:${item.requestId || item.RequestId}`
+        next[key] = item
+      }
+    }
+    evaluations.value = next
+  }
+  catch {
+    /* keep cards usable if evaluation fails */
+  }
+  finally {
+    evaluationsBusy.value = false
+  }
+}
+
+async function openEvaluationHits(row, category, title) {
+  const city = String(row.cityValue || row.CityValue || '')
+  const id = Number(row.id || row.Id || 0)
+  hitsTitle.value = title
+  hitsMeta.value = { requestId: id, category, city, page: 1, total: 0 }
+  hitsOpen.value = true
+  hitsBusy.value = true
+  hitsRows.value = []
+  try {
+    const res = await smPost('sales-requests/evaluation-hits', {
+      requestId: id,
+      sourceCityValue: city,
+      customerName: pick(row, 'customerName', 'CustomerName') || '',
+      customerPhone: pick(row, 'customerPhone', 'CustomerPhone') || '',
+      category,
+      page: 1,
+      pageSize: 40,
+    })
+    hitsRows.value = res?.items || res?.Items || []
+    hitsMeta.value.total = res?.total || res?.Total || hitsRows.value.length
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || 'تعذر تحميل نتائج البحث')
+  }
+  finally {
+    hitsBusy.value = false
+  }
+}
+
+function isProvinceTransferBlocked(row) {
+  const status = requestStatus(row)
+  const converted = Number(pick(row, 'convertedToSaleId', 'ConvertedToSaleId') || 0)
+  if (status === 'Completed' || converted > 0)
+    return 'لا يمكن نقل المحافظة لأن الطلب مكتمل أو مرتبط بمبيع.'
+  if (status === 'ConvertedToSale' || status === 'Inspected')
+    return 'لا يمكن نقل المحافظة لأن الطلب مرتبط بمسار البيع/الكشف.'
+
+  return ''
+}
+
+async function openEdit(row) {
+  editForm.value = {
+    customerName: pick(row, 'customerName', 'CustomerName') || '',
+    phone: pick(row, 'customerPhone', 'CustomerPhone') || '',
+    province: pick(row, 'customerProvince', 'CustomerProvince') || displayCityName(row, branches.value),
+    cityValue: String(pick(row, 'cityValue', 'CityValue') || ''),
+    address: pick(row, 'customerAddress', 'CustomerAddress') || '',
+    notes: pick(row, 'notes', 'Notes') || '',
+  }
+  editOriginalCity.value = String(pick(row, 'cityValue', 'CityValue') || '')
+  editTransferBlockedReason.value = isProvinceTransferBlocked(row)
+  editEmployees.value = []
+  selected.value = row
+  editOpen.value = true
+  if (editForm.value.cityValue && editForm.value.cityValue !== editOriginalCity.value)
+    await loadEditEmployees(editForm.value.cityValue)
+}
+
+async function loadEditEmployees(city) {
+  if (!city || isDemo()) {
+    editEmployees.value = []
+
+    return
+  }
+  try {
+    editEmployees.value = await smGetEmployees(city) || []
+  }
+  catch {
+    editEmployees.value = []
+  }
+}
+
+async function onEditCityChanged(city) {
+  editForm.value.cityValue = city || ''
+  const match = branches.value.find(b => String(b.value) === String(city))
+  if (match)
+    editForm.value.province = match.name || editForm.value.province
+  editForm.value.toEmployeeId = null
+  if (city && String(city) !== String(editOriginalCity.value))
+    await loadEditEmployees(city)
+  else
+    editEmployees.value = []
+}
+
+async function saveEdit() {
+  const row = selected.value
+  if (!row)
+    return
+  editBusy.value = true
+  try {
+    const city = requestCity(row)
+    const id = requestId(row)
+    const phone = editForm.value.phone ? normalizeIraqPhone(editForm.value.phone) : ''
+    const newCity = String(editForm.value.cityValue || '')
+    const cityChanged = newCity && newCity !== String(editOriginalCity.value || '')
+
+    if (cityChanged) {
+      if (editTransferBlockedReason.value) {
+        toast.error(editTransferBlockedReason.value)
+
+        return
+      }
+      const path = isDemo() || !city
+        ? `sales-requests/${id}/transfer-province`
+        : `sales-requests/${encodeURIComponent(city)}/${id}/transfer-province`
+      const match = branches.value.find(b => String(b.value) === newCity)
+      await smPost(path, {
+        toCityValue: newCity,
+        toCityName: match?.name || editForm.value.province,
+        toEmployeeId: editForm.value.toEmployeeId || null,
+        customerName: editForm.value.customerName,
+        customerPhone: phone,
+        customerAddress: editForm.value.address,
+        notes: editForm.value.notes,
+      })
+      toast.success('تم نقل الطلب إلى المحافظة الجديدة')
+    }
+    else {
+      const path = isDemo() || !city
+        ? `sales-requests/${id}`
+        : `sales-requests/${encodeURIComponent(city)}/${id}`
+      await smPut(path, {
+        customerName: editForm.value.customerName,
+        phone,
+        province: editForm.value.province,
+        address: editForm.value.address,
+        notes: editForm.value.notes,
+      })
+      toast.success('تم تعديل الطلب')
+    }
+    editOpen.value = false
+    await load()
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || 'تعذر التعديل')
+  }
+  finally {
+    editBusy.value = false
+  }
+}
+
+function confirmDelete(row) {
+  deleteTarget.value = row
+  deleteOpen.value = true
+}
+
+async function doDelete() {
+  const row = deleteTarget.value
+  if (!row)
+    return
+  deleteBusy.value = true
+  try {
+    const city = requestCity(row)
+    const id = requestId(row)
+    const path = isDemo() || !city
+      ? `sales-requests/${id}`
+      : `sales-requests/${encodeURIComponent(city)}/${id}`
+    await smDelete(path)
+    deleteOpen.value = false
+    deleteTarget.value = null
+    if (detail.value?.id === id)
+      detail.value = null
+    toast.success('تم حذف الطلب')
+    await load()
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || 'تعذر الحذف')
+  }
+  finally {
+    deleteBusy.value = false
+  }
 }
 
 async function openDetails(row, resetAssign = true) {
@@ -955,8 +1230,29 @@ function headerKey(value) {
 function cellText(value) {
   if (value == null)
     return ''
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Excel numeric phones lose leading zero — keep as integer string.
+    return String(Math.trunc(value))
+  }
 
   return String(value).trim()
+}
+
+function normalizeImportedPhone(raw) {
+  const text = cellText(raw)
+  if (!text)
+    return ''
+  const digits = text.replace(/\D/g, '')
+  if (digits.length === 10 && digits.startsWith('7'))
+    return `0${digits}`
+  if (digits.length === 11 && digits.startsWith('07'))
+    return digits
+  try {
+    return normalizeIraqPhone(text) || text
+  }
+  catch {
+    return text
+  }
 }
 
 function resolveCity(provinceText) {
@@ -1034,7 +1330,7 @@ function parseExcel(buffer) {
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i] || []
     const name = cellText(row[map.name])
-    const phone = cellText(map.phone != null ? row[map.phone] : '')
+    const phone = normalizeImportedPhone(map.phone != null ? row[map.phone] : '')
     const province = cellText(map.province != null ? row[map.province] : '')
     const address = cellText(map.address != null ? row[map.address] : '')
     const saleType = cellText(map.saleType != null ? row[map.saleType] : '')
@@ -1150,12 +1446,6 @@ onUnmounted(() => {
         </VBtn>
         <VBtn
           variant="tonal"
-          :to="{ name: 'sales-manager-excel-search' }"
-        >
-          بحث الزبائن من Excel
-        </VBtn>
-        <VBtn
-          variant="tonal"
           :loading="busy"
           @click="markAllRead"
         >
@@ -1219,73 +1509,105 @@ onUnmounted(() => {
           :class="{
             'border-primary': selected?.id === row.id && selected?.cityValue === row.cityValue,
             'unread-request': isUnreadSent(row),
+            'sales-request-card': true,
           }"
           @click="openDetails(row)"
         >
           <VCardText>
-            <div class="d-flex align-center justify-space-between gap-2 mb-2">
-              <div :class="{ 'font-weight-bold': isUnreadSent(row) }">
-                طلب #{{ row.id }} — {{ row.branchName || row.cityName }}
+            <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
+              <div class="d-flex flex-wrap align-center gap-2">
+                <span class="text-h6 mb-0">طلب #{{ row.id }}</span>
+                <VChip size="small" color="primary" variant="tonal">{{ displayCityName(row, branches) }}</VChip>
+                <VChip size="small" :color="statusColor(requestStatus(row))">{{ statusText(row) }}</VChip>
+                <VChip
+                  size="small"
+                  :color="saleRequestTypeLabel(row) === 'مبيع قديم' ? 'secondary' : 'info'"
+                  variant="tonal"
+                >
+                  {{ saleRequestTypeLabel(row) }}
+                </VChip>
+                <VChip size="small" variant="outlined">
+                  {{ isUnassigned(row) ? 'غير مسند' : (row.targetEmployeeName || row.TargetEmployeeName || '—') }}
+                </VChip>
                 <VChip
                   v-if="isUnreadSent(row)"
                   size="x-small"
                   color="error"
-                  class="ms-1"
                 >
                   غير مقروء
                 </VChip>
               </div>
+              <div class="d-flex flex-wrap gap-1" @click.stop>
+                <VBtn size="small" variant="tonal" @click="openEdit(row)">تعديل</VBtn>
+                <VBtn size="small" variant="tonal" color="primary" @click="openDetails(row)">تغيير الموظف</VBtn>
+                <VBtn size="small" variant="tonal" color="error" @click="confirmDelete(row)">حذف</VBtn>
+              </div>
+            </div>
+
+            <VRow dense class="mb-2">
+              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">اسم الزبون</div><strong>{{ row.customerName }}</strong></VCol>
+              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">الهاتف</div>{{ row.customerPhone || row.CustomerPhone || '—' }}</VCol>
+              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">العنوان</div>{{ row.customerAddress || row.CustomerAddress || '—' }}</VCol>
+              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">المصدر</div>{{ requestSourceLabel(row) }}</VCol>
+              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">تاريخ الطلب</div>{{ formatIraqDate(row.createdAtUtc || row.CreatedAtUtc) }} {{ formatIraqTime(row.createdAtUtc || row.CreatedAtUtc) }}</VCol>
+              <VCol v-if="lastNote(row)" cols="12"><div class="text-medium-emphasis text-caption">ملاحظة</div>{{ lastNote(row) }}</VCol>
+            </VRow>
+
+            <VDivider class="my-3" />
+
+            <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
+              <div class="text-subtitle-1 font-weight-bold mb-0">تقييم البرنامج والبحث</div>
               <VChip
                 size="small"
-                :color="statusColor(requestStatus(row))"
+                :color="ratingColor(evaluationOf(row)?.overallRatingLabel || evaluationOf(row)?.OverallRatingLabel)"
               >
-                {{ statusText(row) }}
+                التقييم النهائي:
+                {{ evaluationOf(row)?.overallRatingLabel || evaluationOf(row)?.OverallRatingLabel || (evaluationsBusy ? '...' : 'لا يوجد تطابق') }}
+                <template v-if="(evaluationOf(row)?.overallScore ?? evaluationOf(row)?.OverallScore) != null">
+                  ({{ evaluationOf(row)?.overallScore ?? evaluationOf(row)?.OverallScore }})
+                </template>
               </VChip>
             </div>
-            <strong>{{ row.customerName }}</strong>
-            <div>
-              نوع الطلب:
-              <VChip
-                size="x-small"
-                class="ms-1"
-                :color="saleRequestTypeLabel(row) === 'مبيع قديم' ? 'secondary' : 'primary'"
+
+            <VRow dense>
+              <VCol
+                v-for="item in [
+                  { key: 'tripleName', title: 'تشابه الاسم الثلاثي' },
+                  { key: 'phone', title: 'تشابه رقم الهاتف' },
+                  { key: 'fatherGrandfather', title: 'تشابه اسم الأب والجد' },
+                ]"
+                :key="item.key"
+                cols="12"
+                md="4"
               >
-                {{ saleRequestTypeLabel(row) }}
-              </VChip>
-            </div>
-            <div v-if="pick(row, 'existingCustomerId', 'ExistingCustomerId')">
-              رقم الزبون: {{ pick(row, 'existingCustomerId', 'ExistingCustomerId') }}
-            </div>
-            <div>الهاتف: {{ row.customerPhone || row.CustomerPhone || '—' }}</div>
-            <div>المحافظة: {{ displayCityName(row, branches) }}</div>
-            <div>العنوان: {{ row.customerAddress || row.CustomerAddress || '—' }}</div>
-            <div>الموظف: {{ isEmployeeSubmitted(row) ? submittedBy(row) : (row.targetEmployeeName || 'غير مسند') }}</div>
-            <div v-if="isFollowerSubmitted(row) || isDelegateSubmitted(row) || isEmployeeSubmitted(row)">
-              المصدر: {{ requestSourceLabel(row) }}
-              <template v-if="isFollowerSubmitted(row) || isDelegateSubmitted(row)"> — أرسل بواسطة: {{ submittedBy(row) }}</template>
-            </div>
-            <div>التاريخ: {{ formatIraqDate(row.createdAtUtc || row.CreatedAtUtc) }}</div>
-            <div>الحالة: {{ statusText(row) }}</div>
-            <div v-if="lastNote(row)">
-              آخر ملاحظة/سبب: {{ lastNote(row) }}
-            </div>
-            <div
-              v-if="row.rejectionReason || row.RejectionReason"
-              class="text-error"
-            >
-              سبب الرفض: {{ row.rejectionReason || row.RejectionReason }}
-            </div>
-            <VChip
-              v-if="requestStatus(row) === 'Returned'"
-              size="small"
-              color="warning"
-              class="mt-1"
-            >
-              معاد للموظف
-            </VChip>
-            <div class="text-medium-emphasis">
-              آخر تحديث: {{ lastUpdated(row) }}
-            </div>
+                <div class="eval-metric pa-3 rounded border">
+                  <div class="text-caption text-medium-emphasis mb-1">{{ item.title }}</div>
+                  <button
+                    type="button"
+                    class="text-h6 text-primary text-decoration-underline bg-transparent border-0 pa-0 cursor-pointer"
+                    @click.stop="openEvaluationHits(row, item.key, item.title)"
+                  >
+                    {{ categoryDto(evaluationOf(row), item.key)?.resultCount
+                      ?? categoryDto(evaluationOf(row), item.key)?.ResultCount
+                      ?? 0 }} نتيجة
+                  </button>
+                  <div class="mt-2">
+                    <VChip
+                      size="x-small"
+                      :color="ratingColor(categoryDto(evaluationOf(row), item.key)?.worstRatingLabel || categoryDto(evaluationOf(row), item.key)?.WorstRatingLabel)"
+                    >
+                      {{ categoryDto(evaluationOf(row), item.key)?.worstRatingLabel
+                        || categoryDto(evaluationOf(row), item.key)?.WorstRatingLabel
+                        || 'لا توجد نتائج' }}
+                      <template v-if="(categoryDto(evaluationOf(row), item.key)?.worstScore ?? categoryDto(evaluationOf(row), item.key)?.WorstScore) != null">
+                        ({{ categoryDto(evaluationOf(row), item.key)?.worstScore ?? categoryDto(evaluationOf(row), item.key)?.WorstScore }})
+                      </template>
+                    </VChip>
+                  </div>
+                </div>
+              </VCol>
+            </VRow>
+
             <VBtn
               v-if="requestStatus(row) === 'Completed' || requestStatus(row) === 'Inspected'"
               class="mt-3"
@@ -2045,6 +2367,205 @@ onUnmounted(() => {
         </VCardActions>
       </VCard>
     </VDialog>
+
+    <VDialog
+      v-model="hitsOpen"
+      max-width="960"
+    >
+      <VCard>
+        <VCardTitle>{{ hitsTitle }}</VCardTitle>
+        <VCardText>
+          <div
+            v-if="hitsBusy"
+            class="text-center py-6"
+          >
+            <VProgressCircular indeterminate />
+          </div>
+          <div
+            v-else-if="!hitsRows.length"
+            class="text-medium-emphasis"
+          >
+            لا توجد نتائج
+          </div>
+          <VTable v-else>
+            <thead>
+              <tr>
+                <th>الزبون</th>
+                <th>الهاتف</th>
+                <th>المحافظة</th>
+                <th>التقييم</th>
+                <th>سبب التطابق</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="hit in hitsRows"
+                :key="`${hit.customerId || hit.CustomerId}-${hit.cityValue || hit.CityValue}`"
+              >
+                <td>{{ hit.fullName || hit.FullName }}</td>
+                <td>{{ hit.phone || hit.Phone || '—' }}</td>
+                <td>{{ hit.cityName || hit.CityName || hit.province || hit.Province || '—' }}</td>
+                <td>
+                  <VChip
+                    size="x-small"
+                    :color="ratingColor(hit.ratingLabel || hit.RatingLabel)"
+                  >
+                    {{ hit.ratingLabel || hit.RatingLabel }} ({{ hit.score ?? hit.Score }})
+                  </VChip>
+                </td>
+                <td>{{ hit.matchReason || hit.MatchReason }}</td>
+                <td>
+                  <VBtn
+                    size="x-small"
+                    variant="tonal"
+                    :to="{
+                      name: 'sales-manager-customer-profile',
+                      query: {
+                        customerId: hit.customerId || hit.CustomerId,
+                        cityValue: hit.cityValue || hit.CityValue || hitsMeta.city,
+                      },
+                    }"
+                  >
+                    البروفايل
+                  </VBtn>
+                </td>
+              </tr>
+            </tbody>
+          </VTable>
+        </VCardText>
+        <VCardActions>
+          <VSpacer />
+          <VBtn
+            variant="text"
+            @click="hitsOpen = false"
+          >
+            إغلاق
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+
+    <VDialog
+      v-model="editOpen"
+      max-width="560"
+    >
+      <VCard>
+        <VCardTitle>تعديل طلب البيع</VCardTitle>
+        <VCardText>
+          <VTextField
+            v-model="editForm.customerName"
+            class="mb-3"
+            label="اسم الزبون"
+          />
+          <VTextField
+            v-model="editForm.phone"
+            class="mb-3"
+            label="الهاتف"
+            :rules="[iraqPhoneValidator]"
+            @update:model-value="v => editForm.phone = normalizeIraqPhone(v)"
+          />
+          <VSelect
+            :model-value="editForm.cityValue"
+            class="mb-2"
+            label="المحافظة (نقل حقيقي بين الفروع)"
+            :items="branches"
+            item-title="name"
+            item-value="value"
+            :disabled="!!editTransferBlockedReason || isDemo()"
+            @update:model-value="onEditCityChanged"
+          />
+          <VAlert
+            v-if="editTransferBlockedReason"
+            class="mb-3"
+            type="warning"
+            variant="tonal"
+            density="compact"
+          >
+            {{ editTransferBlockedReason }}
+          </VAlert>
+          <VAlert
+            v-else-if="editCityChanged"
+            class="mb-3"
+            type="warning"
+            variant="tonal"
+            density="compact"
+          >
+            سيتم نقل الطلب إلى محافظة أخرى وقد يتم إلغاء إسناد الموظف الحالي.
+          </VAlert>
+          <VSelect
+            v-if="editCityChanged && !isDemo()"
+            v-model="editForm.toEmployeeId"
+            class="mb-3"
+            label="موظف الفرع الهدف (اختياري)"
+            :items="editEmployees"
+            item-title="employeeName"
+            item-value="employeeId"
+            clearable
+            hint="إذا لم تُختر، يُلغى الإسناد تلقائياً لأن موظف المصدر لا يعمل في الفرع الهدف"
+            persistent-hint
+          />
+          <VTextField
+            v-model="editForm.province"
+            class="mb-3"
+            label="اسم المحافظة للعرض"
+          />
+          <VTextField
+            v-model="editForm.address"
+            class="mb-3"
+            label="العنوان"
+          />
+          <VTextarea
+            v-model="editForm.notes"
+            label="الملاحظات"
+            auto-grow
+          />
+        </VCardText>
+        <VCardActions>
+          <VBtn
+            variant="text"
+            @click="editOpen = false"
+          >
+            إلغاء
+          </VBtn>
+          <VBtn
+            color="primary"
+            :loading="editBusy"
+            :disabled="!!editTransferBlockedReason && editCityChanged"
+            @click="saveEdit"
+          >
+            حفظ
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+
+    <VDialog
+      v-model="deleteOpen"
+      max-width="420"
+    >
+      <VCard>
+        <VCardTitle>تأكيد الحذف</VCardTitle>
+        <VCardText>
+          سيتم إخفاء الطلب من القوائم مع الاحتفاظ بسجل التدقيق. لن يُحذف أي بيع أو تسديد مرتبط.
+        </VCardText>
+        <VCardActions>
+          <VBtn
+            variant="text"
+            @click="deleteOpen = false"
+          >
+            رجوع
+          </VBtn>
+          <VBtn
+            color="error"
+            :loading="deleteBusy"
+            @click="doDelete"
+          >
+            حذف
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
   </div>
 </template>
 
@@ -2058,5 +2579,15 @@ onUnmounted(() => {
 .unread-request {
   border: 2px solid rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.08);
+}
+.sales-request-card {
+  border-radius: 14px;
+}
+.eval-metric {
+  background: rgba(var(--v-theme-on-surface), 0.02);
+  min-height: 110px;
+}
+.cursor-pointer {
+  cursor: pointer;
 }
 </style>
