@@ -6,6 +6,7 @@ import 'package:sales_filter_application/services/api_client.dart';
 import 'package:sales_filter_application/services/filter_repository.dart';
 import 'package:sales_filter_application/services/session.dart';
 import 'package:sales_filter_application/theme/app_theme.dart';
+import 'package:sales_filter_application/widgets/app_scaffold.dart';
 import 'package:sales_filter_application/widgets/request_card.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -171,18 +172,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('تطبيق فلترة المبيعات'),
-          actions: [
-            IconButton(onPressed: _loadCounts, icon: const Icon(Icons.refresh)),
-            IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
-          ],
-        ),
-        body: SafeArea(
-          child: Column(
+    return FilterScaffold(
+      appBar: AppBar(
+        title: const Text('تطبيق فلترة المبيعات'),
+        actions: [
+          IconButton(onPressed: _loadCounts, icon: const Icon(Icons.refresh)),
+          IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
+        ],
+      ),
+      body: Column(
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
@@ -276,8 +274,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-        ),
-      ),
     );
   }
 
@@ -403,12 +399,9 @@ class _StatusListScreenState extends State<StatusListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(title: Text(widget.title)),
-        body: SafeArea(
-          child: _loading
+    return FilterScaffold(
+      appBar: AppBar(title: Text(widget.title)),
+      body: _loading
               ? const Center(child: CircularProgressIndicator())
               : _error != null
                   ? Center(child: Text(_error!, style: const TextStyle(fontFamily: 'Cairo', color: AppColors.danger)))
@@ -435,8 +428,6 @@ class _StatusListScreenState extends State<StatusListScreen> {
                             ),
                           ),
                         ),
-        ),
-      ),
     );
   }
 }

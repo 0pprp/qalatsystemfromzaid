@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sales_filter_application/models/filter_models.dart';
 import 'package:sales_filter_application/services/filter_repository.dart';
 import 'package:sales_filter_application/theme/app_theme.dart';
+import 'package:sales_filter_application/widgets/app_scaffold.dart';
 
 class DetailScreen extends StatefulWidget {
   const DetailScreen({
@@ -198,12 +199,9 @@ class _DetailScreenState extends State<DetailScreen> {
     final pending = row?.filterStatus == FilterStatuses.pending;
     final onHold = row?.filterStatus == FilterStatuses.onHold;
 
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(title: const Text('تفاصيل الطلب')),
-        body: SafeArea(
-          child: _loading
+    return FilterScaffold(
+      appBar: AppBar(title: const Text('تفاصيل الطلب')),
+      body: _loading
               ? const Center(child: CircularProgressIndicator())
               : _error != null
                   ? Center(child: Text(_error!, style: const TextStyle(fontFamily: 'Cairo', color: AppColors.danger)))
@@ -254,8 +252,6 @@ class _DetailScreenState extends State<DetailScreen> {
                             ],
                           ],
                         ),
-        ),
-      ),
     );
   }
 

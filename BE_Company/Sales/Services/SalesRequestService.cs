@@ -793,13 +793,10 @@ namespace BE_Company.Sales.Services
                     "الموظف المحدد غير فعال أو ليس موظف مبيعات في نفس الفرع.");
             }
 
-            // Branch DB is city-scoped; still reject mismatches if CityValue is present on the request.
-            if (!string.IsNullOrWhiteSpace(actor.BranchId)
-                && !string.IsNullOrWhiteSpace(row.CityValue)
-                && !string.Equals(actor.BranchId, row.CityValue, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكن نقل طلب تابع لمحافظة أخرى.");
-            }
+            // Same-branch boundary: this host's branch DB + active peer list.
+            // Do not raw-equality-match actor.BranchId to legacy SalesRequests.CityValue
+            // (short key / catalog / Arabic) — mirrors SalesFilterService trusted-gateway scoping.
+            SalesBranchScope.EnsureSameComparableBranch(actor, row.CityValue);
 
             var fromId = row.TargetEmployeeId;
             var fromName = row.TargetEmployeeName ?? actor.EmployeeName;

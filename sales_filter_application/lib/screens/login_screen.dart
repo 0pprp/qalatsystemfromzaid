@@ -4,6 +4,7 @@ import 'package:sales_filter_application/screens/home_screen.dart';
 import 'package:sales_filter_application/services/api_client.dart';
 import 'package:sales_filter_application/services/session.dart';
 import 'package:sales_filter_application/theme/app_theme.dart';
+import 'package:sales_filter_application/widgets/app_scaffold.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -63,11 +64,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        body: SafeArea(
-          child: Padding(
+    return FilterScaffold(
+      body: Padding(
             padding: const EdgeInsets.all(24),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -101,8 +99,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
           ),
-        ),
-      ),
     );
   }
 }

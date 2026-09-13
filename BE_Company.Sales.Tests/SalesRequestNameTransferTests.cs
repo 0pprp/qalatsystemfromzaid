@@ -19,14 +19,15 @@ public class SalesRequestNameTransferTests
         UserType = SalesRoles.UserTypeSalesManager
     };
 
-    private static SalesIdentity Employee(int id, string name = "موظف", string branch = "najaf-demo") => new()
+    private static SalesIdentity Employee(int id, string name = "موظف", string branch = "najaf-demo", bool gateway = false) => new()
     {
         EmployeeId = id,
         EmployeeName = name,
         BranchId = branch,
         BranchName = "النجف",
         Role = SalesRoles.SalesEmployee,
-        UserType = SalesRoles.UserTypeSalesEmployee
+        UserType = SalesRoles.UserTypeSalesEmployee,
+        IsGateway = gateway
     };
 
     private static async Task<(FakeRequestRepository Repo, FakeManagerRead Employees, SalesRequestService Svc, SalesRequestDTO Row)> ReadyAsync(
@@ -126,11 +127,71 @@ public class SalesRequestNameTransferTests
     [Fact]
     public async Task Rejects_Other_City_Mismatch()
     {
+        // Two different gateway short keys on a direct (non-trusted-gateway) actor → real mismatch.
         var (_, _, svc, row) = await ReadyAsync(1);
         row.CityValue = "baghdad-karkh";
         var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
             svc.TransferNameAsync(Employee(1, "أحمد", "najaf-demo"), row.Id, new() { ToEmployeeId = 2, TransferReason = "سبب" }, default));
         Assert.Equal(403, ex.StatusCode);
+        Assert.Contains("محافظة", ex.Message);
+    }
+
+    /// <summary>
+    /// Reproduces Demo false-403: actor.BranchId is gateway short value while SalesRequests.CityValue
+    /// is a legacy Arabic/display label for the same branch DB.
+    /// </summary>
+    [Fact]
+    public async Task Allows_ShortBranchId_With_LegacyArabic_CityValue_SameBranchDb()
+    {
+        var (_, _, svc, row) = await ReadyAsync(1);
+        row.CityValue = "النجف";
+        var transferred = await svc.TransferNameAsync(
+            Employee(1, "أحمد", "najaf-demo"),
+            row.Id,
+            new() { ToEmployeeId = 2, TransferReason = "خارج المنطقة" },
+            default);
+        Assert.Equal(2, transferred.TargetEmployeeId);
+    }
+
+    [Fact]
+    public async Task Allows_ShortBranchId_With_LegacyCatalog_CityValue_SameBranchDb()
+    {
+        var (_, _, svc, row) = await ReadyAsync(1);
+        row.CityValue = "Database_Najaf_DEMO";
+        var transferred = await svc.TransferNameAsync(
+            Employee(1, "أحمد", "najaf-demo"),
+            row.Id,
+            new() { ToEmployeeId = 2, TransferReason = "سبب" },
+            default);
+        Assert.Equal(2, transferred.TargetEmployeeId);
+    }
+
+    [Fact]
+    public async Task TrustedGateway_Allows_LegacyCityValue_Mismatch()
+    {
+        var (_, _, svc, row) = await ReadyAsync(1);
+        row.CityValue = "baghdad-karkh"; // even a different key: gateway already routed to this branch DB
+        var transferred = await svc.TransferNameAsync(
+            Employee(1, "أحمد", "najaf-demo", gateway: true),
+            row.Id,
+            new() { ToEmployeeId = 2, TransferReason = "سبب" },
+            default);
+        Assert.Equal(2, transferred.TargetEmployeeId);
+    }
+
+    [Fact]
+    public async Task Rejects_Transfer_To_Peer_Outside_This_Branch_Employee_List()
+    {
+        // Cross-branch boundary for this host: peers come only from this branch DB Users table.
+        var (_, employees, svc, row) = await ReadyAsync(1);
+        employees.ActiveEmployees =
+        [
+            new() { EmployeeId = 1, EmployeeName = "أحمد" },
+            new() { EmployeeId = 2, EmployeeName = "علي" }
+        ];
+        var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+            svc.TransferNameAsync(Employee(1), row.Id, new() { ToEmployeeId = 999, TransferReason = "سبب" }, default));
+        Assert.Equal(400, ex.StatusCode);
     }
 
     [Fact]

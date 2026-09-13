@@ -7,6 +7,7 @@ import 'package:sales_filter_application/screens/home_screen.dart';
 import 'package:sales_filter_application/screens/login_screen.dart';
 import 'package:sales_filter_application/services/filter_repository.dart';
 import 'package:sales_filter_application/theme/app_theme.dart';
+import 'package:sales_filter_application/widgets/app_scaffold.dart';
 import 'package:sales_filter_application/widgets/request_card.dart';
 
 class _FakeRepo extends FilterRepository {
@@ -220,6 +221,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('تطبيق فلترة المبيعات'), findsOneWidget);
     expect(find.byType(SafeArea), findsWidgets);
+    expect(find.byType(FilterScaffold), findsOneWidget);
   });
 
   testWidgets('ready card opens from dashboard', (tester) async {
@@ -266,6 +268,40 @@ void main() {
     await tester.tap(find.text('سامي').last);
     await tester.pumpAndSettle();
     expect(repo.lastCountsTarget, 7);
+  });
+
+  testWidgets('AppSafeBody applies viewPadding bottom when padding is zero', (tester) async {
+    late double childBottomY;
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(
+          size: Size(400, 800),
+          padding: EdgeInsets.zero,
+          viewPadding: EdgeInsets.only(bottom: 48),
+        ),
+        child: MaterialApp(
+          home: FilterScaffold(
+            appBar: AppBar(title: const Text('t')),
+            body: Align(
+              alignment: Alignment.bottomCenter,
+              child: Builder(
+                builder: (context) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    final box = context.findRenderObject() as RenderBox;
+                    final origin = box.localToGlobal(Offset.zero);
+                    childBottomY = origin.dy + box.size.height;
+                  });
+                  return const SizedBox(height: 20, width: 20, child: ColoredBox(color: Color(0xFF000000)));
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Body bottom edge must stay above the 48px system nav inset (800 - 48 = 752).
+    expect(childBottomY, lessThanOrEqualTo(752.0));
   });
 }
 
