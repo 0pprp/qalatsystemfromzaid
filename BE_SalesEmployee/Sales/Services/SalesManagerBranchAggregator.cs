@@ -495,7 +495,8 @@ namespace BE_SalesEmployee.Sales.Services
                 return (502, new { message = "تعذر تقييم الطلبات عبر الفروع المسموحة." });
             }
 
-            return (200, SalesRequestCrossBranchEvaluationMerger.MergeSummaries(chunks));
+            return (200, JsonSerializer.Deserialize<object>(
+                SalesRequestCrossBranchEvaluationMerger.MergeSummaries(chunks).ToJsonString())!);
         }
 
         public async Task<(int Status, object? Body)> EvaluationHitsAcrossBranchesAsync(
@@ -553,7 +554,8 @@ namespace BE_SalesEmployee.Sales.Services
                 return (502, new { message = "تعذر تحميل نتائج التقييم من الفروع." });
             }
 
-            return (200, SalesRequestCrossBranchEvaluationMerger.MergeHitsPages(chunks, page, pageSize));
+            return (200, JsonSerializer.Deserialize<object>(
+                SalesRequestCrossBranchEvaluationMerger.MergeHitsPages(chunks, page, pageSize).ToJsonString())!);
         }
 
         public async Task<(int Status, object? Body)> TransferProvinceAsync(

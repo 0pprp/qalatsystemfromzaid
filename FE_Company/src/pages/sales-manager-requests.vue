@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
@@ -26,7 +26,20 @@ import { isDemo } from '@/composables/useCities'
 import { useSalesBranches } from '@/composables/useSalesBranches'
 import { useToast } from '@/composables/useToast'
 import { markAllSalesRequestsRead, refreshSalesRequestUnread, salesRequestUnreadCount } from '@/composables/useSalesRequestUnread'
-import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone } from '@core/utils/validators'
+import {
+  buildEvaluationKey,
+  categoryBlock,
+  categoryResultCount,
+  categoryWorstLabel,
+  categoryWorstScore,
+  evaluationKeyFromRow,
+  indexEvaluationItems,
+  lookupEvaluation,
+  receiptCountDisplay,
+  requestCityOf,
+  requestIdOf,
+  settlementDaysDisplay,
+} from '@/composables/salesRequestEvaluationMap'
 
 const toast = useToast()
 const router = useRouter()
@@ -59,11 +72,15 @@ const importPreview = ref(null)
 const intakeQuery = ref('')
 const evaluations = ref({})
 const evaluationsBusy = ref(false)
-const hitsOpen = ref(false)
-const hitsBusy = ref(false)
-const hitsTitle = ref('')
-const hitsRows = ref([])
-const hitsMeta = ref({ requestId: 0, category: '', city: '', page: 1, total: 0 })
+const evaluationsError = ref('')
+/** Per-request inline evaluation UI: { criterion, title, hits, loading, error, expandedHitKey, profile, profileLoading } */
+const evalPanels = ref({})
+const hitsCache = ref({})
+const EVAL_CRITERIA = [
+  { key: 'tripleName', title: 'تشابه الاسم الثلاثي' },
+  { key: 'phone', title: 'تشابه رقم الهاتف' },
+  { key: 'fatherGrandfather', title: 'تشابه اسم الأب والجد' },
+]
 const editOpen = ref(false)
 const editBusy = ref(false)
 const editForm = ref({
@@ -283,11 +300,11 @@ async function load() {
 }
 
 function evaluationKey(row) {
-  return `${row.cityValue || ''}:${row.id}`
+  return evaluationKeyFromRow(row)
 }
 
 function evaluationOf(row) {
-  return evaluations.value[evaluationKey(row)] || null
+  return lookupEvaluation(evaluations.value, row)
 }
 
 function ratingColor(label) {
@@ -307,80 +324,309 @@ function ratingColor(label) {
 }
 
 function categoryDto(evalRow, key) {
-  if (!evalRow)
-    return null
-  const map = {
-    tripleName: evalRow.tripleName || evalRow.TripleName,
-    phone: evalRow.phone || evalRow.Phone,
-    fatherGrandfather: evalRow.fatherGrandfather || evalRow.FatherGrandfather,
-  }
-
-  return map[key] || null
+  return categoryBlock(evalRow, key)
 }
 
-async function loadEvaluations(list) {
-  evaluationsBusy.value = true
-  try {
-    const items = []
-    for (const row of list || []) {
-      const id = Number(row.id || row.Id || 0)
-      if (!id)
-        continue
-      items.push({
-        requestId: id,
-        sourceCityValue: String(row.cityValue || row.CityValue || ''),
-        customerName: pick(row, 'customerName', 'CustomerName') || '',
-        customerPhone: pick(row, 'customerPhone', 'CustomerPhone') || '',
-      })
-    }
-    const next = {}
-    if (items.length) {
-      // Cross-branch evaluation across all ACL-allowed provinces (gateway merge).
-      const res = await smPost('sales-requests/evaluate', { items })
-      const evalItems = res?.items || res?.Items || []
-      for (const item of evalItems) {
-        const key = item.key || item.Key
-          || `${item.sourceCityValue || item.SourceCityValue || ''}:${item.requestId || item.RequestId}`
-        next[key] = item
-      }
-    }
-    evaluations.value = next
-  }
-  catch {
-    /* keep cards usable if evaluation fails */
-  }
-  finally {
-    evaluationsBusy.value = false
-  }
+function categoryCountText(evalRow, key) {
+  const n = categoryResultCount(categoryDto(evalRow, key))
+  if (n == null)
+    return evaluationsBusy.value ? '...' : '0'
+
+  return String(n)
+}
+
+function categoryLabelText(evalRow, key) {
+  const cat = categoryDto(evalRow, key)
+  const count = categoryResultCount(cat)
+  if (count == null)
+    return evaluationsBusy.value ? '...' : 'لا توجد نتائج'
+  if (count <= 0)
+    return 'لا توجد نتائج'
+
+  return categoryWorstLabel(cat) || '—'
+}
+
+function requestDomId(row) {
+  return `sales-request-${requestCityOf(row) || 'x'}-${requestIdOf(row)}`
+}
+
+function hitDomId(hit) {
+  const city = hit?.cityValue || hit?.CityValue || 'x'
+  const id = hit?.customerId || hit?.CustomerId || '0'
+
+  return `customer-hit-${city}-${id}`
+}
+
+function hitCacheKey(row, category) {
+  return `${evaluationKey(row)}:${category}`
+}
+
+function panelOf(row) {
+  return evalPanels.value[evaluationKey(row)] || null
+}
+
+function scrollToDomId(domId) {
+  nextTick(() => {
+    const el = document.getElementById(domId)
+    if (el)
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  })
 }
 
 async function openEvaluationHits(row, category, title) {
-  const city = String(row.cityValue || row.CityValue || '')
-  const id = Number(row.id || row.Id || 0)
-  hitsTitle.value = title
-  hitsMeta.value = { requestId: id, category, city, page: 1, total: 0 }
-  hitsOpen.value = true
-  hitsBusy.value = true
-  hitsRows.value = []
+  const key = evaluationKey(row)
+  const existing = evalPanels.value[key]
+  // Toggle off same criterion
+  if (existing?.criterion === category && !existing.expandedHitKey) {
+    closeEvalResults(row)
+
+    return
+  }
+
+  const cacheKey = hitCacheKey(row, category)
+  const panel = {
+    criterion: category,
+    title,
+    hits: hitsCache.value[cacheKey]?.items || [],
+    total: hitsCache.value[cacheKey]?.total ?? null,
+    loading: !hitsCache.value[cacheKey],
+    error: '',
+    expandedHitKey: null,
+    profile: null,
+    profileLoading: false,
+  }
+  evalPanels.value = { ...evalPanels.value, [key]: panel }
+  if (history.state?.salesEvalRequestKey !== key || history.state?.salesEvalLayer !== 'results')
+    history.pushState({ salesEvalLayer: 'results', salesEvalRequestKey: key }, '')
+  scrollToDomId(requestDomId(row))
+
+  if (hitsCache.value[cacheKey])
+    return
+
   try {
     const res = await smPost('sales-requests/evaluation-hits', {
-      requestId: id,
-      sourceCityValue: city,
+      requestId: requestIdOf(row),
+      sourceCityValue: requestCityOf(row),
       customerName: pick(row, 'customerName', 'CustomerName') || '',
       customerPhone: pick(row, 'customerPhone', 'CustomerPhone') || '',
       category,
       page: 1,
       pageSize: 40,
     })
-    hitsRows.value = res?.items || res?.Items || []
-    hitsMeta.value.total = res?.total || res?.Total || hitsRows.value.length
+    const items = res?.items || res?.Items || []
+    const total = res?.total ?? res?.Total ?? items.length
+    hitsCache.value = { ...hitsCache.value, [cacheKey]: { items, total } }
+    evalPanels.value = {
+      ...evalPanels.value,
+      [key]: { ...panel, hits: items, total, loading: false, error: '' },
+    }
   }
   catch (err) {
-    toast.error(err?.response?.data?.message || 'تعذر تحميل نتائج البحث')
+    evalPanels.value = {
+      ...evalPanels.value,
+      [key]: {
+        ...panel,
+        loading: false,
+        error: err?.response?.data?.message || 'تعذر تحميل النتائج',
+      },
+    }
+  }
+}
+
+function closeEvalProfile(row, { skipHistory } = {}) {
+  const key = evaluationKey(row)
+  const panel = evalPanels.value[key]
+  if (!panel)
+    return
+  const hitKey = panel.expandedHitKey
+  panel.expandedHitKey = null
+  panel.profile = null
+  panel.profileLoading = false
+  evalPanels.value = { ...evalPanels.value, [key]: { ...panel } }
+  if (!skipHistory && history.state?.salesEvalLayer === 'profile')
+    history.pushState({ salesEvalLayer: 'results', salesEvalRequestKey: key }, '')
+  if (hitKey) {
+    const [city, id] = String(hitKey).split(':')
+    scrollToDomId(hitDomId({ cityValue: city, customerId: id }))
+  }
+  else {
+    scrollToDomId(requestDomId(row))
+  }
+}
+
+function closeEvalResults(row, { skipHistory } = {}) {
+  const key = evaluationKey(row)
+  if (!evalPanels.value[key])
+    return
+  const next = { ...evalPanels.value }
+  delete next[key]
+  evalPanels.value = next
+  if (!skipHistory && history.state?.salesEvalRequestKey === key)
+    history.pushState({ salesEvalLayer: null }, '')
+  scrollToDomId(requestDomId(row))
+}
+
+function onEvalPopState(event) {
+  const layer = event.state?.salesEvalLayer
+  const reqKey = event.state?.salesEvalRequestKey
+  if (!reqKey) {
+    // Browser back left eval stack — close any open panels for scroll safety.
+    const openKey = Object.keys(evalPanels.value)[0]
+    if (!openKey)
+      return
+    const row = rows.value.find(r => evaluationKey(r) === openKey)
+    if (row)
+      closeEvalResults(row, { skipHistory: true })
+
+    return
+  }
+  const row = rows.value.find(r => evaluationKey(r) === reqKey)
+  if (!row)
+    return
+  const panel = evalPanels.value[reqKey]
+  if (layer === 'results') {
+    if (panel?.expandedHitKey)
+      closeEvalProfile(row, { skipHistory: true })
+    scrollToDomId(requestDomId(row))
+
+    return
+  }
+  if (layer === 'profile') {
+    scrollToDomId(requestDomId(row))
+
+    return
+  }
+  if (panel)
+    closeEvalResults(row, { skipHistory: true })
+}
+
+async function loadEvaluations(list) {
+  evaluationsBusy.value = true
+  evaluationsError.value = ''
+  try {
+    const payloadItems = []
+    for (const row of list || []) {
+      const id = requestIdOf(row)
+      if (!id)
+        continue
+      payloadItems.push({
+        requestId: id,
+        sourceCityValue: requestCityOf(row),
+        customerName: pick(row, 'customerName', 'CustomerName') || '',
+        customerPhone: pick(row, 'customerPhone', 'CustomerPhone') || '',
+        key: buildEvaluationKey(requestCityOf(row), id),
+      })
+    }
+    if (!payloadItems.length) {
+      evaluations.value = {}
+
+      return
+    }
+    const res = await smPost('sales-requests/evaluate', { items: payloadItems })
+    const evalItems = res?.items || res?.Items || []
+    evaluations.value = indexEvaluationItems(evalItems, list)
+  }
+  catch (err) {
+    evaluations.value = {}
+    evaluationsError.value = err?.response?.data?.message || 'تعذر تحميل تقييم البرنامج والبحث'
   }
   finally {
-    hitsBusy.value = false
+    evaluationsBusy.value = false
   }
+}
+
+async function retryEvaluationHits(row) {
+  const panel = panelOf(row)
+  if (!panel?.criterion)
+    return
+  const cacheKey = hitCacheKey(row, panel.criterion)
+  const nextCache = { ...hitsCache.value }
+  delete nextCache[cacheKey]
+  hitsCache.value = nextCache
+  await openEvaluationHits(row, panel.criterion, panel.title)
+}
+
+async function openInlineHitProfile(row, hit) {
+  const key = evaluationKey(row)
+  const panel = evalPanels.value[key]
+  if (!panel)
+    return
+  const city = String(hit.cityValue || hit.CityValue || '')
+  const customerId = Number(hit.customerId || hit.CustomerId || 0)
+  const hitKey = `${city}:${customerId}`
+  panel.expandedHitKey = hitKey
+  panel.profileLoading = true
+  panel.profile = null
+  evalPanels.value = { ...evalPanels.value, [key]: { ...panel } }
+  history.pushState({ salesEvalLayer: 'profile', salesEvalRequestKey: key, salesEvalHitKey: hitKey }, '')
+  scrollToDomId(hitDomId(hit))
+
+  // Prefer hit DTO facts; lazy-load full profile when possible.
+  const q = new URLSearchParams()
+  if (customerId)
+    q.set('customerId', String(customerId))
+  if (hit.fullName || hit.FullName)
+    q.set('name', hit.fullName || hit.FullName)
+  if (hit.phone || hit.Phone)
+    q.set('phone', hit.phone || hit.Phone)
+  try {
+    let profile = null
+    if (city) {
+      profile = await smGet(customerProfilePath(city, q.toString()))
+    }
+    evalPanels.value = {
+      ...evalPanels.value,
+      [key]: {
+        ...panel,
+        expandedHitKey: hitKey,
+        profile: profile || { fromHit: true, hit },
+        profileLoading: false,
+      },
+    }
+  }
+  catch {
+    evalPanels.value = {
+      ...evalPanels.value,
+      [key]: {
+        ...panel,
+        expandedHitKey: hitKey,
+        profile: { fromHit: true, hit },
+        profileLoading: false,
+      },
+    }
+  }
+  scrollToDomId(hitDomId(hit))
+}
+
+function evalBack(row) {
+  const panel = panelOf(row)
+  if (!panel)
+    return
+  if (panel.expandedHitKey) {
+    closeEvalProfile(row)
+
+    return
+  }
+  closeEvalResults(row)
+}
+
+function formatSaleDate(value) {
+  if (!value)
+    return '—'
+  try {
+    return formatIraqDate(value) || '—'
+  }
+  catch {
+    return '—'
+  }
+}
+
+function moneyShort(value) {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n))
+    return '—'
+
+  return `${n.toLocaleString('en-US')} د.ع`
 }
 
 function isProvinceTransferBlocked(row) {
@@ -1420,8 +1666,12 @@ async function confirmImport() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  window.addEventListener('popstate', onEvalPopState)
+  load()
+})
 onUnmounted(() => {
+  window.removeEventListener('popstate', onEvalPopState)
   if (shopImageUrl.value)
     URL.revokeObjectURL(shopImageUrl.value)
 })
@@ -1506,6 +1756,7 @@ onUnmounted(() => {
         md="6"
       >
         <VCard
+          :id="requestDomId(row)"
           :class="{
             'border-primary': selected?.id === row.id && selected?.cityValue === row.cityValue,
             'unread-request': isUnreadSent(row),
@@ -1555,7 +1806,7 @@ onUnmounted(() => {
 
             <VDivider class="my-3" />
 
-            <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
+            <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-2">
               <div class="text-subtitle-1 font-weight-bold mb-0">تقييم البرنامج والبحث</div>
               <VChip
                 size="small"
@@ -1568,45 +1819,198 @@ onUnmounted(() => {
                 </template>
               </VChip>
             </div>
+            <VAlert
+              v-if="evaluationsError"
+              type="error"
+              variant="tonal"
+              density="compact"
+              class="mb-2"
+            >
+              {{ evaluationsError }}
+            </VAlert>
 
-            <VRow dense>
-              <VCol
-                v-for="item in [
-                  { key: 'tripleName', title: 'تشابه الاسم الثلاثي' },
-                  { key: 'phone', title: 'تشابه رقم الهاتف' },
-                  { key: 'fatherGrandfather', title: 'تشابه اسم الأب والجد' },
-                ]"
+            <div class="eval-metrics">
+              <button
+                v-for="item in EVAL_CRITERIA"
                 :key="item.key"
-                cols="12"
-                md="4"
+                type="button"
+                class="eval-metric"
+                :class="{ 'eval-metric--active': panelOf(row)?.criterion === item.key }"
+                @click.stop="openEvaluationHits(row, item.key, item.title)"
               >
-                <div class="eval-metric pa-3 rounded border">
-                  <div class="text-caption text-medium-emphasis mb-1">{{ item.title }}</div>
-                  <button
-                    type="button"
-                    class="text-h6 text-primary text-decoration-underline bg-transparent border-0 pa-0 cursor-pointer"
-                    @click.stop="openEvaluationHits(row, item.key, item.title)"
-                  >
-                    {{ categoryDto(evaluationOf(row), item.key)?.resultCount
-                      ?? categoryDto(evaluationOf(row), item.key)?.ResultCount
-                      ?? 0 }} نتيجة
-                  </button>
-                  <div class="mt-2">
+                <div class="text-caption text-medium-emphasis">{{ item.title }}</div>
+                <div class="eval-metric__count text-primary">
+                  {{ categoryCountText(evaluationOf(row), item.key) }}
+                  نتيجة
+                </div>
+                <VChip
+                  size="x-small"
+                  class="mt-1"
+                  :color="ratingColor(categoryLabelText(evaluationOf(row), item.key))"
+                >
+                  {{ categoryLabelText(evaluationOf(row), item.key) }}
+                  <template v-if="categoryWorstScore(categoryDto(evaluationOf(row), item.key)) != null">
+                    ({{ categoryWorstScore(categoryDto(evaluationOf(row), item.key)) }})
+                  </template>
+                </VChip>
+              </button>
+            </div>
+
+            <div
+              v-if="panelOf(row)"
+              class="eval-results mt-3"
+              @click.stop
+            >
+              <div class="d-flex align-center justify-space-between gap-2 mb-2">
+                <div class="text-subtitle-2 mb-0">
+                  نتائج {{ panelOf(row).title }}
+                  <span
+                    v-if="panelOf(row).total != null"
+                    class="text-medium-emphasis text-body-2"
+                  >({{ panelOf(row).total }})</span>
+                </div>
+                <VBtn
+                  size="small"
+                  variant="text"
+                  @click="evalBack(row)"
+                >
+                  رجوع
+                </VBtn>
+              </div>
+
+              <div
+                v-if="panelOf(row).loading"
+                class="eval-skeleton"
+              >
+                <div
+                  v-for="n in 3"
+                  :key="n"
+                  class="eval-skeleton__card"
+                />
+              </div>
+              <VAlert
+                v-else-if="panelOf(row).error"
+                type="warning"
+                variant="tonal"
+                density="compact"
+              >
+                {{ panelOf(row).error }}
+                <VBtn
+                  size="small"
+                  class="ms-2"
+                  variant="text"
+                  @click="retryEvaluationHits(row)"
+                >
+                  إعادة المحاولة
+                </VBtn>
+              </VAlert>
+              <div
+                v-else-if="!(panelOf(row).hits || []).length"
+                class="text-medium-emphasis text-body-2"
+              >
+                لا توجد نتائج
+              </div>
+              <div
+                v-else
+                class="eval-hit-list"
+              >
+                <div
+                  v-for="hit in panelOf(row).hits"
+                  :id="hitDomId(hit)"
+                  :key="hitDomId(hit)"
+                  class="eval-hit-card"
+                >
+                  <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-2">
+                    <div class="font-weight-medium">{{ hit.fullName || hit.FullName }}</div>
                     <VChip
-                      size="x-small"
-                      :color="ratingColor(categoryDto(evaluationOf(row), item.key)?.worstRatingLabel || categoryDto(evaluationOf(row), item.key)?.WorstRatingLabel)"
+                      size="small"
+                      :color="ratingColor(hit.ratingLabel || hit.RatingLabel)"
                     >
-                      {{ categoryDto(evaluationOf(row), item.key)?.worstRatingLabel
-                        || categoryDto(evaluationOf(row), item.key)?.WorstRatingLabel
-                        || 'لا توجد نتائج' }}
-                      <template v-if="(categoryDto(evaluationOf(row), item.key)?.worstScore ?? categoryDto(evaluationOf(row), item.key)?.WorstScore) != null">
-                        ({{ categoryDto(evaluationOf(row), item.key)?.worstScore ?? categoryDto(evaluationOf(row), item.key)?.WorstScore }})
-                      </template>
+                      {{ hit.ratingLabel || hit.RatingLabel || '—' }}
+                      <template v-if="(hit.score ?? hit.Score) != null">({{ hit.score ?? hit.Score }})</template>
                     </VChip>
                   </div>
+                  <div class="text-caption text-medium-emphasis mb-2">
+                    {{ hit.cityName || hit.CityName || hit.province || hit.Province || '—' }}
+                    ·
+                    {{ hit.matchReason || hit.MatchReason || '—' }}
+                  </div>
+                  <div class="eval-mini-stats mb-2">
+                    <div class="eval-mini-stat">
+                      <span class="text-caption">عدد التسديدات</span>
+                      <strong>{{ receiptCountDisplay(hit) ?? '—' }}</strong>
+                    </div>
+                    <div class="eval-mini-stat">
+                      <span class="text-caption">أيام التسديد</span>
+                      <strong>{{ settlementDaysDisplay(hit) != null ? `${settlementDaysDisplay(hit)} يوم` : '—' }}</strong>
+                    </div>
+                    <div class="eval-mini-stat">
+                      <span class="text-caption">تاريخ المبيع</span>
+                      <strong>{{ formatSaleDate(hit.dateSaleDevice || hit.DateSaleDevice) }}</strong>
+                    </div>
+                  </div>
+                  <div class="text-body-2">
+                    <div>الهاتف: {{ hit.phone || hit.Phone || '—' }}</div>
+                    <div>المبلغ الكلي: {{ moneyShort(hit.amountTotalSales ?? hit.AmountTotalSales) }}</div>
+                    <div>المستلم: {{ moneyShort(hit.receiptsTotal ?? hit.ReceiptsTotal) }}</div>
+                    <div>المتبقي: {{ moneyShort(hit.amountRemaining ?? hit.AmountRemaining) }}</div>
+                    <div v-if="hit.isLegal || hit.IsLegal">حالة: قانونية</div>
+                    <div v-if="hit.delegateName || hit.DelegateName">المندوب: {{ hit.delegateName || hit.DelegateName }}</div>
+                  </div>
+                  <div class="d-flex gap-2 mt-2">
+                    <VBtn
+                      size="small"
+                      color="primary"
+                      variant="tonal"
+                      @click="openInlineHitProfile(row, hit)"
+                    >
+                      عرض التفاصيل
+                    </VBtn>
+                  </div>
+                  <div
+                    v-if="panelOf(row).expandedHitKey === `${hit.cityValue || hit.CityValue || ''}:${hit.customerId || hit.CustomerId || ''}`"
+                    class="eval-inline-profile mt-3"
+                  >
+                    <div class="d-flex justify-space-between align-center mb-2">
+                      <div class="text-subtitle-2 mb-0">تفاصيل الزبون</div>
+                      <VBtn
+                        size="small"
+                        variant="text"
+                        @click="closeEvalProfile(row)"
+                      >
+                        إغلاق التفاصيل
+                      </VBtn>
+                    </div>
+                    <div
+                      v-if="panelOf(row).profileLoading"
+                      class="text-medium-emphasis"
+                    >
+                      جاري تحميل التفاصيل...
+                    </div>
+                    <div
+                      v-else
+                      class="text-body-2"
+                    >
+                      <div>الاسم: {{ hit.fullName || hit.FullName }}</div>
+                      <div>الهاتف: {{ hit.phone || hit.Phone || '—' }}</div>
+                      <div>المحافظة: {{ hit.cityName || hit.CityName || hit.province || hit.Province || '—' }}</div>
+                      <div>العنوان: {{ hit.address || hit.Address || pick(panelOf(row).profile, 'address', 'Address') || '—' }}</div>
+                      <div>التقييم: {{ hit.ratingLabel || hit.RatingLabel || '—' }}</div>
+                      <div>عدد التسديدات: {{ receiptCountDisplay(hit) ?? '—' }}</div>
+                      <div>أيام التسديد: {{ settlementDaysDisplay(hit) != null ? `${settlementDaysDisplay(hit)} يوم` : '—' }}</div>
+                      <div>تاريخ المبيع: {{ formatSaleDate(hit.dateSaleDevice || hit.DateSaleDevice) }}</div>
+                      <div>المبلغ الكلي: {{ moneyShort(hit.amountTotalSales ?? hit.AmountTotalSales) }}</div>
+                      <div>المستلم: {{ moneyShort(hit.receiptsTotal ?? hit.ReceiptsTotal) }}</div>
+                      <div>المتبقي: {{ moneyShort(hit.amountRemaining ?? hit.AmountRemaining) }}</div>
+                      <div v-if="hit.isLegal || hit.IsLegal">قانونية: نعم</div>
+                      <div v-if="hit.delegateName || hit.DelegateName || pick(panelOf(row).profile, 'delegateName', 'DelegateName')">
+                        المندوب: {{ hit.delegateName || hit.DelegateName || pick(panelOf(row).profile, 'delegateName', 'DelegateName') }}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </VCol>
-            </VRow>
+              </div>
+            </div>
 
             <VBtn
               v-if="requestStatus(row) === 'Completed' || requestStatus(row) === 'Inspected'"
@@ -2369,84 +2773,6 @@ onUnmounted(() => {
     </VDialog>
 
     <VDialog
-      v-model="hitsOpen"
-      max-width="960"
-    >
-      <VCard>
-        <VCardTitle>{{ hitsTitle }}</VCardTitle>
-        <VCardText>
-          <div
-            v-if="hitsBusy"
-            class="text-center py-6"
-          >
-            <VProgressCircular indeterminate />
-          </div>
-          <div
-            v-else-if="!hitsRows.length"
-            class="text-medium-emphasis"
-          >
-            لا توجد نتائج
-          </div>
-          <VTable v-else>
-            <thead>
-              <tr>
-                <th>الزبون</th>
-                <th>الهاتف</th>
-                <th>المحافظة</th>
-                <th>التقييم</th>
-                <th>سبب التطابق</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="hit in hitsRows"
-                :key="`${hit.customerId || hit.CustomerId}-${hit.cityValue || hit.CityValue}`"
-              >
-                <td>{{ hit.fullName || hit.FullName }}</td>
-                <td>{{ hit.phone || hit.Phone || '—' }}</td>
-                <td>{{ hit.cityName || hit.CityName || hit.province || hit.Province || '—' }}</td>
-                <td>
-                  <VChip
-                    size="x-small"
-                    :color="ratingColor(hit.ratingLabel || hit.RatingLabel)"
-                  >
-                    {{ hit.ratingLabel || hit.RatingLabel }} ({{ hit.score ?? hit.Score }})
-                  </VChip>
-                </td>
-                <td>{{ hit.matchReason || hit.MatchReason }}</td>
-                <td>
-                  <VBtn
-                    size="x-small"
-                    variant="tonal"
-                    :to="{
-                      name: 'sales-manager-customer-profile',
-                      query: {
-                        customerId: hit.customerId || hit.CustomerId,
-                        cityValue: hit.cityValue || hit.CityValue || hitsMeta.city,
-                      },
-                    }"
-                  >
-                    البروفايل
-                  </VBtn>
-                </td>
-              </tr>
-            </tbody>
-          </VTable>
-        </VCardText>
-        <VCardActions>
-          <VSpacer />
-          <VBtn
-            variant="text"
-            @click="hitsOpen = false"
-          >
-            إغلاق
-          </VBtn>
-        </VCardActions>
-      </VCard>
-    </VDialog>
-
-    <VDialog
       v-model="editOpen"
       max-width="560"
     >
@@ -2583,9 +2909,88 @@ onUnmounted(() => {
 .sales-request-card {
   border-radius: 14px;
 }
+.eval-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+@media (max-width: 960px) {
+  .eval-metrics {
+    grid-template-columns: 1fr;
+  }
+}
 .eval-metric {
   background: rgba(var(--v-theme-on-surface), 0.02);
-  min-height: 110px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  text-align: start;
+  cursor: pointer;
+  min-height: auto;
+}
+.eval-metric--active {
+  border-color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.06);
+}
+.eval-metric__count {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-top: 0.15rem;
+}
+.eval-results {
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: rgba(var(--v-theme-surface), 1);
+}
+.eval-hit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.eval-hit-card {
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+  border-radius: 10px;
+  padding: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.eval-mini-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+@media (max-width: 600px) {
+  .eval-mini-stats {
+    grid-template-columns: 1fr;
+  }
+}
+.eval-mini-stat {
+  border-radius: 8px;
+  background: rgba(var(--v-theme-on-surface), 0.03);
+  padding: 0.4rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.eval-inline-profile {
+  border-top: 1px dashed rgba(var(--v-theme-on-surface), 0.2);
+  padding-top: 0.75rem;
+}
+.eval-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.eval-skeleton__card {
+  height: 72px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(var(--v-theme-on-surface), 0.06), rgba(var(--v-theme-on-surface), 0.12), rgba(var(--v-theme-on-surface), 0.06));
+  background-size: 200% 100%;
+  animation: evalPulse 1.2s ease-in-out infinite;
+}
+@keyframes evalPulse {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
 }
 .cursor-pointer {
   cursor: pointer;

@@ -253,6 +253,8 @@ namespace BE_Company.Sales.Services
                     FullName = cust.FullName,
                     Phone = cust.Phone,
                     Province = cust.Province,
+                    Address = cust.Address,
+                    DelegateName = cust.DelegateName,
                     CityValue = _catalog.CityValue,
                     CityName = _catalog.CityName,
                     RatingLabel = rating?.RatingLabel ?? CustomerRatingLabels.Weak,

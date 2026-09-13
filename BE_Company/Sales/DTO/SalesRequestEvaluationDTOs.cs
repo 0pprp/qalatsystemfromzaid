@@ -101,6 +101,8 @@ namespace BE_Company.Sales.DTO
         public string FullName { get; set; } = "";
         public string? Phone { get; set; }
         public string? Province { get; set; }
+        public string? Address { get; set; }
+        public string? DelegateName { get; set; }
         public string? CityValue { get; set; }
         public string? CityName { get; set; }
         public string RatingLabel { get; set; } = "";

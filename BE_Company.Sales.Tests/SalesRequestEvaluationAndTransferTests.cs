@@ -146,12 +146,22 @@ public class SalesRequestEvaluationReceiptCountTests
     }
 
     [Fact]
-    public async Task Payload_Evaluate_Matches_Without_Local_Request_Row()
+    public async Task Payload_Evaluate_Returns_Real_Category_Counts()
     {
         var catalog = new FakeCatalog();
         var rating = new FakeRating();
-        catalog.Customers.Add(new() { CustomerId = 99, FullName = "أحمد منتظر سرحان", Phone = "07804924373" });
-        rating.Facts.Add(new CustomerRatingFacts(99, 1, true, false, DateTime.UtcNow.Date, DateTime.UtcNow.Date, 1, 1, 0, 1));
+        // 3 triple, 2 phone, 4 kinship for أحمد منتظر سرحان / 07804924373
+        catalog.Customers.Add(new() { CustomerId = 1, FullName = "أحمد منتظر سرحان", Phone = "07804924373" });
+        catalog.Customers.Add(new() { CustomerId = 2, FullName = "أحمد منتظر سرحان 2", Phone = "07801110000" });
+        catalog.Customers.Add(new() { CustomerId = 3, FullName = "أحمد منتظر سرحان 3", Phone = "07804924373" });
+        catalog.Customers.Add(new() { CustomerId = 4, FullName = "هادي حيدر سرحان", Phone = "07802220000" });
+        catalog.Customers.Add(new() { CustomerId = 5, FullName = "علي منتظر كاظم", Phone = "07803330000" });
+        catalog.Customers.Add(new() { CustomerId = 6, FullName = "سامر كريم سرحان", Phone = "07804440000" });
+        foreach (var id in new[] { 1, 2, 3, 4, 5, 6 })
+        {
+            rating.Facts.Add(new CustomerRatingFacts(id, 1, false, false, DateTime.UtcNow.Date.AddDays(-20), DateTime.UtcNow.Date, 1000, 1000, 0, 2));
+        }
+
         var svc = new SalesRequestEvaluationService(
             new FakeRequestRepository(),
             catalog,
@@ -164,18 +174,18 @@ public class SalesRequestEvaluationReceiptCountTests
             [
                 new SalesRequestEvaluationPayloadDTO
                 {
-                    RequestId = 42,
-                    SourceCityValue = "najaf-demo",
+                    RequestId = 48,
+                    SourceCityValue = "1",
                     CustomerName = "أحمد منتظر سرحان",
                     CustomerPhone = "07804924373"
                 }
             ]
         }, default);
 
-        Assert.Single(result.Items);
-        Assert.Equal("najaf-demo:42", result.Items[0].Key);
-        Assert.Equal(CustomerRatingLabels.Legal, result.Items[0].OverallRatingLabel);
-        Assert.Equal(1, result.Items[0].Phone.ResultCount);
+        Assert.Equal(3, result.Items[0].TripleName.ResultCount);
+        Assert.Equal(2, result.Items[0].Phone.ResultCount);
+        Assert.True(result.Items[0].FatherGrandfather.ResultCount >= 3);
+        Assert.Equal("1:48", result.Items[0].Key);
     }
 }
 

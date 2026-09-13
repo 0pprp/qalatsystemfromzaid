@@ -74,7 +74,6 @@ namespace BE_SalesEmployee.Sales.Services
             pageSize = Math.Clamp(pageSize <= 0 ? 30 : pageSize, 1, 100);
             var merged = new List<JsonObject>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var total = 0;
             var requestId = 0;
             var category = "";
 
@@ -91,7 +90,6 @@ namespace BE_SalesEmployee.Sales.Services
                     category = ReadString(root, "category", "Category");
                 }
 
-                total += ReadInt(root, "total", "Total");
                 var items = root["items"] as JsonArray ?? root["Items"] as JsonArray;
                 if (items is null)
                 {
@@ -129,7 +127,7 @@ namespace BE_SalesEmployee.Sales.Services
             {
                 ["requestId"] = requestId,
                 ["category"] = category,
-                ["total"] = total,
+                ["total"] = seen.Count,
                 ["page"] = page,
                 ["pageSize"] = pageSize,
                 ["items"] = pageItems

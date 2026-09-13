@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using BE_SalesEmployee.Sales.Services;
 using Xunit;
@@ -115,16 +116,148 @@ namespace BE_SalesEmployee.Tests
                 ("basra", "البصرة", basra)
             ], page: 1, pageSize: 30);
 
-            // Totals from branch responses still sum; item identity is deduped.
-            Assert.Equal(2, page["total"]!.GetValue<int>());
+            // Totals reflect unique city:customerId profiles after dedupe.
+            Assert.Equal(1, page["total"]!.GetValue<int>());
             Assert.Single((page["items"] as JsonArray)!);
         }
 
         [Fact]
-        public void Acl_City_Must_Be_In_Allowed_List()
+        public void Merge_Keeps_Separate_Keys_For_Same_RequestId_Different_SourceCities()
         {
-            Assert.True(SalesRequestCrossBranchEvaluationMerger.IsCityAllowed("basra", ["najaf", "basra"]));
-            Assert.False(SalesRequestCrossBranchEvaluationMerger.IsCityAllowed("karbala", ["najaf", "basra"]));
+            var najafReq = JsonNode.Parse("""
+            {
+              "items": [{
+                "key": "1:5",
+                "requestId": 5,
+                "sourceCityValue": "1",
+                "phone": { "resultCount": 1, "worstScore": 10, "worstRatingLevel": "Excellent", "worstRatingLabel": "ممتاز" },
+                "tripleName": { "resultCount": 0 },
+                "fatherGrandfather": { "resultCount": 0 }
+              }]
+            }
+            """)!;
+            var basraReq = JsonNode.Parse("""
+            {
+              "items": [{
+                "key": "2:5",
+                "requestId": 5,
+                "sourceCityValue": "2",
+                "phone": { "resultCount": 2, "worstScore": -10, "worstRatingLevel": "Legal", "worstRatingLabel": "قانونية" },
+                "tripleName": { "resultCount": 0 },
+                "fatherGrandfather": { "resultCount": 0 }
+              }]
+            }
+            """)!;
+
+            var merged = SalesRequestCrossBranchEvaluationMerger.MergeSummaries([najafReq, basraReq]);
+            var items = (merged["items"] as JsonArray)!;
+            Assert.Equal(2, items.Count);
+            var byKey = items.Cast<JsonNode>().Select(n => n!.AsObject())
+                .ToDictionary(o => o["key"]!.GetValue<string>(), StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(1, byKey["1:5"]["phone"]!["resultCount"]!.GetValue<int>());
+            Assert.Equal(2, byKey["2:5"]["phone"]!["resultCount"]!.GetValue<int>());
+        }
+
+        [Fact]
+        public void Merge_CrossBranch_Sums_Triple_Phone_Kinship_For_Same_Key()
+        {
+            // Najaf local empty + Basra/Baghdad matches for a Najaf-sourced request
+            var najaf = JsonNode.Parse("""
+            {
+              "items": [{
+                "key": "najaf:48",
+                "requestId": 48,
+                "sourceCityValue": "najaf",
+                "tripleName": { "resultCount": 1, "worstScore": 10, "worstRatingLevel": "Excellent", "worstRatingLabel": "ممتاز" },
+                "phone": { "resultCount": 0, "worstRatingLabel": "لا توجد نتائج" },
+                "fatherGrandfather": { "resultCount": 1, "worstScore": 5, "worstRatingLevel": "Good", "worstRatingLabel": "جيد" }
+              }]
+            }
+            """)!;
+            var basra = JsonNode.Parse("""
+            {
+              "items": [{
+                "key": "najaf:48",
+                "requestId": 48,
+                "sourceCityValue": "najaf",
+                "tripleName": { "resultCount": 2, "worstScore": 0, "worstRatingLevel": "Weak", "worstRatingLabel": "ضعيف" },
+                "phone": { "resultCount": 2, "worstScore": -10, "worstRatingLevel": "Legal", "worstRatingLabel": "قانونية" },
+                "fatherGrandfather": { "resultCount": 2, "worstScore": -5, "worstRatingLevel": "Rejected", "worstRatingLabel": "مرفوض" }
+              }]
+            }
+            """)!;
+            var baghdad = JsonNode.Parse("""
+            {
+              "items": [{
+                "key": "najaf:48",
+                "requestId": 48,
+                "sourceCityValue": "najaf",
+                "tripleName": { "resultCount": 1, "worstScore": 5, "worstRatingLevel": "Good", "worstRatingLabel": "جيد" },
+                "phone": { "resultCount": 0 },
+                "fatherGrandfather": { "resultCount": 1, "worstScore": 10, "worstRatingLevel": "Excellent", "worstRatingLabel": "ممتاز" }
+              }]
+            }
+            """)!;
+
+            var merged = SalesRequestCrossBranchEvaluationMerger.MergeSummaries([najaf, basra, baghdad]);
+            var item = (merged["items"] as JsonArray)![0]!.AsObject();
+            Assert.Equal(4, item["tripleName"]!["resultCount"]!.GetValue<int>());
+            Assert.Equal(2, item["phone"]!["resultCount"]!.GetValue<int>());
+            Assert.Equal(4, item["fatherGrandfather"]!["resultCount"]!.GetValue<int>());
+            Assert.Equal(-10, item["overallScore"]!.GetValue<int>());
+            Assert.Equal("قانونية", item["overallRatingLabel"]!.GetValue<string>());
+        }
+
+        [Fact]
+        public void Merge_JsonObject_RoundTrip_Preserves_ResultCount_For_Fe()
+        {
+            var body = JsonNode.Parse("""
+            {
+              "items": [{
+                "key": "1:10",
+                "requestId": 10,
+                "sourceCityValue": "1",
+                "tripleName": { "resultCount": 3, "worstScore": 10, "worstRatingLevel": "Excellent", "worstRatingLabel": "ممتاز" },
+                "phone": { "resultCount": 2, "worstScore": -10, "worstRatingLevel": "Legal", "worstRatingLabel": "قانونية" },
+                "fatherGrandfather": { "resultCount": 4, "worstScore": 5, "worstRatingLevel": "Good", "worstRatingLabel": "جيد" }
+              }]
+            }
+            """)!;
+            var merged = SalesRequestCrossBranchEvaluationMerger.MergeSummaries([body]);
+            // Simulate ASP.NET StatusCode(JsonObject) → HTTP → axios parse
+            var wire = System.Text.Json.JsonSerializer.Serialize(merged);
+            using var doc = System.Text.Json.JsonDocument.Parse(wire);
+            Assert.True(doc.RootElement.TryGetProperty("items", out var items));
+            Assert.Equal(JsonValueKind.Array, items.ValueKind);
+            var first = items[0];
+            Assert.Equal(3, first.GetProperty("tripleName").GetProperty("resultCount").GetInt32());
+            Assert.Equal(2, first.GetProperty("phone").GetProperty("resultCount").GetInt32());
+            Assert.Equal(4, first.GetProperty("fatherGrandfather").GetProperty("resultCount").GetInt32());
+            Assert.Equal("1:10", first.GetProperty("key").GetString());
+        }
+
+        [Fact]
+        public void Hits_Total_Matches_Unique_City_Customer_Profiles()
+        {
+            var najaf = JsonNode.Parse("""
+            { "requestId": 1, "category": "tripleName", "total": 1,
+              "items": [{ "customerId": 10, "score": 10 }] }
+            """)!;
+            var basra = JsonNode.Parse("""
+            { "requestId": 1, "category": "tripleName", "total": 2,
+              "items": [
+                { "customerId": 10, "score": 5 },
+                { "customerId": 11, "score": 0 }
+              ] }
+            """)!;
+            var page = SalesRequestCrossBranchEvaluationMerger.MergeHitsPages(
+            [
+                ("najaf", "النجف", najaf),
+                ("basra", "البصرة", basra)
+            ], 1, 30);
+            // CustomerId 10 in najaf and basra are different profiles
+            Assert.Equal(3, page["total"]!.GetValue<int>());
+            Assert.Equal(3, (page["items"] as JsonArray)!.Count);
         }
     }
 }
