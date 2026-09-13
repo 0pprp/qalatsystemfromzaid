@@ -150,14 +150,15 @@ public class SalesRequestEvaluationReceiptCountTests
     {
         var catalog = new FakeCatalog();
         var rating = new FakeRating();
-        // 3 triple, 2 phone, 4 kinship for أحمد منتظر سرحان / 07804924373
+        // 3 triple, 2 phone, 3 kinship (father+grandfather pair only; father-only/grandfather-only excluded)
         catalog.Customers.Add(new() { CustomerId = 1, FullName = "أحمد منتظر سرحان", Phone = "07804924373" });
         catalog.Customers.Add(new() { CustomerId = 2, FullName = "أحمد منتظر سرحان 2", Phone = "07801110000" });
         catalog.Customers.Add(new() { CustomerId = 3, FullName = "أحمد منتظر سرحان 3", Phone = "07804924373" });
         catalog.Customers.Add(new() { CustomerId = 4, FullName = "هادي حيدر سرحان", Phone = "07802220000" });
         catalog.Customers.Add(new() { CustomerId = 5, FullName = "علي منتظر كاظم", Phone = "07803330000" });
         catalog.Customers.Add(new() { CustomerId = 6, FullName = "سامر كريم سرحان", Phone = "07804440000" });
-        foreach (var id in new[] { 1, 2, 3, 4, 5, 6 })
+        catalog.Customers.Add(new() { CustomerId = 7, FullName = "محمد منتظر سرحان", Phone = "07805550000" });
+        foreach (var id in new[] { 1, 2, 3, 4, 5, 6, 7 })
         {
             rating.Facts.Add(new CustomerRatingFacts(id, 1, false, false, DateTime.UtcNow.Date.AddDays(-20), DateTime.UtcNow.Date, 1000, 1000, 0, 2));
         }
@@ -184,8 +185,57 @@ public class SalesRequestEvaluationReceiptCountTests
 
         Assert.Equal(3, result.Items[0].TripleName.ResultCount);
         Assert.Equal(2, result.Items[0].Phone.ResultCount);
-        Assert.True(result.Items[0].FatherGrandfather.ResultCount >= 3);
+        Assert.Equal(4, result.Items[0].FatherGrandfather.ResultCount);
         Assert.Equal("1:48", result.Items[0].Key);
+    }
+
+    [Fact]
+    public async Task Evaluate_FatherGrandfather_Pair_Only_Counts_And_Reason()
+    {
+        var (_, svc, catalog, rating, row) = await SeedAsync("صادق جعفر حنيو", "07809999999");
+        catalog.Customers.Add(new() { CustomerId = 1, FullName = "محمد جعفر حنيو", Phone = "07801110000" });
+        catalog.Customers.Add(new() { CustomerId = 2, FullName = "حسين جعفر كريم", Phone = "07802220000" });
+        catalog.Customers.Add(new() { CustomerId = 3, FullName = "موسى هادي حنيو", Phone = "07803330000" });
+        catalog.Customers.Add(new() { CustomerId = 4, FullName = "علي جعفر حنيو", Phone = "07804440000" });
+        foreach (var id in new[] { 1, 2, 3, 4 })
+        {
+            rating.Facts.Add(new CustomerRatingFacts(
+                id, 1, IsLegal: id == 1, IsFakeSale: false,
+                DateSaleDevice: DateTime.UtcNow.Date.AddDays(-30),
+                LastPaymentDate: DateTime.UtcNow.Date,
+                AmountTotalSales: 1000, ReceiptsTotal: 1000, AmountRemaining: 0, ReceiptCount: 1));
+        }
+
+        var summary = await svc.EvaluateBatchAsync(Manager(), new SalesRequestEvaluationBatchRequestDTO
+        {
+            Items =
+            [
+                new SalesRequestEvaluationPayloadDTO
+                {
+                    RequestId = row.Id,
+                    SourceCityValue = "najaf-demo",
+                    CustomerName = "صادق جعفر حنيو",
+                    CustomerPhone = "07809999999"
+                }
+            ]
+        }, default);
+
+        Assert.Equal(2, summary.Items[0].FatherGrandfather.ResultCount);
+        Assert.Equal(0, summary.Items[0].TripleName.ResultCount);
+        Assert.Equal(0, summary.Items[0].Phone.ResultCount);
+        Assert.Equal(CustomerRatingLabels.Legal, summary.Items[0].FatherGrandfather.WorstRatingLabel);
+
+        var hits = await svc.ListHitsAsync(
+            Manager(),
+            row.Id,
+            SalesRequestEvaluationService.CategoryKinship,
+            page: 1,
+            pageSize: 30,
+            default);
+
+        Assert.Equal(2, hits.Total);
+        Assert.All(hits.Items, h => Assert.Equal("تطابق اسم الأب والجد", h.MatchReason));
+        Assert.Equal(new[] { 1, 4 }, hits.Items.Select(h => h.CustomerId).OrderBy(x => x).ToArray());
     }
 }
 

@@ -89,53 +89,35 @@ namespace BE_Company.Sales.Services
         }
 
         /// <summary>
-        /// Kinship: candidate shares query father and/or grandfather token in father/grandfather positions
-        /// (tokens[1] / tokens[2]). First name is ignored. Deduplicate at caller.
+        /// Kinship: candidate father+grandfather tokens (positions 1 and 2) must both match
+        /// the query father+grandfather pair in the same order after normalization.
+        /// First name is ignored. Single-token father-only or grandfather-only is not a match.
         /// </summary>
         public static bool IsFatherOrGrandfatherMatch(string? queryName, string? candidateName)
         {
             var (_, father, grandfather) = TripleParts(queryName);
-            if (father.Length == 0 && grandfather.Length == 0)
+            if (father.Length == 0 || grandfather.Length == 0)
             {
                 return false;
             }
 
             var c = MatchingTokens(candidateName);
-            if (c.Count < 2)
+            if (c.Count < 3)
             {
                 return false;
             }
 
-            var cFather = c.ElementAtOrDefault(1) ?? string.Empty;
-            var cGrandfather = c.ElementAtOrDefault(2) ?? string.Empty;
-
-            var fatherHit = father.Length > 0
-                            && (string.Equals(father, cFather, StringComparison.Ordinal)
-                                || string.Equals(father, cGrandfather, StringComparison.Ordinal));
-            var grandfatherHit = grandfather.Length > 0
-                                 && (string.Equals(grandfather, cFather, StringComparison.Ordinal)
-                                     || string.Equals(grandfather, cGrandfather, StringComparison.Ordinal));
-            return fatherHit || grandfatherHit;
+            var cFather = c[1];
+            var cGrandfather = c[2];
+            return string.Equals(father, cFather, StringComparison.Ordinal)
+                   && string.Equals(grandfather, cGrandfather, StringComparison.Ordinal);
         }
 
         public static string FatherGrandfatherMatchReason(string? queryName, string? candidateName)
         {
-            var (_, father, grandfather) = TripleParts(queryName);
-            var c = MatchingTokens(candidateName);
-            var cFather = c.ElementAtOrDefault(1) ?? string.Empty;
-            var cGrandfather = c.ElementAtOrDefault(2) ?? string.Empty;
-
-            var fatherHit = father.Length > 0
-                            && (string.Equals(father, cFather, StringComparison.Ordinal)
-                                || string.Equals(father, cGrandfather, StringComparison.Ordinal));
-            var grandfatherHit = grandfather.Length > 0
-                                 && (string.Equals(grandfather, cFather, StringComparison.Ordinal)
-                                     || string.Equals(grandfather, cGrandfather, StringComparison.Ordinal));
-
-            if (fatherHit && grandfatherHit) return "تطابق الأب والجد";
-            if (fatherHit) return "تطابق الأب";
-            if (grandfatherHit) return "تطابق الجد";
-            return "تطابق قرابة";
+            return IsFatherOrGrandfatherMatch(queryName, candidateName)
+                ? "تطابق اسم الأب والجد"
+                : string.Empty;
         }
     }
 }

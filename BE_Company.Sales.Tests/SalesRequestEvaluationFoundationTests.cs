@@ -58,20 +58,42 @@ public class SalesRequestNameSimilarityTests
             "أحمد منتظر سرحان", "علي حسين كاظم"));
     }
 
-    [Fact]
-    public void FatherGrandfather_Matches_Shared_Grandfather()
+    [Theory]
+    [InlineData("صادق جعفر حنيو", "محمد جعفر حنيو")]
+    [InlineData("صادق جعفر حنيو", "علي جعفر حنيو")]
+    [InlineData("صادق جعفر حنيو", "محمد جعفر حنيو 2")]
+    [InlineData("صادق جعفر حنيو", "محمّد جعفر حنيو")]
+    [InlineData("صادق جعفر حنيو", "احمد جعفر حنيو")]
+    public void FatherGrandfather_Requires_Father_And_Grandfather_Pair(string query, string candidate)
     {
-        Assert.True(SalesRequestNameSimilarity.IsFatherOrGrandfatherMatch(
-            "أحمد منتظر سرحان", "هادي حيدر سرحان"));
-        Assert.Equal("تطابق الجد",
-            SalesRequestNameSimilarity.FatherGrandfatherMatchReason("أحمد منتظر سرحان", "هادي حيدر سرحان"));
+        Assert.True(SalesRequestNameSimilarity.IsFatherOrGrandfatherMatch(query, candidate));
+        Assert.Equal(
+            "تطابق اسم الأب والجد",
+            SalesRequestNameSimilarity.FatherGrandfatherMatchReason(query, candidate));
+    }
+
+    [Theory]
+    [InlineData("صادق جعفر حنيو", "حسين جعفر كريم")] // father only
+    [InlineData("صادق جعفر حنيو", "موسى هادي حنيو")] // grandfather only
+    [InlineData("صادق جعفر حنيو", "جعفر حنيو صادق")] // wrong token positions
+    [InlineData("صادق جعفر حنيو", "صادق علي محمد")] // first name only
+    [InlineData("أحمد منتظر سرحان", "هادي حيدر سرحان")] // grandfather only (legacy OR case)
+    [InlineData("أحمد منتظر سرحان", "علي منتظر كاظم")] // father only (legacy OR case)
+    public void FatherGrandfather_Rejects_Single_Token_Or_Wrong_Pair(string query, string candidate)
+    {
+        Assert.False(SalesRequestNameSimilarity.IsFatherOrGrandfatherMatch(query, candidate));
     }
 
     [Fact]
-    public void FatherGrandfather_Ignores_First_Name_Only()
+    public void FatherGrandfather_Normalization_Keeps_Pair_Match()
     {
-        Assert.False(SalesRequestNameSimilarity.IsFatherOrGrandfatherMatch(
-            "أحمد منتظر سرحان", "أحمد كريم جواد"));
+        Assert.True(SalesRequestNameSimilarity.IsFatherOrGrandfatherMatch(
+            "صادق جعفر حنيو", "محمّد جعفر حنيو"));
+        Assert.True(SalesRequestNameSimilarity.IsFatherOrGrandfatherMatch(
+            "صادق جعفر حنيو", "محمد جعفر حنيوـ"));
+        Assert.Equal(
+            "تطابق اسم الأب والجد",
+            SalesRequestNameSimilarity.FatherGrandfatherMatchReason("صادق جعفر حنيو", "علي جعفر حنيو"));
     }
 }
 
