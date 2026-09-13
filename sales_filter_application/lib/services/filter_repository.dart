@@ -8,8 +8,25 @@ class FilterRepository {
     return list.whereType<Map>().map((e) => FilterCity.fromJson(Map<String, dynamic>.from(e))).toList();
   }
 
-  Future<Map<String, int>> counts({required String cityValue}) async {
-    final raw = await ApiClient.get('sales-filter/counts', {'cityValue': cityValue});
+  Future<List<FilterSalesEmployee>> salesEmployees({required String cityValue}) async {
+    final raw = await ApiClient.get('sales-filter/sales-employees', {'cityValue': cityValue});
+    final list = raw is List ? raw : const [];
+    return list
+        .whereType<Map>()
+        .map((e) => FilterSalesEmployee.fromJson(Map<String, dynamic>.from(e)))
+        .where((e) => e.employeeId > 0)
+        .toList();
+  }
+
+  Future<Map<String, int>> counts({
+    required String cityValue,
+    int? targetEmployeeId,
+  }) async {
+    final query = <String, String>{'cityValue': cityValue};
+    if (targetEmployeeId != null && targetEmployeeId > 0) {
+      query['targetEmployeeId'] = '$targetEmployeeId';
+    }
+    final raw = await ApiClient.get('sales-filter/counts', query);
     if (raw is! Map) return {};
     final map = <String, int>{};
     raw.forEach((k, v) {
@@ -21,6 +38,7 @@ class FilterRepository {
   Future<List<FilterRequest>> list({
     required String status,
     String? cityValue,
+    int? targetEmployeeId,
     int page = 1,
   }) async {
     final query = <String, String>{
@@ -30,6 +48,9 @@ class FilterRepository {
     };
     if (cityValue != null && cityValue.isNotEmpty) {
       query['cityValue'] = cityValue;
+    }
+    if (targetEmployeeId != null && targetEmployeeId > 0) {
+      query['targetEmployeeId'] = '$targetEmployeeId';
     }
     final raw = await ApiClient.get('sales-filter/requests', query);
     final items = raw is Map ? (raw['items'] ?? raw['Items']) : null;

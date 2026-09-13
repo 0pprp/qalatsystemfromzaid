@@ -854,6 +854,42 @@ namespace BE_Company.Sales.Controllers
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("transfer-peers")]
+        public async Task<IActionResult> TransferPeers(CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null) return blocked;
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null) return Unauthorized();
+            try
+            {
+                return Ok(await _requests.ListTransferPeersAsync(identity, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/{id:int}/transfer-name")]
+        public async Task<IActionResult> TransferName(int id, [FromBody] SalesRequestTransferDTO? body, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null) return blocked;
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null) return Unauthorized();
+            try
+            {
+                return Ok(await _requests.TransferNameAsync(identity, id, body ?? new SalesRequestTransferDTO(), ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpGet("requests/{id:int}")]
         public async Task<IActionResult> MyRequest(int id, CancellationToken ct)
         {

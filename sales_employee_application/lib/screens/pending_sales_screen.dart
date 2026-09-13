@@ -465,6 +465,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
                 onPrepare: () => _prepareRequest(r),
                 onPend: () => _pendRequest(r),
                 onReject: () => _rejectRequest(r),
+                onTransfer: () => _transferRequest(r),
               ),
             ],
           ],
@@ -525,6 +526,33 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
     await _load();
+  }
+
+  Future<void> _transferRequest(SalesWorkRequest request) async {
+    try {
+      final peers = await SalesRepositoryFactory.instance.transferPeers();
+      if (!mounted) return;
+      if (peers.isEmpty) {
+        _toast('لا يوجد زملاء مبيعات متاحون للنقل');
+        return;
+      }
+      final result = await showDialog<_TransferResult>(
+        context: context,
+        builder: (ctx) => _TransferNameDialog(peers: peers),
+      );
+      if (result == null || !mounted) return;
+      await SalesRepositoryFactory.instance.transferSalesRequestName(
+        request.id,
+        result.toEmployeeId,
+        result.reason,
+      );
+      if (!mounted) return;
+      _toast('تم نقل الاسم بنجاح');
+      await _load();
+    } catch (e) {
+      final msg = e is ApiException ? e.message : e.toString();
+      _toast(msg);
+    }
   }
 
   void _toast(String m) {
@@ -634,6 +662,44 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
     });
   }
 
+  Future<void> _transferName() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final peers = await SalesRepositoryFactory.instance.transferPeers();
+      if (!mounted) return;
+      if (peers.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('لا يوجد زملاء مبيعات متاحون للنقل')),
+        );
+        return;
+      }
+
+      final result = await showDialog<_TransferResult>(
+        context: context,
+        builder: (ctx) => _TransferNameDialog(peers: peers),
+      );
+      if (result == null || !mounted) return;
+
+      await SalesRepositoryFactory.instance.transferSalesRequestName(
+        widget.requestId,
+        result.toEmployeeId,
+        result.reason,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم نقل الاسم بنجاح')),
+      );
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e is ApiException ? e.message : e.toString();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final row = _row;
@@ -666,6 +732,28 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
                 if (row.status == 'Rejected' && (row.rejectionReason ?? '').trim().isNotEmpty)
                   Text('سبب الرفض: ${row.rejectionReason}',
                       style: const TextStyle(color: AppColors.danger)),
+                if (row.isTransferred && row.latestNameTransfer != null) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  Card(
+                    color: AppColors.card,
+                    child: Padding(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('طلب منقول', style: TextStyle(fontWeight: FontWeight.w700)),
+                          const SizedBox(height: AppSpacing.xs),
+                          Text('من: ${row.latestNameTransfer!.fromEmployeeName}'),
+                          Text('السبب: ${row.latestNameTransfer!.transferReason}'),
+                          Text(
+                            'التاريخ: ${SalesFormat.iraqDateTime(row.latestNameTransfer!.transferredAtUtc)}',
+                            style: const TextStyle(color: AppColors.muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.lg),
                 if (row.canAct)
                   _SalesRequestActions(
@@ -675,6 +763,7 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
                     onPrepare: _prepare,
                     onPend: _pend,
                     onReject: _reject,
+                    onTransfer: _transferName,
                   ),
               ],
             ),
@@ -694,6 +783,7 @@ class _SalesRequestActions extends StatelessWidget {
     required this.onPrepare,
     required this.onPend,
     required this.onReject,
+    required this.onTransfer,
     this.enabled = true,
   });
 
@@ -702,6 +792,7 @@ class _SalesRequestActions extends StatelessWidget {
   final VoidCallback onPrepare;
   final VoidCallback onPend;
   final VoidCallback onReject;
+  final VoidCallback onTransfer;
   final bool enabled;
 
   @override
@@ -747,9 +838,96 @@ class _SalesRequestActions extends StatelessWidget {
           onPressed: enabled ? onReject : null,
           child: const Text('مرفوض'),
         );
+      case 'transfer':
+        return OutlinedButton(
+          onPressed: enabled ? onTransfer : null,
+          child: const Text('نقل الاسم'),
+        );
       default:
         return const SizedBox.shrink();
     }
+  }
+}
+
+class _TransferResult {
+  const _TransferResult({required this.toEmployeeId, required this.reason});
+  final int toEmployeeId;
+  final String reason;
+}
+
+class _TransferNameDialog extends StatefulWidget {
+  const _TransferNameDialog({required this.peers});
+  final List<SalesTransferPeer> peers;
+
+  @override
+  State<_TransferNameDialog> createState() => _TransferNameDialogState();
+}
+
+class _TransferNameDialogState extends State<_TransferNameDialog> {
+  SalesTransferPeer? _selected;
+  final _reason = TextEditingController();
+  String? _error;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  Future<void> _confirm() async {
+    final peer = _selected;
+    final reason = _reason.text.trim();
+    if (peer == null) {
+      setState(() => _error = 'اختر الموظف');
+      return;
+    }
+    if (reason.isEmpty) {
+      setState(() => _error = 'سبب نقل الاسم مطلوب');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    if (!mounted) return;
+    Navigator.of(context).pop(_TransferResult(toEmployeeId: peer.employeeId, reason: reason));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('نقل الاسم'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButtonFormField<SalesTransferPeer>(
+            // ignore: deprecated_member_use
+            value: _selected,
+            decoration: const InputDecoration(labelText: 'الموظف'),
+            items: widget.peers
+                .map((p) => DropdownMenuItem(value: p, child: Text(p.employeeName)))
+                .toList(),
+            onChanged: _saving ? null : (v) => setState(() => _selected = v),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _reason,
+            enabled: !_saving,
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'سبب نقل الاسم *'),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(color: AppColors.danger)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('إلغاء')),
+        ElevatedButton(onPressed: _saving ? null : _confirm, child: const Text('تأكيد النقل')),
+      ],
+    );
   }
 }
 

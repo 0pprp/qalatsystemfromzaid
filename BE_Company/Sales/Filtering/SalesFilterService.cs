@@ -8,6 +8,10 @@ namespace BE_Company.Sales.Filtering
     {
         Task EnsureSchemaAsync(CancellationToken ct = default);
         Task<IReadOnlyList<SalesFilterCityDTO>> MyCitiesAsync(SalesIdentity actor, CancellationToken ct = default);
+        Task<IReadOnlyList<SalesFilterSalesEmployeeDTO>> ListSalesEmployeesAsync(
+            SalesIdentity actor,
+            string? city,
+            CancellationToken ct = default);
         Task<SalesFilterPagedResultDTO> ListAsync(
             SalesIdentity actor,
             string? city,
@@ -15,8 +19,13 @@ namespace BE_Company.Sales.Filtering
             string? search,
             int page,
             int pageSize,
+            int? targetEmployeeId = null,
             CancellationToken ct = default);
-        Task<IReadOnlyDictionary<string, int>> CountsAsync(SalesIdentity actor, string? city, CancellationToken ct = default);
+        Task<IReadOnlyDictionary<string, int>> CountsAsync(
+            SalesIdentity actor,
+            string? city,
+            int? targetEmployeeId = null,
+            CancellationToken ct = default);
         Task<SalesFilterDetailDTO> GetAsync(SalesIdentity actor, int id, CancellationToken ct = default);
         Task<SalesFilterDetailDTO> HoldAsync(SalesIdentity actor, int id, string? note, CancellationToken ct = default);
         Task<SalesFilterDetailDTO> ReadyAsync(SalesIdentity actor, int id, string? note, CancellationToken ct = default);
@@ -48,6 +57,29 @@ namespace BE_Company.Sales.Filtering
             return await _repo.ListUserCitiesAsync(actor.EmployeeId, ct);
         }
 
+        public async Task<IReadOnlyList<SalesFilterSalesEmployeeDTO>> ListSalesEmployeesAsync(
+            SalesIdentity actor,
+            string? city,
+            CancellationToken ct = default)
+        {
+            EnsureFilterEmployee(actor);
+            var scope = await ResolveCityScopeAsync(actor, city, ct);
+            var stamp = !string.IsNullOrWhiteSpace(city)
+                ? city.Trim()
+                : scope.CityValues.FirstOrDefault();
+            var rows = await _repo.ListActiveSalesEmployeesAsync(ct);
+            return rows
+                .Where(e => e.EmployeeId > 0)
+                .Select(e => new SalesFilterSalesEmployeeDTO
+                {
+                    EmployeeId = e.EmployeeId,
+                    EmployeeName = e.EmployeeName ?? "",
+                    CityValue = stamp,
+                })
+                .OrderBy(e => e.EmployeeName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         public async Task<SalesFilterPagedResultDTO> ListAsync(
             SalesIdentity actor,
             string? city,
@@ -55,6 +87,7 @@ namespace BE_Company.Sales.Filtering
             string? search,
             int page,
             int pageSize,
+            int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
             EnsureFilterEmployee(actor);
@@ -69,6 +102,7 @@ namespace BE_Company.Sales.Filtering
             var scope = await ResolveCityScopeAsync(actor, city, ct);
             var ownByActor = !string.Equals(filterStatus, SalesFilterStatuses.PendingFilter, StringComparison.OrdinalIgnoreCase);
             var (actorUserId, actorUserName) = ActorKeys(actor);
+            var targetId = targetEmployeeId is > 0 ? targetEmployeeId : null;
 
             var (items, total) = await _repo.ListRequestsAsync(
                 scope,
@@ -79,6 +113,7 @@ namespace BE_Company.Sales.Filtering
                 ownByActor,
                 actorUserId,
                 actorUserName,
+                targetId,
                 ct);
             return new SalesFilterPagedResultDTO
             {
@@ -92,12 +127,14 @@ namespace BE_Company.Sales.Filtering
         public async Task<IReadOnlyDictionary<string, int>> CountsAsync(
             SalesIdentity actor,
             string? city,
+            int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
             EnsureFilterEmployee(actor);
             var scope = await ResolveCityScopeAsync(actor, city, ct);
             var (actorUserId, actorUserName) = ActorKeys(actor);
-            return await _repo.CountByStatusAsync(scope, actorUserId, actorUserName, ct);
+            var targetId = targetEmployeeId is > 0 ? targetEmployeeId : null;
+            return await _repo.CountByStatusAsync(scope, actorUserId, actorUserName, targetId, ct);
         }
 
         public async Task<SalesFilterDetailDTO> GetAsync(SalesIdentity actor, int id, CancellationToken ct = default)

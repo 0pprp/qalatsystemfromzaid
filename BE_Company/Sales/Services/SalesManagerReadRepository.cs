@@ -28,6 +28,19 @@ ORDER BY UserName", cancellationToken: ct));
             return rows.ToList();
         }
 
+        public async Task<IReadOnlyList<SalesManagerEmployeeRow>> ListActiveSalesEmployeesAsync(CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            var rows = await connection.QueryAsync<SalesManagerEmployeeRow>(new CommandDefinition(@"
+SELECT UserID AS EmployeeId, UserName AS EmployeeName
+FROM dbo.Users
+WHERE UserType = N'موظف مبيعات'
+  AND ISNULL(UserState, 1) = 1
+ORDER BY UserName", cancellationToken: ct));
+            return rows.ToList();
+        }
+
         public async Task<SalesManagerLocationPointDTO?> GetLatestPointAsync(int employeeId, CancellationToken ct)
         {
             var cs = RequireConnection();

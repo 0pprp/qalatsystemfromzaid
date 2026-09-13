@@ -55,6 +55,20 @@ namespace BE_SalesEmployee.Controllers
             return Ok(rows);
         }
 
+        [HttpGet("sales-employees")]
+        public async Task<IActionResult> SalesEmployees([FromQuery] string? cityValue, CancellationToken ct = default)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (city, error) = await ResolveAllowedCityAsync(user, cityValue, requireValue: true, ct);
+            if (error != null)
+            {
+                return error;
+            }
+
+            var path = $"sales-filter/sales-employees?city={Uri.EscapeDataString(city!.Value)}";
+            return await ProxyAsync(user, city, path, HttpMethod.Get, null, ct);
+        }
+
         [HttpGet("requests")]
         public async Task<IActionResult> List(
             [FromQuery] string? cityValue,
@@ -62,6 +76,7 @@ namespace BE_SalesEmployee.Controllers
             [FromQuery] string? search,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 30,
+            [FromQuery] int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
             var user = TokenService.FromPrincipal(User);
@@ -81,6 +96,10 @@ namespace BE_SalesEmployee.Controllers
             {
                 qs.Append("&search=").Append(Uri.EscapeDataString(search.Trim()));
             }
+            if (targetEmployeeId is > 0)
+            {
+                qs.Append("&targetEmployeeId=").Append(targetEmployeeId.Value);
+            }
             qs.Append("&page=").Append(Math.Max(1, page));
             qs.Append("&pageSize=").Append(Math.Clamp(pageSize <= 0 ? 30 : pageSize, 1, 100));
 
@@ -88,7 +107,10 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [HttpGet("counts")]
-        public async Task<IActionResult> Counts([FromQuery] string? cityValue, CancellationToken ct = default)
+        public async Task<IActionResult> Counts(
+            [FromQuery] string? cityValue,
+            [FromQuery] int? targetEmployeeId = null,
+            CancellationToken ct = default)
         {
             var user = TokenService.FromPrincipal(User);
             var (city, error) = await ResolveAllowedCityAsync(user, cityValue, requireValue: true, ct);
@@ -97,8 +119,12 @@ namespace BE_SalesEmployee.Controllers
                 return error;
             }
 
-            var path = $"sales-filter/counts?city={Uri.EscapeDataString(city!.Value)}";
-            return await ProxyAsync(user, city, path, HttpMethod.Get, null, ct);
+            var path = new StringBuilder("sales-filter/counts?city=").Append(Uri.EscapeDataString(city!.Value));
+            if (targetEmployeeId is > 0)
+            {
+                path.Append("&targetEmployeeId=").Append(targetEmployeeId.Value);
+            }
+            return await ProxyAsync(user, city, path.ToString(), HttpMethod.Get, null, ct);
         }
 
         [HttpGet("requests/{cityValue}/{id:int}")]

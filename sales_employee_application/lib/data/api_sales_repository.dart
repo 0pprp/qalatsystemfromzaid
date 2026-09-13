@@ -444,6 +444,29 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   @override
+  Future<List<SalesTransferPeer>> transferPeers() async {
+    try {
+      final raw = await ApiClient.get('sales/transfer-peers');
+      return _maps(raw).map(SalesTransferPeer.fromJson).toList();
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
+  Future<SalesWorkRequest> transferSalesRequestName(int id, int toEmployeeId, String reason) async {
+    try {
+      final raw = await ApiClient.post('sales/requests/$id/transfer-name', body: {
+        'toEmployeeId': toEmployeeId,
+        'transferReason': reason,
+      });
+      return SalesWorkRequest.fromJson(Map<String, dynamic>.from(raw as Map));
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
   Future<SalesWorkRequest> submitSalesRequest({
     required String fullName,
     required String phone,

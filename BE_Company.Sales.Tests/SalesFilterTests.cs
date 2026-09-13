@@ -14,6 +14,8 @@ namespace BE_Company.Sales.Tests
         public readonly List<SalesFilterHistoryDTO> History = [];
         public int NextHistoryId = 1;
 
+        public readonly List<SalesFilterSalesEmployeeDTO> ActiveSalesEmployees = [];
+
         public Task EnsureSchemaAsync(CancellationToken ct = default) => Task.CompletedTask;
 
         public Task ReplaceUserCitiesAsync(int userId, IReadOnlyList<(string CityValue, string? CityName)> cities, CancellationToken ct = default)
@@ -48,11 +50,17 @@ namespace BE_Company.Sales.Tests
             bool ownByActor,
             int? actorUserId,
             string? actorUserName,
+            int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
             IEnumerable<SalesRequestDTO> q = Requests.Where(r =>
                 r.TargetEmployeeId > 0
                 && string.Equals(r.FilterStatus, filterStatus, StringComparison.OrdinalIgnoreCase));
+
+            if (targetEmployeeId is > 0)
+            {
+                q = q.Where(r => r.TargetEmployeeId == targetEmployeeId.Value);
+            }
 
             if (!scope.TrustEntireBranch)
             {
@@ -77,6 +85,7 @@ namespace BE_Company.Sales.Tests
             SalesFilterCityScope scope,
             int? actorUserId,
             string? actorUserName,
+            int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
             var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
@@ -88,6 +97,11 @@ namespace BE_Company.Sales.Tests
             };
             foreach (var r in Requests.Where(x => x.TargetEmployeeId > 0))
             {
+                if (targetEmployeeId is > 0 && r.TargetEmployeeId != targetEmployeeId.Value)
+                {
+                    continue;
+                }
+
                 if (!scope.TrustEntireBranch
                     && !scope.CityValues.Any(c => string.Equals(c, r.CityValue, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -105,6 +119,9 @@ namespace BE_Company.Sales.Tests
 
             return Task.FromResult((IReadOnlyDictionary<string, int>)map);
         }
+
+        public Task<IReadOnlyList<SalesFilterSalesEmployeeDTO>> ListActiveSalesEmployeesAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<SalesFilterSalesEmployeeDTO>>(ActiveSalesEmployees.ToList());
 
         public Task<SalesFilterDetailDTO?> GetRequestAsync(int id, CancellationToken ct = default)
         {
@@ -521,6 +538,66 @@ namespace BE_Company.Sales.Tests
             });
             var svc = new SalesRequestService(requests, new FakeClock { UtcNow = DateTime.UtcNow });
             Assert.Single(await svc.ListForEmployeeAsync(7, default));
+        }
+
+        [Fact]
+        public async Task TargetEmployeeFilter_ShowsOnlyThatEmployeeRequests()
+        {
+            var repo = new FakeSalesFilterRepository();
+            repo.Cities.Add((9, "najaf"));
+            repo.Requests.Add(new SalesRequestDTO
+            {
+                Id = 1, TargetEmployeeId = 101, CityValue = "najaf",
+                CustomerName = "A", FilterStatus = SalesFilterStatuses.PendingFilter, CreatedAtUtc = DateTime.UtcNow,
+            });
+            repo.Requests.Add(new SalesRequestDTO
+            {
+                Id = 2, TargetEmployeeId = 202, CityValue = "najaf",
+                CustomerName = "B", FilterStatus = SalesFilterStatuses.PendingFilter, CreatedAtUtc = DateTime.UtcNow,
+            });
+            var svc = new SalesFilterService(repo);
+            var all = await svc.ListAsync(FilterActor(), "najaf", SalesFilterStatuses.PendingFilter, null, 1, 30, null, default);
+            var ahmed = await svc.ListAsync(FilterActor(), "najaf", SalesFilterStatuses.PendingFilter, null, 1, 30, 101, default);
+            Assert.Equal(2, all.Items.Count);
+            Assert.Single(ahmed.Items);
+            Assert.Equal(1, ahmed.Items[0].Id);
+        }
+
+        [Fact]
+        public async Task TargetEmployeeFilter_PreservesOwnershipOnReadyForSale()
+        {
+            var repo = new FakeSalesFilterRepository();
+            repo.Cities.Add((9, "najaf"));
+            repo.Cities.Add((10, "najaf"));
+            repo.Requests.Add(new SalesRequestDTO
+            {
+                Id = 7, TargetEmployeeId = 101, CityValue = "najaf",
+                CustomerName = "X", FilterStatus = SalesFilterStatuses.ReadyForSale,
+                FilteredByUserId = 9, FilteredByUserName = "فلتر", CreatedAtUtc = DateTime.UtcNow,
+            });
+            repo.Requests.Add(new SalesRequestDTO
+            {
+                Id = 8, TargetEmployeeId = 101, CityValue = "najaf",
+                CustomerName = "Y", FilterStatus = SalesFilterStatuses.ReadyForSale,
+                FilteredByUserId = 10, FilteredByUserName = "فلتر-ب", CreatedAtUtc = DateTime.UtcNow,
+            });
+            var svc = new SalesFilterService(repo);
+            var forA = await svc.ListAsync(FilterActor(9, "فلتر"), "najaf", SalesFilterStatuses.ReadyForSale, null, 1, 30, 101, default);
+            Assert.Single(forA.Items);
+            Assert.Equal(7, forA.Items[0].Id);
+        }
+
+        [Fact]
+        public async Task ListSalesEmployees_ReturnsActiveOnly_WithCityStamp()
+        {
+            var repo = new FakeSalesFilterRepository();
+            repo.Cities.Add((9, "najaf"));
+            repo.ActiveSalesEmployees.Add(new SalesFilterSalesEmployeeDTO { EmployeeId = 1, EmployeeName = "أحمد" });
+            repo.ActiveSalesEmployees.Add(new SalesFilterSalesEmployeeDTO { EmployeeId = 2, EmployeeName = "علي" });
+            var svc = new SalesFilterService(repo);
+            var rows = await svc.ListSalesEmployeesAsync(FilterActor(), "najaf", default);
+            Assert.Equal(2, rows.Count);
+            Assert.All(rows, r => Assert.Equal("najaf", r.CityValue));
         }
     }
 }

@@ -11,6 +11,9 @@ import 'package:sales_filter_application/widgets/request_card.dart';
 
 class _FakeRepo extends FilterRepository {
   String? lastHoldNote;
+  String? lastEmployeesCity;
+  int? lastCountsTarget;
+  int? lastListTarget;
 
   @override
   Future<List<FilterCity>> myCities() async => [
@@ -18,27 +21,52 @@ class _FakeRepo extends FilterRepository {
       ];
 
   @override
-  Future<Map<String, int>> counts({required String cityValue}) async => {
-        FilterStatuses.pending: 2,
-        FilterStatuses.onHold: 1,
-        FilterStatuses.ready: 3,
-        FilterStatuses.rejected: 0,
-      };
+  Future<List<FilterSalesEmployee>> salesEmployees({required String cityValue}) async {
+    lastEmployeesCity = cityValue;
+    if (cityValue == 'najaf') {
+      return [
+        FilterSalesEmployee(employeeId: 101, employeeName: 'أحمد', cityValue: cityValue),
+        FilterSalesEmployee(employeeId: 202, employeeName: 'علي', cityValue: cityValue),
+      ];
+    }
+    return [
+      FilterSalesEmployee(employeeId: 7, employeeName: 'سامي', cityValue: cityValue),
+    ];
+  }
 
   @override
-  Future<List<FilterRequest>> list({required String status, String? cityValue, int page = 1}) async => [
-        FilterRequest(
-          id: 1,
-          customerName: 'أحمد علي',
-          customerPhone: '07701234567',
-          cityName: 'بغداد الكرخ',
-          customerAddress: 'حي الجامعة',
-          wantedDescription: 'iPhone 16',
-          filterStatus: status,
-          filterNote: status == FilterStatuses.onHold ? 'اتصل غداً' : null,
-          rejectReason: status == FilterStatuses.rejected ? 'رقم خاطئ' : null,
-        ),
-      ];
+  Future<Map<String, int>> counts({required String cityValue, int? targetEmployeeId}) async {
+    lastCountsTarget = targetEmployeeId;
+    return {
+      FilterStatuses.pending: targetEmployeeId == 101 ? 1 : 2,
+      FilterStatuses.onHold: 1,
+      FilterStatuses.ready: 3,
+      FilterStatuses.rejected: 0,
+    };
+  }
+
+  @override
+  Future<List<FilterRequest>> list({
+    required String status,
+    String? cityValue,
+    int? targetEmployeeId,
+    int page = 1,
+  }) async {
+    lastListTarget = targetEmployeeId;
+    return [
+      FilterRequest(
+        id: 1,
+        customerName: 'أحمد علي',
+        customerPhone: '07701234567',
+        cityName: 'بغداد الكرخ',
+        customerAddress: 'حي الجامعة',
+        wantedDescription: 'iPhone 16',
+        filterStatus: status,
+        filterNote: status == FilterStatuses.onHold ? 'اتصل غداً' : null,
+        rejectReason: status == FilterStatuses.rejected ? 'رقم خاطئ' : null,
+      ),
+    ];
+  }
 
   @override
   Future<FilterRequest> get(String cityValue, int id) async => FilterRequest(
@@ -86,6 +114,7 @@ void main() {
     expect(find.text('معلق'), findsOneWidget);
     expect(find.text('جاهز للبيع'), findsOneWidget);
     expect(find.text('مرفوض'), findsOneWidget);
+    expect(find.text('موظف المبيعات'), findsOneWidget);
     expect(find.byType(Card), findsWidgets);
   });
 
@@ -221,4 +250,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('سبب الرفض مطلوب'), findsOneWidget);
   });
+
+  testWidgets('sales employee filter shows الكل and reloads on city', (tester) async {
+    final repo = _FakeRepo();
+    await tester.pumpWidget(MaterialApp(
+      home: HomeScreen(repository: repo, dialer: (_) async => true),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('موظف المبيعات'), findsOneWidget);
+    expect(find.text('الكل'), findsOneWidget);
+    expect(repo.lastEmployeesCity, 'baghdad-karkh');
+
+    await tester.tap(find.text('الكل'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('سامي').last);
+    await tester.pumpAndSettle();
+    expect(repo.lastCountsTarget, 7);
+  });
 }
+

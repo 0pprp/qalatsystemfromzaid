@@ -728,6 +728,137 @@ namespace BE_Company.Sales.Services
             await AppendHistoryAsync(row, SalesRequestEvents.Completed, EmployeeActor(row.TargetEmployeeId, row), null, ct, previous);
         }
 
+        public async Task<IReadOnlyList<SalesTransferPeerDTO>> ListTransferPeersAsync(SalesIdentity actor, CancellationToken ct)
+        {
+            EnsureSalesEmployee(actor);
+            await _repo.EnsureSchemaAsync(ct);
+            if (_employees == null)
+            {
+                return [];
+            }
+
+            var peers = await _employees.ListActiveSalesEmployeesAsync(ct);
+            return peers
+                .Where(e => e.EmployeeId > 0 && e.EmployeeId != actor.EmployeeId)
+                .Select(e => new SalesTransferPeerDTO
+                {
+                    EmployeeId = e.EmployeeId,
+                    EmployeeName = e.EmployeeName
+                })
+                .OrderBy(e => e.EmployeeName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        public async Task<SalesRequestDTO> TransferNameAsync(
+            SalesIdentity actor,
+            int requestId,
+            SalesRequestTransferDTO request,
+            CancellationToken ct)
+        {
+            EnsureSalesEmployee(actor);
+            var reason = (request.TransferReason ?? request.Reason ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "سبب نقل الاسم مطلوب.");
+            }
+
+            if (request.ToEmployeeId <= 0)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "يجب اختيار موظف المبيعات.");
+            }
+
+            if (request.ToEmployeeId == actor.EmployeeId)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "لا يمكن نقل الاسم إلى نفسك.");
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await RequireOwned(requestId, actor.EmployeeId, ct);
+            if (!SalesRequestStatuses.CanTransferName(row.Status))
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن نقل هذا الطلب في حالته الحالية.");
+            }
+
+            if (_employees == null)
+            {
+                throw new SalesCompleteException(StatusCodes.Status503ServiceUnavailable, "تعذر التحقق من موظفي الفرع.");
+            }
+
+            var peers = await _employees.ListActiveSalesEmployeesAsync(ct);
+            var peer = peers.FirstOrDefault(e => e.EmployeeId == request.ToEmployeeId);
+            if (peer == null)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status400BadRequest,
+                    "الموظف المحدد غير فعال أو ليس موظف مبيعات في نفس الفرع.");
+            }
+
+            // Branch DB is city-scoped; still reject mismatches if CityValue is present on the request.
+            if (!string.IsNullOrWhiteSpace(actor.BranchId)
+                && !string.IsNullOrWhiteSpace(row.CityValue)
+                && !string.Equals(actor.BranchId, row.CityValue, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكن نقل طلب تابع لمحافظة أخرى.");
+            }
+
+            var fromId = row.TargetEmployeeId;
+            var fromName = row.TargetEmployeeName ?? actor.EmployeeName;
+            var previous = row.Status;
+            var now = _clock.UtcNow;
+
+            var transferred = await _repo.TryTransferTargetAsync(
+                row.Id,
+                fromId,
+                peer.EmployeeId,
+                peer.EmployeeName,
+                SalesRequestStatuses.Assigned,
+                now,
+                SalesFilterStatuses.ReadyForSale,
+                ct);
+            if (!transferred)
+            {
+                throw new SalesCompleteException(StatusCodes.Status409Conflict, "تم نقل الطلب بواسطة عملية أخرى. أعد المحاولة.");
+            }
+
+            row.TargetEmployeeId = peer.EmployeeId;
+            row.TargetEmployeeName = peer.EmployeeName;
+            row.Status = SalesRequestStatuses.Assigned;
+            row.AssignedAtUtc = now;
+            row.ViewedAtUtc = null;
+            row.FilterStatus = SalesFilterStatuses.ReadyForSale;
+
+            var transfer = new SalesRequestNameTransferDTO
+            {
+                SaleRequestId = row.Id,
+                FromEmployeeId = fromId,
+                FromEmployeeName = fromName,
+                ToEmployeeId = peer.EmployeeId,
+                ToEmployeeName = peer.EmployeeName,
+                TransferReason = reason,
+                TransferredAtUtc = now,
+                TransferredByUserId = actor.EmployeeId,
+                TransferredByName = actor.EmployeeName
+            };
+            await _repo.InsertNameTransferAsync(transfer, ct);
+            await AppendHistoryAsync(
+                row,
+                SalesRequestEvents.NameTransferred,
+                actor,
+                $"من {fromName} إلى {peer.EmployeeName}: {reason}",
+                ct,
+                previous);
+            return await HydrateAsync(row, ct);
+        }
+
+        private static void EnsureSalesEmployee(SalesIdentity actor)
+        {
+            if (!SalesRoles.IsSalesEmployee(actor.UserType)
+                && !string.Equals(actor.Role, SalesRoles.SalesEmployee, StringComparison.Ordinal))
+            {
+                throw new SalesCompleteException(StatusCodes.Status403Forbidden, "غير مصرح.");
+            }
+        }
+
         private async Task<SalesRequestDTO> RequireOwned(int id, int employeeId, CancellationToken ct)
         {
             var row = await _repo.GetByIdAsync(id, ct)
@@ -798,6 +929,10 @@ namespace BE_Company.Sales.Services
         private async Task<SalesRequestDTO> HydrateAsync(SalesRequestDTO row, CancellationToken ct)
         {
             row.History = (await _repo.ListHistoryAsync(row.Id, ct)).ToList();
+            row.NameTransfers = (await _repo.ListNameTransfersAsync(row.Id, ct)).ToList();
+            row.LatestNameTransfer = row.NameTransfers.Count == 0
+                ? null
+                : row.NameTransfers[^1];
             return WithTimeline(row);
         }
 

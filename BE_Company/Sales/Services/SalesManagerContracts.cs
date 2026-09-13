@@ -53,6 +53,12 @@ namespace BE_Company.Sales.Services
 
         public static bool IsTerminal(string? status) =>
             IsSold(status);
+
+        /// <summary>Employee may transfer name in every status except sold (Completed) and Rejected.</summary>
+        public static bool CanTransferName(string? status) =>
+            !string.IsNullOrWhiteSpace(status)
+            && !IsSold(status)
+            && !string.Equals(status, Rejected, StringComparison.OrdinalIgnoreCase);
     }
 
     public static class SalesRequestEvents
@@ -73,6 +79,7 @@ namespace BE_Company.Sales.Services
         public const string Viewed = "Viewed";
         public const string EmployeeSubmitted = "EmployeeSubmitted";
         public const string ManagerViewed = "ManagerViewed";
+        public const string NameTransferred = "NameTransferred";
     }
 
     public static class SalesRequestSources
@@ -185,6 +192,18 @@ namespace BE_Company.Sales.Services
         Task<int> CountByStatusAsync(string status, CancellationToken ct);
         Task InsertHistoryAsync(SalesRequestHistoryDTO row, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestHistoryDTO>> ListHistoryAsync(int requestId, CancellationToken ct);
+        Task InsertNameTransferAsync(SalesRequestNameTransferDTO row, CancellationToken ct);
+        Task<IReadOnlyList<SalesRequestNameTransferDTO>> ListNameTransfersAsync(int saleRequestId, CancellationToken ct);
+        /// <summary>Optimistic ownership transfer. Returns false if TargetEmployeeId no longer matches.</summary>
+        Task<bool> TryTransferTargetAsync(
+            int requestId,
+            int expectedFromEmployeeId,
+            int toEmployeeId,
+            string? toEmployeeName,
+            string status,
+            DateTime assignedAtUtc,
+            string filterStatus,
+            CancellationToken ct);
     }
 
     public interface ISalesRequestService
@@ -213,11 +232,14 @@ namespace BE_Company.Sales.Services
         Task AttachDraftAsync(int requestId, int employeeId, int saleId, CancellationToken ct);
         Task<SalesRequestDTO> InspectAsync(int id, int employeeId, int? saleId, CancellationToken ct);
         Task MarkCompletedBySaleIdAsync(int saleId, DateTime utcNow, CancellationToken ct);
+        Task<IReadOnlyList<SalesTransferPeerDTO>> ListTransferPeersAsync(SalesIdentity actor, CancellationToken ct);
+        Task<SalesRequestDTO> TransferNameAsync(SalesIdentity actor, int requestId, SalesRequestTransferDTO request, CancellationToken ct);
     }
 
     public interface ISalesManagerReadRepository
     {
         Task<IReadOnlyList<SalesManagerEmployeeRow>> ListEmployeesAsync(CancellationToken ct);
+        Task<IReadOnlyList<SalesManagerEmployeeRow>> ListActiveSalesEmployeesAsync(CancellationToken ct);
         Task<SalesManagerLocationPointDTO?> GetLatestPointAsync(int employeeId, CancellationToken ct);
         Task<SalesManagerTrackingEventDTO?> GetLatestEventAsync(int employeeId, CancellationToken ct);
         Task<SalesShiftDTO?> GetShiftForBusinessDateAsync(int employeeId, DateTime businessDateIraq, CancellationToken ct);

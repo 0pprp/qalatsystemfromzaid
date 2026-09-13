@@ -63,4 +63,12 @@ namespace BE_Company.Sales.Filtering
         public int Total { get; set; }
         public List<SalesFilterListItemDTO> Items { get; set; } = [];
     }
+
+    /// <summary>Active sales employees for the selected filter city/branch (no secrets).</summary>
+    public sealed class SalesFilterSalesEmployeeDTO
+    {
+        public int EmployeeId { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public string? CityValue { get; set; }
+    }
 }

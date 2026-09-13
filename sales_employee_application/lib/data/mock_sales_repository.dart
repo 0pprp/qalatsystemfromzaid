@@ -580,6 +580,33 @@ class MockSalesRepository implements SalesRepository {
   }
 
   @override
+  Future<List<SalesTransferPeer>> transferPeers() async => [
+        SalesTransferPeer(employeeId: 9001, employeeName: 'زميل تجريبي'),
+      ];
+
+  @override
+  Future<SalesWorkRequest> transferSalesRequestName(int id, int toEmployeeId, String reason) async {
+    if (reason.trim().isEmpty) throw Exception('سبب نقل الاسم مطلوب');
+    final current = await salesRequest(id);
+    if (!current.canTransferName) {
+      throw Exception('لا يمكن نقل هذا الطلب في حالته الحالية.');
+    }
+    final info = SalesNameTransferInfo(
+      fromEmployeeName: 'أنا',
+      toEmployeeName: 'زميل #$toEmployeeId',
+      transferReason: reason.trim(),
+      transferredAtUtc: DateTime.now().toUtc(),
+    );
+    final row = current.copyWith(
+      status: 'Assigned',
+      latestNameTransfer: info,
+      nameTransfers: [...current.nameTransfers, info],
+    );
+    _requests.removeWhere((r) => r.id == id);
+    return row;
+  }
+
+  @override
   Future<SalesWorkRequest> submitSalesRequest({
     required String fullName,
     required String phone,

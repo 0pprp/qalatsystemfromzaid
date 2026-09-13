@@ -56,11 +56,53 @@ namespace BE_Company.Sales.Tests
 
         public Task<IReadOnlyList<SalesRequestHistoryDTO>> ListHistoryAsync(int requestId, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SalesRequestHistoryDTO>>(History.Where(h => h.RequestId == requestId).ToList());
+
+        public readonly List<SalesRequestNameTransferDTO> NameTransfers = [];
+        public int NextTransferId = 1;
+
+        public Task InsertNameTransferAsync(SalesRequestNameTransferDTO row, CancellationToken ct)
+        {
+            row.Id = NextTransferId++;
+            NameTransfers.Add(row);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<SalesRequestNameTransferDTO>> ListNameTransfersAsync(int saleRequestId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SalesRequestNameTransferDTO>>(
+                NameTransfers.Where(t => t.SaleRequestId == saleRequestId).ToList());
+
+        public Task<bool> TryTransferTargetAsync(
+            int requestId,
+            int expectedFromEmployeeId,
+            int toEmployeeId,
+            string? toEmployeeName,
+            string status,
+            DateTime assignedAtUtc,
+            string filterStatus,
+            CancellationToken ct)
+        {
+            var current = Rows.FirstOrDefault(r => r.Id == requestId);
+            if (current == null
+                || current.TargetEmployeeId != expectedFromEmployeeId
+                || !SalesRequestStatuses.CanTransferName(current.Status))
+            {
+                return Task.FromResult(false);
+            }
+
+            current.TargetEmployeeId = toEmployeeId;
+            current.TargetEmployeeName = toEmployeeName;
+            current.Status = status;
+            current.ViewedAtUtc = null;
+            current.AssignedAtUtc = assignedAtUtc;
+            current.FilterStatus = filterStatus;
+            return Task.FromResult(true);
+        }
     }
 
     public sealed class FakeManagerRead : ISalesManagerReadRepository
     {
         public List<SalesManagerEmployeeRow> Employees { get; } = [new() { EmployeeId = 1, EmployeeName = "أحمد" }, new() { EmployeeId = 2, EmployeeName = "علي" }];
+        public List<SalesManagerEmployeeRow>? ActiveEmployees { get; set; }
         public Dictionary<int, SalesManagerLocationPointDTO> Points { get; } = [];
         public Dictionary<int, SalesManagerTrackingEventDTO> Events { get; } = [];
         public List<SalesShiftDTO> Shifts { get; } = [];
@@ -69,6 +111,9 @@ namespace BE_Company.Sales.Tests
 
         public Task<IReadOnlyList<SalesManagerEmployeeRow>> ListEmployeesAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SalesManagerEmployeeRow>>(Employees);
+
+        public Task<IReadOnlyList<SalesManagerEmployeeRow>> ListActiveSalesEmployeesAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SalesManagerEmployeeRow>>(ActiveEmployees ?? Employees);
 
         public Task<SalesManagerLocationPointDTO?> GetLatestPointAsync(int employeeId, CancellationToken ct) =>
             Task.FromResult(Points.GetValueOrDefault(employeeId));

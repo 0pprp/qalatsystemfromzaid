@@ -136,6 +136,45 @@ namespace BE_Company.Sales.DTO
         public DateTime? FilteredAtUtc { get; set; }
         public List<SalesRequestTimelineItemDTO> Timeline { get; set; } = [];
         public List<SalesRequestHistoryDTO> History { get; set; } = [];
+        public List<SalesRequestNameTransferDTO> NameTransfers { get; set; } = [];
+        public SalesRequestNameTransferDTO? LatestNameTransfer { get; set; }
+    }
+
+    public sealed class SalesRequestNameTransferDTO
+    {
+        public int Id { get; set; }
+        public int SaleRequestId { get; set; }
+        public int FromEmployeeId { get; set; }
+        public string? FromEmployeeName { get; set; }
+        public int ToEmployeeId { get; set; }
+        public string? ToEmployeeName { get; set; }
+        public string TransferReason { get; set; } = string.Empty;
+        public DateTime TransferredAtUtc { get; set; }
+        public int TransferredByUserId { get; set; }
+        public string? TransferredByName { get; set; }
+    }
+
+    public sealed class SalesRequestTransferDTO
+    {
+        public int ToEmployeeId { get; set; }
+        public string? TransferReason { get; set; }
+        public string? Reason
+        {
+            get => TransferReason;
+            set
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    TransferReason = value;
+                }
+            }
+        }
+    }
+
+    public sealed class SalesTransferPeerDTO
+    {
+        public int EmployeeId { get; set; }
+        public string EmployeeName { get; set; } = string.Empty;
     }
 
     public sealed class SalesRequestTimelineItemDTO

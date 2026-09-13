@@ -427,6 +427,23 @@ namespace BE_SalesEmployee.Controllers
             ProxyAssigned("sales/requests", HttpMethod.Get, null, ct);
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("transfer-peers")]
+        public Task<IActionResult> TransferPeers(CancellationToken ct) =>
+            ProxyAssigned("sales/transfer-peers", HttpMethod.Get, null, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/{id:int}/transfer-name")]
+        public async Task<IActionResult> TransferName(int id, [FromBody] JsonElement body, CancellationToken ct) =>
+            await ProxyAssigned(
+                $"sales/requests/{id}/transfer-name",
+                HttpMethod.Post,
+                new StringContent(
+                    body.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "{}" : body.GetRawText(),
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+                ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpGet("requests/{id:int}")]
         public Task<IActionResult> RequestDetails(int id, CancellationToken ct) =>
             ProxyAssigned($"sales/requests/{id}", HttpMethod.Get, null, ct);

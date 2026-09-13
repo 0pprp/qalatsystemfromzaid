@@ -621,6 +621,41 @@ class SalesDraftCreateRequest {
       };
 }
 
+class SalesTransferPeer {
+  SalesTransferPeer({required this.employeeId, required this.employeeName});
+
+  final int employeeId;
+  final String employeeName;
+
+  factory SalesTransferPeer.fromJson(Map<String, dynamic> json) => SalesTransferPeer(
+        employeeId: int.tryParse('${json['employeeId'] ?? json['EmployeeId'] ?? 0}') ?? 0,
+        employeeName: '${json['employeeName'] ?? json['EmployeeName'] ?? ''}',
+      );
+}
+
+class SalesNameTransferInfo {
+  SalesNameTransferInfo({
+    required this.fromEmployeeName,
+    required this.toEmployeeName,
+    required this.transferReason,
+    required this.transferredAtUtc,
+  });
+
+  final String fromEmployeeName;
+  final String toEmployeeName;
+  final String transferReason;
+  final DateTime transferredAtUtc;
+
+  factory SalesNameTransferInfo.fromJson(Map<String, dynamic> json) => SalesNameTransferInfo(
+        fromEmployeeName: '${json['fromEmployeeName'] ?? json['FromEmployeeName'] ?? ''}',
+        toEmployeeName: '${json['toEmployeeName'] ?? json['ToEmployeeName'] ?? ''}',
+        transferReason: '${json['transferReason'] ?? json['TransferReason'] ?? ''}',
+        transferredAtUtc:
+            DateTime.tryParse('${json['transferredAtUtc'] ?? json['TransferredAtUtc'] ?? ''}')?.toUtc() ??
+                DateTime.now().toUtc(),
+      );
+}
+
 class SalesWorkRequest {
   SalesWorkRequest({
     required this.id,
@@ -639,6 +674,8 @@ class SalesWorkRequest {
     this.returnNote,
     this.delegateId,
     this.delegateName,
+    this.latestNameTransfer,
+    this.nameTransfers = const [],
   });
 
   final int id;
@@ -657,6 +694,8 @@ class SalesWorkRequest {
   final String? returnNote;
   final int? delegateId;
   final String? delegateName;
+  final SalesNameTransferInfo? latestNameTransfer;
+  final List<SalesNameTransferInfo> nameTransfers;
 
   String get normalizedStatus => status.trim();
 
@@ -681,6 +720,9 @@ class SalesWorkRequest {
       normalizedStatus == 'PreparedForSale' ||
       normalizedStatus == 'InProgress' ||
       normalizedStatus == 'ConvertedToSale';
+  bool get canTransferName =>
+      !isSold && normalizedStatus != 'Rejected';
+  bool get isTransferred => latestNameTransfer != null;
 
   /// Inspected employee UI: continue sale + reject only.
   List<String> get availableActions {
@@ -695,6 +737,7 @@ class SalesWorkRequest {
     }
     if (canPend) actions.add('pending');
     if (canReject) actions.add('rejected');
+    if (canTransferName) actions.add('transfer');
     return actions;
   }
 
@@ -705,6 +748,8 @@ class SalesWorkRequest {
     String? preparedForSaleNote,
     String? returnNote,
     int? convertedToSaleId,
+    SalesNameTransferInfo? latestNameTransfer,
+    List<SalesNameTransferInfo>? nameTransfers,
   }) =>
       SalesWorkRequest(
         id: id,
@@ -723,36 +768,54 @@ class SalesWorkRequest {
         returnNote: returnNote ?? this.returnNote,
         delegateId: delegateId,
         delegateName: delegateName,
+        latestNameTransfer: latestNameTransfer ?? this.latestNameTransfer,
+        nameTransfers: nameTransfers ?? this.nameTransfers,
       );
 
-  factory SalesWorkRequest.fromJson(Map<String, dynamic> json) => SalesWorkRequest(
-        id: int.tryParse('${json['id'] ?? json['Id'] ?? 0}') ?? 0,
-        customerName: '${json['customerName'] ?? json['CustomerName'] ?? ''}',
-        customerPhone: json['customerPhone']?.toString() ?? json['CustomerPhone']?.toString(),
-        customerProvince: json['customerProvince']?.toString(),
-        customerAddress: json['customerAddress']?.toString(),
-        existingCustomerId: int.tryParse('${json['existingCustomerId'] ?? json['ExistingCustomerId'] ?? ''}'),
-        notes: json['notes']?.toString() ?? json['Notes']?.toString(),
-        status: '${json['status'] ?? json['Status'] ?? 'New'}'.trim(),
-        createdAtUtc: DateTime.tryParse('${json['createdAtUtc'] ?? json['CreatedAtUtc'] ?? ''}')?.toUtc() ??
-            DateTime.now().toUtc(),
-        convertedToSaleId: int.tryParse('${json['convertedToSaleId'] ?? json['ConvertedToSaleId'] ?? ''}'),
-        rejectionReason: json['rejectionReason']?.toString() ?? json['RejectionReason']?.toString(),
-        pendingNote: json['pendingNote']?.toString() ?? json['PendingNote']?.toString(),
-        preparedForSaleNote:
-            json['preparedForSaleNote']?.toString() ?? json['PreparedForSaleNote']?.toString(),
-        returnNote: json['returnNote']?.toString() ?? json['ReturnNote']?.toString(),
-        delegateId: _optionalPositiveInt(json, const [
-          'delegateId',
-          'DelegateID',
-          'delegateID',
-          'DelegateId',
-        ]),
-        delegateName: _optionalText(json, const [
-          'delegateName',
-          'DelegateName',
-        ]),
-      );
+  factory SalesWorkRequest.fromJson(Map<String, dynamic> json) {
+    final latestRaw = json['latestNameTransfer'] ?? json['LatestNameTransfer'];
+    final transfersRaw = json['nameTransfers'] ?? json['NameTransfers'];
+    final transfers = <SalesNameTransferInfo>[];
+    if (transfersRaw is List) {
+      for (final item in transfersRaw) {
+        if (item is Map) {
+          transfers.add(SalesNameTransferInfo.fromJson(Map<String, dynamic>.from(item)));
+        }
+      }
+    }
+    return SalesWorkRequest(
+      id: int.tryParse('${json['id'] ?? json['Id'] ?? 0}') ?? 0,
+      customerName: '${json['customerName'] ?? json['CustomerName'] ?? ''}',
+      customerPhone: json['customerPhone']?.toString() ?? json['CustomerPhone']?.toString(),
+      customerProvince: json['customerProvince']?.toString(),
+      customerAddress: json['customerAddress']?.toString(),
+      existingCustomerId: int.tryParse('${json['existingCustomerId'] ?? json['ExistingCustomerId'] ?? ''}'),
+      notes: json['notes']?.toString() ?? json['Notes']?.toString(),
+      status: '${json['status'] ?? json['Status'] ?? 'New'}'.trim(),
+      createdAtUtc: DateTime.tryParse('${json['createdAtUtc'] ?? json['CreatedAtUtc'] ?? ''}')?.toUtc() ??
+          DateTime.now().toUtc(),
+      convertedToSaleId: int.tryParse('${json['convertedToSaleId'] ?? json['ConvertedToSaleId'] ?? ''}'),
+      rejectionReason: json['rejectionReason']?.toString() ?? json['RejectionReason']?.toString(),
+      pendingNote: json['pendingNote']?.toString() ?? json['PendingNote']?.toString(),
+      preparedForSaleNote:
+          json['preparedForSaleNote']?.toString() ?? json['PreparedForSaleNote']?.toString(),
+      returnNote: json['returnNote']?.toString() ?? json['ReturnNote']?.toString(),
+      delegateId: _optionalPositiveInt(json, const [
+        'delegateId',
+        'DelegateID',
+        'delegateID',
+        'DelegateId',
+      ]),
+      delegateName: _optionalText(json, const [
+        'delegateName',
+        'DelegateName',
+      ]),
+      latestNameTransfer: latestRaw is Map
+          ? SalesNameTransferInfo.fromJson(Map<String, dynamic>.from(latestRaw))
+          : null,
+      nameTransfers: transfers,
+    );
+  }
 }
 
 class SalesShopComplete {

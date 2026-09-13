@@ -25,8 +25,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late final FilterRepository _repo = widget.repository ?? FilterRepository();
   List<FilterCity> _cities = [];
+  List<FilterSalesEmployee> _employees = [];
   String? _city;
+  /// null = الكل
+  int? _targetEmployeeId;
   bool _loadingCities = true;
+  bool _loadingEmployees = false;
   bool _loadingCounts = false;
   String? _error;
   Map<String, int> _counts = {};
@@ -50,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _city = cities.length == 1 ? cities.first.cityValue : null;
         _loadingCities = false;
       });
-      await _loadCounts();
+      await _onCityChanged(reloadEmployees: true);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -63,6 +67,47 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _onCityChanged({required bool reloadEmployees}) async {
+    if (_city == null || _city!.isEmpty) {
+      setState(() {
+        _employees = [];
+        _targetEmployeeId = null;
+        _counts = {};
+      });
+      return;
+    }
+
+    if (reloadEmployees) {
+      setState(() {
+        _loadingEmployees = true;
+        _targetEmployeeId = null;
+        _error = null;
+      });
+      try {
+        final employees = await _repo.salesEmployees(cityValue: _city!);
+        if (!mounted) return;
+        setState(() {
+          _employees = employees;
+          _loadingEmployees = false;
+          if (_targetEmployeeId != null &&
+              !_employees.any((e) => e.employeeId == _targetEmployeeId)) {
+            _targetEmployeeId = null;
+          }
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _loadingEmployees = false;
+          _employees = [];
+          _targetEmployeeId = null;
+          _error = e.toString();
+        });
+      }
+    }
+
+    await _loadCounts();
+  }
+
   Future<void> _loadCounts() async {
     if (_city == null || _city!.isEmpty) {
       setState(() => _counts = {});
@@ -73,7 +118,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _error = null;
     });
     try {
-      final counts = await _repo.counts(cityValue: _city!);
+      final counts = await _repo.counts(
+        cityValue: _city!,
+        targetEmployeeId: _targetEmployeeId,
+      );
       if (!mounted) return;
       setState(() {
         _counts = counts;
@@ -107,6 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
           status: bin.status,
           title: bin.title,
           cityValue: city,
+          targetEmployeeId: _targetEmployeeId,
           repository: _repo,
           dialer: widget.dialer ?? _defaultDial,
         ),
@@ -137,25 +186,67 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
-                child: DropdownButtonFormField<String>(
-                  key: ValueKey('city-$_city-${_cities.length}'),
-                  value: _city,
-                  decoration: const InputDecoration(
-                    labelText: 'المحافظة',
-                    border: OutlineInputBorder(),
-                  ),
-                  hint: const Text('اختر المحافظة', style: TextStyle(fontFamily: 'Cairo')),
-                  items: [
-                    ..._cities.map(
-                      (c) => DropdownMenuItem(value: c.cityValue, child: Text(c.label, style: const TextStyle(fontFamily: 'Cairo'))),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey('city-$_city-${_cities.length}'),
+                        value: _city,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'المحافظة',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        hint: const Text('اختر المحافظة', style: TextStyle(fontFamily: 'Cairo')),
+                        items: [
+                          ..._cities.map(
+                            (c) => DropdownMenuItem(
+                              value: c.cityValue,
+                              child: Text(c.label, style: const TextStyle(fontFamily: 'Cairo'), overflow: TextOverflow.ellipsis),
+                            ),
+                          ),
+                        ],
+                        onChanged: _loadingCities || _cities.isEmpty
+                            ? null
+                            : (v) async {
+                                setState(() => _city = v);
+                                await _onCityChanged(reloadEmployees: true);
+                              },
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: DropdownButtonFormField<int?>(
+                        key: ValueKey('emp-$_city-$_targetEmployeeId-${_employees.length}'),
+                        value: _targetEmployeeId,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'موظف المبيعات',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: [
+                          const DropdownMenuItem<int?>(
+                            value: null,
+                            child: Text('الكل', style: TextStyle(fontFamily: 'Cairo')),
+                          ),
+                          ..._employees.map(
+                            (e) => DropdownMenuItem<int?>(
+                              value: e.employeeId,
+                              child: Text(e.employeeName, style: const TextStyle(fontFamily: 'Cairo'), overflow: TextOverflow.ellipsis),
+                            ),
+                          ),
+                        ],
+                        onChanged: (_city == null || _city!.isEmpty || _loadingEmployees)
+                            ? null
+                            : (v) async {
+                                setState(() => _targetEmployeeId = v);
+                                await _loadCounts();
+                              },
+                      ),
                     ),
                   ],
-                  onChanged: _loadingCities || _cities.isEmpty
-                      ? null
-                      : (v) async {
-                          setState(() => _city = v);
-                          await _loadCounts();
-                        },
                 ),
               ),
               if (_error != null)
@@ -167,14 +258,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: _loadingCities || (_loadingCounts && _counts.isEmpty)
                     ? const Center(child: CircularProgressIndicator())
                     : (_city == null || _city!.isEmpty)
-                        ? const Center(child: Text('اختر المحافظة أولاً', style: TextStyle(fontFamily: 'Cairo', color: AppColors.muted)))
+                        ? const Center(
+                            child: Text('اختر المحافظة أولاً', style: TextStyle(fontFamily: 'Cairo', color: AppColors.muted)),
+                          )
                         : RefreshIndicator(
                             onRefresh: _loadCounts,
-                            child: ListView.separated(
+                            child: ListView(
                               padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.lg),
-                              itemCount: FilterStatuses.bins.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.md),
-                              itemBuilder: (context, i) => _binCard(i),
+                              children: [
+                                for (var i = 0; i < FilterStatuses.bins.length; i++) ...[
+                                  if (i > 0) const SizedBox(height: AppSpacing.md),
+                                  _binCard(i),
+                                ],
+                              ],
                             ),
                           ),
               ),
@@ -239,6 +335,7 @@ class StatusListScreen extends StatefulWidget {
     required this.status,
     required this.title,
     required this.cityValue,
+    this.targetEmployeeId,
     required this.repository,
     required this.dialer,
   });
@@ -246,6 +343,7 @@ class StatusListScreen extends StatefulWidget {
   final String status;
   final String title;
   final String cityValue;
+  final int? targetEmployeeId;
   final FilterRepository repository;
   final Future<bool> Function(String tel) dialer;
 
@@ -270,7 +368,11 @@ class _StatusListScreenState extends State<StatusListScreen> {
       _error = null;
     });
     try {
-      final rows = await widget.repository.list(status: widget.status, cityValue: widget.cityValue);
+      final rows = await widget.repository.list(
+        status: widget.status,
+        cityValue: widget.cityValue,
+        targetEmployeeId: widget.targetEmployeeId,
+      );
       if (!mounted) return;
       setState(() {
         _items = rows;

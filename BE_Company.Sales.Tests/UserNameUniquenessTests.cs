@@ -94,9 +94,11 @@ namespace BE_Company.Sales.Tests
             public Task EnsureSchemaAsync(CancellationToken ct = default) => Task.CompletedTask;
             public Task<IReadOnlyList<SalesFilterCityDTO>> MyCitiesAsync(SalesIdentity actor, CancellationToken ct = default) =>
                 Task.FromResult<IReadOnlyList<SalesFilterCityDTO>>([]);
-            public Task<SalesFilterPagedResultDTO> ListAsync(SalesIdentity actor, string? city, string? status, string? search, int page, int pageSize, CancellationToken ct = default) =>
+            public Task<IReadOnlyList<SalesFilterSalesEmployeeDTO>> ListSalesEmployeesAsync(SalesIdentity actor, string? city, CancellationToken ct = default) =>
+                Task.FromResult<IReadOnlyList<SalesFilterSalesEmployeeDTO>>([]);
+            public Task<SalesFilterPagedResultDTO> ListAsync(SalesIdentity actor, string? city, string? status, string? search, int page, int pageSize, int? targetEmployeeId = null, CancellationToken ct = default) =>
                 Task.FromResult(new SalesFilterPagedResultDTO());
-            public Task<IReadOnlyDictionary<string, int>> CountsAsync(SalesIdentity actor, string? city, CancellationToken ct = default) =>
+            public Task<IReadOnlyDictionary<string, int>> CountsAsync(SalesIdentity actor, string? city, int? targetEmployeeId = null, CancellationToken ct = default) =>
                 Task.FromResult<IReadOnlyDictionary<string, int>>(new Dictionary<string, int>());
             public Task<SalesFilterDetailDTO> GetAsync(SalesIdentity actor, int id, CancellationToken ct = default) =>
                 throw new NotImplementedException();

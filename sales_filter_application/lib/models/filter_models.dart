@@ -11,6 +11,24 @@ class FilterCity {
       );
 }
 
+class FilterSalesEmployee {
+  FilterSalesEmployee({
+    required this.employeeId,
+    required this.employeeName,
+    this.cityValue,
+  });
+
+  final int employeeId;
+  final String employeeName;
+  final String? cityValue;
+
+  factory FilterSalesEmployee.fromJson(Map<String, dynamic> json) => FilterSalesEmployee(
+        employeeId: int.tryParse('${json['employeeId'] ?? json['EmployeeId'] ?? 0}') ?? 0,
+        employeeName: '${json['employeeName'] ?? json['EmployeeName'] ?? ''}',
+        cityValue: json['cityValue']?.toString() ?? json['CityValue']?.toString(),
+      );
+}
+
 class FilterRequest {
   FilterRequest({
     required this.id,

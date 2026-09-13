@@ -126,6 +126,91 @@ ORDER BY CreatedAtUtc ASC, Id ASC",
             return rows.ToList();
         }
 
+        public async Task InsertNameTransferAsync(SalesRequestNameTransferDTO row, CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            var id = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
+INSERT INTO dbo.SalesRequestNameTransfers
+(SaleRequestId, FromEmployeeId, FromEmployeeName, ToEmployeeId, ToEmployeeName, TransferReason,
+ TransferredAtUtc, TransferredByUserId, TransferredByName)
+OUTPUT INSERTED.Id
+VALUES
+(@SaleRequestId, @FromEmployeeId, @FromEmployeeName, @ToEmployeeId, @ToEmployeeName, @TransferReason,
+ @TransferredAtUtc, @TransferredByUserId, @TransferredByName);",
+                row, cancellationToken: ct));
+            row.Id = id;
+        }
+
+        public async Task<IReadOnlyList<SalesRequestNameTransferDTO>> ListNameTransfersAsync(int saleRequestId, CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            var rows = await connection.QueryAsync<SalesRequestNameTransferDTO>(new CommandDefinition(@"
+SELECT Id, SaleRequestId, FromEmployeeId, FromEmployeeName, ToEmployeeId, ToEmployeeName,
+ TransferReason, TransferredAtUtc, TransferredByUserId, TransferredByName
+FROM dbo.SalesRequestNameTransfers
+WHERE SaleRequestId = @SaleRequestId
+ORDER BY TransferredAtUtc ASC, Id ASC",
+                new { SaleRequestId = saleRequestId }, cancellationToken: ct));
+            return rows.ToList();
+        }
+
+        public async Task<bool> TryTransferTargetAsync(
+            int requestId,
+            int expectedFromEmployeeId,
+            int toEmployeeId,
+            string? toEmployeeName,
+            string status,
+            DateTime assignedAtUtc,
+            string filterStatus,
+            CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            await connection.OpenAsync(ct);
+            await using var tx = await connection.BeginTransactionAsync(ct);
+            try
+            {
+                var updated = await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.SalesRequests WITH (UPDLOCK, ROWLOCK) SET
+ [Status] = @Status,
+ TargetEmployeeId = @ToEmployeeId,
+ TargetEmployeeName = @ToEmployeeName,
+ ViewedAtUtc = NULL,
+ AssignedAtUtc = @AssignedAtUtc,
+ FilterStatus = @FilterStatus
+WHERE Id = @Id
+  AND TargetEmployeeId = @ExpectedFromEmployeeId
+  AND [Status] NOT IN (N'Completed', N'Rejected')",
+                    new
+                    {
+                        Id = requestId,
+                        ExpectedFromEmployeeId = expectedFromEmployeeId,
+                        ToEmployeeId = toEmployeeId,
+                        ToEmployeeName = toEmployeeName,
+                        Status = status,
+                        AssignedAtUtc = assignedAtUtc,
+                        FilterStatus = filterStatus
+                    },
+                    transaction: (SqlTransaction)tx,
+                    cancellationToken: ct));
+                if (updated != 1)
+                {
+                    await tx.RollbackAsync(ct);
+                    return false;
+                }
+
+                await tx.CommitAsync(ct);
+                return true;
+            }
+            catch
+            {
+                await tx.RollbackAsync(ct);
+                throw;
+            }
+        }
+
         private string RequireConnection() =>
             _guard.GetSalesConnectionString()
             ?? throw new InvalidOperationException("Sales module has no usable branch connection.");
@@ -237,6 +322,28 @@ BEGIN
     CREATE INDEX IX_SalesRequestHistory_RequestId ON dbo.SalesRequestHistory (RequestId, CreatedAtUtc, Id);
 END;
 IF COL_LENGTH(N'dbo.SalesRequestHistory', N'PreviousStatus') IS NULL
-    ALTER TABLE dbo.SalesRequestHistory ADD PreviousStatus NVARCHAR(30) NULL;";
+    ALTER TABLE dbo.SalesRequestHistory ADD PreviousStatus NVARCHAR(30) NULL;
+IF OBJECT_ID(N'dbo.SalesRequestNameTransfers', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SalesRequestNameTransfers (
+        Id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        SaleRequestId INT NOT NULL,
+        FromEmployeeId INT NOT NULL,
+        FromEmployeeName NVARCHAR(200) NULL,
+        ToEmployeeId INT NOT NULL,
+        ToEmployeeName NVARCHAR(200) NULL,
+        TransferReason NVARCHAR(1000) NOT NULL,
+        TransferredAtUtc DATETIME2 NOT NULL CONSTRAINT DF_SalesRequestNameTransfers_At DEFAULT (SYSUTCDATETIME()),
+        TransferredByUserId INT NOT NULL,
+        TransferredByName NVARCHAR(200) NULL
+    );
+END;
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_SalesRequestNameTransfers_SaleRequestId'
+      AND object_id = OBJECT_ID(N'dbo.SalesRequestNameTransfers')
+)
+    CREATE INDEX IX_SalesRequestNameTransfers_SaleRequestId
+        ON dbo.SalesRequestNameTransfers (SaleRequestId, TransferredAtUtc, Id);";
     }
 }

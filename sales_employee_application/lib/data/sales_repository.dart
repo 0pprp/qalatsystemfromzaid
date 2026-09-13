@@ -40,6 +40,8 @@ abstract class SalesRepository {
   Future<SalesWorkRequest> inspectSalesRequest(int id, SalesDraftCreateRequest progress);
   Future<SalesWorkRequest> pendSalesRequest(int id, String note);
   Future<SalesWorkRequest> rejectSalesRequest(int id, String reason);
+  Future<List<SalesTransferPeer>> transferPeers();
+  Future<SalesWorkRequest> transferSalesRequestName(int id, int toEmployeeId, String reason);
   Future<SalesWorkRequest> submitSalesRequest({
     required String fullName,
     required String phone,

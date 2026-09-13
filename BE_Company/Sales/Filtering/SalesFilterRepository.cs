@@ -20,12 +20,15 @@ namespace BE_Company.Sales.Filtering
             bool ownByActor,
             int? actorUserId,
             string? actorUserName,
+            int? targetEmployeeId = null,
             CancellationToken ct = default);
         Task<IReadOnlyDictionary<string, int>> CountByStatusAsync(
             SalesFilterCityScope scope,
             int? actorUserId,
             string? actorUserName,
+            int? targetEmployeeId = null,
             CancellationToken ct = default);
+        Task<IReadOnlyList<SalesFilterSalesEmployeeDTO>> ListActiveSalesEmployeesAsync(CancellationToken ct = default);
         Task<SalesFilterDetailDTO?> GetRequestAsync(int id, CancellationToken ct = default);
         Task<(bool Ok, string? CurrentStatus)> TryTransitionAsync(
             int id,
@@ -131,6 +134,7 @@ WHERE UserId = @UserId AND CityValue = @CityValue;",
             bool ownByActor,
             int? actorUserId,
             string? actorUserName,
+            int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
             await EnsureSchemaAsync(ct);
@@ -153,6 +157,7 @@ WHERE UserId = @UserId AND CityValue = @CityValue;",
 
             var q = string.IsNullOrWhiteSpace(search) ? null : $"%{search.Trim()}%";
             var actorName = string.IsNullOrWhiteSpace(actorUserName) ? null : actorUserName.Trim();
+            var targetId = targetEmployeeId is > 0 ? targetEmployeeId : null;
             await using var c = new SqlConnection(RequireCs());
             var args = new
             {
@@ -162,6 +167,7 @@ WHERE UserId = @UserId AND CityValue = @CityValue;",
                 OwnByActor = ownByActor,
                 ActorUserId = actorUserId,
                 ActorUserName = actorName,
+                TargetEmployeeId = targetId,
                 Q = q,
                 Skip = (page - 1) * pageSize,
                 Take = pageSize,
@@ -172,6 +178,7 @@ SELECT COUNT(1)
 FROM dbo.SalesRequests R
 WHERE R.FilterStatus = @FilterStatus
   AND R.TargetEmployeeId > 0
+  AND (@TargetEmployeeId IS NULL OR R.TargetEmployeeId = @TargetEmployeeId)
   AND (@TrustBranch = 1 OR R.CityValue IN @Cities)
   AND (
         @OwnByActor = 0
@@ -205,6 +212,7 @@ SELECT
 FROM dbo.SalesRequests R
 WHERE R.FilterStatus = @FilterStatus
   AND R.TargetEmployeeId > 0
+  AND (@TargetEmployeeId IS NULL OR R.TargetEmployeeId = @TargetEmployeeId)
   AND (@TrustBranch = 1 OR R.CityValue IN @Cities)
   AND (
         @OwnByActor = 0
@@ -229,6 +237,7 @@ OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;",
             SalesFilterCityScope scope,
             int? actorUserId,
             string? actorUserName,
+            int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
             await EnsureSchemaAsync(ct);
@@ -255,11 +264,13 @@ OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;",
             }
 
             var actorName = string.IsNullOrWhiteSpace(actorUserName) ? null : actorUserName.Trim();
+            var targetId = targetEmployeeId is > 0 ? targetEmployeeId : null;
             await using var c = new SqlConnection(RequireCs());
             var rows = await c.QueryAsync<(string FilterStatus, int Cnt)>(new CommandDefinition(@"
 SELECT R.FilterStatus, COUNT(1) AS Cnt
 FROM dbo.SalesRequests R
 WHERE R.TargetEmployeeId > 0
+  AND (@TargetEmployeeId IS NULL OR R.TargetEmployeeId = @TargetEmployeeId)
   AND (@TrustBranch = 1 OR R.CityValue IN @Cities)
   AND (
         R.FilterStatus = N'PendingFilter'
@@ -279,6 +290,7 @@ GROUP BY R.FilterStatus;",
                     TrustBranch = scope.TrustEntireBranch,
                     ActorUserId = actorUserId,
                     ActorUserName = actorName,
+                    TargetEmployeeId = targetId,
                 },
                 cancellationToken: ct));
 
@@ -291,6 +303,19 @@ GROUP BY R.FilterStatus;",
             }
 
             return result;
+        }
+
+        public async Task<IReadOnlyList<SalesFilterSalesEmployeeDTO>> ListActiveSalesEmployeesAsync(CancellationToken ct = default)
+        {
+            await using var c = new SqlConnection(RequireCs());
+            var rows = await c.QueryAsync<SalesFilterSalesEmployeeDTO>(new CommandDefinition(@"
+SELECT UserID AS EmployeeId, UserName AS EmployeeName
+FROM dbo.Users
+WHERE UserType = N'موظف مبيعات'
+  AND ISNULL(UserState, 1) = 1
+ORDER BY UserName;",
+                cancellationToken: ct));
+            return rows.ToList();
         }
 
         public async Task<SalesFilterDetailDTO?> GetRequestAsync(int id, CancellationToken ct = default)

@@ -133,6 +133,12 @@ class SalesRequestStatusLabels {
       };
 }
 
+class SalesFormat {
+  static final DateFormat _dateTime = DateFormat('yyyy/MM/dd HH:mm');
+
+  static String iraqDateTime(DateTime utc) => _dateTime.format(utc.toLocal());
+}
+
 class SalesStaffInventoryFilter {
   static bool isHidden(String? productName) {
     final n = normalizeArabic(productName);

@@ -37,6 +37,19 @@ namespace BE_Company.Sales.Filtering
             }
         }
 
+        [HttpGet("sales-employees")]
+        public async Task<IActionResult> SalesEmployees([FromQuery] string? city, CancellationToken ct = default)
+        {
+            try
+            {
+                return Ok(await _service.ListSalesEmployeesAsync(RequireActor(), city, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
         [HttpGet("requests")]
         public async Task<IActionResult> List(
             [FromQuery] string? city,
@@ -44,11 +57,13 @@ namespace BE_Company.Sales.Filtering
             [FromQuery] string? search,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 30,
+            [FromQuery] int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
             try
             {
-                return Ok(await _service.ListAsync(RequireActor(), city, status, search, page, pageSize, ct));
+                return Ok(await _service.ListAsync(
+                    RequireActor(), city, status, search, page, pageSize, targetEmployeeId, ct));
             }
             catch (SalesCompleteException ex)
             {
@@ -57,11 +72,14 @@ namespace BE_Company.Sales.Filtering
         }
 
         [HttpGet("counts")]
-        public async Task<IActionResult> Counts([FromQuery] string? city, CancellationToken ct = default)
+        public async Task<IActionResult> Counts(
+            [FromQuery] string? city,
+            [FromQuery] int? targetEmployeeId = null,
+            CancellationToken ct = default)
         {
             try
             {
-                return Ok(await _service.CountsAsync(RequireActor(), city, ct));
+                return Ok(await _service.CountsAsync(RequireActor(), city, targetEmployeeId, ct));
             }
             catch (SalesCompleteException ex)
             {
