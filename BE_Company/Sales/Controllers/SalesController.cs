@@ -333,6 +333,9 @@ namespace BE_Company.Sales.Controllers
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("{id:int}/shop-image")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(50_000_000)]
+        [RequestFormLimits(MultipartBodyLengthLimit = 50_000_000)]
         public async Task<IActionResult> UploadShopImage(int id, [FromForm] IFormFile? file, CancellationToken ct)
         {
             var blocked = await BlockIfNotDemo(ct);
@@ -347,6 +350,7 @@ namespace BE_Company.Sales.Controllers
                 return Unauthorized();
             }
 
+            file ??= Request.Form.Files.FirstOrDefault(f => f.Length > 0);
             if (file == null || file.Length <= 0)
             {
                 return BadRequest(new { message = "صورة المحل مطلوبة." });
@@ -360,6 +364,14 @@ namespace BE_Company.Sales.Controllers
             catch (SalesCompleteException ex)
             {
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "تعذر حفظ صورة المحل على الخادم.",
+                    detail = ex.GetType().Name
+                });
             }
         }
 

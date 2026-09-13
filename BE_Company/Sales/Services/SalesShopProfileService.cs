@@ -124,21 +124,30 @@ namespace BE_Company.Sales.Services
             }
 
             var folder = Path.Combine(_env.ContentRootPath, "App_Data", "sales", saleId.ToString());
-            Directory.CreateDirectory(folder);
-            var fileName = "shop" + ext.ToLowerInvariant();
-            var path = Path.Combine(folder, fileName);
-            await using (var stream = File.Create(path))
+            try
             {
-                await file.CopyToAsync(stream, ct);
-            }
+                Directory.CreateDirectory(folder);
+                var fileName = "shop" + ext.ToLowerInvariant();
+                var path = Path.Combine(folder, fileName);
+                await using (var stream = System.IO.File.Create(path))
+                {
+                    await file.CopyToAsync(stream, ct);
+                }
 
-            var key = $"sales/{saleId}/{fileName}";
-            return new SalesShopProfileDTO
+                var key = $"sales/{saleId}/{fileName}";
+                return new SalesShopProfileDTO
+                {
+                    SaleId = saleId,
+                    ShopImageKey = key,
+                    ShopImageUrl = $"/api/sales/{saleId}/shop-image"
+                };
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
-                SaleId = saleId,
-                ShopImageKey = key,
-                ShopImageUrl = $"/api/sales/{saleId}/shop-image"
-            };
+                throw new SalesCompleteException(
+                    StatusCodes.Status500InternalServerError,
+                    "تعذر كتابة صورة المحل على القرص. تحقق من صلاحيات App_Data/sales.");
+            }
         }
 
         public async Task UpsertFromCompleteAsync(SalesDraftDTO sale, SalesShopCompleteDTO shop, CancellationToken ct)

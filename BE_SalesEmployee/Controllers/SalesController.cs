@@ -118,6 +118,9 @@ namespace BE_SalesEmployee.Controllers
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("{id:int}/shop-image")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(50_000_000)]
+        [RequestFormLimits(MultipartBodyLengthLimit = 50_000_000)]
         public async Task<IActionResult> UploadShopImage(int id, [FromForm] IFormFile? file, CancellationToken ct)
         {
             var blocked = await BlockIfNotDemo(ct);
@@ -126,17 +129,25 @@ namespace BE_SalesEmployee.Controllers
                 return blocked;
             }
 
+            file ??= Request.Form.Files.FirstOrDefault(f => f.Length > 0);
             if (file == null || file.Length <= 0)
             {
                 return BadRequest(new { message = "صورة المحل مطلوبة." });
             }
 
-            using var form = new MultipartFormDataContent();
-            await using var stream = file.OpenReadStream();
-            var part = new StreamContent(stream);
-            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
-            form.Add(part, "file", file.FileName);
-            return await ProxyAssigned($"sales/{id}/shop-image", HttpMethod.Post, form, ct);
+            try
+            {
+                using var form = await MultipartProxyContent.FromFormFileAsync(file, "file", ct);
+                return await ProxyAssigned($"sales/{id}/shop-image", HttpMethod.Post, form, ct);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "تعذر رفع صورة المحل عبر البوابة.",
+                    detail = ex.GetType().Name
+                });
+            }
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
@@ -170,6 +181,9 @@ namespace BE_SalesEmployee.Controllers
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("{id:int}/customer-documents")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(50_000_000)]
+        [RequestFormLimits(MultipartBodyLengthLimit = 50_000_000)]
         public async Task<IActionResult> UploadCustomerDocument(int id, [FromQuery] string? type, [FromForm] IFormFile? file, CancellationToken ct)
         {
             var blocked = await BlockIfNotDemo(ct);
@@ -178,23 +192,31 @@ namespace BE_SalesEmployee.Controllers
                 return blocked;
             }
 
+            file ??= Request.Form.Files.FirstOrDefault(f => f.Length > 0);
             if (file == null || file.Length <= 0)
             {
                 return BadRequest(new { message = "الصورة مطلوبة." });
             }
 
-            using var form = new MultipartFormDataContent();
-            await using var stream = file.OpenReadStream();
-            var part = new StreamContent(stream);
-            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
-            form.Add(part, "file", file.FileName);
-            var path = $"sales/{id}/customer-documents";
-            if (!string.IsNullOrWhiteSpace(type))
+            try
             {
-                path += $"?type={Uri.EscapeDataString(type)}";
-            }
+                using var form = await MultipartProxyContent.FromFormFileAsync(file, "file", ct);
+                var path = $"sales/{id}/customer-documents";
+                if (!string.IsNullOrWhiteSpace(type))
+                {
+                    path += $"?type={Uri.EscapeDataString(type)}";
+                }
 
-            return await ProxyAssigned(path, HttpMethod.Post, form, ct);
+                return await ProxyAssigned(path, HttpMethod.Post, form, ct);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "تعذر رفع المستند عبر البوابة.",
+                    detail = ex.GetType().Name
+                });
+            }
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
