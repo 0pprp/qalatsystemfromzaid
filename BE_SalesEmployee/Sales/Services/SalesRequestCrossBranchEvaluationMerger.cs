@@ -181,7 +181,7 @@ namespace BE_SalesEmployee.Sales.Services
         private static JsonNode? CloneOrNull(JsonNode? node) =>
             node?.DeepClone();
 
-        private static void ApplyOverall(JsonObject item)
+        public static void ApplyOverall(JsonObject item)
         {
             int? worstScore = null;
             string? worstLevel = null;

@@ -388,8 +388,8 @@ namespace BE_SalesEmployee.Controllers
         }
 
         /// <summary>
-        /// Cross-branch evaluation across all ACL-allowed sales branches.
-        /// Prefer payload items (name/phone/key) so matching is not limited to the request's home branch catalog.
+        /// Evaluate each request only against its sourceCity / home province catalog.
+        /// Groups by sourceCityValue (one HTTP call per distinct province), ACL-gated.
         /// </summary>
         [HttpPost("sales-requests/evaluate")]
         public async Task<IActionResult> EvaluateAcrossBranches([FromBody] JsonElement body, CancellationToken ct)

@@ -44,8 +44,9 @@ namespace BE_SalesEmployee.Tests
         }
 
         [Fact]
-        public void Merge_Sums_ResultCounts_Across_Branches()
+        public void Merge_Legacy_Helper_Still_Sums_When_Called_Directly()
         {
+            // MergeSummaries remains for tooling; evaluate path uses CollectHomeBranchSummaries instead.
             var a = JsonNode.Parse("""
             {
               "items": [{
@@ -159,9 +160,49 @@ namespace BE_SalesEmployee.Tests
         }
 
         [Fact]
-        public void Merge_CrossBranch_Sums_Triple_Phone_Kinship_For_Same_Key()
+        public void Evaluate_Path_Home_Branch_Only_Ignores_Foreign_Chunk()
         {
-            // Najaf local empty + Basra/Baghdad matches for a Najaf-sourced request
+            var karkh = JsonNode.Parse("""
+            {
+              "items": [{
+                "key": "karkh:29",
+                "requestId": 29,
+                "sourceCityValue": "karkh",
+                "tripleName": { "resultCount": 0 },
+                "phone": { "resultCount": 1, "worstScore": 5, "worstRatingLevel": "Good", "worstRatingLabel": "جيد" },
+                "fatherGrandfather": { "resultCount": 2, "worstScore": 5, "worstRatingLevel": "Good", "worstRatingLabel": "جيد" }
+              }]
+            }
+            """)!;
+            var najafNoise = JsonNode.Parse("""
+            {
+              "items": [{
+                "key": "karkh:29",
+                "requestId": 29,
+                "sourceCityValue": "karkh",
+                "tripleName": { "resultCount": 10 },
+                "phone": { "resultCount": 1, "worstScore": -10, "worstRatingLevel": "Legal", "worstRatingLabel": "قانونية" },
+                "fatherGrandfather": { "resultCount": 7, "worstScore": -10, "worstRatingLevel": "Legal", "worstRatingLabel": "قانونية" }
+              }]
+            }
+            """)!;
+
+            var merged = SalesRequestEvaluationRouter.CollectHomeBranchSummaries(
+            [
+                ("karkh", karkh),
+                ("najaf", najafNoise)
+            ]);
+            var item = (merged["items"] as JsonArray)![0]!.AsObject();
+            Assert.Equal(1, item["phone"]!["resultCount"]!.GetValue<int>());
+            Assert.Equal(2, item["fatherGrandfather"]!["resultCount"]!.GetValue<int>());
+            Assert.Equal(5, item["overallScore"]!.GetValue<int>());
+            Assert.Equal("جيد", item["overallRatingLabel"]!.GetValue<string>());
+        }
+
+        [Fact]
+        public void Merge_CrossBranch_Sums_Triple_Phone_Kinship_For_Same_Key_Legacy_Only()
+        {
+            // Legacy MergeSummaries sums — not used by evaluate after home-province routing.
             var najaf = JsonNode.Parse("""
             {
               "items": [{

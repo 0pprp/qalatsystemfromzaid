@@ -481,22 +481,53 @@ namespace BE_SalesEmployee.Sales.Services
             string jsonBody,
             CancellationToken ct)
         {
-            var targets = await GetTargetsAsync(null, ct);
-            if (targets.Count == 0)
+            // Search scope = request home province only. ACL gates access to that branch;
+            // it does not expand evaluation across every allowed city.
+            var groups = SalesRequestEvaluationRouter.GroupItemsBySourceCity(jsonBody);
+            if (groups.Count == 0)
             {
+                return (400, new { message = "لا توجد عناصر تقييم مع محافظة مصدر صالحة." });
+            }
+
+            var work = new List<(AdminCity City, string Body)>();
+            var denied = 0;
+            foreach (var (cityValue, items) in groups)
+            {
+                var city = await FindAsync(cityValue, ct);
+                if (city is null)
+                {
+                    denied++;
+                    continue;
+                }
+
+                work.Add((city, SalesRequestEvaluationRouter.BuildEvaluatePayload(items).ToJsonString()));
+            }
+
+            if (work.Count == 0)
+            {
+                if (denied > 0)
+                {
+                    return (403, new { message = "غير مصرح بالوصول لمحافظة الطلب." });
+                }
+
                 return (400, new { message = "لا توجد محافظات مسموحة للتقييم." });
             }
 
-            var chunks = await Task.WhenAll(targets.Select(city =>
-                FetchJsonPostAsync(user, city, "sales-manager/sales-requests/evaluate", jsonBody, ct)));
-            var ok = chunks.Count(c => c is not null);
+            var chunks = await Task.WhenAll(work.Select(async w =>
+            {
+                var body = await FetchJsonPostAsync(
+                    user, w.City, "sales-manager/sales-requests/evaluate", w.Body, ct);
+                return (w.City.Value, body);
+            }));
+
+            var ok = chunks.Count(c => c.body is not null);
             if (ok == 0)
             {
-                return (502, new { message = "تعذر تقييم الطلبات عبر الفروع المسموحة." });
+                return (502, new { message = "تعذر تقييم الطلبات في محافظة المصدر." });
             }
 
             return (200, JsonSerializer.Deserialize<object>(
-                SalesRequestCrossBranchEvaluationMerger.MergeSummaries(chunks).ToJsonString())!);
+                SalesRequestEvaluationRouter.CollectHomeBranchSummaries(chunks).ToJsonString())!);
         }
 
         public async Task<(int Status, object? Body)> EvaluationHitsAcrossBranchesAsync(
@@ -504,10 +535,15 @@ namespace BE_SalesEmployee.Sales.Services
             string jsonBody,
             CancellationToken ct)
         {
-            var targets = await GetTargetsAsync(null, ct);
-            if (targets.Count == 0)
+            if (!SalesRequestEvaluationRouter.TryReadHitsSourceCity(jsonBody, out var sourceCity))
             {
-                return (400, new { message = "لا توجد محافظات مسموحة للبحث." });
+                return (400, new { message = "sourceCityValue مطلوب لتحميل نتائج التقييم." });
+            }
+
+            var city = await FindAsync(sourceCity, ct);
+            if (city is null)
+            {
+                return (403, new { message = "غير مصرح بالوصول لمحافظة الطلب." });
             }
 
             var page = 1;
@@ -527,35 +563,16 @@ namespace BE_SalesEmployee.Sales.Services
                 // keep defaults
             }
 
-            // Fetch a wide first window per branch then merge/page server-side (no N+1 per hit).
-            var fetchBody = jsonBody;
-            try
+            var body = await FetchJsonPostAsync(
+                user, city, "sales-manager/sales-requests/evaluation-hits", jsonBody, ct);
+            if (body is null)
             {
-                var obj = JsonNode.Parse(string.IsNullOrWhiteSpace(jsonBody) ? "{}" : jsonBody) as JsonObject
-                          ?? new JsonObject();
-                obj["page"] = 1;
-                obj["pageSize"] = Math.Clamp(pageSize * Math.Max(1, targets.Count), 1, 200);
-                fetchBody = obj.ToJsonString();
-            }
-            catch
-            {
-                // use original
-            }
-
-            var chunks = await Task.WhenAll(targets.Select(async city =>
-            {
-                var body = await FetchJsonPostAsync(
-                    user, city, "sales-manager/sales-requests/evaluation-hits", fetchBody, ct);
-                return (city.Value, city.Name, body);
-            }));
-
-            if (chunks.All(c => c.body is null))
-            {
-                return (502, new { message = "تعذر تحميل نتائج التقييم من الفروع." });
+                return (502, new { message = "تعذر تحميل نتائج التقييم من محافظة الطلب." });
             }
 
             return (200, JsonSerializer.Deserialize<object>(
-                SalesRequestCrossBranchEvaluationMerger.MergeHitsPages(chunks, page, pageSize).ToJsonString())!);
+                SalesRequestEvaluationRouter.HitsFromHomeBranch(
+                    city.Value, city.Name, body, page, pageSize).ToJsonString())!);
         }
 
         public async Task<(int Status, object? Body)> TransferProvinceAsync(

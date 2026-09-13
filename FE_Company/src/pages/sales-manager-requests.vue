@@ -294,11 +294,36 @@ function tabCount(value) {
 }
 
 async function load() {
+  clearAllEvaluationCaches()
   rows.value = await smGet(withCityQuery('sales-requests', cityValue.value)) || []
   await refreshSalesRequestUnread(cityValue.value)
   await loadEvaluations(rows.value)
   if (selected.value)
     await openDetails(selected.value, false)
+}
+
+function clearAllEvaluationCaches() {
+  evaluations.value = {}
+  hitsCache.value = {}
+  evalPanels.value = {}
+  evaluationsError.value = ''
+}
+
+function clearEvaluationCachesForRow(row) {
+  const key = evaluationKey(row)
+  if (!key)
+    return
+  const nextEvals = { ...evaluations.value }
+  delete nextEvals[key]
+  evaluations.value = nextEvals
+  const nextPanels = { ...evalPanels.value }
+  delete nextPanels[key]
+  evalPanels.value = nextPanels
+  const nextHits = { ...hitsCache.value }
+  for (const category of ['tripleName', 'phone', 'fatherGrandfather']) {
+    delete nextHits[hitCacheKey(row, category)]
+  }
+  hitsCache.value = nextHits
 }
 
 function evaluationKey(row) {
@@ -732,6 +757,7 @@ async function saveEdit() {
       })
       toast.success('تم تعديل الطلب')
     }
+    clearEvaluationCachesForRow(row)
     editOpen.value = false
     await load()
   }
@@ -760,6 +786,7 @@ async function doDelete() {
       ? `sales-requests/${id}`
       : `sales-requests/${encodeURIComponent(city)}/${id}`
     await smDelete(path)
+    clearEvaluationCachesForRow(row)
     deleteOpen.value = false
     deleteTarget.value = null
     if (detail.value?.id === id)
