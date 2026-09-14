@@ -5,8 +5,6 @@ import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
-import { createGlobalSalesManager } from '@/composables/globalManagersApi'
-import { globalManagerUserMessage, isGlobalSalesManagerType } from '@/utils/globalManagerMessages'
 import { fetchCities } from '@/composables/useCities'
 import { useToast } from '@/composables/useToast'
 import { creatableUserTypesFor, userFormErrorMessage } from '@/utils/userCreationRoles'
@@ -298,46 +296,28 @@ function openDeleteDialog(userID){
 async function addUser() {
   if (saving.value) return
 
+  const url = `${apiUrl}Users/Users_Create`
+  const data = new FormData()
+
+  Object.keys(formData.value).forEach(key => {
+    if (key !== 'userImage') { // Skip userImage from formData, we use selectedFile
+      data.append(key, formData.value[key] ?? '')
+    }
+  })
+  
+  if (selectedFile.value) {
+    const file = Array.isArray(selectedFile.value) ? selectedFile.value[0] : selectedFile.value
+    if (file) {
+      data.append('UserImage', file)
+    }
+  }
+
+  appendListIds(data)
+  appendFilterCities(data)
+
   saving.value = true
   formError.value = ''
   try {
-    if (isGlobalSalesManagerType(formData.value.userType)) {
-      const result = await createGlobalSalesManager(formData.value)
-      if (!result.ok) {
-        const msg = globalManagerUserMessage(result)
-        formError.value = msg
-        toast.error(msg)
-
-        return
-      }
-
-      const msg = globalManagerUserMessage(result)
-      toast.success(msg)
-      addDialog.value = false
-      await fetchUsers()
-
-      return
-    }
-
-    const url = `${apiUrl}Users/Users_Create`
-    const data = new FormData()
-
-    Object.keys(formData.value).forEach(key => {
-      if (key !== 'userImage') {
-        data.append(key, formData.value[key] ?? '')
-      }
-    })
-
-    if (selectedFile.value) {
-      const file = Array.isArray(selectedFile.value) ? selectedFile.value[0] : selectedFile.value
-      if (file) {
-        data.append('UserImage', file)
-      }
-    }
-
-    appendListIds(data)
-    appendFilterCities(data)
-
     const response = await axios.postForm(url, data, { headers: authOnlyHeaders() })
 
     usersData.value.push(response.data)

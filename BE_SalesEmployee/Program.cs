@@ -21,7 +21,6 @@ builder.Services.AddScoped<SalesFilterLoginService>();
 builder.Services.AddSingleton<SalesDevelopmentGuard>();
 builder.Services.AddScoped<IGlobalCustomerSearchService, GatewayGlobalCustomerSearchService>();
 builder.Services.AddScoped<ISalesManagerBranchAggregator, SalesManagerBranchAggregator>();
-builder.Services.AddScoped<IGlobalSalesManagerOrchestrator, GlobalSalesManagerOrchestrator>();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAuthorizationHandler, SalesRoleHandler>();
 builder.Services.AddAuthorization(options =>
@@ -38,66 +37,34 @@ builder.Services.AddAuthorization(options =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
     options.AddPolicy(SalesPolicies.ReadOtherSalesEmployees, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
-    options.AddPolicy("Company.MainAccountant", p =>
-        p.RequireAssertion(ctx =>
-            string.Equals(
-                ctx.User.FindFirst("UserType")?.Value,
-                "محاسب رئيسي",
-                StringComparison.Ordinal)));
 });
 
-const string companyJwtScheme = "CompanyJwt";
-var gatewayJwtKey = builder.Configuration["Jwt:Key"] ?? "SalesEmployeeGwSigningKey-2026-ChangeMe!!";
-IReadOnlyList<SecurityKey> companyKeys;
-try
-{
-    companyKeys = CompanyJwtSigningConfig.LoadRequired(builder.Configuration);
-}
-catch (InvalidOperationException ex)
-{
-    throw new InvalidOperationException(ex.Message, ex);
-}
-
+var jwtKey = builder.Configuration["Jwt:Key"] ?? "SalesEmployeeGwSigningKey-2026-ChangeMe!!";
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.MapInboundClaims = false;
         options.Events = new JwtBearerEvents
-        {
-            OnMessageReceived = context =>
-            {
-                var accessToken = context.Request.Query["access_token"];
-                if (!string.IsNullOrEmpty(accessToken) && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
-                {
-                    context.Token = accessToken;
-                }
-
-                return Task.CompletedTask;
-            }
-        };
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = false,
-            ValidateAudience = false,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ClockSkew = TimeSpan.Zero,
-            // Gateway-issued tokens only — never accept company keys here for SM APIs.
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(gatewayJwtKey))
-        };
-    })
-    .AddJwtBearer(companyJwtScheme, options =>
     {
-        options.MapInboundClaims = false;
-        options.TokenValidationParameters = new TokenValidationParameters
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            if (!string.IsNullOrEmpty(accessToken) && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+            {
+                context.Token = accessToken;
+            }
+
+            return Task.CompletedTask;
+        }
+    };
+    options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = false,
             ValidateAudience = false,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             ClockSkew = TimeSpan.Zero,
-            // Main Accountant tokens from BE_Company only — gateway Jwt:Key is NOT trusted.
-            IssuerSigningKeys = companyKeys
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
         };
     });
 

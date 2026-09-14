@@ -46,7 +46,6 @@ namespace BE_Company.Sales
                 return options;
             });
             services.AddScoped<SalesManagerQueryService>();
-            services.AddScoped<IGlobalSalesManagerRepository, GlobalSalesManagerRepository>();
             services.AddSignalR();
             services.AddScoped<ISalesLocationBroadcaster, SignalRSalesLocationBroadcaster>();
             services.AddHostedService<SalesShiftCutoffHostedService>();
