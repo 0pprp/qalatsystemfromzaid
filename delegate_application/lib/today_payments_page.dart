@@ -1,4 +1,5 @@
 import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'package:delegate_application/services/delegate_business_date_service.dart';
 import 'package:delegate_application/services/today_payments_logic.dart';
 import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
@@ -56,6 +57,7 @@ class TodayPaymentsPageState extends State<TodayPaymentsPage>
   void _onExternalRefresh() => reload();
 
   Future<void> reload() async {
+    await DelegateBusinessDateService.instance.ensureCurrentBusinessDay();
     final db = await DatabaseHelper().database;
     final customers = await db.query('Customer');
     final payments = await db.query('CustomerPayment');
@@ -152,6 +154,16 @@ class TodayPaymentsPageState extends State<TodayPaymentsPage>
               color: Colors.white,
               fontSize: 18,
               fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            IraqDate.formatBusinessDate(),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Cairo',
+              color: Colors.white.withValues(alpha: 0.9),
+              fontSize: 13,
             ),
           ),
           const SizedBox(height: 10),

@@ -18,6 +18,7 @@ import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:delegate_application/services/payment_sync_status.dart';
 import 'package:delegate_application/services/payment_validation.dart';
 import 'package:delegate_application/today_payments_page.dart';
+import 'package:delegate_application/ui/payment_success_feedback.dart';
 import 'package:delegate_application/utils/Formatters.dart';
 import 'package:delegate_application/utils/iraq_date.dart';
 import 'package:http/http.dart' as http;
@@ -395,8 +396,13 @@ class CustomerPageState extends State<Customer> {
   }
 
 // دالة لإضافة التسديد
+  bool _paymentSubmitting = false;
+
   Future<void> _addPayment(
       Client client, double amount, BuildContext context) async {
+    if (_paymentSubmitting) return;
+    _paymentSubmitting = true;
+    try {
     final amountError = PaymentValidation.validateAmount(amount);
     if (amountError != null) {
       _showMessage(amountError, context);
@@ -486,11 +492,32 @@ class CustomerPageState extends State<Customer> {
       await report.printReceipt(context);
     }
 
-    // Auto-sync if online; offline stays PendingSync for later.
     await PaymentSyncService.instance.syncPendingPayments();
     TodayPaymentsRefresh.notify();
+
+    if (context.mounted) {
+      final rows = await db.query(
+        'CustomerPayment',
+        where: 'ClientPaymentId = ?',
+        whereArgs: [clientPaymentId],
+        limit: 1,
+      );
+      final synced = rows.isNotEmpty &&
+          rows.first['SyncStatus']?.toString() == PaymentSyncStatus.synced;
+      if (!context.mounted) return;
+      if (synced) {
+        await PaymentSuccessFeedback.playServerSuccess(context);
+      } else {
+        // Offline or transient failure — never claim server success.
+        PaymentSuccessFeedback.showQueued(context);
+      }
+    }
+
     if (mounted) {
       await _calculatePayments(int.parse(selectedRepresentative!));
+    }
+    } finally {
+      _paymentSubmitting = false;
     }
   }
 
@@ -1031,7 +1058,9 @@ class CustomerPageState extends State<Customer> {
                     children: [
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: () async {
+                          onPressed: _paymentSubmitting
+                              ? null
+                              : () async {
                             double amount =
                                 double.tryParse(amountController.text) ?? 0.0;
                             final err = PaymentValidation.validateAmount(amount);

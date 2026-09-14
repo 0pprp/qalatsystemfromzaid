@@ -10,6 +10,7 @@ import 'package:delegate_application/TrustReceiptFormPage.dart';
 import 'package:delegate_application/delegate_sales_request_page.dart';
 import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/config/app_env.dart';
+import 'package:delegate_application/services/delegate_business_date_service.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:flutter/material.dart';
@@ -20,6 +21,7 @@ Future<void> main() async {
   AppEnv.logIfDebug();
   await PaymentSyncService.instance.start();
   await DelegateDataRefreshService.instance.start();
+  await DelegateBusinessDateService.instance.start();
   runApp(const MyApp());
 }
 

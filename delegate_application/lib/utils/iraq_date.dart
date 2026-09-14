@@ -1,13 +1,42 @@
-/// Iraq civil calendar helpers (Asia/Baghdad = UTC+3, no DST).
+/// Iraq civil calendar + collection business-day helpers.
+/// Asia/Baghdad = UTC+3 (no DST). Business day rolls at 03:00 Baghdad.
 class IraqDate {
   static const Duration iraqOffset = Duration(hours: 3);
+
+  /// Local hour (Baghdad) when a new business day begins.
+  static const int businessDayStartHour = 3;
 
   static DateTime nowIraq([DateTime? utcNow]) {
     final utc = (utcNow ?? DateTime.now()).toUtc();
     return utc.add(iraqOffset);
   }
 
+  /// Calendar Y-M-D for the collection business day in Baghdad.
+  ///
+  /// Window: [03:00, next-day 02:59:59].
+  /// Example: 2026-09-17 02:30 → 2026-09-16; 03:00 → 2026-09-17.
+  static DateTime businessDate([DateTime? utcNow]) {
+    final iraq = nowIraq(utcNow);
+    final localDay = DateTime(iraq.year, iraq.month, iraq.day);
+    if (iraq.hour < businessDayStartHour) {
+      return localDay.subtract(const Duration(days: 1));
+    }
+    return localDay;
+  }
+
+  static String formatBusinessDate([DateTime? utcNow]) {
+    final d = businessDate(utcNow);
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '$y-$m-$day';
+  }
+
+  /// Stable key for SharedPreferences / comparisons (yyyy-MM-dd).
+  static String businessDateKey([DateTime? utcNow]) => formatBusinessDate(utcNow);
+
   /// [createdAtUtcIso] is typically CustomerPayment.CreatedAtUtc (ISO-8601 UTC).
+  /// Matches the **business day** (03:00 boundary), not midnight calendar day.
   static bool isCreatedOnIraqDay(String? createdAtUtcIso, [DateTime? utcNow]) {
     if (createdAtUtcIso == null || createdAtUtcIso.trim().isEmpty) return false;
     DateTime parsed;
@@ -16,11 +45,11 @@ class IraqDate {
     } catch (_) {
       return false;
     }
-    final iraq = parsed.toUtc().add(iraqOffset);
-    final today = nowIraq(utcNow);
-    return iraq.year == today.year &&
-        iraq.month == today.month &&
-        iraq.day == today.day;
+    final paymentBiz = businessDate(parsed.toUtc());
+    final todayBiz = businessDate(utcNow);
+    return paymentBiz.year == todayBiz.year &&
+        paymentBiz.month == todayBiz.month &&
+        paymentBiz.day == todayBiz.day;
   }
 
   static String formatIraqTime(String? createdAtUtcIso) {

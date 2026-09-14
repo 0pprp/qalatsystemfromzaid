@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:delegate_application/AsyncIdChecker.dart';
 import 'package:delegate_application/AllSale.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
@@ -6,13 +9,14 @@ import 'package:delegate_application/customer.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/ui/app_safe_scaffold.dart';
+import 'package:delegate_application/ui/delegate_complaint_sheet.dart';
 import 'package:delegate_application/ui/main_bottom_nav.dart';
+import 'package:delegate_application/services/delegate_business_date_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:delegate_application/utils/Formatters.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
-import 'dart:convert';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -208,6 +212,7 @@ class _HomePageState extends State<HomePage> {
       fetchData();
     }
     if (index == 3) {
+      unawaited(DelegateBusinessDateService.instance.ensureCurrentBusinessDay());
       _todayKey.currentState?.reload();
     }
   }
@@ -333,6 +338,16 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: AppTheme.backgroundColor,
         extendBody: false,
         safeBottom: false,
+        floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
+        floatingActionButton: SafeArea(
+          child: FloatingActionButton(
+            heroTag: 'delegate_complaint_fab',
+            tooltip: 'شكوى إلى المدير المفوض',
+            backgroundColor: AppTheme.primaryColor,
+            onPressed: () => DelegateComplaintSheet.show(context),
+            child: const Icon(Icons.chat_bubble_outline, color: Colors.white),
+          ),
+        ),
         bottomNavigationBar: MainBottomNavBar(
           selectedIndex: _selectedIndex,
           onTap: _onItemTapped,
