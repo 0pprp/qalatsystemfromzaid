@@ -1,8 +1,10 @@
 using Dapper;
 using BE_Company.DTO;
 using BE_Company.IRepository;
+using BE_Company.Sales.Services;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using System.Data;
 using System.Threading;
 
@@ -12,70 +14,96 @@ namespace BE_Company.Repository
     {
         private readonly string _connectionString;
         private readonly IWebHostEnvironment _env;
+        private readonly ILogger<UsersRepository> _logger;
 
-        public UsersRepository(IConfiguration configuration, IWebHostEnvironment env)
+        public UsersRepository(IConfiguration configuration, IWebHostEnvironment env, ILogger<UsersRepository> logger)
         {
             _connectionString = configuration.GetConnectionString("DataBaseConnection")!;
             _env = env;
+            _logger = logger;
         }
 
         public async Task<UsersGetDTO?> Users_GetUserLoginAdmin(string? userName, string? password)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            var (code, user) = await ResolveLoginAsync(userName, password, UserLoginDiagnostics.IsAdminLoginRole);
+            if (code == LoginDiagnosticCode.LoginOk)
             {
-                var result = await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_GetUserLogin",
-                new
-                {
-                    UserName = userName,
-                    Password = password
-                },
-                commandType: CommandType.StoredProcedure);
-                if (result != null)
-                {
-                    if (result.UserType == "محاسب رئيسي" || result.UserType == "مدير فرع")
-                    {
-                        return result;
-                    }
-                }
-                return null;
+                _logger.LogInformation("LoginAdmin succeeded");
             }
+            else
+            {
+                _logger.LogDebug("LoginAdmin failed diagnostic={Code}", code);
+            }
+            return user;
         }
 
         public async Task<UsersGetDTO?> Users_GetUserLoginEmployee(string? userName, string? password)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            var (code, user) = await ResolveLoginAsync(userName, password, UserLoginDiagnostics.IsEmployeeLoginRole);
+            if (code == LoginDiagnosticCode.LoginOk)
             {
-                var result =  await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_GetUserLogin",
-                new
-                {
-                    UserName = userName,
-                    Password = password
-                },
-                commandType: CommandType.StoredProcedure);
-                if (result != null)
-                {
-                    if (result.UserType == "محاسب فرعي" || result.UserType == "مدير فرع" || result.UserType == "موظف مبيعات" || result.UserType == "مدير مبيعات" || result.UserType == "موظف فلترة المبيعات")
-                    {
-                        return result;
-                    }
-                }
-                return null;
+                _logger.LogInformation("LoginEmployee succeeded");
             }
+            else
+            {
+                _logger.LogDebug("LoginEmployee failed diagnostic={Code}", code);
+            }
+            return user;
         }
 
         public async Task<UsersGetDTO?> Users_GetUserLogin(string? userName, string? password)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            var (code, user) = await ResolveLoginAsync(userName, password, _ => true);
+            _logger.LogDebug("LoginRaw diagnostic={Code}", code);
+            return user;
+        }
+
+        private async Task<(LoginDiagnosticCode Code, UsersGetDTO? User)> ResolveLoginAsync(
+            string? userName,
+            string? password,
+            Func<string?, bool> roleAllowed)
+        {
+            var normalized = (userName ?? string.Empty).Trim();
+            if (normalized.Length == 0)
             {
-                var result = await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_GetUserLogin",
-                new
-                {
-                    UserName = userName,
-                    Password = password
-                },
-                commandType: CommandType.StoredProcedure);
-                return result;
+                return (LoginDiagnosticCode.UserNotFound, null);
             }
+
+            await using var connection = new SqlConnection(_connectionString);
+            var rows = (await connection.QueryAsync(new CommandDefinition(@"
+SELECT UserID, UserName, Password, UserType, UserState, UserImage, Email, PhoneNumber, Address
+FROM dbo.Users
+WHERE LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName)
+", new { UserName = normalized }))).ToList();
+
+            var candidates = rows.Select(r => new LoginCandidate
+            {
+                UserId = (int)r.UserID,
+                UserName = (string)(r.UserName ?? ""),
+                Password = (string)(r.Password ?? ""),
+                UserType = (string)(r.UserType ?? ""),
+                IsActive = UserLoginDiagnostics.IsActiveUserState(r.UserState)
+            }).ToList();
+
+            var (code, match) = UserLoginDiagnostics.Classify(candidates, password, roleAllowed);
+            if (code != LoginDiagnosticCode.LoginOk || match is null)
+            {
+                return (code, null);
+            }
+
+            var row = rows.First(r => (int)r.UserID == match.UserId);
+            return (code, new UsersGetDTO
+            {
+                UserID = match.UserId,
+                UserName = match.UserName,
+                UserType = match.UserType,
+                UserImage = row.UserImage as string,
+                Email = row.Email as string,
+                PhoneNumber = row.PhoneNumber as string,
+                Address = row.Address as string,
+                // Password intentionally omitted from returned DTO used for JWT.
+                Password = null
+            });
         }
 
         private static int _sessionColumnReady;
