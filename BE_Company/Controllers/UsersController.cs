@@ -152,6 +152,21 @@ namespace BE_Company.Controllers
                     return Unauthorized("User is not authenticated.");
                 }
 
+                // Prefer validated principal claims; Items may come from unvalidated JWT parse.
+                var actorUserType = User.FindFirst("UserType")?.Value
+                    ?? HttpContext.Items["UserType"] as string;
+                if (string.IsNullOrWhiteSpace(usersPostDTO.UserType))
+                {
+                    return BadRequest(new { message = "نوع المستخدم مطلوب" });
+                }
+                if (!UserCreationAuthorization.CanAssignUserType(actorUserType, usersPostDTO.UserType))
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new
+                    {
+                        message = "غير مصرح بإنشاء هذا النوع من المستخدمين"
+                    });
+                }
+
                 var userName = usersPostDTO.UserName?.Trim();
                 if (string.IsNullOrWhiteSpace(userName))
                 {
@@ -193,6 +208,21 @@ namespace BE_Company.Controllers
                 if (!authenticatedUserID.HasValue)
                 {
                     return Unauthorized("User is not authenticated.");
+                }
+
+                // Prefer validated principal claims; Items may come from unvalidated JWT parse.
+                var actorUserType = User.FindFirst("UserType")?.Value
+                    ?? HttpContext.Items["UserType"] as string;
+                if (string.IsNullOrWhiteSpace(usersPutDTO.UserType))
+                {
+                    return BadRequest(new { message = "نوع المستخدم مطلوب" });
+                }
+                if (!UserCreationAuthorization.CanAssignUserType(actorUserType, usersPutDTO.UserType))
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new
+                    {
+                        message = "غير مصرح بتعيين هذا النوع من المستخدمين"
+                    });
                 }
 
                 var userName = usersPutDTO.UserName?.Trim();

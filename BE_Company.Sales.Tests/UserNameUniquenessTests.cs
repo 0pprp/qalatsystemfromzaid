@@ -124,6 +124,7 @@ namespace BE_Company.Sales.Tests
                 HttpContext = new DefaultHttpContext()
             };
             controller.HttpContext.Items["UserID"] = "1";
+            controller.HttpContext.Items["UserType"] = "محاسب رئيسي";
             return controller;
         }
 

@@ -6,6 +6,8 @@ import { computed, onMounted, ref } from 'vue'
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import { fetchCities } from '@/composables/useCities'
+import { useToast } from '@/composables/useToast'
+import { creatableUserTypesFor, userFormErrorMessage } from '@/utils/userCreationRoles'
 import * as XLSX from 'xlsx'
 
 const apiUrl = localStorage.getItem('LinkCity')
@@ -13,15 +15,12 @@ const apiUrlImage = apiUrl.replace('api/', 'Images/')
 const currentUserID = ref(0)
 const usersData = ref([])
 const loading = ref(false)
+const saving = ref(false)
+const formError = ref('')
 const userCount = ref(0)
-const userTypeOptions = [
-  'محاسب رئيسي',
-  'محاسب فرعي',
-  'مدير فرع',
-  'موظف مبيعات',
-  'موظف فلترة المبيعات',
-  'متابع',
-]
+const toast = useToast()
+const actorUserType = localStorage.getItem('UserType') || ''
+const userTypeOptions = computed(() => creatableUserTypesFor(actorUserType))
 
 const filters = ref({
   textSearch: '',
@@ -66,6 +65,13 @@ const listsLoading = ref(false)
 const availableFilterCities = ref([])
 const selectedFilterCityValues = ref([])
 const filterCitiesLoading = ref(false)
+
+/** Auth only — never force Content-Type (breaks multipart FormData boundary). */
+function authOnlyHeaders() {
+  const h = getAuthHeaders()
+  
+  return h.Authorization ? { Authorization: h.Authorization } : {}
+}
 
 const isFollowerType = computed(() => {
   const t = formData.value.userType || ''
@@ -244,6 +250,8 @@ function openAddDialog() {
   selectedListIds.value = []
   listSearch.value = ''
   selectedFilterCityValues.value = []
+  formError.value = ''
+  saving.value = false
   currentUserID.value = null
   addDialog.value = true
   fetchAvailableLists()
@@ -260,6 +268,8 @@ async function openEditDialog(userID) {
     formData.value.password = ''
     selectedFile.value = null
     listSearch.value = ''
+    formError.value = ''
+    saving.value = false
     editDialog.value = true
     await fetchAvailableLists()
     await fetchFilterCitiesCatalog()
@@ -284,13 +294,14 @@ function openDeleteDialog(userID){
 }
 
 async function addUser() {
-  const authHeader = getAuthHeaders()
+  if (saving.value) return
+
   const url = `${apiUrl}Users/Users_Create`
   const data = new FormData()
 
   Object.keys(formData.value).forEach(key => {
     if (key !== 'userImage') { // Skip userImage from formData, we use selectedFile
-      data.append(key, formData.value[key])
+      data.append(key, formData.value[key] ?? '')
     }
   })
   
@@ -304,19 +315,28 @@ async function addUser() {
   appendListIds(data)
   appendFilterCities(data)
 
+  saving.value = true
+  formError.value = ''
   try {
-    const response = await axios.postForm(url, data, { headers: { 'Content-Type': 'multipart/form-data', ...authHeader } })
+    const response = await axios.postForm(url, data, { headers: authOnlyHeaders() })
 
     usersData.value.push(response.data)
     userCount.value = usersData.value.length
     addDialog.value = false
+    toast.success('تم إنشاء المستخدم بنجاح')
   } catch (error) {
     console.error(error)
+    const msg = userFormErrorMessage(error)
+    formError.value = msg
+    toast.error(msg)
+  } finally {
+    saving.value = false
   }
 }
 
 async function updateUser() {
-  const authHeader = getAuthHeaders()
+  if (saving.value) return
+
   const url = `${apiUrl}Users/Users_Update/${currentUserID.value}`
   const data = new FormData()
 
@@ -337,13 +357,21 @@ async function updateUser() {
   appendListIds(data)
   appendFilterCities(data)
 
+  saving.value = true
+  formError.value = ''
   try {
-    await axios.putForm(url, data, { headers: { 'Content-Type': 'multipart/form-data', ...authHeader } })
+    await axios.putForm(url, data, { headers: authOnlyHeaders() })
     await fetchUsers()
     editDialog.value = false
     selectedFile.value = null
+    toast.success('تم تحديث المستخدم بنجاح')
   } catch (error) {
     console.error(error)
+    const msg = userFormErrorMessage(error)
+    formError.value = msg
+    toast.error(msg)
+  } finally {
+    saving.value = false
   }
 }
 
@@ -697,6 +725,18 @@ onMounted(() => {
                 />
               </VCol>
               <VCol
+                v-if="formError"
+                cols="12"
+              >
+                <VAlert
+                  type="error"
+                  variant="tonal"
+                  density="compact"
+                >
+                  {{ formError }}
+                </VAlert>
+              </VCol>
+              <VCol
                 v-if="isFollowerType"
                 cols="12"
               >
@@ -867,6 +907,8 @@ onMounted(() => {
                   elevation="4"
                   prepend-icon="tabler-check"
                   type="submit"
+                  :loading="saving"
+                  :disabled="saving"
                 >
                   حفظ
                 </VBtn>
@@ -989,6 +1031,18 @@ onMounted(() => {
                   prepend-inner-icon="tabler-category"
                   label="نوع المستخدم"
                 />
+              </VCol>
+              <VCol
+                v-if="formError"
+                cols="12"
+              >
+                <VAlert
+                  type="error"
+                  variant="tonal"
+                  density="compact"
+                >
+                  {{ formError }}
+                </VAlert>
               </VCol>
               <VCol
                 v-if="isFollowerType"
@@ -1165,6 +1219,8 @@ onMounted(() => {
                   color="primary"
                   prepend-icon="tabler-check"
                   type="submit"
+                  :loading="saving"
+                  :disabled="saving"
                 >
                   تعديل
                 </VBtn>
