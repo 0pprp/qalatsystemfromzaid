@@ -122,6 +122,67 @@ public sealed class UserLoginDiagnosticsTests
         Assert.Equal(LoginDiagnosticCode.UserNotFound, code);
     }
 
+    /// <summary>
+    /// Basra regression: active محاسب فرعي + active محاسب رئيسي sharing a trimmed username.
+    /// Admin login must ignore the non-admin role when evaluating ambiguity/credentials.
+    /// </summary>
+    [Fact]
+    public void Basra_Admin_Ignores_Active_SubAccountant_Same_Trimmed_Name()
+    {
+        var rows = new[]
+        {
+            Row(10, "كرار ", "shared-or-any", "محاسب فرعي", true),
+            Row(11, "كرار", "main-secret", "محاسب رئيسي", true),
+        };
+        var (code, user) = UserLoginDiagnostics.Classify(
+            rows, "main-secret", UserLoginDiagnostics.IsAdminLoginRole);
+        Assert.Equal(LoginDiagnosticCode.LoginOk, code);
+        Assert.Equal(11, user!.UserId);
+        Assert.Equal("محاسب رئيسي", user.UserType);
+    }
+
+    [Fact]
+    public void Basra_Admin_Same_Password_Still_Succeeds_Because_SubAccountant_Not_Eligible()
+    {
+        var rows = new[]
+        {
+            Row(10, "كرار ", "same", "محاسب فرعي", true),
+            Row(11, "كرار", "same", "محاسب رئيسي", true),
+        };
+        var (code, user) = UserLoginDiagnostics.Classify(
+            rows, "same", UserLoginDiagnostics.IsAdminLoginRole);
+        Assert.Equal(LoginDiagnosticCode.LoginOk, code);
+        Assert.Equal(11, user!.UserId);
+    }
+
+    [Fact]
+    public void Basra_Employee_Uses_SubAccountant_Independently()
+    {
+        var rows = new[]
+        {
+            Row(10, "كرار ", "emp-secret", "محاسب فرعي", true),
+            Row(11, "كرار", "main-secret", "محاسب رئيسي", true),
+        };
+        var (code, user) = UserLoginDiagnostics.Classify(
+            rows, "emp-secret", UserLoginDiagnostics.IsEmployeeLoginRole);
+        Assert.Equal(LoginDiagnosticCode.LoginOk, code);
+        Assert.Equal(10, user!.UserId);
+        Assert.Equal("محاسب فرعي", user.UserType);
+    }
+
+    [Fact]
+    public void Two_Eligible_Active_Same_Password_Still_DuplicateAmbiguous()
+    {
+        var rows = new[]
+        {
+            Row(1, "dup", "secret", "محاسب رئيسي", true),
+            Row(2, "dup", "secret", "مدير فرع", true),
+            Row(3, "dup", "secret", "محاسب فرعي", true), // ignored on admin path
+        };
+        var (code, _) = UserLoginDiagnostics.Classify(rows, "secret", UserLoginDiagnostics.IsAdminLoginRole);
+        Assert.Equal(LoginDiagnosticCode.DuplicateAmbiguous, code);
+    }
+
     [Theory]
     [InlineData(true, true)]
     [InlineData(1, true)]

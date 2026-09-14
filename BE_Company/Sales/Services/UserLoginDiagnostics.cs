@@ -59,7 +59,8 @@ public static class UserLoginDiagnostics
 
     /// <summary>
     /// Deterministic selection among rows sharing a username.
-    /// Prefers a single active credential match; never QueryFirstOrDefault roulette.
+    /// Ambiguity is evaluated only among active rows that are eligible for this endpoint's roles
+    /// and match the supplied credentials — never QueryFirstOrDefault roulette.
     /// </summary>
     public static (LoginDiagnosticCode Code, LoginCandidate? User) Classify(
         IReadOnlyList<LoginCandidate> rows,
@@ -71,13 +72,19 @@ public static class UserLoginDiagnostics
             return (LoginDiagnosticCode.UserNotFound, null);
         }
 
-        var active = rows.Where(r => r.IsActive).ToList();
-        if (active.Count == 0)
+        var eligible = rows.Where(r => roleAllowed(r.UserType)).ToList();
+        if (eligible.Count == 0)
+        {
+            return (LoginDiagnosticCode.WrongRole, null);
+        }
+
+        var activeEligible = eligible.Where(r => r.IsActive).ToList();
+        if (activeEligible.Count == 0)
         {
             return (LoginDiagnosticCode.UserDisabled, null);
         }
 
-        var passwordMatches = active
+        var passwordMatches = activeEligible
             .Where(r => string.Equals(r.Password, password ?? "", StringComparison.Ordinal))
             .ToList();
 
@@ -88,17 +95,10 @@ public static class UserLoginDiagnostics
 
         if (passwordMatches.Count > 1)
         {
-            // Ambiguous only when multiple active rows share username+password.
             return (LoginDiagnosticCode.DuplicateAmbiguous, null);
         }
 
-        var user = passwordMatches[0];
-        if (!roleAllowed(user.UserType))
-        {
-            return (LoginDiagnosticCode.WrongRole, null);
-        }
-
-        return (LoginDiagnosticCode.LoginOk, user);
+        return (LoginDiagnosticCode.LoginOk, passwordMatches[0]);
     }
 
     public static bool IsAdminLoginRole(string? userType) =>
