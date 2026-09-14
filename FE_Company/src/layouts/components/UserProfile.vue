@@ -2,6 +2,7 @@
 import axios from "axios"
 import { jwtDecode } from "jwt-decode"
 import { computed, ref } from 'vue'
+import { findProvince } from '@/utils/provinceCatalog'
 import { useCities, isLocalLab, isDemo, LOCAL_API, DEMO_API } from '@/composables/useCities'
 import { useUserRole } from '@/composables/useUserRole'
 
@@ -35,9 +36,10 @@ const changeCity = async city => {
 
   const selectedApi = isDemo()
     ? DEMO_API
-    : (isLocalLab() ? LOCAL_API : city.link)
-  const cityName = city.name
-  const database = city.database
+    : (isLocalLab() ? LOCAL_API : (findProvince(provinces.value, city.value ?? city)?.link || city.link))
+  const matched = findProvince(provinces.value, city.value ?? city) || city
+  const cityName = matched.name
+  const database = matched.database
 
   if (!selectedApi) {
     showAlert.value = true

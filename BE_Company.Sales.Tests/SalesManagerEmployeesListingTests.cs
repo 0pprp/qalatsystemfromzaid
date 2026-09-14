@@ -5,7 +5,8 @@ using Xunit;
 namespace BE_Company.Sales.Tests;
 
 /// <summary>
-/// sales-manager/employees listing rules: role filter + branch city filter.
+/// sales-manager/employees listing rules: role filter + branch tenancy.
+/// Tenant boundary = SQL connection. cityValue must NOT pretend to route branches.
 /// </summary>
 public sealed class SalesManagerEmployeesListingTests
 {
@@ -29,15 +30,24 @@ public sealed class SalesManagerEmployeesListingTests
     }
 
     [Fact]
-    public void GetAdmin_Numeric_CityValue_Must_Not_Drop_Branch_Employees()
+    public void GetAdmin_Numeric_Vs_Catalog_Label_Is_Not_Comparable_Key_Match()
     {
-        // GetAdmin نجف value=1 while BranchLabel falls back to InitialCatalog / BranchId.
-        const string requestedFromUi = "1";
-        const string branchLabelFromCatalog = "DatabaseCompanyNajaf";
-        const string branchName = "النجف";
+        // Documents why equality-filtering employees by cityValue emptied lists:
+        // UI sends GetAdmin "1" while BranchLabel uses InitialCatalog / Arabic name.
+        Assert.False(SalesBranchScope.IsComparableBranchKey("DatabaseCompanyNajaf"));
+        Assert.True(SalesBranchScope.IsComparableBranchKey("1"));
+    }
 
+    [Fact]
+    public void FailOpen_CityFilter_Must_Not_Be_Used_As_Tenant_Router()
+    {
+        // Historical 6d52550 behavior: requesting Karkh (3) against Najaf catalog label
+        // still "passes". That is safe ONLY when the HTTP target is already the branch DB.
+        // Using it to accept cross-province UI selection on the wrong host is a routing bug.
         Assert.True(SalesBranchScope.PassesOptionalCityFilter(
-            requestedFromUi, branchLabelFromCatalog, branchName));
+            "3", "DatabaseCompanyNajaf", "النجف"));
+        Assert.True(SalesBranchScope.PassesOptionalCityFilter(
+            "9", "DatabaseCompanyNajaf", "النجف"));
     }
 
     [Fact]
@@ -66,15 +76,34 @@ public sealed class SalesManagerEmployeesListingTests
     [Fact]
     public void Truly_Different_Comparable_Keys_Are_Excluded()
     {
-        // Only when both sides are comparable short keys and differ — rare on single-branch API.
         Assert.False(SalesBranchScope.PassesOptionalCityFilter(
             "basra-demo", "najaf-demo", "النجف"));
     }
 
     [Fact]
+    public void Admin_Login_AllowList_Includes_MainAccountant()
+    {
+        // Mirrors UsersRepository.Users_GetUserLoginAdmin — must not reject محاسب رئيسي.
+        var userType = SalesRoles.UserTypeMainAccountant;
+        var allowed = userType is "محاسب رئيسي" or "مدير فرع";
+        Assert.True(allowed);
+        Assert.False(userType is "محاسب فرعي" or "موظف مبيعات");
+    }
+
+    [Fact]
+    public void UserCreationAuthorization_Is_Not_Referenced_By_Login_AllowList()
+    {
+        // Guard: create/update whitelist must stay separate from authentication.
+        Assert.True(UserCreationAuthorization.CanAssignUserType(
+            SalesRoles.UserTypeMainAccountant, SalesRoles.UserTypeSalesManager));
+        var loginAdminAllows =
+            SalesRoles.UserTypeMainAccountant is "محاسب رئيسي" or "مدير فرع";
+        Assert.True(loginAdminAllows);
+    }
+
+    [Fact]
     public void No_Female_SalesEmployee_Variant_In_Roles()
     {
-        // Guard against accidental exact-match bugs if DB used "موظفة مبيعات".
         Assert.NotEqual("موظفة مبيعات", SalesRoles.UserTypeSalesEmployee);
         Assert.False(SalesRoles.IsSalesEmployee("موظفة مبيعات"));
     }

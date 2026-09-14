@@ -69,16 +69,10 @@ namespace BE_Company.Sales.Controllers
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
+            // Branch SQL connection is the tenancy boundary. Gateway selects the branch URL;
+            // do not equality-filter rows by GetAdmin numeric ids (that emptied or mis-routed lists).
+            _ = cityValue;
             var rows = await _query.ListEmployeesAsync(shiftStatus, locationStatus, ct);
-            // Branch DB is tenancy. cityValue is for gateway fan-out; do not equality-drop vs GetAdmin ids.
-            var branchCity = rows.FirstOrDefault()?.CityValue;
-            var branchName = rows.FirstOrDefault()?.CityName;
-            if (!string.IsNullOrWhiteSpace(cityValue)
-                && !SalesBranchScope.PassesOptionalCityFilter(cityValue, branchCity, branchName))
-            {
-                rows = [];
-            }
-
             return Ok(rows);
         }
 
@@ -87,15 +81,8 @@ namespace BE_Company.Sales.Controllers
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
+            _ = cityValue;
             var rows = await _query.ListLiveLocationsAsync(ct);
-            var branchCity = rows.FirstOrDefault()?.CityValue;
-            var branchName = rows.FirstOrDefault()?.CityName;
-            if (!string.IsNullOrWhiteSpace(cityValue)
-                && !SalesBranchScope.PassesOptionalCityFilter(cityValue, branchCity, branchName))
-            {
-                rows = [];
-            }
-
             return Ok(rows);
         }
 

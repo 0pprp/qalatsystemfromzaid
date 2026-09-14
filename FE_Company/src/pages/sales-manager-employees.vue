@@ -2,16 +2,43 @@
 import { onMounted, ref } from 'vue'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { branchRowKey, locationStatusLabel, smGetEmployees } from '@/composables/salesManagerApi'
+import { createRequestGeneration } from '@/utils/provinceCatalog'
 
 const rows = ref([])
 const cityValue = ref('')
 const shiftStatus = ref('')
+const loading = ref(false)
+const loadError = ref('')
+const requestGen = createRequestGeneration()
 
 async function load() {
-  const q = []
-  if (shiftStatus.value)
-    q.push(`shiftStatus=${encodeURIComponent(shiftStatus.value)}`)
-  rows.value = await smGetEmployees(cityValue.value, q.join('&'))
+  const token = requestGen.next()
+  loading.value = true
+  loadError.value = ''
+  // Clear immediately so Najaf rows never linger while Karkh/Basra loads.
+  rows.value = []
+
+  try {
+    const q = []
+    if (shiftStatus.value)
+      q.push(`shiftStatus=${encodeURIComponent(shiftStatus.value)}`)
+    const data = await smGetEmployees(cityValue.value, q.join('&'))
+    if (!requestGen.isCurrent(token))
+      return
+    rows.value = data
+  }
+  catch (err) {
+    if (!requestGen.isCurrent(token))
+      return
+    rows.value = []
+    loadError.value = err?.response?.data?.message
+      || err?.message
+      || 'تعذر تحميل الموظفين'
+  }
+  finally {
+    if (requestGen.isCurrent(token))
+      loading.value = false
+  }
 }
 
 onMounted(load)
@@ -47,6 +74,20 @@ onMounted(load)
         />
       </VCol>
     </VRow>
+    <div
+      v-if="loading"
+      class="text-medium-emphasis mb-3"
+    >
+      جاري التحميل...
+    </div>
+    <VAlert
+      v-if="loadError"
+      type="error"
+      variant="tonal"
+      class="mb-3"
+    >
+      {{ loadError }}
+    </VAlert>
     <VTable>
       <thead>
         <tr>

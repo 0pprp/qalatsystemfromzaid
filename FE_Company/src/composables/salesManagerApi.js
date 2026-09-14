@@ -84,30 +84,40 @@ export async function smGetEmployees(cityValue, extraQuery = '') {
     return `${path}${path.includes('?') ? '&' : '?'}${extra}`
   }
 
+  // Production: one canonical cityValue → one gateway/branch call.
+  // Demo may retry alternate keys when the catalog uses DatabaseCompanyNajaf_DEMO.
   const keys = []
   const add = value => {
     if (value == null)
       return
-    const key = String(value)
-    if (!keys.includes(key))
+    const key = String(value).trim()
+    if (key !== '' && !keys.includes(key))
       keys.push(key)
   }
 
-  add(cityValue || '')
+  add(cityValue)
   if (isDemo()) {
     add(DEMO_BRANCH_VALUE)
     add('najaf-demo')
-    add('')
+  }
+
+  // Empty cityValue = fan-out all branches (central manager "الكل")
+  if (!keys.length) {
+    return normalizeEmployeeRows(await smGet(apply('employees')))
   }
 
   let last = []
   let lastError = null
-  let gotOk = false
   for (const key of keys) {
     try {
-      const path = apply(key ? withCityQuery('employees', key) : 'employees')
+      const path = apply(withCityQuery('employees', key))
       last = normalizeEmployeeRows(await smGet(path))
-      gotOk = true
+
+      // Do not fall through to another key after a successful empty branch response
+      // in production — that previously could surface Najaf via demo-style retries.
+      if (!isDemo())
+        return last
+
       if (last.length)
         return last
     }
@@ -118,7 +128,7 @@ export async function smGetEmployees(cityValue, extraQuery = '') {
     }
   }
 
-  if (!gotOk && lastError)
+  if (lastError)
     throw lastError
 
   return last

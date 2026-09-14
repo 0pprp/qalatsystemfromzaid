@@ -8,6 +8,7 @@ namespace BE_SalesEmployee.Sales.Services
     {
         Task<IReadOnlyList<AdminCity>> BranchesAsync(CancellationToken ct);
         Task<(int Status, object? Body)> GetAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct);
+        Task<(int Status, object? Body)> GetExactBranchArrayAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> GetOneAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> SumCountAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> PostFanoutAsync(GatewayUser user, string? cityValue, string companyPath, string jsonBody, CancellationToken ct);
@@ -869,6 +870,19 @@ namespace BE_SalesEmployee.Sales.Services
             string companyPath,
             CancellationToken ct)
         {
+            var (_, rows) = await TryFetchArrayAsync(user, city, companyPath, ct);
+            return rows;
+        }
+
+        /// <summary>
+        /// Soft-fail for fan-out (skip dead branches). Exact routing uses the bool.
+        /// </summary>
+        private async Task<(bool Ok, List<JsonNode> Rows)> TryFetchArrayAsync(
+            GatewayUser user,
+            AdminCity city,
+            string companyPath,
+            CancellationToken ct)
+        {
             try
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -877,14 +891,14 @@ namespace BE_SalesEmployee.Sales.Services
                     city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
                 if (!response.IsSuccessStatusCode)
                 {
-                    return [];
+                    return (false, []);
                 }
 
                 var raw = await response.Content.ReadAsStringAsync(ct);
                 var node = JsonNode.Parse(string.IsNullOrWhiteSpace(raw) ? "[]" : raw);
                 if (node is not JsonArray array)
                 {
-                    return [];
+                    return (false, []);
                 }
 
                 var rows = new List<JsonNode>();
@@ -897,31 +911,55 @@ namespace BE_SalesEmployee.Sales.Services
                     }
                 }
 
-                return rows;
+                return (true, rows);
             }
             catch
             {
-                return [];
+                return (false, []);
             }
         }
 
         private async Task<IReadOnlyList<AdminCity>> GetTargetsAsync(string? cityValue, CancellationToken ct)
         {
             var cities = await _cities.GetSalesBranchesAsync(ct);
+            return SalesBranchResolver.ResolveTargets(cities, cityValue);
+        }
+
+        /// <summary>
+        /// Exact one-branch array fetch. Unknown city → 404 (no Najaf fallback).
+        /// Unreachable branch → 502 (never disguise as empty list / invalid credentials).
+        /// </summary>
+        public async Task<(int Status, object? Body)> GetExactBranchArrayAsync(
+            GatewayUser user,
+            string cityValue,
+            string companyPath,
+            CancellationToken ct)
+        {
             if (string.IsNullOrWhiteSpace(cityValue))
             {
-                return cities;
+                return (400, new { message = "يجب تحديد المحافظة." });
             }
 
-            return cities.Where(c =>
-                string.Equals(c.Value, cityValue, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(c.Name, cityValue, StringComparison.OrdinalIgnoreCase)).ToList();
+            var cities = await _cities.GetSalesBranchesAsync(ct);
+            var city = SalesBranchResolver.ResolveExact(cities, cityValue);
+            if (city is null)
+            {
+                return (404, new { message = "المحافظة غير موجودة أو غير مسموحة لمدير المبيعات." });
+            }
+
+            var (ok, rows) = await TryFetchArrayAsync(user, city, companyPath, ct);
+            if (!ok)
+            {
+                return (502, new { message = "تعذر الاتصال بخادم المحافظة." });
+            }
+
+            return (200, rows);
         }
 
         private async Task<AdminCity?> FindAsync(string cityValue, CancellationToken ct)
         {
-            var matches = await GetTargetsAsync(cityValue, ct);
-            return matches.FirstOrDefault();
+            var cities = await _cities.GetSalesBranchesAsync(ct);
+            return SalesBranchResolver.ResolveExact(cities, cityValue);
         }
 
         private static object? Stamp(string raw, AdminCity city)

@@ -110,7 +110,7 @@ async function fetchCities() {
       localStorage.setItem(CACHE_KEY, rawJson)
 
       provinces.value = data.map(item => ({
-        value: item.value,
+        value: item.value == null ? '' : String(item.value),
         name: item.name,
         database: item.database,
         link: resolveCityLink(item.link),
@@ -150,7 +150,7 @@ function loadFromCache() {
       const data = JSON.parse(cachedJson)
       if (Array.isArray(data) && data.length > 0) {
         return data.map(item => ({
-          value: item.value,
+          value: item.value == null ? '' : String(item.value),
           name: item.name,
           database: item.database,
           link: resolveCityLink(item.link),
@@ -167,7 +167,12 @@ function loadFromCache() {
  * الحصول على رابط API لمحافظة معينة
  */
 function getCityLink(cityValue) {
-  const city = provinces.value.find(p => p.value === cityValue)
+  const key = cityValue == null ? '' : String(cityValue).trim()
+  const city = provinces.value.find(p =>
+    String(p.value) === key
+    || String(p.name || '') === key
+    || String(p.database || '') === key)
+
   return city?.link || null
 }
 
@@ -175,7 +180,12 @@ function getCityLink(cityValue) {
  * الحصول على اسم المحافظة
  */
 function getCityName(cityValue) {
-  const city = provinces.value.find(p => p.value === cityValue)
+  const key = cityValue == null ? '' : String(cityValue).trim()
+  const city = provinces.value.find(p =>
+    String(p.value) === key
+    || String(p.name || '') === key
+    || String(p.database || '') === key)
+
   return city?.name || ''
 }
 
@@ -183,7 +193,12 @@ function getCityName(cityValue) {
  * الحصول على اسم قاعدة البيانات
  */
 function getCityDatabase(cityValue) {
-  const city = provinces.value.find(p => p.value === cityValue)
+  const key = cityValue == null ? '' : String(cityValue).trim()
+  const city = provinces.value.find(p =>
+    String(p.value) === key
+    || String(p.name || '') === key
+    || String(p.database || '') === key)
+
   return city?.database || ''
 }
 

@@ -92,7 +92,7 @@ namespace BE_Company.Sales.Services
             var points = OfficialSlot.SelectRoutePoints(await _read.GetRouteAsync(employeeId, fromUtc, toUtc, _options.MaxRoutePoints, ct))
                 .Select(AsIndependentUtcPin)
                 .ToList();
-            var cityName = _configuration["SalesManagement:BranchName"] ?? "النجف";
+            var (_, cityName) = BranchLabel();
             return new SalesManagerRouteDTO
             {
                 Employee = new SalesManagerRouteEmployeeDTO { Id = emp.EmployeeId, Name = emp.EmployeeName, City = cityName },
@@ -236,13 +236,19 @@ namespace BE_Company.Sales.Services
         private (string CityValue, string CityName) BranchLabel()
         {
             var cityValue = _configuration["SalesManagement:BranchId"];
-            var cityName = _configuration["SalesManagement:BranchName"] ?? "النجف";
+            var cityName = _configuration["SalesManagement:BranchName"];
             if (string.IsNullOrWhiteSpace(cityValue))
             {
                 var cs = _configuration.GetConnectionString("DataBaseConnection");
                 cityValue = string.IsNullOrWhiteSpace(cs)
                     ? "branch"
                     : new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(cs).InitialCatalog;
+            }
+
+            // Never hardcode النجف — wrong BranchName would label every province as Najaf.
+            if (string.IsNullOrWhiteSpace(cityName))
+            {
+                cityName = cityValue;
             }
 
             return (cityValue, cityName);

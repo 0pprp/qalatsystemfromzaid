@@ -40,19 +40,40 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [HttpGet("employees")]
-        public Task<IActionResult> Employees(
+        public async Task<IActionResult> Employees(
             [FromQuery] string? cityValue,
             [FromQuery] string? shiftStatus,
             [FromQuery] string? locationStatus,
             CancellationToken ct)
         {
-            var q = Query(("cityValue", null), ("shiftStatus", shiftStatus), ("locationStatus", locationStatus));
-            return ListAsync(cityValue, "sales-manager/employees" + q, ct);
+            var user = TokenService.FromPrincipal(User);
+            var path = "sales-manager/employees" + Query(
+                ("shiftStatus", shiftStatus),
+                ("locationStatus", locationStatus));
+
+            // Selected province must pick ONE branch DB — never silently reuse Najaf.
+            if (!string.IsNullOrWhiteSpace(cityValue))
+            {
+                var (status, payload) = await _aggregator.GetExactBranchArrayAsync(user, cityValue, path, ct);
+                return StatusCode(status, payload);
+            }
+
+            return await ListAsync(null, path, ct);
         }
 
         [HttpGet("live-locations")]
-        public Task<IActionResult> LiveLocations([FromQuery] string? cityValue, CancellationToken ct) =>
-            ListAsync(cityValue, "sales-manager/live-locations", ct);
+        public async Task<IActionResult> LiveLocations([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            const string path = "sales-manager/live-locations";
+            if (!string.IsNullOrWhiteSpace(cityValue))
+            {
+                var (status, payload) = await _aggregator.GetExactBranchArrayAsync(user, cityValue, path, ct);
+                return StatusCode(status, payload);
+            }
+
+            return await ListAsync(null, path, ct);
+        }
 
         [HttpGet("employees/{cityValue}/{employeeId:int}")]
         public Task<IActionResult> Employee(string cityValue, int employeeId, CancellationToken ct) =>

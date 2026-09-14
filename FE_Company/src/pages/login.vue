@@ -3,6 +3,7 @@ import AppAutocomplete from "@core/components/app-form-elements/AppAutocomplete.
 import AppTextField from "@core/components/app-form-elements/AppTextField.vue"
 import { jwtDecode } from 'jwt-decode'
 import { useTheme } from 'vuetify'
+import { findProvince } from '@/utils/provinceCatalog'
 import { useCities, isLocalLab, isDemo, LOCAL_API, DEMO_API } from '@/composables/useCities'
 import { salesGatewayBase } from '@/composables/useSalesBranches'
 
@@ -46,8 +47,10 @@ async function login() {
   if (validForm.valid === true) {
     loginLoadingBtn.value = true
 
-    try {
-      if (!isDemo()) {
+    // Central sales manager: city is optional. Do not hit gateway SM login when a province
+    // is selected — accountants must authenticate against that branch API only.
+    if (!isDemo() && (selectCity.value == null || selectCity.value === '')) {
+      try {
         const gatewayRes = await fetch(`${salesGatewayBase()}Auth/LoginSalesManager`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -70,12 +73,12 @@ async function login() {
           return
         }
       }
-    }
-    catch {
-      // fall through to city accountant login
+      catch {
+        // fall through — require province for branch login
+      }
     }
 
-    if (!selectCity.value) {
+    if (selectCity.value == null || selectCity.value === '') {
       showAlert.value = true
       errorMessage.value = 'يجب اختيار المحافظة'
       loginLoadingBtn.value = false
@@ -83,8 +86,7 @@ async function login() {
       return
     }
 
-    // البحث عن المحافظة المختارة في البيانات
-    const selectedProvince = provinces.value.find(p => p.value === selectCity.value)
+    const selectedProvince = findProvince(provinces.value, selectCity.value)
 
     const selectedApi = isDemo()
       ? DEMO_API
@@ -93,33 +95,62 @@ async function login() {
     const cityName = selectedProvince?.name || ''
     const database = selectedProvince?.database || ''
 
-    if (!selectedApi) {
+    if (!selectedProvince || !selectedApi) {
       showAlert.value = true
-      errorMessage.value = "لا يوجد رابط API لهذه المحافظة"
+      errorMessage.value = 'تعذر تحديد خادم المحافظة. أعد اختيار المحافظة من القائمة.'
       loginLoadingBtn.value = false
 
       return
     }
 
-    const postLogin = endpoint => fetch(`${selectedApi}${endpoint}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(form.value),
-    }).then(res => res.json())
+    const postLogin = async endpoint => {
+      let res
+      try {
+        res = await fetch(`${selectedApi}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(form.value),
+        })
+      }
+      catch {
+        const err = new Error('تعذر الاتصال بخادم المحافظة')
+        err.code = 'BRANCH_UNREACHABLE'
+        throw err
+      }
+
+      let data = null
+      try {
+        data = await res.json()
+      }
+      catch {
+        data = null
+      }
+
+      if (res.status >= 500) {
+        const err = new Error('تعذر الاتصال بخادم المحافظة')
+        err.code = 'BRANCH_UNAVAILABLE'
+        throw err
+      }
+
+      return data || {}
+    }
 
     try {
       let resData = await postLogin('Users/Users_LoginAdmin')
 
-      // على اللوكال والإنتاج: المحاسب الفرعي ومدير المبيعات يدخلون من نفس الصفحة
+      // المحاسب الفرعي / مدير المبيعات / موظف المبيعات من نفس الصفحة
       if (resData.message)
         resData = await postLogin('Users/Users_LoginEmployee')
 
       if (resData.message) {
         loginLoadingBtn.value = false
         showAlert.value = true
+        // Keep API auth failure text only for real credential/state rejections.
         errorMessage.value = resData.message
+      } else if (!resData.token) {
+        loginLoadingBtn.value = false
+        showAlert.value = true
+        errorMessage.value = 'تعذر إكمال تسجيل الدخول. حاول مرة أخرى.'
       } else {
         loginLoadingBtn.value = false
 
@@ -143,9 +174,15 @@ async function login() {
     } catch (err) {
       loginLoadingBtn.value = false
       showAlert.value = true
-      errorMessage.value = err.message || (isDemo()
-        ? 'تعذر الاتصال بخادم Demo. تأكد أن BE_Company يعمل على المنفذ 5401.'
-        : 'تعذر الاتصال بالخادم المحلي. تأكد أن الـ API يعمل على المنفذ 5180.')
+      if (err?.code === 'BRANCH_UNREACHABLE' || err?.code === 'BRANCH_UNAVAILABLE') {
+        errorMessage.value = err.message
+      } else if (isDemo()) {
+        errorMessage.value = 'تعذر الاتصال بخادم Demo. تأكد أن BE_Company يعمل على المنفذ 5401.'
+      } else if (isLocalLab()) {
+        errorMessage.value = 'تعذر الاتصال بالخادم المحلي. تأكد أن الـ API يعمل على المنفذ 5180.'
+      } else {
+        errorMessage.value = 'تعذر الاتصال بخادم المحافظة'
+      }
     }
   } else {
     showAlert.value = true
