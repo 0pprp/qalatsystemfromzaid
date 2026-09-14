@@ -70,9 +70,13 @@ namespace BE_Company.Sales.Controllers
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
             var rows = await _query.ListEmployeesAsync(shiftStatus, locationStatus, ct);
-            if (!string.IsNullOrWhiteSpace(cityValue))
+            // Branch DB is tenancy. cityValue is for gateway fan-out; do not equality-drop vs GetAdmin ids.
+            var branchCity = rows.FirstOrDefault()?.CityValue;
+            var branchName = rows.FirstOrDefault()?.CityName;
+            if (!string.IsNullOrWhiteSpace(cityValue)
+                && !SalesBranchScope.PassesOptionalCityFilter(cityValue, branchCity, branchName))
             {
-                rows = rows.Where(e => string.Equals(e.CityValue, cityValue, StringComparison.OrdinalIgnoreCase)).ToList();
+                rows = [];
             }
 
             return Ok(rows);
@@ -84,9 +88,12 @@ namespace BE_Company.Sales.Controllers
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
             var rows = await _query.ListLiveLocationsAsync(ct);
-            if (!string.IsNullOrWhiteSpace(cityValue))
+            var branchCity = rows.FirstOrDefault()?.CityValue;
+            var branchName = rows.FirstOrDefault()?.CityName;
+            if (!string.IsNullOrWhiteSpace(cityValue)
+                && !SalesBranchScope.PassesOptionalCityFilter(cityValue, branchCity, branchName))
             {
-                rows = rows.Where(e => string.Equals(e.CityValue, cityValue, StringComparison.OrdinalIgnoreCase)).ToList();
+                rows = [];
             }
 
             return Ok(rows);

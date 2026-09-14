@@ -77,5 +77,45 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكن نقل طلب تابع لمحافظة أخرى.");
             }
         }
+
+        /// <summary>
+        /// Optional <c>cityValue</c> query on single-branch BE_Company sales-manager reads.
+        /// Branch DB is already the tenancy boundary; all employees share <paramref name="branchCityValue"/>.
+        /// GetAdmin may send numeric ids (e.g. "1") while BranchLabel uses catalog/BranchId —
+        /// raw equality would drop every employee. Only exclude when both sides are comparable
+        /// short keys and clearly differ (should not happen on a correctly routed branch call).
+        /// </summary>
+        public static bool PassesOptionalCityFilter(
+            string? requestedCityValue,
+            string? branchCityValue,
+            string? branchCityName)
+        {
+            if (string.IsNullOrWhiteSpace(requestedCityValue))
+            {
+                return true;
+            }
+
+            var requested = requestedCityValue.Trim();
+            if (!string.IsNullOrWhiteSpace(branchCityValue)
+                && string.Equals(branchCityValue.Trim(), requested, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(branchCityName)
+                && string.Equals(branchCityName.Trim(), requested, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Catalog / numeric / Arabic / Database* keys are not safe to equality-reject against.
+            if (!IsComparableBranchKey(requested)
+                || !IsComparableBranchKey(branchCityValue))
+            {
+                return true;
+            }
+
+            return string.Equals(requested, branchCityValue!.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
     }
 }
