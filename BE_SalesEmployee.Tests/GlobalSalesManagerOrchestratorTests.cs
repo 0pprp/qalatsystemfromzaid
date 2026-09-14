@@ -81,8 +81,8 @@ public sealed class GlobalSalesManagerOrchestratorTests
 
         Assert.Equal(GlobalOrchestrationStatus.Success, result.Status);
         Assert.DoesNotContain(handler.Calls, c => c.Url.Contains("testapp", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal(4, handler.Calls.Count(c => c.Url.Contains("preflight", StringComparison.OrdinalIgnoreCase)
-            || c.Method == "POST")); // 2 preflight + 2 create for najaf+karkh
+        Assert.Equal(4, handler.Calls.Count(c => c.Url.Contains("preflight", StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal(2, handler.Calls.Count(c => c.Method == "POST" && !c.Url.Contains("preflight", StringComparison.OrdinalIgnoreCase)));
         Assert.Equal(2, result.SucceededBranches.Count);
     }
 
@@ -186,6 +186,125 @@ public sealed class GlobalSalesManagerOrchestratorTests
             && !c.Url.Contains("preflight")).ToList();
         Assert.Equal(2, writes.Count);
         Assert.All(writes, w => Assert.Contains(result.GlobalAccountId!.Value.ToString("D"), w.Body!, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Legacy_Adoptable_All_Branches_Uses_One_Guid_No_Conflict()
+    {
+        var (orch, handler) = Build(requireDemo: false);
+        handler.Responder = (req, _) =>
+            req.RequestUri!.AbsolutePath.Contains("preflight")
+                ? Json(HttpStatusCode.OK, """{"status":"LegacyAdoptable"}""")
+                : Json(HttpStatusCode.OK, """{"ok":true,"code":"ADOPTED"}""");
+
+        var result = await orch.CreateAsync(new GlobalManagerClientRequest
+        {
+            UserName = "legacy-sm",
+            Password = "secret",
+            Email = "a@x.com",
+            PhoneNumber = "0700"
+        }, CancellationToken.None);
+
+        Assert.Equal(GlobalOrchestrationStatus.Success, result.Status);
+        Assert.NotNull(result.GlobalAccountId);
+        Assert.DoesNotContain(handler.Calls, c =>
+            c.Method == "POST" && !c.Url.Contains("preflight") && c.Body != null
+            && !c.Body.Contains(result.GlobalAccountId.Value.ToString("D"), StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task LegacyConflict_On_One_Branch_Blocks_All_Writes()
+    {
+        var (orch, handler) = Build(requireDemo: false);
+        handler.Responder = (req, _) =>
+        {
+            if (req.RequestUri!.ToString().Contains("19003")
+                && req.RequestUri!.AbsolutePath.Contains("preflight"))
+            {
+                return Json(HttpStatusCode.OK, """{"status":"LegacyConflict"}""");
+            }
+
+            return Json(HttpStatusCode.OK, """{"status":"LegacyAdoptable"}""");
+        };
+
+        var result = await orch.CreateAsync(new GlobalManagerClientRequest
+        {
+            UserName = "legacy-sm",
+            Password = "secret"
+        }, CancellationToken.None);
+
+        Assert.Equal(GlobalOrchestrationStatus.Conflict, result.Status);
+        Assert.DoesNotContain(handler.Calls, c =>
+            c.Method == "POST" && !c.Url.Contains("preflight", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Existing_Global_On_Subset_Reused_For_Adoption()
+    {
+        var existing = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var (orch, handler) = Build(requireDemo: false);
+        handler.Responder = (req, body) =>
+        {
+            if (!req.RequestUri!.AbsolutePath.Contains("preflight"))
+            {
+                return Json(HttpStatusCode.OK, """{"ok":true,"code":"ADOPTED"}""");
+            }
+
+            // Discovery (null global): najaf already bound, karkh legacy.
+            if (body != null && body.Contains("\"globalAccountId\":null", StringComparison.Ordinal))
+            {
+                if (req.RequestUri!.ToString().Contains("19001"))
+                {
+                    return Json(HttpStatusCode.OK,
+                        $$"""{"status":"ExistingSameGlobalAccount","globalAccountId":"{{existing:D}}"}""");
+                }
+
+                return Json(HttpStatusCode.OK, """{"status":"LegacyAdoptable"}""");
+            }
+
+            return Json(HttpStatusCode.OK, """{"status":"ExistingSameGlobalAccount"}""");
+        };
+
+        var result = await orch.CreateAsync(new GlobalManagerClientRequest
+        {
+            UserName = "legacy-sm",
+            Password = "secret"
+        }, CancellationToken.None);
+
+        Assert.Equal(GlobalOrchestrationStatus.Success, result.Status);
+        Assert.Equal(existing, result.GlobalAccountId);
+    }
+
+    [Fact]
+    public async Task Two_Different_Observed_Globals_Conflict()
+    {
+        var (orch, handler) = Build(requireDemo: false);
+        handler.Responder = (req, _) =>
+        {
+            if (!req.RequestUri!.AbsolutePath.Contains("preflight"))
+            {
+                return Json(HttpStatusCode.OK, """{"ok":true}""");
+            }
+
+            if (req.RequestUri!.ToString().Contains("19001"))
+            {
+                return Json(HttpStatusCode.OK,
+                    """{"status":"ExistingSameGlobalAccount","globalAccountId":"11111111-1111-1111-1111-111111111111"}""");
+            }
+
+            return Json(HttpStatusCode.OK,
+                """{"status":"ExistingSameGlobalAccount","globalAccountId":"22222222-2222-2222-2222-222222222222"}""");
+        };
+
+        var result = await orch.CreateAsync(new GlobalManagerClientRequest
+        {
+            UserName = "legacy-sm",
+            Password = "secret"
+        }, CancellationToken.None);
+
+        Assert.Equal(GlobalOrchestrationStatus.Conflict, result.Status);
+        Assert.DoesNotContain(handler.Calls, c =>
+            c.Method == "POST" && !c.Url.Contains("preflight", StringComparison.OrdinalIgnoreCase));
     }
 
     private static HttpResponseMessage Json(HttpStatusCode code, string json) =>

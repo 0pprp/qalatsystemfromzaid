@@ -32,6 +32,9 @@ public sealed class InternalGlobalSalesManagerController : ControllerBase
     {
         public string? UserName { get; set; }
         public Guid? GlobalAccountId { get; set; }
+        public string? Email { get; set; }
+        public string? PhoneNumber { get; set; }
+        public string? Password { get; set; }
     }
 
     public sealed class UpsertBody
@@ -55,14 +58,35 @@ public sealed class InternalGlobalSalesManagerController : ControllerBase
             return blocked!;
         }
 
-        var result = await _repo.PreflightAsync(body.UserName, body.GlobalAccountId, ct);
+        var result = await _repo.PreflightAsync(new GlobalManagerIdentityRequest
+        {
+            UserName = body.UserName,
+            GlobalAccountId = body.GlobalAccountId,
+            Email = body.Email,
+            PhoneNumber = body.PhoneNumber,
+            Password = body.Password
+        }, ct);
+
         return Ok(new
         {
             status = result.Status.ToString(),
-            userId = result.UserId,
-            globalAccountId = result.GlobalAccountId,
-            userName = result.UserName,
-            userStateActive = result.UserStateActive
+            // Success paths may include ids for orchestration; conflict/legacy paths stay coarse.
+            userId = result.Status is GlobalManagerPreflightStatus.LegacyAdoptable
+                or GlobalManagerPreflightStatus.ExistingSameGlobalAccount
+                or GlobalManagerPreflightStatus.NotFound
+                ? result.UserId
+                : null,
+            globalAccountId = result.Status is GlobalManagerPreflightStatus.ExistingSameGlobalAccount
+                ? result.GlobalAccountId
+                : null,
+            userName = result.Status is GlobalManagerPreflightStatus.LegacyAdoptable
+                or GlobalManagerPreflightStatus.ExistingSameGlobalAccount
+                ? result.UserName
+                : null,
+            userStateActive = result.Status is GlobalManagerPreflightStatus.LegacyAdoptable
+                or GlobalManagerPreflightStatus.ExistingSameGlobalAccount
+                ? result.UserStateActive
+                : null
         });
     }
 
@@ -74,7 +98,6 @@ public sealed class InternalGlobalSalesManagerController : ControllerBase
             return blocked!;
         }
 
-        // Role forced in repository. ActorUserId intentionally discarded (not trusted from client).
         var result = await _repo.UpsertAsync(new GlobalManagerWriteRequest
         {
             GlobalAccountId = body.GlobalAccountId,
@@ -97,6 +120,7 @@ public sealed class InternalGlobalSalesManagerController : ControllerBase
         if (!result.Ok)
         {
             var status = result.Code is "USERNAMECONFLICT" or "DUPLICATEAMBIGUOUS" or "USERNAME_CONFLICT"
+                or "LEGACY_CONFLICT" or "LEGACYCONFLICT"
                 ? StatusCodes.Status409Conflict
                 : StatusCodes.Status400BadRequest;
             return StatusCode(status, new

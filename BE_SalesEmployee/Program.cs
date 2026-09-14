@@ -48,30 +48,14 @@ builder.Services.AddAuthorization(options =>
 
 const string companyJwtScheme = "CompanyJwt";
 var gatewayJwtKey = builder.Configuration["Jwt:Key"] ?? "SalesEmployeeGwSigningKey-2026-ChangeMe!!";
-var companyKeys = new List<SecurityKey>();
-foreach (var child in builder.Configuration.GetSection("Authentication:Schemes:Bearer:SigningKeys").GetChildren())
+IReadOnlyList<SecurityKey> companyKeys;
+try
 {
-    var value = child["Value"];
-    if (string.IsNullOrWhiteSpace(value))
-    {
-        continue;
-    }
-
-    try
-    {
-        companyKeys.Add(new SymmetricSecurityKey(Convert.FromBase64String(value)));
-    }
-    catch (FormatException)
-    {
-    }
+    companyKeys = CompanyJwtSigningConfig.LoadRequired(builder.Configuration);
 }
-
-if (companyKeys.Count == 0)
+catch (InvalidOperationException ex)
 {
-    // Never fall back to gateway Jwt:Key — that would allow forging Main Accountant tokens.
-    throw new InvalidOperationException(
-        "CompanyJwt requires Authentication:Schemes:Bearer:SigningKeys (BE_Company JWT keys). " +
-        "Do not reuse Jwt:Key for global-managers authorization.");
+    throw new InvalidOperationException(ex.Message, ex);
 }
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

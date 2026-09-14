@@ -1,18 +1,17 @@
-using BE_Company.DTO;
 using Dapper;
 using Microsoft.Data.SqlClient;
-using System.Data;
 
 namespace BE_Company.Sales.Services;
 
 public interface IGlobalSalesManagerRepository
 {
     Task EnsureSchemaAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<(int UserId, string UserName, Guid? GlobalAccountId, bool Active)>> FindCandidatesAsync(
-        string? userName,
-        Guid? globalAccountId,
+    Task<IReadOnlyList<GlobalManagerCandidate>> FindCandidatesAsync(
+        GlobalManagerIdentityRequest identity,
         CancellationToken ct = default);
-    Task<GlobalManagerPreflightResult> PreflightAsync(string? userName, Guid? globalAccountId, CancellationToken ct = default);
+    Task<GlobalManagerPreflightResult> PreflightAsync(
+        GlobalManagerIdentityRequest identity,
+        CancellationToken ct = default);
     Task<GlobalManagerWriteResult> UpsertAsync(GlobalManagerWriteRequest request, CancellationToken ct = default);
     Task<GlobalManagerWriteResult> DisableAsync(Guid globalAccountId, CancellationToken ct = default);
 }
@@ -36,59 +35,53 @@ public sealed class GlobalSalesManagerRepository : IGlobalSalesManagerRepository
         }
 
         await using var connection = new SqlConnection(_connectionString);
-        await connection.ExecuteAsync(new CommandDefinition(@"
-IF COL_LENGTH(N'dbo.Users', N'GlobalAccountId') IS NULL
-BEGIN
-    ALTER TABLE dbo.Users ADD GlobalAccountId UNIQUEIDENTIFIER NULL;
-END
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_Users_GlobalAccountId' AND object_id = OBJECT_ID(N'dbo.Users'))
-BEGIN
-    CREATE NONCLUSTERED INDEX IX_Users_GlobalAccountId
-        ON dbo.Users(GlobalAccountId)
-        WHERE GlobalAccountId IS NOT NULL;
-END
-", cancellationToken: ct));
+        await connection.ExecuteAsync(new CommandDefinition(
+            GlobalAccountIdSchemaSql.EnsureScript,
+            cancellationToken: ct));
         Volatile.Write(ref _schemaReady, 1);
     }
 
-    public async Task<IReadOnlyList<(int UserId, string UserName, Guid? GlobalAccountId, bool Active)>> FindCandidatesAsync(
-        string? userName,
-        Guid? globalAccountId,
+    public async Task<IReadOnlyList<GlobalManagerCandidate>> FindCandidatesAsync(
+        GlobalManagerIdentityRequest identity,
         CancellationToken ct = default)
     {
         await EnsureSchemaAsync(ct);
-        var name = (userName ?? "").Trim();
+        var name = (identity.UserName ?? "").Trim();
         await using var connection = new SqlConnection(_connectionString);
         var rows = await connection.QueryAsync(new CommandDefinition(@"
-SELECT UserID, UserName, GlobalAccountId, UserState
+SELECT UserID, UserName, GlobalAccountId, UserState, UserType, Email, PhoneNumber, Password
 FROM dbo.Users
 WHERE (@UserName <> N'' AND LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName))
    OR (@GlobalAccountId IS NOT NULL AND GlobalAccountId = @GlobalAccountId)
-", new { UserName = name, GlobalAccountId = globalAccountId }, cancellationToken: ct));
+", new { UserName = name, GlobalAccountId = identity.GlobalAccountId }, cancellationToken: ct));
 
-        var list = new List<(int UserId, string UserName, Guid? GlobalAccountId, bool Active)>();
+        var list = new List<GlobalManagerCandidate>();
+        var suppliedPassword = identity.Password ?? "";
         foreach (var r in rows)
         {
-            list.Add((
-                (int)r.UserID,
-                (string)(r.UserName ?? ""),
-                (Guid?)r.GlobalAccountId,
-                UserLoginDiagnostics.IsActiveUserState(r.UserState)
-            ));
+            var storedPassword = (string?)(r.Password) ?? "";
+            list.Add(new GlobalManagerCandidate
+            {
+                UserId = (int)r.UserID,
+                UserName = (string)(r.UserName ?? ""),
+                GlobalAccountId = (Guid?)r.GlobalAccountId,
+                Active = UserLoginDiagnostics.IsActiveUserState(r.UserState),
+                UserType = (string)(r.UserType ?? ""),
+                Email = (string?)r.Email,
+                PhoneNumber = (string?)r.PhoneNumber,
+                PasswordMatches = string.Equals(storedPassword, suppliedPassword, StringComparison.Ordinal)
+            });
         }
 
         return list;
     }
 
     public async Task<GlobalManagerPreflightResult> PreflightAsync(
-        string? userName,
-        Guid? globalAccountId,
+        GlobalManagerIdentityRequest identity,
         CancellationToken ct = default)
     {
-        var matches = await FindCandidatesAsync(userName, globalAccountId, ct);
-        return GlobalSalesManagerRules.EvaluatePreflight(matches, userName, globalAccountId);
+        var matches = await FindCandidatesAsync(identity, ct);
+        return GlobalSalesManagerRules.EvaluatePreflight(matches, identity);
     }
 
     public async Task<GlobalManagerWriteResult> UpsertAsync(GlobalManagerWriteRequest request, CancellationToken ct = default)
@@ -104,23 +97,33 @@ WHERE (@UserName <> N'' AND LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName))
             return Fail("INVALID_USERNAME", "اسم المستخدم مطلوب.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.Password))
+        var identity = new GlobalManagerIdentityRequest
         {
-            // Password required on create; optional on update when empty means keep.
-        }
+            UserName = userName,
+            GlobalAccountId = request.GlobalAccountId,
+            Email = request.Email,
+            PhoneNumber = request.PhoneNumber,
+            Password = request.Password
+        };
 
-        var preflight = await PreflightAsync(userName, request.GlobalAccountId, ct);
+        var preflight = await PreflightAsync(identity, ct);
         if (!GlobalSalesManagerRules.CanProceedWithCreate(preflight.Status)
-            && preflight.Status != GlobalManagerPreflightStatus.ExistingSameGlobalAccount)
+            && !GlobalSalesManagerRules.CanProceedWithUpdate(preflight.Status))
         {
-            return Fail(preflight.Status.ToString().ToUpperInvariant(), "تعارض في الحساب.");
+            var code = preflight.Status == GlobalManagerPreflightStatus.LegacyConflict
+                ? "LEGACY_CONFLICT"
+                : preflight.Status.ToString().ToUpperInvariant();
+            return Fail(code, "تعارض في الحساب.");
         }
 
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
-        if (preflight.Status == GlobalManagerPreflightStatus.ExistingSameGlobalAccount && preflight.UserId is int existingId)
+        if (preflight.Status is GlobalManagerPreflightStatus.ExistingSameGlobalAccount
+                or GlobalManagerPreflightStatus.LegacyAdoptable
+            && preflight.UserId is int existingId)
         {
+            // Never auto-enable UserState. Adoption binds GlobalAccountId only + optional field sync.
             await connection.ExecuteAsync(new CommandDefinition(@"
 UPDATE dbo.Users
 SET UserName = @UserName,
@@ -130,7 +133,6 @@ SET UserName = @UserName,
     Address = COALESCE(@Address, Address),
     UserImage = COALESCE(@UserImage, UserImage),
     UserType = @UserType,
-    UserState = 1,
     GlobalAccountId = @GlobalAccountId
 WHERE UserID = @UserID
 ", new
@@ -149,7 +151,7 @@ WHERE UserID = @UserID
             return new GlobalManagerWriteResult
             {
                 Ok = true,
-                Code = "UPDATED",
+                Code = preflight.Status == GlobalManagerPreflightStatus.LegacyAdoptable ? "ADOPTED" : "UPDATED",
                 UserId = existingId,
                 GlobalAccountId = request.GlobalAccountId,
                 UserName = userName
@@ -161,7 +163,6 @@ WHERE UserID = @UserID
             return Fail("PASSWORD_REQUIRED", "كلمة المرور مطلوبة عند الإنشاء.");
         }
 
-        // Prefer explicit insert so GlobalAccountId is set (legacy Users_Create SP has no column).
         var newId = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
 INSERT INTO dbo.Users
     (UserName, Email, Password, PhoneNumber, Address, UserState, AsyncID, AsyncState, UserType, UserImage, GlobalAccountId)
@@ -179,18 +180,6 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);
             request.UserImage,
             request.GlobalAccountId
         }, cancellationToken: ct));
-
-        if (request.ActorUserId is int actorId)
-        {
-            await connection.ExecuteAsync(new CommandDefinition(@"
-INSERT INTO dbo.Activities (UserID, ActivityDescription, ActivityDate, AsyncState, AsyncID)
-VALUES (@ActorId, @Desc, GETUTCDATE(), 'false', NEWID())
-", new
-            {
-                ActorId = actorId,
-                Desc = "تم اضافة المستخدم  " + userName
-            }, cancellationToken: ct));
-        }
 
         return new GlobalManagerWriteResult
         {

@@ -23,6 +23,7 @@ public sealed record BranchOpResult
     public string Code { get; init; } = "";
     public string? Message { get; init; }
     public int? HttpStatus { get; init; }
+    public Guid? ObservedGlobalAccountId { get; init; }
 }
 
 public sealed class GlobalOrchestrationResult
@@ -70,13 +71,13 @@ public sealed class GlobalSalesManagerOrchestrator : IGlobalSalesManagerOrchestr
     }
 
     public Task<GlobalOrchestrationResult> CreateAsync(GlobalManagerClientRequest request, CancellationToken ct) =>
-        RunAsync(Guid.NewGuid(), request, isCreate: true, ct);
+        RunCreateAsync(request, ct);
 
     public Task<GlobalOrchestrationResult> UpdateAsync(
         Guid globalAccountId,
         GlobalManagerClientRequest request,
         CancellationToken ct) =>
-        RunAsync(globalAccountId, request, isCreate: false, ct);
+        RunUpdateAsync(globalAccountId, request, ct);
 
     public async Task<GlobalOrchestrationResult> DisableAsync(Guid globalAccountId, CancellationToken ct)
     {
@@ -109,106 +110,222 @@ public sealed class GlobalSalesManagerOrchestrator : IGlobalSalesManagerOrchestr
         return Summarize(operationId, globalAccountId, succeeded, failed);
     }
 
-    private async Task<GlobalOrchestrationResult> RunAsync(
-        Guid globalAccountId,
+    private async Task<GlobalOrchestrationResult> RunCreateAsync(
         GlobalManagerClientRequest request,
-        bool isCreate,
         CancellationToken ct)
     {
         var operationId = Guid.NewGuid();
         var userName = (request.UserName ?? "").Trim();
         if (userName.Length == 0)
         {
-            return new GlobalOrchestrationResult
-            {
-                Status = GlobalOrchestrationStatus.BadRequest,
-                OperationId = operationId,
-                Message = "اسم المستخدم مطلوب."
-            };
+            return Bad(operationId, "اسم المستخدم مطلوب.");
         }
 
-        if (isCreate && string.IsNullOrWhiteSpace(request.Password))
+        if (string.IsNullOrWhiteSpace(request.Password))
         {
-            return new GlobalOrchestrationResult
-            {
-                Status = GlobalOrchestrationStatus.BadRequest,
-                OperationId = operationId,
-                Message = "كلمة المرور مطلوبة."
-            };
+            return Bad(operationId, "كلمة المرور مطلوبة.");
         }
 
         var branches = await ProductionSalesBranchesAsync(ct);
         if (branches.Count == 0)
         {
-            return new GlobalOrchestrationResult
-            {
-                Status = GlobalOrchestrationStatus.BadRequest,
-                OperationId = operationId,
-                Message = "لا توجد فروع إنتاج متاحة."
-            };
+            return Bad(operationId, "لا توجد فروع إنتاج متاحة.");
         }
 
-        // Preflight all branches before any write.
-        var preflightFailed = new List<BranchOpResult>();
+        // Phase 1 — discovery preflight (no GlobalAccountId): adopt vs create vs conflict.
+        var discovery = new List<BranchOpResult>();
+        var observedIds = new List<Guid?>();
         foreach (var branch in branches)
         {
             var pre = await CallBranchAsync(
                 branch,
                 HttpMethod.Post,
                 "internal/sales-users/global-manager/preflight",
-                new { userName, globalAccountId },
+                new
+                {
+                    userName,
+                    globalAccountId = (Guid?)null,
+                    request.Email,
+                    request.PhoneNumber,
+                    request.Password
+                },
+                ct);
+            discovery.Add(pre);
+            observedIds.Add(pre.ObservedGlobalAccountId);
+            if (!pre.Ok)
+            {
+                return new GlobalOrchestrationResult
+                {
+                    Status = GlobalOrchestrationStatus.BranchUnavailable,
+                    OperationId = operationId,
+                    FailedBranches = [pre with { Code = "BRANCH_UNAVAILABLE" }],
+                    Message = "تعذر التحقق من بعض الفروع قبل الكتابة."
+                };
+            }
+        }
+
+        var statuses = discovery.Select(d => d.Code).ToList();
+        var plan = DecideCreateWritePlan(statuses);
+        if (plan == CreateWritePlan.Conflict)
+        {
+            return new GlobalOrchestrationResult
+            {
+                Status = GlobalOrchestrationStatus.Conflict,
+                OperationId = operationId,
+                FailedBranches = discovery
+                    .Where(d => IsConflictStatus(d.Code))
+                    .Select(RedactBranchForClient)
+                    .ToList(),
+                Message = "تعارض legacy/هوية في أحد الفروع."
+            };
+        }
+
+        if (plan == CreateWritePlan.BranchUnavailable)
+        {
+            return new GlobalOrchestrationResult
+            {
+                Status = GlobalOrchestrationStatus.BranchUnavailable,
+                OperationId = operationId,
+                FailedBranches = discovery.Select(RedactBranchForClient).ToList(),
+                Message = "تعذر التحقق من بعض الفروع قبل الكتابة."
+            };
+        }
+
+        if (HasConflictingObservedGlobals(observedIds))
+        {
+            return new GlobalOrchestrationResult
+            {
+                Status = GlobalOrchestrationStatus.Conflict,
+                OperationId = operationId,
+                FailedBranches = discovery,
+                Message = "GlobalAccountId متعارض بين الفروع."
+            };
+        }
+
+        var globalAccountId = observedIds.FirstOrDefault(g => g.HasValue) ?? Guid.NewGuid();
+
+        // Phase 2 — confirm with chosen GlobalAccountId before writes.
+        foreach (var branch in branches)
+        {
+            var pre = await CallBranchAsync(
+                branch,
+                HttpMethod.Post,
+                "internal/sales-users/global-manager/preflight",
+                new
+                {
+                    userName,
+                    globalAccountId,
+                    request.Email,
+                    request.PhoneNumber,
+                    request.Password
+                },
                 ct);
             if (!pre.Ok)
             {
-                preflightFailed.Add(pre with { Code = "BRANCH_UNAVAILABLE" });
-                continue;
+                return new GlobalOrchestrationResult
+                {
+                    Status = GlobalOrchestrationStatus.BranchUnavailable,
+                    OperationId = operationId,
+                    GlobalAccountId = globalAccountId,
+                    FailedBranches = [pre with { Code = "BRANCH_UNAVAILABLE" }],
+                    Message = "تعذر التحقق من بعض الفروع قبل الكتابة."
+                };
             }
 
-            var status = pre.Code;
-            if (status is "UsernameConflict" or "DuplicateAmbiguous" or "GlobalIdConflict")
+            if (IsConflictStatus(pre.Code))
             {
                 return new GlobalOrchestrationResult
                 {
                     Status = GlobalOrchestrationStatus.Conflict,
                     OperationId = operationId,
                     GlobalAccountId = globalAccountId,
-                    FailedBranches = [pre],
+                    FailedBranches = [RedactBranchForClient(pre)],
                     Message = "تعارض في أحد الفروع."
                 };
             }
+        }
 
-            if (status is not ("NotFound" or "ExistingSameGlobalAccount" or "OK"))
-            {
-                // Prefer explicit preflight statuses; OK without status should not happen.
-                if (status.StartsWith("HTTP_", StringComparison.Ordinal) || status == "BRANCH_UNAVAILABLE")
+        return await FanOutUpsertAsync(operationId, globalAccountId, request, branches, isCreate: true, ct);
+    }
+
+    private async Task<GlobalOrchestrationResult> RunUpdateAsync(
+        Guid globalAccountId,
+        GlobalManagerClientRequest request,
+        CancellationToken ct)
+    {
+        var operationId = Guid.NewGuid();
+        var userName = (request.UserName ?? "").Trim();
+        if (userName.Length == 0)
+        {
+            return Bad(operationId, "اسم المستخدم مطلوب.", globalAccountId);
+        }
+
+        var branches = await ProductionSalesBranchesAsync(ct);
+        if (branches.Count == 0)
+        {
+            return Bad(operationId, "لا توجد فروع إنتاج متاحة.", globalAccountId);
+        }
+
+        foreach (var branch in branches)
+        {
+            var pre = await CallBranchAsync(
+                branch,
+                HttpMethod.Post,
+                "internal/sales-users/global-manager/preflight",
+                new
                 {
-                    preflightFailed.Add(pre with { Code = "BRANCH_UNAVAILABLE" });
-                }
+                    userName,
+                    globalAccountId,
+                    request.Email,
+                    request.PhoneNumber,
+                    request.Password
+                },
+                ct);
+            if (!pre.Ok)
+            {
+                return new GlobalOrchestrationResult
+                {
+                    Status = GlobalOrchestrationStatus.BranchUnavailable,
+                    OperationId = operationId,
+                    GlobalAccountId = globalAccountId,
+                    FailedBranches = [pre with { Code = "BRANCH_UNAVAILABLE" }],
+                    Message = "تعذر التحقق من بعض الفروع قبل الكتابة."
+                };
+            }
+
+            if (IsConflictStatus(pre.Code))
+            {
+                return new GlobalOrchestrationResult
+                {
+                    Status = GlobalOrchestrationStatus.Conflict,
+                    OperationId = operationId,
+                    GlobalAccountId = globalAccountId,
+                    FailedBranches = [RedactBranchForClient(pre)],
+                    Message = "تعارض في أحد الفروع."
+                };
             }
         }
 
-        if (preflightFailed.Count > 0)
-        {
-            return new GlobalOrchestrationResult
-            {
-                Status = GlobalOrchestrationStatus.BranchUnavailable,
-                OperationId = operationId,
-                GlobalAccountId = globalAccountId,
-                FailedBranches = preflightFailed,
-                Message = "تعذر التحقق من بعض الفروع قبل الكتابة."
-            };
-        }
+        return await FanOutUpsertAsync(operationId, globalAccountId, request, branches, isCreate: false, ct);
+    }
 
+    private async Task<GlobalOrchestrationResult> FanOutUpsertAsync(
+        Guid operationId,
+        Guid globalAccountId,
+        GlobalManagerClientRequest request,
+        IReadOnlyList<AdminCity> branches,
+        bool isCreate,
+        CancellationToken ct)
+    {
         var body = new
         {
             globalAccountId,
-            userName,
+            userName = request.UserName,
             request.Email,
             request.Password,
             request.PhoneNumber,
             request.Address,
-            request.UserImage,
-            request.ActorUserId
+            request.UserImage
         };
 
         var succeeded = new List<BranchOpResult>();
@@ -233,11 +350,8 @@ public sealed class GlobalSalesManagerOrchestrator : IGlobalSalesManagerOrchestr
         return Summarize(operationId, globalAccountId, succeeded, failed);
     }
 
-    private async Task<IReadOnlyList<AdminCity>> ProductionSalesBranchesAsync(CancellationToken ct)
-    {
-        // GetSalesBranchesAsync already excludes قانونية/تجريبي/شهري and honors RequireDemoDatabase.
-        return await _cities.GetSalesBranchesAsync(ct);
-    }
+    private async Task<IReadOnlyList<AdminCity>> ProductionSalesBranchesAsync(CancellationToken ct) =>
+        await _cities.GetSalesBranchesAsync(ct);
 
     private async Task<BranchOpResult> CallBranchAsync(
         AdminCity branch,
@@ -261,7 +375,8 @@ public sealed class GlobalSalesManagerOrchestrator : IGlobalSalesManagerOrchestr
             var raw = await response.Content.ReadAsStringAsync(ct);
             var ok = response.IsSuccessStatusCode;
             string code = ok ? "OK" : $"HTTP_{(int)response.StatusCode}";
-            string? message = raw;
+            string? message = null;
+            Guid? observedGlobal = null;
             try
             {
                 using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
@@ -272,20 +387,25 @@ public sealed class GlobalSalesManagerOrchestrator : IGlobalSalesManagerOrchestr
                 else if (doc.RootElement.TryGetProperty("status", out var s))
                 {
                     code = s.GetString() ?? code;
-                    message = raw;
                 }
 
                 if (doc.RootElement.TryGetProperty("message", out var m))
                 {
                     message = m.GetString();
                 }
+
+                if (doc.RootElement.TryGetProperty("globalAccountId", out var g)
+                    && g.ValueKind != JsonValueKind.Null
+                    && Guid.TryParse(g.GetString() ?? g.ToString(), out var parsed))
+                {
+                    observedGlobal = parsed;
+                }
             }
             catch (JsonException)
             {
-                // keep raw
+                message = null;
             }
 
-            // Never treat password-looking content specially; just truncate message length.
             if (message != null && message.Length > 300)
             {
                 message = message[..300];
@@ -299,7 +419,8 @@ public sealed class GlobalSalesManagerOrchestrator : IGlobalSalesManagerOrchestr
                 Ok = ok,
                 Code = code,
                 Message = message,
-                HttpStatus = (int)response.StatusCode
+                HttpStatus = (int)response.StatusCode,
+                ObservedGlobalAccountId = observedGlobal
             };
         }
         catch (Exception ex)
@@ -317,27 +438,70 @@ public sealed class GlobalSalesManagerOrchestrator : IGlobalSalesManagerOrchestr
         }
     }
 
-    private static string? ExtractPreflightStatus(string? raw)
+    private enum CreateWritePlan
     {
-        if (string.IsNullOrWhiteSpace(raw))
+        AdoptOrCreate,
+        Conflict,
+        BranchUnavailable
+    }
+
+    /// <summary>Mirrors BE_Company GlobalSalesManagerRules.DecideCreateWritePlan — unknown statuses fail closed.</summary>
+    private static CreateWritePlan DecideCreateWritePlan(IReadOnlyList<string> statuses)
+    {
+        if (statuses.Count == 0)
         {
-            return null;
+            return CreateWritePlan.BranchUnavailable;
         }
 
-        try
+        foreach (var s in statuses)
         {
-            using var doc = JsonDocument.Parse(raw);
-            if (doc.RootElement.TryGetProperty("status", out var s))
+            var status = (s ?? "").Trim();
+            if (IsConflictStatus(status))
             {
-                return s.GetString();
+                return CreateWritePlan.Conflict;
+            }
+
+            if (status is "BRANCH_UNAVAILABLE" || status.StartsWith("HTTP_", StringComparison.Ordinal))
+            {
+                return CreateWritePlan.BranchUnavailable;
+            }
+
+            if (status is not ("NotFound" or "ExistingSameGlobalAccount" or "LegacyAdoptable" or "OK"))
+            {
+                return CreateWritePlan.Conflict;
             }
         }
-        catch (JsonException)
-        {
-        }
 
-        return null;
+        return CreateWritePlan.AdoptOrCreate;
     }
+
+    private static bool IsConflictStatus(string? status) =>
+        status is "UsernameConflict" or "GlobalIdConflict" or "DuplicateAmbiguous" or "LegacyConflict"
+            or "LEGACY_CONFLICT" or "USERNAMECONFLICT" or "DUPLICATEAMBIGUOUS";
+
+    private static bool HasConflictingObservedGlobals(IEnumerable<Guid?> ids)
+    {
+        var distinct = ids.Where(g => g.HasValue).Select(g => g!.Value).Distinct().ToList();
+        return distinct.Count > 1;
+    }
+
+    /// <summary>Hide existence/password oracles from FE: city name only + coarse code.</summary>
+    private static BranchOpResult RedactBranchForClient(BranchOpResult branch) =>
+        branch with
+        {
+            Code = IsConflictStatus(branch.Code) ? "LEGACY_CONFLICT" : branch.Code,
+            Message = null,
+            ObservedGlobalAccountId = null
+        };
+
+    private static GlobalOrchestrationResult Bad(Guid operationId, string message, Guid? global = null) =>
+        new()
+        {
+            Status = GlobalOrchestrationStatus.BadRequest,
+            OperationId = operationId,
+            GlobalAccountId = global,
+            Message = message
+        };
 
     private static GlobalOrchestrationResult Summarize(
         Guid operationId,
@@ -366,7 +530,7 @@ public sealed class GlobalSalesManagerOrchestrator : IGlobalSalesManagerOrchestr
                 OperationId = operationId,
                 GlobalAccountId = globalAccountId,
                 SucceededBranches = succeeded,
-                FailedBranches = failed,
+                FailedBranches = failed.Select(RedactBranchForClient).ToList(),
                 Message = "تعذر تنفيذ العملية على الفروع."
             };
         }
@@ -377,7 +541,7 @@ public sealed class GlobalSalesManagerOrchestrator : IGlobalSalesManagerOrchestr
             OperationId = operationId,
             GlobalAccountId = globalAccountId,
             SucceededBranches = succeeded,
-            FailedBranches = failed,
+            FailedBranches = failed.Select(RedactBranchForClient).ToList(),
             Message = "تم التنفيذ جزئياً، تعذر تحديث بعض الفروع"
         };
     }

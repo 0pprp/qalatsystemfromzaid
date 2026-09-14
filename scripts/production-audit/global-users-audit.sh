@@ -12,6 +12,8 @@ umask 077
 SQL_SERVER="${SQL_SERVER:?set SQL_SERVER}"
 SQL_USER="${SQL_USER:-sa}"
 : "${SQL_PASSWORD:?set SQL_PASSWORD}"
+export SQLCMDPASSWORD="$SQL_PASSWORD"
+unset SQL_PASSWORD
 
 DBS=(
   DatabaseCompanyDewania
@@ -51,7 +53,7 @@ SQL
 
 for db in "${DBS[@]}"; do
   echo "===== ${db} ====="
-  sqlcmd -S "$SQL_SERVER" -U "$SQL_USER" -P "$SQL_PASSWORD" -C -d "$db" -Q "$QUERY" -W -s "|" || {
+  sqlcmd -S "$SQL_SERVER" -U "$SQL_USER" -C -d "$db" -Q "$QUERY" -W -s "|" || {
     echo "BRANCH_UNAVAILABLE ${db}"
   }
 done

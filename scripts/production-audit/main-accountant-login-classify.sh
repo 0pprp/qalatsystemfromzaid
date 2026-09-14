@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Safe HTTP login smoke test across 17 branch APIs.
-# Classes: HTTP_200 | AUTH_REJECT | MALFORMED_REQUEST | BRANCH_UNAVAILABLE | SERVER_ERROR
-# Never prints passwords, JWT, Authorization headers, or response bodies that may contain tokens.
+# READ-ONLY Main Accountant classification across 17 branch login endpoints.
+# Uses safe JSON generation + temp files. Never prints password or JWT.
+# Env:
+#   TEST_USERNAME, TEST_PASSWORD required
+# Optional: HOSTS override
+# Output classes:
+#   ACTIVE_LOGIN_OK | DISABLED_EXPECTED | DUPLICATE_AMBIGUOUS | WRONG_ROLE
+#   AUTH_FAILURE | BRANCH_UNAVAILABLE | SERVER_ERROR | MALFORMED_REQUEST
+
 set -euo pipefail
 umask 077
 TMP=$(mktemp)
@@ -10,13 +16,6 @@ trap 'rm -f "$TMP"' EXIT
 
 TEST_USERNAME="${TEST_USERNAME:?}"
 TEST_PASSWORD="${TEST_PASSWORD:?}"
-TEST_ROLE="${TEST_ROLE:?}"
-
-if [[ "$TEST_ROLE" == "محاسب رئيسي" || "$TEST_ROLE" == "مدير فرع" ]]; then
-  ENDPOINT="Users/Users_LoginAdmin"
-else
-  ENDPOINT="Users/Users_LoginEmployee"
-fi
 
 python3 -c 'import json,os; print(json.dumps({"userName":os.environ["TEST_USERNAME"],"password":os.environ["TEST_PASSWORD"]},ensure_ascii=False))' >"$TMP"
 python3 -c 'import json,sys; json.load(open(sys.argv[1],encoding="utf-8")); print("JSON_OK")' "$TMP" >/dev/null
@@ -41,7 +40,8 @@ HOSTS=(
   "RusafaAqeel|http://shortnewrosafaaqeel.alsaaeidy.com/api"
 )
 
-printf 'Branch\tRole\tHTTP\tClass\tPASS_FAIL\n'
+ENDPOINT="Users/Users_LoginAdmin"
+printf 'Branch\tHTTP\tClass\n'
 for entry in "${HOSTS[@]}"; do
   name="${entry%%|*}"
   base="${entry##*|}"
@@ -56,32 +56,33 @@ for entry in "${HOSTS[@]}"; do
   curl_ec=$?
   set -e
   if [[ $curl_ec -ne 0 ]]; then
-    printf '%s\t%s\t000\tBRANCH_UNAVAILABLE\tFAIL\n' "$name" "$TEST_ROLE"
+    printf '%s\t000\tBRANCH_UNAVAILABLE\n' "$name"
     rm -f "$body_file"
     continue
   fi
-  class="OTHER"
-  pf="FAIL"
+  class="AUTH_FAILURE"
   if [[ "$code" == "200" ]]; then
     if python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); raise SystemExit(0 if (d.get("token") or d.get("Token")) else 1)' "$body_file" 2>/dev/null; then
-      class="HTTP_200"; pf="PASS"
+      class="ACTIVE_LOGIN_OK"
     else
       class="SERVER_ERROR"
     fi
   elif [[ "$code" =~ ^5 ]]; then
     class="SERVER_ERROR"
   elif [[ "$code" == "400" || "$code" == "401" ]]; then
+    # Public body stays generic — cannot distinguish DISABLED vs wrong password from client safely.
+    # Label AUTH_FAILURE; operators use SQL audit for DISABLED_EXPECTED / DUPLICATE_AMBIGUOUS.
     msg=$(python3 -c 'import json,sys
 try:
  d=json.load(open(sys.argv[1],encoding="utf-8")); print(d.get("message") or "")
 except Exception:
  print("")' "$body_file")
     if [[ "$msg" == *"غير صحيحة"* ]]; then
-      class="AUTH_REJECT"
+      class="AUTH_FAILURE"
     else
       class="MALFORMED_REQUEST"
     fi
   fi
-  printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$TEST_ROLE" "$code" "$class" "$pf"
+  printf '%s\t%s\t%s\n' "$name" "$code" "$class"
   rm -f "$body_file"
 done
