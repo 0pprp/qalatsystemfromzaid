@@ -2,6 +2,7 @@ using BE_SalesEmployee.DelegatedManager.Domain;
 using BE_SalesEmployee.DelegatedManager.Services;
 using BE_SalesEmployee.DelegatedManager.Stores;
 using BE_SalesEmployee.Sales.Authorization;
+using BE_SalesEmployee.Sales.Services;
 using BE_SalesEmployee.Services;
 using Xunit;
 
@@ -40,12 +41,12 @@ public sealed class SalesExceptionServiceTests
         CityValue = "najaf-demo"
     };
 
-    private static CreateSalesExceptionInput Input(string reason = "العميل متعاون ويستحق استثناء") => new()
+    private static CreateSalesExceptionInput Input(string reason = "العميل متعاون ويستحق استثناء", int? salesRequestId = null) => new()
     {
         Reason = reason,
         CustomerId = 501,
         CustomerName = "عميل تجريبي",
-        SalesRequestId = 900
+        SalesRequestId = salesRequestId
     };
 
     private static async Task<Guid> CreatePendingAsync(SalesExceptionService service, GatewayUser? manager = null)
@@ -303,5 +304,104 @@ public sealed class SalesExceptionServiceTests
         var (service, _) = CreateService();
 
         Assert.Null(await service.GetAsync(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task EnrichedDetail_Missing_SalesRequestId_Returns_Clear_Error()
+    {
+        var (service, _) = CreateService();
+        var id = await CreatePendingAsync(service);
+        var (outcome, detail, error) = await service.GetEnrichedDetailAsync(id);
+        Assert.Equal(SalesExceptionOutcome.Invalid, outcome);
+        Assert.NotNull(detail);
+        Assert.Contains("طلب البيع الأصلي", error);
+        Assert.Null(detail!.Review);
+    }
+
+    [Fact]
+    public async Task EnrichedDetail_With_Fake_Aggregator_Returns_Review()
+    {
+        var notes = new IntentRecordingBranchNotePoster();
+        var store = new InMemorySalesExceptionStore();
+        var aggregator = new FakeReviewAggregator
+        {
+            Body = new
+            {
+                customerClassification = new { type = "New", labelArabic = "زبون جديد", matchCount = 0 },
+                matchingCustomers = Array.Empty<object>(),
+                source = new { displayLabel = "مندوب", personName = "أحمد" }
+            }
+        };
+        var service = new SalesExceptionService(store, notes, aggregator: aggregator);
+        var created = await service.CreateAsync(Manager(), Input(salesRequestId: 42));
+        Assert.True(created.Ok);
+
+        var (outcome, detail, error) = await service.GetEnrichedDetailAsync(created.Request!.Id);
+        Assert.Equal(SalesExceptionOutcome.Success, outcome);
+        Assert.Null(error);
+        Assert.NotNull(detail!.Review);
+        Assert.Equal(1, aggregator.Calls);
+        Assert.Contains("exception-review-context", aggregator.LastPath);
+        Assert.Equal("najaf-demo", aggregator.LastCity);
+    }
+
+    [Fact]
+    public async Task EnrichedDetail_Branch_404_Is_Business_Error()
+    {
+        var notes = new IntentRecordingBranchNotePoster();
+        var aggregator = new FakeReviewAggregator { Status = 404 };
+        var service = new SalesExceptionService(new InMemorySalesExceptionStore(), notes, aggregator: aggregator);
+        var created = await service.CreateAsync(Manager(), Input(salesRequestId: 99));
+        var (outcome, _, error) = await service.GetEnrichedDetailAsync(created.Request!.Id);
+        Assert.Equal(SalesExceptionOutcome.Invalid, outcome);
+        Assert.Contains("طلب البيع الأصلي", error);
+    }
+
+    private sealed class FakeReviewAggregator : ISalesManagerBranchAggregator
+    {
+        public int Status { get; set; } = 200;
+        public object? Body { get; set; }
+        public int Calls { get; private set; }
+        public string? LastPath { get; private set; }
+        public string? LastCity { get; private set; }
+
+        public Task<IReadOnlyList<AdminCity>> BranchesAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<AdminCity>>([]);
+
+        public Task<(int Status, object? Body)> GetOneAsync(
+            GatewayUser user, string cityValue, string companyPath, CancellationToken ct)
+        {
+            Calls++;
+            LastPath = companyPath;
+            LastCity = cityValue;
+            return Task.FromResult((Status, Body));
+        }
+
+        public Task<(int Status, object? Body)> GetAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> GetExactBranchArrayAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> SumCountAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> PostFanoutAsync(GatewayUser user, string? cityValue, string companyPath, string jsonBody, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> GetFileAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, string? cityValue, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> ExcelSearchAsync(GatewayUser user, string? cityValue, string jsonBody, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> EvaluateAcrossBranchesAsync(GatewayUser user, string jsonBody, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> EvaluationHitsAcrossBranchesAsync(GatewayUser user, string jsonBody, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> TransferProvinceAsync(GatewayUser user, string fromCityValue, int requestId, string jsonBody, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
     }
 }

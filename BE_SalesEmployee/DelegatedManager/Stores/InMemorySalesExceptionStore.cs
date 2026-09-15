@@ -33,6 +33,11 @@ public sealed class InMemorySalesExceptionStore : ISalesExceptionStore
             row.DecisionMakerDisplayName = null;
             row.DecisionNote = null;
             row.BranchCustomerNotePosted = false;
+            row.AssignmentConsumed = false;
+            row.AssignedEmployeeId = null;
+            row.AssignedEmployeeName = null;
+            row.AssignedAtUtc = null;
+            row.AssignedByManagerUserName = null;
             _rows.Add(row);
             AppendAudit(audit, row.Id, row.RequestedAtUtc);
             return Task.FromResult(row.Clone());
@@ -162,6 +167,48 @@ public sealed class InMemorySalesExceptionStore : ISalesExceptionStore
                 .GroupBy(r => r.Status, StringComparer.Ordinal)
                 .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
             return Task.FromResult(counts);
+        }
+    }
+
+    public Task<SalesExceptionRequest?> FindActiveBySalesRequestIdAsync(int salesRequestId, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var row = _rows.FirstOrDefault(r =>
+                r.SalesRequestId == salesRequestId
+                && (string.Equals(r.Status, ExceptionStatuses.Pending, StringComparison.Ordinal)
+                    || (string.Equals(r.Status, ExceptionStatuses.Approved, StringComparison.Ordinal)
+                        && !r.AssignmentConsumed)));
+            return Task.FromResult(row?.Clone());
+        }
+    }
+
+    public Task<SalesExceptionRequest?> TryConsumeAsync(
+        Guid id,
+        int employeeId,
+        string? employeeName,
+        string? assignedByManagerUserName,
+        DateTime assignedAtUtc,
+        SalesExceptionAuditEntry audit,
+        CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var row = _rows.FirstOrDefault(r => r.Id == id);
+            if (row is null
+                || !string.Equals(row.Status, ExceptionStatuses.Approved, StringComparison.Ordinal)
+                || row.AssignmentConsumed)
+            {
+                return Task.FromResult<SalesExceptionRequest?>(null);
+            }
+
+            row.AssignmentConsumed = true;
+            row.AssignedEmployeeId = employeeId;
+            row.AssignedEmployeeName = employeeName;
+            row.AssignedAtUtc = assignedAtUtc;
+            row.AssignedByManagerUserName = assignedByManagerUserName;
+            AppendAudit(audit, id, assignedAtUtc);
+            return Task.FromResult<SalesExceptionRequest?>(row.Clone());
         }
     }
 

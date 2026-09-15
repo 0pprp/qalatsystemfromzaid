@@ -60,7 +60,6 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
   }
 
   Future<void> _decide(String decision) async {
-    // Double-submit guard: one in-flight decision at a time.
     if (_submitting) return;
 
     final approving = decision == ExceptionDecision.approved;
@@ -101,6 +100,7 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
         _detail = ExceptionDetail(
           request: updated,
           audit: _detail?.audit ?? const [],
+          review: _detail?.review,
         );
         _decided = true;
       });
@@ -146,91 +146,146 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
 
   Widget _buildDetail(ExceptionDetail detail) {
     final request = detail.request;
+    final review = detail.review;
     final pending = request.status == ExceptionStatuses.pending;
+    final classification = review?.customerClassification;
+
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    request.summary.customerName,
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.text,
-                    ),
-                  ),
-                ),
-                StatusChip(
-                  label: ExceptionStatuses.arabic(request.status),
-                  color: ExceptionStatuses.color(request.status),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.md),
+        // 1. Classification
+        if (classification != null) ...[
+          _ClassificationBanner(classification: classification),
+          const SizedBox(height: AppSpacing.md),
+        ],
+
+        // 2. Current request details
         SectionCard(
-          title: 'بيانات الزبون',
+          title: 'تفاصيل الطلب الحالي',
           children: [
             InfoRow(
-                label: 'الاسم', value: request.summary.customerName),
-            InfoRow(
-              label: 'رقم الزبون',
-              value: request.summary.customerId?.toString() ?? '-',
+              label: 'اسم الزبون',
+              value: review?.currentRequest?.customerName ??
+                  request.summary.customerName,
             ),
-            InfoRow(label: 'الهاتف', value: request.customerPhone ?? '-'),
+            InfoRow(
+              label: 'الهاتف',
+              value: review?.currentRequest?.customerPhone ??
+                  request.customerPhone ??
+                  '-',
+            ),
             InfoRow(
               label: 'المحافظة',
-              value: request.summary.cityName ?? 'غير محددة',
+              value: review?.currentRequest?.cityName ??
+                  review?.currentRequest?.customerProvince ??
+                  request.summary.cityName ??
+                  'غير محددة',
+            ),
+            InfoRow(
+              label: 'العنوان',
+              value: review?.currentRequest?.customerAddress ?? '-',
+            ),
+            InfoRow(
+              label: 'نوع المبيع / المنتج',
+              value: review?.currentRequest?.saleTypeOrProduct ?? '-',
+            ),
+            InfoRow(
+              label: 'ملاحظات الطلب',
+              value: review?.currentRequest?.notes ?? '-',
+            ),
+            InfoRow(
+              label: 'تاريخ إنشاء الطلب',
+              value: AppDate.format(
+                  review?.currentRequest?.createdAtUtc ??
+                      request.summary.requestedAtUtc),
+            ),
+            InfoRow(
+              label: 'حالة الطلب',
+              value: review?.currentRequest?.status ?? request.status,
             ),
           ],
         ),
         const SizedBox(height: AppSpacing.md),
+
+        // 3. Source
         SectionCard(
-          title: 'بيانات الطلب',
+          title: 'مصدر الطلب',
           children: [
             InfoRow(
-              label: 'رقم طلب البيع',
-              value: request.summary.salesRequestId?.toString() ?? '-',
+              label: 'المصدر',
+              value: review?.source.displayLabel ?? 'غير متوفر',
             ),
             InfoRow(
-              label: 'مقدّم الطلب',
+              label: 'الاسم',
+              value: review?.source.personName ?? 'غير متوفر',
+            ),
+            if ((review?.source.listName ?? '').isNotEmpty)
+              InfoRow(label: 'القائمة', value: review!.source.listName!),
+            InfoRow(
+              label: 'المحافظة',
+              value: review?.source.branchName ??
+                  request.summary.cityName ??
+                  'غير متوفر',
+            ),
+            InfoRow(
+              label: 'مقدّم طلب الاستثناء',
               value: request.summary.requestingManagerDisplayName ?? '-',
             ),
-            InfoRow(
-              label: 'جهة الموافقة',
-              value: request.summary.targetApproverType == 'BranchManager'
-                  ? 'مدير الفرع'
-                  : 'المدير المفوض',
-            ),
-            InfoRow(
-              label: 'تاريخ الطلب',
-              value: AppDate.format(request.summary.requestedAtUtc),
-            ),
-            InfoRow(
-              label: 'تاريخ القرار',
-              value: AppDate.format(request.summary.decidedAtUtc),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            const Text(
-              'سبب الاستثناء',
-              style: TextStyle(color: AppColors.muted, fontSize: 13),
-            ),
-            const SizedBox(height: 4),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+
+        // 4. Exception reason
+        SectionCard(
+          title: 'سبب الاستثناء',
+          children: [
             Text(
               request.reason ?? '-',
               style: const TextStyle(
                   fontSize: 14, height: 1.6, color: AppColors.text),
             ),
+            const SizedBox(height: AppSpacing.sm),
+            InfoRow(
+              label: 'تاريخ الطلب',
+              value: AppDate.format(request.summary.requestedAtUtc),
+            ),
+            StatusChip(
+              label: ExceptionStatuses.arabic(request.status),
+              color: ExceptionStatuses.color(request.status),
+            ),
           ],
         ),
-        if (!pending) ...[
+        const SizedBox(height: AppSpacing.md),
+
+        // 5–7. Matches / financial / rating
+        if (classification?.isExisting == true &&
+            (review?.matchingCustomers.isNotEmpty ?? false)) ...[
+          Text(
+            classification!.explanationArabic,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          ...review!.matchingCustomers.map(_MatchCard.new),
           const SizedBox(height: AppSpacing.md),
+        ] else if (classification?.isNew == true) ...[
+          SectionCard(
+            title: 'الحالات المطابقة',
+            children: [
+              Text(
+                classification!.explanationArabic,
+                style: const TextStyle(
+                    fontSize: 14, height: 1.5, color: AppColors.muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
+
+        if (!pending) ...[
           SectionCard(
             title: 'القرار',
             children: [
@@ -242,53 +297,13 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
                 label: 'ملاحظة القرار',
                 value: request.decisionNote ?? '-',
               ),
-              InfoRow(
-                label: 'تمت إضافة ملاحظة للزبون',
-                value: request.branchCustomerNotePosted ? 'نعم' : 'لا',
-              ),
             ],
           ),
-        ],
-        if (detail.audit.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.md),
-          SectionCard(
-            title: 'سجل الإجراءات',
-            children: detail.audit
-                .map(
-                  (entry) => Padding(
-                    padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${ExceptionStatuses.arabic(entry.previousStatus)}'
-                          ' ← ${ExceptionStatuses.arabic(entry.newStatus)}',
-                          style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.text),
-                        ),
-                        Text(
-                          '${entry.actorDisplayName ?? '-'} • '
-                          '${AppDate.format(entry.createdAtUtc)}',
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.muted),
-                        ),
-                        if ((entry.decisionNote ?? '').isNotEmpty)
-                          Text(
-                            entry.decisionNote!,
-                            style: const TextStyle(
-                                fontSize: 12, color: AppColors.muted),
-                          ),
-                      ],
-                    ),
-                  ),
-                )
-                .toList(),
-          ),
         ],
+
+        // 8. Approve / reject
         if (pending) ...[
-          const SizedBox(height: AppSpacing.md),
           TextField(
             controller: _noteController,
             maxLines: 3,
@@ -299,41 +314,179 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
               alignLabelWithHint: true,
             ),
           ),
-          const SizedBox(height: AppSpacing.xs),
+          const SizedBox(height: AppSpacing.md),
           Row(
             children: [
               Expanded(
-                child: FilledButton.icon(
+                child: FilledButton(
                   style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.approved),
+                    backgroundColor: AppColors.approved,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
                   onPressed: _submitting
                       ? null
                       : () => _decide(ExceptionDecision.approved),
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('موافقة'),
+                  child: const Text('موافقة'),
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
-                child: FilledButton.icon(
+                child: FilledButton(
                   style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.rejected),
+                    backgroundColor: AppColors.rejected,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
                   onPressed: _submitting
                       ? null
                       : () => _decide(ExceptionDecision.rejected),
-                  icon: const Icon(Icons.cancel_outlined),
-                  label: const Text('رفض'),
+                  child: const Text('رفض'),
                 ),
               ),
             ],
           ),
-          if (_submitting)
-            const Padding(
-              padding: EdgeInsets.only(top: AppSpacing.sm),
-              child: Center(child: CircularProgressIndicator()),
-            ),
         ],
       ],
+    );
+  }
+}
+
+class _ClassificationBanner extends StatelessWidget {
+  const _ClassificationBanner({required this.classification});
+
+  final ExceptionReviewClassification classification;
+
+  @override
+  Widget build(BuildContext context) {
+    final existing = classification.isExisting;
+    final color = existing ? AppColors.accent : AppColors.approved;
+    return Card(
+          color: color.withValues(alpha: 0.12),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              classification.labelArabic,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              classification.explanationArabic,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: AppColors.text,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MatchCard extends StatelessWidget {
+  const _MatchCard(this.match);
+
+  final ExceptionReviewMatchCustomer match;
+
+  @override
+  Widget build(BuildContext context) {
+    final fin = match.financialSummary;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: Card(
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          childrenPadding: const EdgeInsets.fromLTRB(
+              AppSpacing.md, 0, AppSpacing.md, AppSpacing.md),
+          title: Text(
+            match.fullName,
+            style: const TextStyle(
+                fontWeight: FontWeight.bold, color: AppColors.text),
+          ),
+          subtitle: Text(
+            match.matchReasons.join(' • '),
+            style: const TextStyle(fontSize: 12, color: AppColors.muted),
+          ),
+          children: [
+            const Align(
+              alignment: Alignment.centerRight,
+              child: Text('بيانات الزبون',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            InfoRow(label: 'الهاتف', value: match.phone ?? '-'),
+            InfoRow(
+              label: 'المحافظة',
+              value: match.cityName ?? match.province ?? '-',
+            ),
+            InfoRow(label: 'العنوان', value: match.address ?? '-'),
+            if ((match.occupation ?? '').isNotEmpty)
+              InfoRow(label: 'المهنة', value: match.occupation!),
+            const SizedBox(height: AppSpacing.sm),
+            const Align(
+              alignment: Alignment.centerRight,
+              child: Text('التقييم',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            InfoRow(label: 'التقييم', value: match.ratingLabel ?? '-'),
+            if (match.isLegal)
+              const InfoRow(label: 'الحالة القانونية', value: 'قانونية'),
+            const SizedBox(height: AppSpacing.sm),
+            const Align(
+              alignment: Alignment.centerRight,
+              child: Text('السجل المالي',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            InfoRow(
+                label: 'إجمالي المبيعات',
+                value: fin.totalSales.toStringAsFixed(0)),
+            InfoRow(
+                label: 'المدفوع', value: fin.totalPaid.toStringAsFixed(0)),
+            InfoRow(
+                label: 'المتبقي', value: fin.remaining.toStringAsFixed(0)),
+            InfoRow(
+              label: 'حساب مسدد',
+              value: fin.fullyPaid ? 'نعم' : 'لا',
+            ),
+            InfoRow(
+              label: 'آخر بيع',
+              value: AppDate.format(fin.lastSaleDate),
+            ),
+            InfoRow(
+              label: 'آخر دفعة',
+              value: AppDate.format(fin.lastPaymentDate),
+            ),
+            if (match.previousSales.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              const Align(
+                alignment: Alignment.centerRight,
+                child: Text('المبيعات السابقة',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              ...match.previousSales.take(5).map(
+                    (s) => Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        '${AppDate.format(s.saleDate)} • '
+                        '${(s.saleAmount ?? 0).toStringAsFixed(0)}'
+                        '${s.accountZero == true ? ' • مسدد' : ''}',
+                        style: const TextStyle(
+                            fontSize: 13, color: AppColors.text),
+                      ),
+                    ),
+                  ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

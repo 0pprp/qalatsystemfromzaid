@@ -11,6 +11,7 @@ class ComplaintSummary {
     required this.senderDisplayName,
     this.sourceApp,
     this.sourceType,
+    this.sourceLabel,
     this.senderRole,
     this.cityValue,
     this.cityName,
@@ -24,6 +25,7 @@ class ComplaintSummary {
   final String senderDisplayName;
   final String? sourceApp;
   final String? sourceType;
+  final String? sourceLabel;
   final String? senderRole;
   final String? cityValue;
   final String? cityName;
@@ -31,6 +33,16 @@ class ComplaintSummary {
   final DateTime? readAtUtc;
 
   bool get isUnread => status != ComplaintStatuses.read && readAtUtc == null;
+
+  /// Friendly Arabic source for UI (never raw app keys).
+  String get friendlySource {
+    if ((sourceLabel ?? '').trim().isNotEmpty) return sourceLabel!.trim();
+    final app = (sourceApp ?? '').toLowerCase();
+    if (app.contains('delegate')) return 'مندوب';
+    if (app.contains('follower')) return 'متابع';
+    if (app.contains('sales') || app.contains('employee')) return 'موظف مبيعات';
+    return 'غير متوفر';
+  }
 
   factory ComplaintSummary.fromJson(Map<String, dynamic> json) =>
       ComplaintSummary(
@@ -42,6 +54,7 @@ class ComplaintSummary {
             JsonRead.text(json['senderDisplayName'], fallback: 'غير محدد'),
         sourceApp: JsonRead.optionalText(json['sourceApp']),
         sourceType: JsonRead.optionalText(json['sourceType']),
+        sourceLabel: JsonRead.optionalText(json['sourceLabel']),
         senderRole: JsonRead.optionalText(json['senderRole']),
         cityValue: JsonRead.optionalText(json['cityValue']),
         cityName: JsonRead.optionalText(json['cityName']),

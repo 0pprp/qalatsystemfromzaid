@@ -117,27 +117,36 @@ public class DelegatedManagerController : ControllerBase
     [HttpGet("exceptions/{id:guid}")]
     public async Task<IActionResult> Exception(Guid id, CancellationToken ct)
     {
-        var detail = await _exceptions.GetAsync(id, ct);
-        if (detail is null)
+        var (outcome, detail, error) = await _exceptions.GetEnrichedDetailAsync(id, ct);
+        return outcome switch
         {
-            return NotFound(new { message = "الطلب غير موجود" });
-        }
-
-        return Ok(new
-        {
-            request = ToExceptionDetail(detail.Request),
-            audit = detail.Audit.Select(a => new
+            SalesExceptionOutcome.NotFound => NotFound(new { message = error ?? "الطلب غير موجود" }),
+            SalesExceptionOutcome.Invalid => BadRequest(new { message = error }),
+            SalesExceptionOutcome.Success when detail is not null => Ok(new
             {
-                a.Id,
-                a.ActorUserName,
-                a.ActorDisplayName,
-                a.ActorRole,
-                a.PreviousStatus,
-                a.NewStatus,
-                a.DecisionNote,
-                a.CreatedAtUtc
-            })
-        });
+                request = ToExceptionDetail(detail.Request),
+                audit = detail.Audit.Select(a => new
+                {
+                    a.ActorDisplayName,
+                    a.ActorRole,
+                    a.PreviousStatus,
+                    a.NewStatus,
+                    a.DecisionNote,
+                    a.CreatedAtUtc
+                }),
+                review = detail.Review,
+                decisionHistory = detail.Audit.Select(a => new
+                {
+                    a.ActorDisplayName,
+                    a.ActorRole,
+                    a.PreviousStatus,
+                    a.NewStatus,
+                    a.DecisionNote,
+                    a.CreatedAtUtc
+                })
+            }),
+            _ => BadRequest(new { message = error ?? "تعذر تحميل التفاصيل" })
+        };
     }
 
     [HttpPut("exceptions/{id:guid}/decision")]
@@ -178,37 +187,56 @@ public class DelegatedManagerController : ControllerBase
 
     private static object ToSummary(CentralComplaint c) => new
     {
-        c.Id,
-        c.SourceApp,
-        c.SourceType,
-        c.SenderDisplayName,
-        c.SenderRole,
-        c.CityValue,
-        c.CityName,
-        c.Subject,
-        c.Status,
-        c.CreatedAtUtc,
-        c.ReadAtUtc
+        senderDisplayName = c.SenderDisplayName,
+        senderRole = c.SenderRole,
+        cityValue = c.CityValue,
+        cityName = c.CityName,
+        subject = c.Subject,
+        status = c.Status,
+        createdAtUtc = c.CreatedAtUtc,
+        readAtUtc = c.ReadAtUtc,
+        sourceLabel = FriendlySourceLabel(c.SourceApp, c.SourceType),
+        // id kept for client navigation only — Flutter must not render it
+        id = c.Id
     };
 
     private static object ToDetail(CentralComplaint c) => new
     {
-        c.Id,
-        c.SourceApp,
-        c.SourceType,
-        c.SenderUserId,
-        c.SenderUserName,
-        c.SenderDisplayName,
-        c.SenderRole,
-        c.CityValue,
-        c.CityName,
-        c.Subject,
-        c.Body,
-        c.Status,
-        c.CreatedAtUtc,
-        c.ReadAtUtc,
-        c.MetadataJson
+        senderDisplayName = c.SenderDisplayName,
+        senderRole = c.SenderRole,
+        cityValue = c.CityValue,
+        cityName = c.CityName,
+        subject = c.Subject,
+        body = c.Body,
+        status = c.Status,
+        createdAtUtc = c.CreatedAtUtc,
+        readAtUtc = c.ReadAtUtc,
+        sourceLabel = FriendlySourceLabel(c.SourceApp, c.SourceType),
+        id = c.Id
     };
+
+    internal static string FriendlySourceLabel(string? sourceApp, string? sourceType)
+    {
+        var app = (sourceApp ?? "").Trim().ToLowerInvariant();
+        if (app.Contains("delegate"))
+            return "مندوب";
+        if (app.Contains("follower") || app.Contains("متابع"))
+            return "متابع";
+        if (app.Contains("sales") || app.Contains("employee"))
+            return "موظف مبيعات";
+        if (app.Contains("filter"))
+            return "موظف فلترة";
+
+        var type = (sourceType ?? "").Trim();
+        if (string.Equals(type, "Complaint", StringComparison.OrdinalIgnoreCase))
+            return "شكوى";
+        if (string.Equals(type, "Message", StringComparison.OrdinalIgnoreCase))
+            return "رسالة";
+        if (!string.IsNullOrWhiteSpace(type) && type.Any(c => c > 127))
+            return type;
+
+        return "غير متوفر";
+    }
 
     internal static object ToExceptionSummary(SalesExceptionRequest r) => new
     {
@@ -217,12 +245,19 @@ public class DelegatedManagerController : ControllerBase
         r.CityName,
         r.CustomerId,
         r.CustomerName,
+        r.CustomerPhone,
         r.SalesRequestId,
         r.RequestingManagerDisplayName,
         r.Status,
         r.TargetApproverType,
         r.RequestedAtUtc,
-        r.DecidedAtUtc
+        r.DecidedAtUtc,
+        r.DecisionNote,
+        r.AssignmentConsumed,
+        r.AssignedEmployeeId,
+        r.AssignedEmployeeName,
+        r.AssignedAtUtc,
+        r.AssignedByManagerUserName
     };
 
     internal static object ToExceptionDetail(SalesExceptionRequest r) => new
@@ -244,6 +279,11 @@ public class DelegatedManagerController : ControllerBase
         r.DecisionMakerUserName,
         r.DecisionMakerDisplayName,
         r.DecisionNote,
-        r.BranchCustomerNotePosted
+        r.BranchCustomerNotePosted,
+        r.AssignmentConsumed,
+        r.AssignedEmployeeId,
+        r.AssignedEmployeeName,
+        r.AssignedAtUtc,
+        r.AssignedByManagerUserName
     };
 }

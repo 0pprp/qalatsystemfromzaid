@@ -48,4 +48,21 @@ public interface ISalesExceptionStore
     Task MarkBranchNotePostedAsync(Guid id, CancellationToken ct = default);
 
     Task<IReadOnlyDictionary<string, int>> CountByStatusAsync(string? cityValue, CancellationToken ct = default);
+
+    /// <summary>
+    /// Active = Pending, or Approved and not yet assignment-consumed.
+    /// </summary>
+    Task<SalesExceptionRequest?> FindActiveBySalesRequestIdAsync(int salesRequestId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Optimistic consume: succeeds only while Status=Approved and AssignmentConsumed=false.
+    /// </summary>
+    Task<SalesExceptionRequest?> TryConsumeAsync(
+        Guid id,
+        int employeeId,
+        string? employeeName,
+        string? assignedByManagerUserName,
+        DateTime assignedAtUtc,
+        SalesExceptionAuditEntry audit,
+        CancellationToken ct = default);
 }

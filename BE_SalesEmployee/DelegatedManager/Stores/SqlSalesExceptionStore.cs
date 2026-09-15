@@ -14,7 +14,8 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
         Id, CityValue, CityName, CustomerId, CustomerName, CustomerPhone, SalesRequestId,
         RequestingManagerUserName, RequestingManagerDisplayName, Reason, TargetApproverType, Status,
         RequestedAtUtc, DecidedAtUtc, DecisionMakerUserName, DecisionMakerDisplayName, DecisionNote,
-        BranchCustomerNotePosted
+        BranchCustomerNotePosted, AssignmentConsumed, AssignedEmployeeId, AssignedEmployeeName,
+        AssignedAtUtc, AssignedByManagerUserName
         """;
 
     private const string InsertAuditSql = """
@@ -47,6 +48,11 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
         }
         row.Status = ExceptionStatuses.Pending;
         row.BranchCustomerNotePosted = false;
+        row.AssignmentConsumed = false;
+        row.AssignedEmployeeId = null;
+        row.AssignedEmployeeName = null;
+        row.AssignedAtUtc = null;
+        row.AssignedByManagerUserName = null;
 
         var auditRow = audit.Clone();
         auditRow.ExceptionRequestId = row.Id;
@@ -61,7 +67,8 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
             VALUES (@Id, @CityValue, @CityName, @CustomerId, @CustomerName, @CustomerPhone, @SalesRequestId,
                     @RequestingManagerUserName, @RequestingManagerDisplayName, @Reason, @TargetApproverType, @Status,
                     @RequestedAtUtc, @DecidedAtUtc, @DecisionMakerUserName, @DecisionMakerDisplayName, @DecisionNote,
-                    @BranchCustomerNotePosted);
+                    @BranchCustomerNotePosted, @AssignmentConsumed, @AssignedEmployeeId, @AssignedEmployeeName,
+                    @AssignedAtUtc, @AssignedByManagerUserName);
             """, row, cancellationToken: ct));
         await connection.ExecuteAsync(new CommandDefinition(InsertAuditSql, auditRow, cancellationToken: ct));
         return row;
@@ -193,6 +200,68 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
             """, new { cityValue = Trimmed(cityValue) }, cancellationToken: ct));
 
         return rows.ToDictionary(r => r.Status, r => r.Total, StringComparer.Ordinal);
+    }
+
+    public async Task<SalesExceptionRequest?> FindActiveBySalesRequestIdAsync(int salesRequestId, CancellationToken ct = default)
+    {
+        using var connection = await _factory.OpenAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<SalesExceptionRequest>(new CommandDefinition($"""
+            SELECT TOP (1) {Columns}
+            FROM dbo.SalesExceptionRequests
+            WHERE SalesRequestId = @salesRequestId
+              AND (
+                    Status = N'Pending'
+                    OR (Status = N'Approved' AND AssignmentConsumed = 0)
+                  )
+            ORDER BY RequestedAtUtc DESC;
+            """, new { salesRequestId }, cancellationToken: ct));
+    }
+
+    public async Task<SalesExceptionRequest?> TryConsumeAsync(
+        Guid id,
+        int employeeId,
+        string? employeeName,
+        string? assignedByManagerUserName,
+        DateTime assignedAtUtc,
+        SalesExceptionAuditEntry audit,
+        CancellationToken ct = default)
+    {
+        using var connection = await _factory.OpenAsync(ct);
+        var affected = await connection.ExecuteAsync(new CommandDefinition("""
+            UPDATE dbo.SalesExceptionRequests
+            SET AssignmentConsumed = 1,
+                AssignedEmployeeId = @employeeId,
+                AssignedEmployeeName = @employeeName,
+                AssignedAtUtc = @assignedAtUtc,
+                AssignedByManagerUserName = @assignedByManagerUserName
+            WHERE Id = @id
+              AND Status = N'Approved'
+              AND AssignmentConsumed = 0;
+            """, new
+        {
+            id,
+            employeeId,
+            employeeName,
+            assignedAtUtc,
+            assignedByManagerUserName
+        }, cancellationToken: ct));
+
+        if (affected == 0)
+        {
+            return null;
+        }
+
+        var auditRow = audit.Clone();
+        auditRow.ExceptionRequestId = id;
+        if (auditRow.CreatedAtUtc == default)
+        {
+            auditRow.CreatedAtUtc = assignedAtUtc;
+        }
+        await connection.ExecuteAsync(new CommandDefinition(InsertAuditSql, auditRow, cancellationToken: ct));
+
+        return await connection.QuerySingleOrDefaultAsync<SalesExceptionRequest>(new CommandDefinition($"""
+            SELECT {Columns} FROM dbo.SalesExceptionRequests WHERE Id = @id;
+            """, new { id }, cancellationToken: ct));
     }
 
     private static string? Trimmed(string? value) =>

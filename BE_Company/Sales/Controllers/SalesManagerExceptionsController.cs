@@ -1,4 +1,6 @@
+using System.Text.Json;
 using BE_Company.Sales.Authorization;
+using BE_Company.Sales.DTO;
 using BE_Company.Sales.Models;
 using BE_Company.Sales.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -17,13 +19,16 @@ namespace BE_Company.Sales.Controllers
     {
         private readonly SalesIdentityService _identity;
         private readonly ISalesExceptionGatewayForwarder _forwarder;
+        private readonly ISalesRequestService _requests;
 
         public SalesManagerExceptionsController(
             SalesIdentityService identity,
-            ISalesExceptionGatewayForwarder forwarder)
+            ISalesExceptionGatewayForwarder forwarder,
+            ISalesRequestService requests)
         {
             _identity = identity;
             _forwarder = forwarder;
+            _requests = requests;
         }
 
         /// <summary>
@@ -45,6 +50,12 @@ namespace BE_Company.Sales.Controllers
             public string? RequesterUserName { get; set; }
             public string? RequesterDisplayName { get; set; }
             public string? Role { get; set; }
+        }
+
+        public sealed class AssignExceptionBody
+        {
+            public int EmployeeId { get; set; }
+            public string? EmployeeName { get; set; }
         }
 
         [HttpPost]
@@ -82,6 +93,24 @@ namespace BE_Company.Sales.Controllers
                 RequesterDisplayName = actor.EmployeeName,
                 Role = SalesRoles.UserTypeSalesManager
             }, ct);
+
+            if (forwarded.Ok
+                && body.SalesRequestId is int salesRequestId and > 0
+                && TryReadExceptionId(forwarded.ResponseBody, out var exceptionId))
+            {
+                try
+                {
+                    await _requests.SetExceptionHoldAsync(
+                        salesRequestId,
+                        SalesExceptionHoldStatuses.Pending,
+                        exceptionId,
+                        ct);
+                }
+                catch (SalesCompleteException ex)
+                {
+                    return StatusCode(ex.StatusCode, new { message = ex.Message });
+                }
+            }
 
             return ToActionResult(forwarded);
         }
@@ -124,6 +153,94 @@ namespace BE_Company.Sales.Controllers
             }, ct);
 
             return ToActionResult(forwarded);
+        }
+
+        [HttpPost("{id:guid}/assign")]
+        public async Task<IActionResult> Assign(Guid id, [FromBody] AssignExceptionBody? body, CancellationToken ct)
+        {
+            var actor = _identity.FromAuthenticatedUser();
+            if (actor is null)
+            {
+                return Unauthorized();
+            }
+
+            if (!SalesRoles.IsSalesManager(actor.UserType))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "إسناد الاستثناء متاح لمدير المبيعات فقط" });
+            }
+
+            body ??= new AssignExceptionBody();
+            if (body.EmployeeId <= 0)
+            {
+                return BadRequest(new { message = "يجب اختيار موظف المبيعات" });
+            }
+
+            var got = await _forwarder.GetAsync(id, ct);
+            if (!got.Ok)
+            {
+                return ToActionResult(got);
+            }
+
+            if (!TryReadExceptionSnapshot(got.ResponseBody, out var snapshot))
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { message = "تعذر قراءة بيانات الاستثناء" });
+            }
+
+            if (!string.Equals(snapshot.Status, SalesExceptionHoldStatuses.Approved, StringComparison.OrdinalIgnoreCase)
+                || snapshot.AssignmentConsumed)
+            {
+                return Conflict(new { message = "لا يمكن إسناد هذا الاستثناء" });
+            }
+
+            if (snapshot.SalesRequestId is null or <= 0)
+            {
+                return BadRequest(new { message = "طلب المبيع المرتبط بالاستثناء غير موجود" });
+            }
+
+            var original = await _requests.GetForManagerAsync(snapshot.SalesRequestId.Value, ct);
+            if (original is null)
+            {
+                return NotFound(new { message = "طلب المبيع الأصلي غير موجود" });
+            }
+
+            if (!string.IsNullOrWhiteSpace(original.CityValue)
+                && !SalesBranchScope.PassesOptionalCityFilter(original.CityValue, actor.BranchId, actor.BranchName))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "لا يمكن إسناد طلب خارج صلاحياتك" });
+            }
+
+            try
+            {
+                var assigned = await _requests.AssignAsync(
+                    actor,
+                    snapshot.SalesRequestId.Value,
+                    new SalesRequestAssignDTO
+                    {
+                        EmployeeId = body.EmployeeId,
+                        EmployeeName = body.EmployeeName
+                    },
+                    ct,
+                    exceptionAssignId: id);
+
+                var consumed = await _forwarder.ConsumeAsync(id, new SalesExceptionConsumeForwardRequest
+                {
+                    EmployeeId = body.EmployeeId,
+                    EmployeeName = body.EmployeeName ?? assigned.TargetEmployeeName,
+                    AssignedByManagerUserName = actor.EmployeeName
+                }, ct);
+
+                if (!consumed.Ok)
+                {
+                    return ToActionResult(consumed);
+                }
+
+                await _requests.SetExceptionHoldAsync(snapshot.SalesRequestId.Value, null, null, ct);
+                return Ok(assigned);
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
         }
 
         private static IActionResult ToActionResult(SalesExceptionGatewayForwardResult forwarded)
@@ -176,6 +293,113 @@ namespace BE_Company.Sales.Controllers
             }
 
             return true;
+        }
+
+        private static bool TryReadExceptionId(string? body, out Guid id)
+        {
+            id = Guid.Empty;
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("id", out var idProp)
+                    && idProp.ValueKind == JsonValueKind.String
+                    && Guid.TryParse(idProp.GetString(), out id))
+                {
+                    return true;
+                }
+
+                if (doc.RootElement.TryGetProperty("Id", out idProp)
+                    && idProp.ValueKind == JsonValueKind.String
+                    && Guid.TryParse(idProp.GetString(), out id))
+                {
+                    return true;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
+            return false;
+        }
+
+        private sealed class ExceptionSnapshot
+        {
+            public string? Status { get; init; }
+            public bool AssignmentConsumed { get; init; }
+            public int? SalesRequestId { get; init; }
+            public string? CityValue { get; init; }
+        }
+
+        private static bool TryReadExceptionSnapshot(string? body, out ExceptionSnapshot snapshot)
+        {
+            snapshot = new ExceptionSnapshot();
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                snapshot = new ExceptionSnapshot
+                {
+                    Status = ReadString(root, "status", "Status"),
+                    AssignmentConsumed = ReadBool(root, "assignmentConsumed", "AssignmentConsumed"),
+                    SalesRequestId = ReadInt(root, "salesRequestId", "SalesRequestId"),
+                    CityValue = ReadString(root, "cityValue", "CityValue")
+                };
+                return true;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        private static string? ReadString(JsonElement root, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (root.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.String)
+                {
+                    return prop.GetString();
+                }
+            }
+
+            return null;
+        }
+
+        private static bool ReadBool(JsonElement root, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (root.TryGetProperty(name, out var prop)
+                    && (prop.ValueKind is JsonValueKind.True or JsonValueKind.False))
+                {
+                    return prop.GetBoolean();
+                }
+            }
+
+            return false;
+        }
+
+        private static int? ReadInt(JsonElement root, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (root.TryGetProperty(name, out var prop) && prop.TryGetInt32(out var value))
+                {
+                    return value;
+                }
+            }
+
+            return null;
         }
     }
 }

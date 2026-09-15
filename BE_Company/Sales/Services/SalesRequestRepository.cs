@@ -96,7 +96,8 @@ UPDATE dbo.SalesRequests SET
  PendingNote = @PendingNote, PreparedForSaleNote = @PreparedForSaleNote, ReturnNote = @ReturnNote, ManagerReadAtUtc = @ManagerReadAtUtc,
  FilterStatus = @FilterStatus, FilteredByUserId = @FilteredByUserId, FilterNote = @FilterNote,
  FilterRejectReason = @FilterRejectReason, FilteredAtUtc = @FilteredAtUtc,
- IsDeleted = @IsDeleted, DeletedAtUtc = @DeletedAtUtc, DeletedByUserId = @DeletedByUserId, DeletedByName = @DeletedByName
+ IsDeleted = @IsDeleted, DeletedAtUtc = @DeletedAtUtc, DeletedByUserId = @DeletedByUserId, DeletedByName = @DeletedByName,
+ ExceptionHoldStatus = @ExceptionHoldStatus, ActiveExceptionId = @ActiveExceptionId
 WHERE Id = @Id", row, cancellationToken: ct));
         }
 
@@ -233,7 +234,8 @@ SELECT Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, 
  AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc,
  SaleRequestType, SourceListId,
  FilterStatus, FilteredByUserId, FilterNote, FilterRejectReason, FilteredAtUtc,
- ISNULL(IsDeleted, 0) AS IsDeleted, DeletedAtUtc, DeletedByUserId, DeletedByName
+ ISNULL(IsDeleted, 0) AS IsDeleted, DeletedAtUtc, DeletedByUserId, DeletedByName,
+ ExceptionHoldStatus, ActiveExceptionId
 FROM dbo.SalesRequests";
 
         private const string SchemaSql = @"
@@ -364,6 +366,10 @@ IF COL_LENGTH(N'dbo.SalesRequests', N'DeletedByUserId') IS NULL
     ALTER TABLE dbo.SalesRequests ADD DeletedByUserId INT NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'DeletedByName') IS NULL
     ALTER TABLE dbo.SalesRequests ADD DeletedByName NVARCHAR(200) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'ExceptionHoldStatus') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD ExceptionHoldStatus NVARCHAR(30) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'ActiveExceptionId') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD ActiveExceptionId UNIQUEIDENTIFIER NULL;
 IF NOT EXISTS (
     SELECT 1 FROM sys.indexes
     WHERE name = N'IX_SalesRequests_IsDeleted' AND object_id = OBJECT_ID(N'dbo.SalesRequests')

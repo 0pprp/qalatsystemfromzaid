@@ -24,5 +24,12 @@ public sealed class SalesExceptionRequest
     public string? DecisionNote { get; set; }
     public bool BranchCustomerNotePosted { get; set; }
 
+    /// <summary>True after branch assignment successfully consumed this Approved exception.</summary>
+    public bool AssignmentConsumed { get; set; }
+    public int? AssignedEmployeeId { get; set; }
+    public string? AssignedEmployeeName { get; set; }
+    public DateTime? AssignedAtUtc { get; set; }
+    public string? AssignedByManagerUserName { get; set; }
+
     public SalesExceptionRequest Clone() => (SalesExceptionRequest)MemberwiseClone();
 }

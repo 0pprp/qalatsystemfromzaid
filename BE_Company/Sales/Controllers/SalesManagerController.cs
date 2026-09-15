@@ -24,6 +24,7 @@ namespace BE_Company.Sales.Controllers
         private readonly ISalesPurchaseService _purchases;
         private readonly ISalesExcelCustomerSearchService _excelSearch;
         private readonly ISalesRequestEvaluationService _evaluation;
+        private readonly IExceptionReviewService _exceptionReview;
         private readonly ISharedCustomerNotesService _sharedNotes;
 
         public SalesManagerController(
@@ -39,6 +40,7 @@ namespace BE_Company.Sales.Controllers
             ISalesPurchaseService purchases,
             ISalesExcelCustomerSearchService excelSearch,
             ISalesRequestEvaluationService evaluation,
+            IExceptionReviewService exceptionReview,
             ISharedCustomerNotesService sharedNotes)
         {
             _guard = guard;
@@ -53,6 +55,7 @@ namespace BE_Company.Sales.Controllers
             _purchases = purchases;
             _excelSearch = excelSearch;
             _evaluation = evaluation;
+            _exceptionReview = exceptionReview;
             _sharedNotes = sharedNotes;
         }
 
@@ -719,6 +722,25 @@ namespace BE_Company.Sales.Controllers
             try
             {
                 return Ok(await _evaluation.EvaluateBatchAsync(identity!, body ?? new SalesRequestEvaluationBatchRequestDTO(), ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Same-province exception review context for Delegated Manager (via gateway S2S).
+        /// </summary>
+        [HttpGet("sales-requests/{id:int}/exception-review-context")]
+        public async Task<IActionResult> ExceptionReviewContext(int id, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _exceptionReview.BuildContextAsync(identity!, id, ct));
             }
             catch (SalesCompleteException ex)
             {

@@ -42,6 +42,13 @@ public sealed class InternalSalesExceptionsController : ControllerBase
         public string? Role { get; set; }
     }
 
+    public sealed class ConsumeBody
+    {
+        public int EmployeeId { get; set; }
+        public string? EmployeeName { get; set; }
+        public string? AssignedByManagerUserName { get; set; }
+    }
+
     /// <summary>Fails closed: an unset <c>InternalApiKey</c> rejects every caller.</summary>
     public static bool HasValidGatewayKey(HttpRequest request, IConfiguration configuration)
     {
@@ -88,6 +95,8 @@ public sealed class InternalSalesExceptionsController : ControllerBase
                 Ok(DelegatedManagerController.ToExceptionDetail(result.Request!)),
             SalesExceptionOutcome.Forbidden =>
                 StatusCode(StatusCodes.Status403Forbidden, new { message = result.Error }),
+            SalesExceptionOutcome.Conflict =>
+                Conflict(new { message = result.Error }),
             _ => BadRequest(new { message = result.Error })
         };
     }
@@ -129,6 +138,56 @@ public sealed class InternalSalesExceptionsController : ControllerBase
             totalPages = result.TotalPages,
             items = result.Items.Select(DelegatedManagerController.ToExceptionSummary)
         });
+    }
+
+    [HttpGet("{id:guid}")]
+    public async Task<IActionResult> Get(Guid id, CancellationToken ct)
+    {
+        if (!HasValidGatewayKey(Request, _configuration))
+        {
+            return Unauthorized(new { message = "مفتاح البوابة الداخلي غير صالح" });
+        }
+
+        var detail = await _exceptions.GetAsync(id, ct);
+        if (detail is null)
+        {
+            return NotFound(new { message = "طلب الاستثناء غير موجود" });
+        }
+
+        return Ok(DelegatedManagerController.ToExceptionDetail(detail.Request));
+    }
+
+    [HttpPost("{id:guid}/consume")]
+    public async Task<IActionResult> Consume(Guid id, [FromBody] ConsumeBody? body, CancellationToken ct)
+    {
+        if (!HasValidGatewayKey(Request, _configuration))
+        {
+            return Unauthorized(new { message = "مفتاح البوابة الداخلي غير صالح" });
+        }
+
+        body ??= new ConsumeBody();
+        var manager = new GatewayUser
+        {
+            UserID = "",
+            UserName = string.IsNullOrWhiteSpace(body.AssignedByManagerUserName)
+                ? "sales-manager"
+                : body.AssignedByManagerUserName.Trim(),
+            UserType = SalesRoles.UserTypeSalesManager
+        };
+
+        var result = await _exceptions.TryConsumeAssignmentAsync(
+            manager, id, body.EmployeeId, body.EmployeeName, ct);
+
+        return result.Outcome switch
+        {
+            SalesExceptionOutcome.Success =>
+                Ok(DelegatedManagerController.ToExceptionDetail(result.Request!)),
+            SalesExceptionOutcome.NotFound =>
+                NotFound(new { message = result.Error }),
+            SalesExceptionOutcome.Conflict =>
+                Conflict(new { message = result.Error }),
+            _ => BadRequest(new { message = result.Error })
+        };
     }
 
     /// <summary>

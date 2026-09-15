@@ -63,8 +63,6 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
         item.customerName,
         item.requestingManagerDisplayName ?? '',
         item.cityName ?? '',
-        item.salesRequestId?.toString() ?? '',
-        item.customerId?.toString() ?? '',
       ].join(' ');
       return haystack.contains(query);
     }).toList();
@@ -178,7 +176,7 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
                 controller: _searchController,
                 onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
-                  hintText: 'بحث باسم الزبون أو رقم الطلب',
+                  hintText: 'بحث باسم الزبون أو المحافظة',
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _searchController.text.isEmpty
                       ? null
@@ -285,15 +283,6 @@ class _ExceptionCard extends StatelessWidget {
                   const SizedBox(width: 4),
                   Text(
                     item.cityName ?? 'غير محددة',
-                    style:
-                        const TextStyle(color: AppColors.muted, fontSize: 12),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  const Icon(Icons.receipt_long_outlined,
-                      size: 15, color: AppColors.muted),
-                  const SizedBox(width: 4),
-                  Text(
-                    'طلب ${item.salesRequestId ?? '-'}',
                     style:
                         const TextStyle(color: AppColors.muted, fontSize: 12),
                   ),

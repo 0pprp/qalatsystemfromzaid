@@ -42,6 +42,7 @@ else
 }
 builder.Services.AddSingleton<IntentRecordingBranchNotePoster>();
 builder.Services.AddScoped<IBranchNotePoster, GatewayBranchNotePoster>();
+builder.Services.AddScoped<IBranchExceptionHoldPoster, GatewayExceptionHoldPoster>();
 builder.Services.AddScoped<CentralComplaintsService>();
 builder.Services.AddScoped<SalesExceptionService>();
 builder.Services.AddScoped<MobileUpdateService>();

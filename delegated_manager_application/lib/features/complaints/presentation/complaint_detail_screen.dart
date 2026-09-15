@@ -120,15 +120,11 @@ class _ComplaintDetailScreenState extends State<ComplaintDetailScreen> {
                                 value: detail.summary.cityName ?? 'غير محددة',
                               ),
                               InfoRow(
-                                label: 'التطبيق',
-                                value: detail.summary.sourceApp ?? '-',
+                                label: 'المصدر',
+                                value: detail.summary.friendlySource,
                               ),
                               InfoRow(
-                                label: 'النوع',
-                                value: detail.summary.sourceType ?? '-',
-                              ),
-                              InfoRow(
-                                label: 'تاريخ الإرسال',
+                                label: 'وقت الإرسال',
                                 value:
                                     AppDate.format(detail.summary.createdAtUtc),
                               ),
@@ -153,19 +149,6 @@ class _ComplaintDetailScreenState extends State<ComplaintDetailScreen> {
                           ),
                         ],
                       ),
-                      if ((detail.metadataJson ?? '').isNotEmpty) ...[
-                        const SizedBox(height: AppSpacing.md),
-                        SectionCard(
-                          title: 'بيانات إضافية',
-                          children: [
-                            Text(
-                              detail.metadataJson!,
-                              style: const TextStyle(
-                                  fontSize: 12, color: AppColors.muted),
-                            ),
-                          ],
-                        ),
-                      ],
                       const SizedBox(height: AppSpacing.md),
                       if (detail.summary.isUnread)
                         FilledButton.icon(

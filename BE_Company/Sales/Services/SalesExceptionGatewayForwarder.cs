@@ -30,6 +30,13 @@ namespace BE_Company.Sales.Services
         public string? RequesterUserName { get; init; }
     }
 
+    public sealed class SalesExceptionConsumeForwardRequest
+    {
+        public int EmployeeId { get; init; }
+        public string? EmployeeName { get; init; }
+        public string? AssignedByManagerUserName { get; init; }
+    }
+
     public sealed class SalesExceptionGatewayForwardResult
     {
         public bool Ok { get; init; }
@@ -54,12 +61,20 @@ namespace BE_Company.Sales.Services
         Task<SalesExceptionGatewayForwardResult> ListAsync(
             SalesExceptionListForwardRequest request,
             CancellationToken ct = default);
+
+        Task<SalesExceptionGatewayForwardResult> GetAsync(Guid id, CancellationToken ct = default);
+
+        Task<SalesExceptionGatewayForwardResult> ConsumeAsync(
+            Guid id,
+            SalesExceptionConsumeForwardRequest request,
+            CancellationToken ct = default);
     }
 
     /// <summary>
     /// Server-to-server bridge into BE_SalesEmployee internal sales-exceptions.
     /// The shared internal key lives only in branch configuration — never in the browser.
     /// Gateway 401 is mapped to 502 so FE auth interceptors do not log the user out.
+    /// Conflict (409) is preserved for duplicate/active exception errors.
     /// </summary>
     public sealed class SalesExceptionGatewayForwarder : ISalesExceptionGatewayForwarder
     {
@@ -131,6 +146,15 @@ namespace BE_Company.Sales.Services
             return SendAsync(HttpMethod.Get, path, body: null, ct);
         }
 
+        public Task<SalesExceptionGatewayForwardResult> GetAsync(Guid id, CancellationToken ct = default) =>
+            SendAsync(HttpMethod.Get, $"{RelativePath}/{id:D}", body: null, ct);
+
+        public Task<SalesExceptionGatewayForwardResult> ConsumeAsync(
+            Guid id,
+            SalesExceptionConsumeForwardRequest request,
+            CancellationToken ct = default) =>
+            SendAsync(HttpMethod.Post, $"{RelativePath}/{id:D}/consume", request, ct);
+
         private async Task<SalesExceptionGatewayForwardResult> SendAsync(
             HttpMethod method,
             string relativePath,
@@ -176,14 +200,25 @@ namespace BE_Company.Sales.Services
                     (int)response.StatusCode,
                     responseBody);
 
-                // Never pass gateway 401 through — FE would treat it as branch session failure.
-                var mapped = response.StatusCode is System.Net.HttpStatusCode.Unauthorized
-                    or System.Net.HttpStatusCode.Forbidden
-                    ? StatusCodes.Status502BadGateway
-                    : StatusCodes.Status502BadGateway;
+                if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+                {
+                    var conflictMessage = TryReadMessage(responseBody)
+                                          ?? "تعذر إكمال العملية بسبب تعارض";
+                    return SalesExceptionGatewayForwardResult.Failure(
+                        StatusCodes.Status409Conflict,
+                        conflictMessage);
+                }
 
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    return SalesExceptionGatewayForwardResult.Failure(
+                        StatusCodes.Status404NotFound,
+                        TryReadMessage(responseBody) ?? "طلب الاستثناء غير موجود");
+                }
+
+                // Never pass gateway 401 through — FE would treat it as branch session failure.
                 return SalesExceptionGatewayForwardResult.Failure(
-                    mapped,
+                    StatusCodes.Status502BadGateway,
                     "تعذر تسليم طلب الاستثناء إلى الإدارة المركزية، يرجى المحاولة لاحقًا");
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
@@ -193,6 +228,29 @@ namespace BE_Company.Sales.Services
                     StatusCodes.Status503ServiceUnavailable,
                     "تعذر الاتصال بالإدارة المركزية حاليًا، يرجى المحاولة لاحقًا");
             }
+        }
+
+        private static string? TryReadMessage(string? body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return null;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("message", out var message)
+                    && message.ValueKind == JsonValueKind.String)
+                {
+                    return message.GetString();
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
+            return null;
         }
     }
 }

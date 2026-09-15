@@ -44,6 +44,15 @@ public sealed class SalesManagerExceptionBridgeTests
             LastList = request;
             return Task.FromResult(Result);
         }
+
+        public Task<SalesExceptionGatewayForwardResult> GetAsync(Guid id, CancellationToken ct = default) =>
+            Task.FromResult(Result);
+
+        public Task<SalesExceptionGatewayForwardResult> ConsumeAsync(
+            Guid id,
+            SalesExceptionConsumeForwardRequest request,
+            CancellationToken ct = default) =>
+            Task.FromResult(Result);
     }
 
     private static IConfiguration BranchConfig(
@@ -82,7 +91,8 @@ public sealed class SalesManagerExceptionBridgeTests
 
         var accessor = new HttpContextAccessor { HttpContext = http };
         var identity = new SalesIdentityService(accessor, config);
-        var controller = new SalesManagerExceptionsController(identity, forwarder)
+        var requests = new SalesRequestService(new FakeRequestRepository(), new FakeClock());
+        var controller = new SalesManagerExceptionsController(identity, forwarder, requests)
         {
             ControllerContext = new ControllerContext { HttpContext = http }
         };

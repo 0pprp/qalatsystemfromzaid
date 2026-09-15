@@ -263,6 +263,113 @@ void main() {
       expect(detail.audit.single.newStatus, ExceptionStatuses.approved);
     });
 
+    test('reads enriched review with New classification and source', () {
+      final json = jsonDecode('''
+      {
+        "request": {
+          "id": "33333333-3333-3333-3333-333333333333",
+          "status": "Pending",
+          "customerName": "محمد علي حسن",
+          "customerPhone": "07801111111",
+          "cityName": "البصرة",
+          "reason": "طلب استثناء"
+        },
+        "audit": [],
+        "review": {
+          "customerClassification": {
+            "type": "New",
+            "labelArabic": "زبون جديد",
+            "matchCount": 0,
+            "explanationArabic": "لم يتم العثور على تطابق في نفس المحافظة برقم الهاتف أو الاسم الثلاثي"
+          },
+          "currentRequest": {
+            "customerName": "محمد علي حسن",
+            "customerPhone": "07801111111",
+            "cityName": "البصرة",
+            "saleTypeOrProduct": "ثلاجة"
+          },
+          "source": {
+            "type": "Delegate",
+            "displayLabel": "مندوب",
+            "personName": "أحمد علي",
+            "listName": "العشار الأولى",
+            "branchName": "البصرة"
+          },
+          "matchingCustomers": []
+        }
+      }''') as Map<String, dynamic>;
+
+      final detail = ExceptionDetail.fromJson(json);
+      expect(detail.review, isNotNull);
+      expect(detail.review!.customerClassification.isNew, isTrue);
+      expect(detail.review!.customerClassification.labelArabic, 'زبون جديد');
+      expect(detail.review!.source.displayLabel, 'مندوب');
+      expect(detail.review!.source.listName, 'العشار الأولى');
+      expect(detail.review!.matchingCustomers, isEmpty);
+    });
+
+    test('reads Existing classification with match count and reasons', () {
+      final json = jsonDecode('''
+      {
+        "request": {
+          "id": "33333333-3333-3333-3333-333333333333",
+          "status": "Pending",
+          "customerName": "محمد علي حسن"
+        },
+        "audit": [],
+        "review": {
+          "customerClassification": {
+            "type": "Existing",
+            "labelArabic": "زبون قديم",
+            "matchCount": 2,
+            "explanationArabic": "تم العثور على 2 حالة مطابقة في نفس المحافظة"
+          },
+          "source": {
+            "displayLabel": "موظف مبيعات",
+            "personName": "سامر",
+            "branchName": "البصرة"
+          },
+          "matchingCustomers": [
+            {
+              "fullName": "محمد علي حسن",
+              "phone": "07801111111",
+              "cityName": "البصرة",
+              "matchReasons": ["تطابق الاسم ورقم الهاتف"],
+              "ratingLabel": "جيد",
+              "isLegal": false,
+              "financialSummary": {
+                "totalSales": 1000,
+                "totalPaid": 400,
+                "remaining": 600,
+                "fullyPaid": false
+              },
+              "previousSales": []
+            },
+            {
+              "fullName": "محمد علي حسن",
+              "phone": "07802222222",
+              "cityName": "البصرة",
+              "matchReasons": ["تطابق الاسم الثلاثي"],
+              "financialSummary": {},
+              "previousSales": []
+            }
+          ]
+        }
+      }''') as Map<String, dynamic>;
+
+      final detail = ExceptionDetail.fromJson(json);
+      expect(detail.review!.customerClassification.isExisting, isTrue);
+      expect(detail.review!.customerClassification.matchCount, 2);
+      expect(detail.review!.matchingCustomers.length, 2);
+      expect(detail.review!.matchingCustomers.first.matchReasons.single,
+          'تطابق الاسم ورقم الهاتف');
+      // Cross-province would not appear in payload; ensure we only see basra names.
+      expect(
+          detail.review!.matchingCustomers
+              .every((m) => m.cityName == 'البصرة'),
+          isTrue);
+    });
+
     test('decision response parses as a bare request object', () {
       final request = ExceptionRequest.fromJson(const {
         'id': '33333333-3333-3333-3333-333333333333',

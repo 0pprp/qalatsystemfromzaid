@@ -271,7 +271,7 @@ class _ComplaintTile extends StatelessWidget {
         child: Text(
           '${item.senderDisplayName}'
           '${item.cityName == null ? '' : ' • ${item.cityName}'}'
-          '${item.sourceApp == null ? '' : ' • ${item.sourceApp}'}',
+          ' • ${item.friendlySource}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(color: AppColors.muted, fontSize: 12),
