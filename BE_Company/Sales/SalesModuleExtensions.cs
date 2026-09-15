@@ -51,6 +51,7 @@ namespace BE_Company.Sales
             services.AddHostedService<SalesShiftCutoffHostedService>();
             services.AddHostedService<SalesPostingHostedService>();
             services.AddScoped<IFollowerDirectoryService, FollowerDirectoryService>();
+            services.AddHttpClient<ISalesExceptionGatewayForwarder, SalesExceptionGatewayForwarder>();
             services.AddSingleton<IAuthorizationHandler, SalesRoleHandler>();
             services.AddAuthorization(options =>
             {
