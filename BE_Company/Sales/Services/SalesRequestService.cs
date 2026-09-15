@@ -90,7 +90,7 @@ namespace BE_Company.Sales.Services
 
         public async Task<SalesRequestImportResultDTO> ImportRowsAsync(
             SalesIdentity actor,
-            IReadOnlyList<SalesRequestImportRowDTO> rows,
+            SalesRequestImportDTO import,
             CancellationToken ct)
         {
             if (SalesRoles.IsSalesEmployee(actor.UserType)
@@ -100,7 +100,10 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status403Forbidden, "غير مصرح.");
             }
 
-            rows ??= [];
+            import ??= new SalesRequestImportDTO();
+            var rows = import.Rows ?? [];
+            var batchCityValue = Trimmed(import.CityValue);
+            var batchCityName = Trimmed(import.CityName);
             var result = new SalesRequestImportResultDTO { Total = rows.Count };
             foreach (var row in rows)
             {
@@ -126,21 +129,66 @@ namespace BE_Company.Sales.Services
                         throw new SalesCompleteException(StatusCodes.Status400BadRequest, SalesIraqPhone.Message);
                     }
 
+                    var provinceText = Trimmed(row.Province) ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(provinceText))
+                    {
+                        throw new SalesCompleteException(
+                            StatusCodes.Status400BadRequest,
+                            "المحافظة مطلوبة");
+                    }
+
+                    // Never stamp actor.BranchId (often نجف on shared/central hosts).
+                    // Each Excel row must carry its own resolved CityValue/CityName.
+                    var cityValue = Trimmed(row.CityValue) ?? batchCityValue;
+                    var cityName = Trimmed(row.CityName) ?? batchCityName ?? provinceText;
+                    if (string.IsNullOrWhiteSpace(cityValue))
+                    {
+                        throw new SalesCompleteException(
+                            StatusCodes.Status400BadRequest,
+                            $"المحافظة غير معروفة بعد التطبيع: {provinceText}");
+                    }
+
+                    // Reject silent Najaf / demo fallbacks when the Excel province is not Najaf.
+                    if (IsForbiddenDefaultCityStamp(cityValue, cityName, provinceText))
+                    {
+                        throw new SalesCompleteException(
+                            StatusCodes.Status400BadRequest,
+                            $"تعذر مطابقة المحافظة «{provinceText}» — لن يتم تعيين النجف تلقائياً");
+                    }
+
+                    if (!actor.IsGateway)
+                    {
+                        // Branch-bound manager: never trust PassesOptionalCityFilter fail-open for Arabic labels.
+                        var ownByExactId = !string.IsNullOrWhiteSpace(actor.BranchId)
+                            && string.Equals(cityValue, actor.BranchId.Trim(), StringComparison.OrdinalIgnoreCase);
+                        var ownByComparableKey = SalesBranchScope.IsComparableBranchKey(cityValue)
+                            && SalesBranchScope.IsComparableBranchKey(actor.BranchId)
+                            && string.Equals(cityValue, actor.BranchId.Trim(), StringComparison.OrdinalIgnoreCase);
+                        var ownByName = !string.IsNullOrWhiteSpace(actor.BranchName)
+                            && (FoldAr(actor.BranchName) == FoldAr(cityName)
+                                || FoldAr(actor.BranchName) == FoldAr(provinceText));
+                        if (!ownByExactId && !ownByComparableKey && !ownByName)
+                        {
+                            throw new SalesCompleteException(
+                                StatusCodes.Status403Forbidden,
+                                $"لا يمكن استيراد محافظة خارج صلاحياتك: {provinceText}");
+                        }
+                    }
+
                     var notes = string.IsNullOrWhiteSpace(row.SaleType)
                         ? null
                         : $"نوع المبيع: {row.SaleType.Trim()}";
 
-                    await CreateAsync(actor, new SalesRequestCreateDTO
-                    {
-                        Customer = new SalesRequestCustomerDTO
-                        {
-                            FullName = name,
-                            Phone = phone,
-                            Province = row.Province,
-                            Address = row.Address
-                        },
-                        Notes = notes
-                    }, ct, validateIraqPhone: true);
+                    await CreateImportedAsync(
+                        actor,
+                        cityValue,
+                        cityName,
+                        name,
+                        phone,
+                        provinceText,
+                        Trimmed(row.Address),
+                        notes,
+                        ct);
                     result.Saved++;
                 }
                 catch (SalesCompleteException ex)
@@ -156,6 +204,89 @@ namespace BE_Company.Sales.Services
 
             return result;
         }
+
+        /// <summary>
+        /// Import-only create: persists the Excel-resolved CityValue/CityName, never actor.BranchId.
+        /// </summary>
+        private async Task<SalesRequestDTO> CreateImportedAsync(
+            SalesIdentity actor,
+            string cityValue,
+            string cityName,
+            string customerName,
+            string phone,
+            string province,
+            string? address,
+            string? notes,
+            CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            var row = new SalesRequestDTO
+            {
+                CreatedByUserId = actor.EmployeeId,
+                CreatedByName = actor.EmployeeName,
+                CreatedByUserType = actor.UserType,
+                TargetEmployeeId = 0,
+                TargetEmployeeName = null,
+                CityValue = cityValue,
+                CityName = cityName,
+                CustomerSourceType = SalesRequestSources.NewCustomer,
+                ExistingCustomerId = null,
+                CustomerSourceCityValue = null,
+                CustomerName = customerName,
+                CustomerPhone = phone,
+                CustomerProvince = province,
+                CustomerAddress = address,
+                Notes = notes,
+                Status = SalesRequestStatuses.New,
+                FilterStatus = SalesFilterStatuses.PendingFilter,
+                CreatedAtUtc = _clock.UtcNow
+            };
+            var saved = await _repo.InsertAsync(row, ct);
+            await AppendHistoryAsync(saved, SalesRequestEvents.Created, actor, saved.Notes, ct);
+            return await HydrateAsync(saved, ct);
+        }
+
+        /// <summary>
+        /// Detects when a non-Najaf Excel province would be persisted under a Najaf/demo city key.
+        /// </summary>
+        public static bool IsForbiddenDefaultCityStamp(string cityValue, string? cityName, string province)
+        {
+            if (string.IsNullOrWhiteSpace(province))
+            {
+                return false;
+            }
+
+            var prov = FoldAr(province);
+            var isNajafProvince = prov.Contains("نجف", StringComparison.Ordinal)
+                                  || prov.Contains("najaf", StringComparison.OrdinalIgnoreCase);
+            if (isNajafProvince)
+            {
+                return false;
+            }
+
+            var city = FoldAr(cityValue + " " + (cityName ?? ""));
+            var looksNajaf = city.Contains("نجف", StringComparison.Ordinal)
+                             || city.Contains("najaf", StringComparison.OrdinalIgnoreCase);
+            return looksNajaf;
+        }
+
+        private static string FoldAr(string value)
+        {
+            var text = value.Trim()
+                .Replace('\u0640', ' ')
+                .Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا').Replace('ٱ', 'ا')
+                .Replace('ة', 'ه')
+                .Replace('ى', 'ي');
+            while (text.Contains("  ", StringComparison.Ordinal))
+            {
+                text = text.Replace("  ", " ", StringComparison.Ordinal);
+            }
+
+            return text;
+        }
+
+        private static string? Trimmed(string? value) =>
+            string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
         public async Task<SalesRequestDTO> SubmitByEmployeeAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct)
         {
@@ -379,6 +510,12 @@ namespace BE_Company.Sales.Services
             var result = new List<SalesRequestDTO>();
             foreach (var row in rows)
             {
+                // Backend-enforce: held New/unassigned requests never appear in manager lists (غير مسند).
+                if (SalesExceptionHoldStatuses.IsHeldUnassigned(row))
+                {
+                    continue;
+                }
+
                 result.Add(await HydrateAsync(row, ct));
             }
 
@@ -532,7 +669,12 @@ namespace BE_Company.Sales.Services
             return await HydrateAsync(row, ct);
         }
 
-        public async Task<SalesRequestDTO> AssignAsync(SalesIdentity manager, int id, SalesRequestAssignDTO request, CancellationToken ct)
+        public async Task<SalesRequestDTO> AssignAsync(
+            SalesIdentity manager,
+            int id,
+            SalesRequestAssignDTO request,
+            CancellationToken ct,
+            Guid? exceptionAssignId = null)
         {
             EnsureManager(manager);
             if (request.EmployeeId <= 0)
@@ -543,6 +685,31 @@ namespace BE_Company.Sales.Services
             await _repo.EnsureSchemaAsync(ct);
             var row = await _repo.GetByIdAsync(id, ct)
                       ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
+
+            if (SalesExceptionHoldStatuses.IsHeld(row.ExceptionHoldStatus))
+            {
+                var hold = row.ExceptionHoldStatus!;
+                if (string.Equals(hold, SalesExceptionHoldStatuses.Pending, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(hold, SalesExceptionHoldStatuses.Rejected, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new SalesCompleteException(
+                        StatusCodes.Status409Conflict,
+                        "الطلب محجوز ضمن طلب استثناء ولا يمكن إسناده.");
+                }
+
+                if (string.Equals(hold, SalesExceptionHoldStatuses.Approved, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (exceptionAssignId is null
+                        || row.ActiveExceptionId is null
+                        || exceptionAssignId.Value != row.ActiveExceptionId.Value)
+                    {
+                        throw new SalesCompleteException(
+                            StatusCodes.Status409Conflict,
+                            "يجب إسناد الطلب عبر طلب الاستثناء الموافق عليه.");
+                    }
+                }
+            }
+
             if (row.TargetEmployeeId > 0 && row.Status != SalesRequestStatuses.New)
             {
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مسند مسبقاً.");
@@ -628,6 +795,35 @@ namespace BE_Company.Sales.Services
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(row, SalesRequestEvents.Assigned, manager, null, ct);
             return await HydrateAsync(row, ct);
+        }
+
+        public async Task SetExceptionHoldAsync(int id, string? holdStatus, Guid? exceptionId, CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
+
+            if (string.IsNullOrWhiteSpace(holdStatus))
+            {
+                row.ExceptionHoldStatus = null;
+                row.ActiveExceptionId = null;
+            }
+            else
+            {
+                var normalized = holdStatus.Trim();
+                if (!SalesExceptionHoldStatuses.IsHeld(normalized))
+                {
+                    throw new SalesCompleteException(StatusCodes.Status400BadRequest, "حالة حجز الاستثناء غير صحيحة.");
+                }
+
+                row.ExceptionHoldStatus = normalized;
+                if (exceptionId.HasValue)
+                {
+                    row.ActiveExceptionId = exceptionId;
+                }
+            }
+
+            await _repo.UpdateAsync(row, ct);
         }
 
         public async Task<SalesRequestDTO> ReturnAsync(SalesIdentity manager, int id, string note, CancellationToken ct)

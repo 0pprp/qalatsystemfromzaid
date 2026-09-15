@@ -647,12 +647,35 @@ namespace BE_Company.Sales.Controllers
             var identity = _identity.FromAuthenticatedUser();
             try
             {
-                return Ok(await _requests.ImportRowsAsync(identity!, body?.Rows ?? [], ct));
+                return Ok(await _requests.ImportRowsAsync(identity!, body ?? new SalesRequestImportDTO(), ct));
             }
             catch (SalesCompleteException ex)
             {
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
+        }
+
+        [HttpPost("sales-requests/{id:int}/exception-hold")]
+        [HttpPut("sales-requests/{id:int}/exception-hold")]
+        public async Task<IActionResult> SetExceptionHold(int id, [FromBody] ExceptionHoldBody? body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            try
+            {
+                await _requests.SetExceptionHoldAsync(id, body?.Status, body?.ExceptionId, ct);
+                return Ok(new { id, status = body?.Status, exceptionId = body?.ExceptionId });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
+        public sealed class ExceptionHoldBody
+        {
+            public string? Status { get; set; }
+            public Guid? ExceptionId { get; set; }
         }
 
         [HttpPost("sales-requests/{id:int}/assign")]

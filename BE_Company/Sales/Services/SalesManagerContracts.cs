@@ -61,6 +61,24 @@ namespace BE_Company.Sales.Services
             && !string.Equals(status, Rejected, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>Denormalized exception hold on branch SalesRequests (Pending/Approved/Rejected).</summary>
+    public static class SalesExceptionHoldStatuses
+    {
+        public const string Pending = "Pending";
+        public const string Approved = "Approved";
+        public const string Rejected = "Rejected";
+
+        public static bool IsHeld(string? status) =>
+            string.Equals(status, Pending, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, Approved, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, Rejected, StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsHeldUnassigned(SalesRequestDTO row) =>
+            IsHeld(row.ExceptionHoldStatus)
+            && (string.Equals(row.Status, SalesRequestStatuses.New, StringComparison.OrdinalIgnoreCase)
+                || row.TargetEmployeeId <= 0);
+    }
+
     public static class SalesRequestEvents
     {
         public const string Created = "Created";
@@ -216,7 +234,7 @@ namespace BE_Company.Sales.Services
     public interface ISalesRequestService
     {
         Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct, bool validateIraqPhone = true);
-        Task<SalesRequestImportResultDTO> ImportRowsAsync(SalesIdentity actor, IReadOnlyList<SalesRequestImportRowDTO> rows, CancellationToken ct);
+        Task<SalesRequestImportResultDTO> ImportRowsAsync(SalesIdentity actor, SalesRequestImportDTO import, CancellationToken ct);
         Task<SalesRequestDTO> SubmitByEmployeeAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForManagerAsync(string? status, int? employeeId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListEmployeeSubmittedAsync(CancellationToken ct);
@@ -234,7 +252,13 @@ namespace BE_Company.Sales.Services
         Task<SalesRequestDTO> PrepareForSaleAsync(int id, int employeeId, string note, CancellationToken ct);
         Task<SalesRequestDTO> PendAsync(int id, int employeeId, string note, CancellationToken ct);
         Task<SalesRequestDTO> RejectAsync(int id, int employeeId, string reason, CancellationToken ct);
-        Task<SalesRequestDTO> AssignAsync(SalesIdentity manager, int id, SalesRequestAssignDTO request, CancellationToken ct);
+        Task<SalesRequestDTO> AssignAsync(
+            SalesIdentity manager,
+            int id,
+            SalesRequestAssignDTO request,
+            CancellationToken ct,
+            Guid? exceptionAssignId = null);
+        Task SetExceptionHoldAsync(int id, string? holdStatus, Guid? exceptionId, CancellationToken ct);
         Task<SalesRequestDTO> ReturnAsync(SalesIdentity manager, int id, string note, CancellationToken ct);
         Task MarkConvertedAsync(int requestId, int employeeId, int saleId, DateTime utcNow, CancellationToken ct);
         Task AttachDraftAsync(int requestId, int employeeId, int saleId, CancellationToken ct);

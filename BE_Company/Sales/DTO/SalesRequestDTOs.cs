@@ -42,10 +42,20 @@ namespace BE_Company.Sales.DTO
         public string? Province { get; set; }
         public string? Address { get; set; }
         public string? SaleType { get; set; }
+
+        /// <summary>Resolved branch key from Excel province (required for multi-province import).</summary>
+        public string? CityValue { get; set; }
+
+        /// <summary>Human province/branch label matching <see cref="CityValue"/>.</summary>
+        public string? CityName { get; set; }
     }
 
     public sealed class SalesRequestImportDTO
     {
+        /// <summary>Target province for a grouped import batch (central manager / gateway).</summary>
+        public string? CityValue { get; set; }
+
+        public string? CityName { get; set; }
         public List<SalesRequestImportRowDTO> Rows { get; set; } = [];
     }
 
@@ -138,6 +148,9 @@ namespace BE_Company.Sales.DTO
         public DateTime? DeletedAtUtc { get; set; }
         public int? DeletedByUserId { get; set; }
         public string? DeletedByName { get; set; }
+        /// <summary>Pending | Approved | Rejected — null when not under exception hold.</summary>
+        public string? ExceptionHoldStatus { get; set; }
+        public Guid? ActiveExceptionId { get; set; }
         public List<SalesRequestTimelineItemDTO> Timeline { get; set; } = [];
         public List<SalesRequestHistoryDTO> History { get; set; } = [];
         public List<SalesRequestNameTransferDTO> NameTransfers { get; set; } = [];

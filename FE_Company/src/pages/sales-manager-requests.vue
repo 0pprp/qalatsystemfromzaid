@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { formatIraqDate, formatIraqTime } from '@/composables/iraqDate'
 import {
+  assignExceptionRequest,
   branchRowKey,
   createExceptionRequest,
   evaluationLabel,
@@ -76,6 +77,7 @@ const exceptionTarget = ref(null)
 const exceptionRows = ref([])
 const exceptionStatus = ref('Pending')
 const exceptionListBusy = ref(false)
+const exceptionAssignId = ref(null)
 const busy = ref(false)
 const excelInput = ref(null)
 const importOpen = ref(false)
@@ -280,16 +282,36 @@ function exceptionStatusColor(status) {
 function exceptionStatusText(status) {
   switch (String(status || '')) {
     case 'Approved':
-      return 'موافق عليه'
+      return 'تمت الموافقة'
     case 'Rejected':
       return 'مرفوض'
     case 'Cancelled':
       return 'ملغى'
     case 'Pending':
-      return 'قيد الانتظار'
+      return 'بانتظار الموافقة'
     default:
       return status || '—'
   }
+}
+
+function canAssignException(item) {
+  const status = String(item?.status || item?.Status || '')
+  const consumed = !!(item?.assignmentConsumed ?? item?.AssignmentConsumed)
+
+  return status === 'Approved' && !consumed
+}
+
+function exceptionDecisionNote(item) {
+  return (item?.decisionNote || item?.DecisionNote || '').trim()
+}
+
+function exceptionAssignedLabel(item) {
+  const name = item?.assignedEmployeeName || item?.AssignedEmployeeName
+  if (!name)
+    return ''
+  const at = item?.assignedAtUtc || item?.AssignedAtUtc
+
+  return at ? `${name} — ${formatIraqDate(at)} ${formatIraqTime(at)}` : name
 }
 
 function statusColor(status) {
@@ -1413,6 +1435,30 @@ async function assign() {
     return
   }
   const employee = employees.value.find(e => Number(e.employeeId) === employeeId)
+
+  if (exceptionAssignId.value) {
+    busy.value = true
+    try {
+      await assignExceptionRequest(exceptionAssignId.value, {
+        employeeId,
+        employeeName: employee?.employeeName,
+      })
+      toast.success('تم إسناد الطلب من الاستثناء')
+      exceptionAssignId.value = null
+      await loadExceptions()
+      await load()
+      detail.value = null
+    }
+    catch (err) {
+      toast.error(smErrorMessage(err, 'تعذر إسناد الاستثناء'))
+    }
+    finally {
+      busy.value = false
+    }
+
+    return
+  }
+
   const selectedCustomer = intakeSelected.value
   const sourceCity = selectedCustomer
     ? String(selectedCustomer.cityValue || selectedCustomer.CityValue || selectedCustomer.sourceCityValue || selectedCustomer.SourceCityValue || city)
@@ -1461,6 +1507,36 @@ async function assign() {
   finally {
     busy.value = false
   }
+}
+
+async function openExceptionAssign(item) {
+  const salesRequestId = Number(item?.salesRequestId || item?.SalesRequestId || 0)
+  const exceptionId = item?.id || item?.Id
+  if (!salesRequestId || !exceptionId) {
+    toast.error('طلب المبيع المرتبط بالاستثناء غير موجود')
+
+    return
+  }
+  exceptionAssignId.value = exceptionId
+  const city = item.cityValue || item.CityValue || cityValue.value || ''
+  let row = rows.value.find(r => Number(requestId(r)) === salesRequestId)
+  if (!row) {
+    try {
+      row = await smGet(withCityQuery(`sales-requests/${salesRequestId}`, city))
+    }
+    catch {
+      row = {
+        id: salesRequestId,
+        cityValue: city,
+        cityName: item.cityName || item.CityName,
+        customerName: item.customerName || item.CustomerName,
+        customerPhone: item.customerPhone || item.CustomerPhone,
+        status: 'New',
+        targetEmployeeId: 0,
+      }
+    }
+  }
+  await openDetails(row, true)
 }
 
 async function sendReturn() {
@@ -1633,22 +1709,14 @@ function foldAr(value) {
 }
 
 function resolveCity(provinceText) {
+  // Each Excel row must resolve its own province — never fall back to the UI filter
+  // (that previously stamped the selected/Najaf branch onto every blank/unknown row).
   const text = foldAr(provinceText)
-  if (text) {
-    const match = branches.value.find(p => foldAr(p.name) === text || foldAr(p.value) === text)
-    if (match)
-      return { cityValue: String(match.value), cityName: match.name }
-
+  if (!text)
     return null
-  }
-  if (cityValue.value) {
-    const selected = branches.value.find(p => String(p.value) === String(cityValue.value))
-
-    return {
-      cityValue: String(cityValue.value),
-      cityName: selected?.name || '',
-    }
-  }
+  const match = branches.value.find(p => foldAr(p.name) === text || foldAr(p.value) === text)
+  if (match)
+    return { cityValue: String(match.value), cityName: match.name }
 
   return null
 }
@@ -1707,8 +1775,10 @@ async function confirmImport() {
     let saved = 0
     const failed = []
     for (const [city, rows] of groups.entries()) {
+      const cityName = rows[0]?.cityName || ''
       const result = await smPost('sales-requests/import', {
         cityValue: city,
+        cityName,
         rows: rows.map(r => ({
           rowNumber: r.rowNumber,
           customerName: r.customerName,
@@ -1716,6 +1786,8 @@ async function confirmImport() {
           province: r.province,
           address: r.address,
           saleType: r.saleType,
+          cityValue: r.cityValue || city,
+          cityName: r.cityName || cityName,
         })),
       })
       saved += Number(result?.saved || result?.Saved || 0)
@@ -1921,6 +1993,24 @@ watch(exceptionStatus, () => {
                   sm="6"
                 >
                   <div class="text-medium-emphasis text-caption">
+                    الهاتف
+                  </div>
+                  {{ item.customerPhone || item.CustomerPhone || '—' }}
+                </VCol>
+                <VCol
+                  cols="12"
+                  sm="6"
+                >
+                  <div class="text-medium-emphasis text-caption">
+                    سبب الاستثناء
+                  </div>
+                  {{ item.reason || item.Reason || '—' }}
+                </VCol>
+                <VCol
+                  cols="12"
+                  sm="6"
+                >
+                  <div class="text-medium-emphasis text-caption">
                     تاريخ الطلب
                   </div>
                   {{ formatIraqDate(item.requestedAtUtc || item.RequestedAtUtc) }}
@@ -1937,15 +2027,42 @@ watch(exceptionStatus, () => {
                   {{ formatIraqDate(item.decidedAtUtc || item.DecidedAtUtc) }}
                   {{ formatIraqTime(item.decidedAtUtc || item.DecidedAtUtc) }}
                 </VCol>
+                <VCol
+                  v-if="exceptionDecisionNote(item)"
+                  cols="12"
+                >
+                  <div class="text-medium-emphasis text-caption">
+                    ملاحظة القرار
+                  </div>
+                  {{ exceptionDecisionNote(item) }}
+                </VCol>
+                <VCol
+                  v-if="exceptionAssignedLabel(item)"
+                  cols="12"
+                >
+                  <div class="text-medium-emphasis text-caption">
+                    الموظف المسند
+                  </div>
+                  {{ exceptionAssignedLabel(item) }}
+                </VCol>
               </VRow>
               <VAlert
-                v-if="String(item.status || item.Status) === 'Approved'"
+                v-if="String(item.status || item.Status) === 'Approved' && !(item.assignmentConsumed || item.AssignmentConsumed)"
                 class="mt-3"
                 type="success"
                 variant="tonal"
                 density="compact"
               >
-                تمت الموافقة على الاستثناء من قبل المدير المفوض
+                تمت الموافقة على الاستثناء — يمكنك تحديد الموظف الآن
+              </VAlert>
+              <VAlert
+                v-else-if="String(item.status || item.Status) === 'Approved'"
+                class="mt-3"
+                type="success"
+                variant="tonal"
+                density="compact"
+              >
+                تمت الموافقة وتم إسناد الطلب
               </VAlert>
               <VAlert
                 v-else-if="String(item.status || item.Status) === 'Rejected'"
@@ -1956,6 +2073,17 @@ watch(exceptionStatus, () => {
               >
                 تم رفض طلب الاستثناء
               </VAlert>
+              <div
+                v-if="canAssignException(item)"
+                class="mt-3"
+              >
+                <VBtn
+                  color="primary"
+                  @click="openExceptionAssign(item)"
+                >
+                  تحديد الموظف
+                </VBtn>
+              </div>
             </VCardText>
           </VCard>
         </VCol>

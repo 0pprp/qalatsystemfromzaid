@@ -114,11 +114,15 @@ export function parseSalesRequestExcel(buffer, { XLSX, resolveCity }) {
       errors.push({ rowNumber: excelRow, message: 'رقم الهاتف مطلوب' })
       continue
     }
+    if (!province) {
+      errors.push({ rowNumber: excelRow, message: 'المحافظة مطلوبة' })
+      continue
+    }
     const city = resolveCity(province)
     if (!city) {
       errors.push({
         rowNumber: excelRow,
-        message: province ? `المحافظة غير معروفة بعد التطبيع: ${province}` : 'المحافظة مطلوبة أو حددها من الفلتر',
+        message: `المحافظة غير معروفة بعد التطبيع: ${province}`,
       })
       continue
     }
