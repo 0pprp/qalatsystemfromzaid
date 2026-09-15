@@ -1,19 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// One-shot success feedback for a user-initiated payment action.
+/// One-shot success feedback for a user-initiated local payment save.
+///
+/// Sound means: "تم تسجيل تسديدة الزبون بنجاح على الجهاز".
+/// Never play on batch upload / retry / WorkManager sync.
 class PaymentSuccessFeedback {
   PaymentSuccessFeedback._();
 
   static bool _playing = false;
 
-  /// Server-confirmed success (or same-session sync completed after user action).
-  static Future<void> playServerSuccess(BuildContext context) async {
+  /// Play once after durable local save succeeds (before any server sync).
+  static Future<void> playLocalSaveSuccess(BuildContext context) async {
     if (_playing) return;
     _playing = true;
     try {
       await SystemSound.play(SystemSoundType.click);
-      await HapticFeedback.mediumImpact();
+      try {
+        await HapticFeedback.lightImpact();
+      } catch (_) {
+        // Vibration must never block payment completion.
+      }
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -24,7 +31,7 @@ class PaymentSuccessFeedback {
               SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'تم التسديد بنجاح',
+                  'تم تسجيل تسديدة الزبون بنجاح على الجهاز',
                   style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
                 ),
               ),
@@ -40,17 +47,24 @@ class PaymentSuccessFeedback {
     }
   }
 
-  /// Offline queue only — no success sound.
-  static void showQueued(BuildContext context) {
+  /// @deprecated Prefer [playLocalSaveSuccess] — kept for callers that still
+  /// check server ACK in the same session (no extra sound on retry paths).
+  static Future<void> playServerSuccess(BuildContext context) =>
+      playLocalSaveSuccess(context);
+
+  /// Informational only — no sound (gate closed / offline queue).
+  static void showQueued(BuildContext context, {bool beforeSyncGate = false}) {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
+      SnackBar(
         content: Text(
-          'تم حفظ التسديد وسيتم رفعه عند توفر الإنترنت',
-          style: TextStyle(fontFamily: 'Cairo'),
+          beforeSyncGate
+              ? 'تم حفظ التسديد وسيُرفع تلقائياً بعد الساعة 4 مساءً'
+              : 'تم حفظ التسديد وسيتم رفعه عند توفر الإنترنت',
+          style: const TextStyle(fontFamily: 'Cairo'),
         ),
         behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 3),
+        duration: const Duration(seconds: 3),
       ),
     );
   }

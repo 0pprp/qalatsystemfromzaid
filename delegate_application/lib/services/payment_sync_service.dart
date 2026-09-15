@@ -4,13 +4,19 @@ import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
+import 'package:delegate_application/services/payment_sync_scheduler.dart';
 import 'package:delegate_application/services/payment_sync_status.dart';
 import 'package:delegate_application/services/payment_validation.dart';
+import 'package:delegate_application/utils/iraq_date.dart';
 import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Offline-first auto-sync for collection payments.
+///
+/// CRITICAL: HTTP upload is gated by [IraqDate.isPaymentSyncGateOpen]
+/// (16:00 Asia/Baghdad). Before the gate, payments stay `pending` locally —
+/// normal customer/data sync may still run elsewhere.
 /// Never deletes a local row until the server acknowledges success.
 class PaymentSyncService with WidgetsBindingObserver {
   PaymentSyncService._();
@@ -23,10 +29,18 @@ class PaymentSyncService with WidgetsBindingObserver {
   bool _wasOffline = true;
   bool _uploadedAnyThisRun = false;
 
+  /// Last sync outcome for diagnostics / UI (not persisted).
+  bool lastSkippedDueToGate = false;
+
   Future<void> start() async {
     if (_started) return;
     _started = true;
     WidgetsBinding.instance.addObserver(this);
+    try {
+      await PaymentSyncScheduler.instance.initialize();
+    } catch (_) {
+      // Scheduler failure must never block app start; in-process triggers remain.
+    }
     _connectivitySub =
         _connectivity.onConnectivityChanged.listen((results) async {
       final online = results.any((r) => r != ConnectivityResult.none);
@@ -44,6 +58,7 @@ class PaymentSyncService with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(syncPendingPayments());
+      unawaited(PaymentSyncScheduler.instance.ensureScheduled());
     }
   }
 
@@ -60,14 +75,28 @@ class PaymentSyncService with WidgetsBindingObserver {
   }
 
   /// Concurrent callers share one in-flight sync (mutex).
-  Future<void> syncPendingPayments() async {
+  ///
+  /// Before 16:00 Baghdad: SKIP — no HTTP, status stays pending.
+  /// After 16:00: uploads all eligible pending rows (including older days).
+  Future<void> syncPendingPayments({DateTime? utcNow}) async {
     if (_syncLock != null) {
       return _syncLock!.future;
     }
     final lock = Completer<void>();
     _syncLock = lock;
     _uploadedAnyThisRun = false;
+    lastSkippedDueToGate = false;
     try {
+      // PAYMENT SYNC GATE — independent of 03:00 UI business day.
+      if (!IraqDate.isPaymentSyncGateOpen(utcNow)) {
+        lastSkippedDueToGate = true;
+        // Keep status pending; schedule WorkManager for next 16:00.
+        try {
+          await PaymentSyncScheduler.instance.ensureScheduled(utcNow: utcNow);
+        } catch (_) {}
+        return;
+      }
+
       if (!await isOnline) {
         return;
       }
@@ -92,6 +121,11 @@ class PaymentSyncService with WidgetsBindingObserver {
       );
 
       for (final row in pending) {
+        // Re-check gate each row in case midnight crossed mid-batch (unlikely).
+        if (!IraqDate.isPaymentSyncGateOpen(utcNow)) {
+          lastSkippedDueToGate = true;
+          return;
+        }
         if (row['PermanentFailure'] == 1) {
           continue;
         }

@@ -27,9 +27,45 @@ void main() {
     });
   });
 
+  group('IraqDate payment sync gate 16:00 (independent of 03:00)', () {
+    test('15:59:59 Baghdad — gate CLOSED (no upload)', () {
+      // 15:59:59 Baghdad = 12:59:59 UTC
+      final utc = DateTime.utc(2026, 9, 14, 12, 59, 59);
+      expect(IraqDate.isPaymentSyncGateOpen(utc), isFalse);
+    });
+
+    test('16:00:00 Baghdad — gate OPEN', () {
+      // 16:00 Baghdad = 13:00 UTC
+      final utc = DateTime.utc(2026, 9, 14, 13, 0, 0);
+      expect(IraqDate.isPaymentSyncGateOpen(utc), isTrue);
+    });
+
+    test('10:00 Baghdad — gate CLOSED', () {
+      final utc = DateTime.utc(2026, 9, 14, 7, 0);
+      expect(IraqDate.isPaymentSyncGateOpen(utc), isFalse);
+    });
+
+    test('02:30 Baghdad — gate CLOSED (even though previous business day)', () {
+      // 02:30 Baghdad next calendar = previous biz day, but sync gate still closed
+      final utc = DateTime.utc(2026, 9, 14, 23, 30); // Sep 15 02:30 Baghdad
+      expect(IraqDate.isPaymentSyncGateOpen(utc), isFalse);
+      expect(IraqDate.businessDateKey(utc), '2026-09-14');
+    });
+
+    test('delayUntilPaymentSyncGate is zero when open', () {
+      final utc = DateTime.utc(2026, 9, 14, 14, 0); // 17:00 Baghdad
+      expect(IraqDate.delayUntilPaymentSyncGate(utc), Duration.zero);
+    });
+
+    test('delayUntilPaymentSyncGate positive before 16:00', () {
+      final utc = DateTime.utc(2026, 9, 14, 10, 0); // 13:00 Baghdad
+      final d = IraqDate.delayUntilPaymentSyncGate(utc);
+      expect(d.inHours, 3);
+    });
+  });
+
   group('IraqDate.isCreatedOnIraqDay business boundary', () {
     test('payment at 02:30 Thu counts as Wednesday business day', () {
-      // Payment Wed business: Thu 02:30 Baghdad = Wed 23:30 UTC previous calendar
       final paymentUtc = DateTime.utc(2026, 9, 16, 23, 30); // Thu 02:30 Baghdad
       final nowUtc = DateTime.utc(2026, 9, 16, 22, 0); // Thu 01:00 Baghdad → still Wed biz
       expect(IraqDate.isCreatedOnIraqDay(paymentUtc.toIso8601String(), nowUtc), isTrue);

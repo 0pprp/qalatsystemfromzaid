@@ -6,8 +6,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Idempotent daily rollover for «تسديدات اليوم» (Baghdad business day @ 03:00).
 ///
-/// Does **not** delete server history or local payment rows. Only advances
-/// [lastBusinessDate] and refreshes the today-list UI after attempting sync.
+  /// Does **not** delete server history or local payment rows. Only advances
+  /// [lastBusinessDate] and refreshes the today-list UI.
+  ///
+  /// Payment HTTP upload is gated separately at 16:00 ([PaymentSyncService]);
+  /// a rollover at 03:00 may call sync but the gate will SKIP until 16:00.
 class DelegateBusinessDateService with WidgetsBindingObserver {
   DelegateBusinessDateService._();
   static final DelegateBusinessDateService instance =

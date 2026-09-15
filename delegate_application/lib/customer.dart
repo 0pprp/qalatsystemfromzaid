@@ -445,7 +445,13 @@ class CustomerPageState extends State<Customer> {
       'PermanentFailure': 0,
     });
 
+    // Confirmation sound = durable local save only (never wait for server / batch).
+    if (context.mounted) {
+      await PaymentSuccessFeedback.playLocalSaveSuccess(context);
+    }
+
     await _calculatePayments(int.parse(selectedRepresentative!));
+    TodayPaymentsRefresh.notify();
 
     String customerName = client.name;
     String countReceiptDevice = receiptNumber;
@@ -492,26 +498,10 @@ class CustomerPageState extends State<Customer> {
       await report.printReceipt(context);
     }
 
+    // May SKIP before 16:00 Baghdad; after gate + online uploads immediately.
+    // No sound on sync / retry / WorkManager batch.
     await PaymentSyncService.instance.syncPendingPayments();
     TodayPaymentsRefresh.notify();
-
-    if (context.mounted) {
-      final rows = await db.query(
-        'CustomerPayment',
-        where: 'ClientPaymentId = ?',
-        whereArgs: [clientPaymentId],
-        limit: 1,
-      );
-      final synced = rows.isNotEmpty &&
-          rows.first['SyncStatus']?.toString() == PaymentSyncStatus.synced;
-      if (!context.mounted) return;
-      if (synced) {
-        await PaymentSuccessFeedback.playServerSuccess(context);
-      } else {
-        // Offline or transient failure — never claim server success.
-        PaymentSuccessFeedback.showQueued(context);
-      }
-    }
 
     if (mounted) {
       await _calculatePayments(int.parse(selectedRepresentative!));

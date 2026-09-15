@@ -1,10 +1,17 @@
 /// Iraq civil calendar + collection business-day helpers.
-/// Asia/Baghdad = UTC+3 (no DST). Business day rolls at 03:00 Baghdad.
+/// Asia/Baghdad = UTC+3 (no DST).
+///
+/// Two independent clocks:
+/// - [businessDayStartHour] 03:00 — UI «تسديدات اليوم» boundary
+/// - [paymentSyncGateHour] 16:00 — PAYMENT HTTP upload gate (not UI day)
 class IraqDate {
   static const Duration iraqOffset = Duration(hours: 3);
 
   /// Local hour (Baghdad) when a new business day begins.
   static const int businessDayStartHour = 3;
+
+  /// Local hour (Baghdad) when pending payments become eligible for server upload.
+  static const int paymentSyncGateHour = 16;
 
   static DateTime nowIraq([DateTime? utcNow]) {
     final utc = (utcNow ?? DateTime.now()).toUtc();
@@ -34,6 +41,28 @@ class IraqDate {
 
   /// Stable key for SharedPreferences / comparisons (yyyy-MM-dd).
   static String businessDateKey([DateTime? utcNow]) => formatBusinessDate(utcNow);
+
+  /// True when pending payments may be HTTP-uploaded (Baghdad local time ≥ 16:00).
+  /// Window each calendar day: [16:00, 23:59:59]. Closed [00:00, 15:59:59].
+  static bool isPaymentSyncGateOpen([DateTime? utcNow]) {
+    final iraq = nowIraq(utcNow);
+    return iraq.hour >= paymentSyncGateHour;
+  }
+
+  /// Duration until the next Baghdad 16:00 (zero if gate already open).
+  /// Uses wall-clock arithmetic only — never mixes DateTime kinds / device TZ.
+  static Duration delayUntilPaymentSyncGate([DateTime? utcNow]) {
+    final iraq = nowIraq(utcNow);
+    if (iraq.hour >= paymentSyncGateHour) {
+      return Duration.zero;
+    }
+    return Duration(
+      hours: paymentSyncGateHour - iraq.hour,
+      minutes: -iraq.minute,
+      seconds: -iraq.second,
+      milliseconds: -iraq.millisecond,
+    );
+  }
 
   /// [createdAtUtcIso] is typically CustomerPayment.CreatedAtUtc (ISO-8601 UTC).
   /// Matches the **business day** (03:00 boundary), not midnight calendar day.
