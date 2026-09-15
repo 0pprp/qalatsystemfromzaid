@@ -208,6 +208,14 @@ export async function listExceptionRequests({ status, cityValue, page, pageSize 
   return smGet(q ? `exceptions?${q}` : 'exceptions')
 }
 
+/** Assign original SalesRequest after Approved exception (branch + consume). */
+export async function assignExceptionRequest(exceptionId, { employeeId, employeeName } = {}) {
+  return smPost(`exceptions/${exceptionId}/assign`, {
+    employeeId,
+    employeeName,
+  })
+}
+
 export async function smPut(path, body) {
   const { data } = await axios.put(`${salesManagerBase()}${path}`, body, { headers: getAuthHeaders() })
 
