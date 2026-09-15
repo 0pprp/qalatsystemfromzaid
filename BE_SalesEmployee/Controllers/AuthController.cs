@@ -1,3 +1,4 @@
+using BE_SalesEmployee.Sales.Authorization;
 using BE_SalesEmployee.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -12,6 +13,7 @@ namespace BE_SalesEmployee.Controllers
         private readonly BranchProxyService _proxy;
         private readonly TokenService _tokens;
         private readonly SalesManagerAccountService _managerAccount;
+        private readonly DelegatedManagerAccountService _delegatedManagerAccount;
         private readonly SalesFilterLoginService _filterLogin;
 
         public AuthController(
@@ -19,12 +21,14 @@ namespace BE_SalesEmployee.Controllers
             BranchProxyService proxy,
             TokenService tokens,
             SalesManagerAccountService managerAccount,
+            DelegatedManagerAccountService delegatedManagerAccount,
             SalesFilterLoginService filterLogin)
         {
             _cities = cities;
             _proxy = proxy;
             _tokens = tokens;
             _managerAccount = managerAccount;
+            _delegatedManagerAccount = delegatedManagerAccount;
             _filterLogin = filterLogin;
         }
 
@@ -57,6 +61,36 @@ namespace BE_SalesEmployee.Controllers
                 userId = 0,
                 userName = identity.DisplayName,
                 userType = "مدير مبيعات",
+                cityLink = "",
+                cityName = "كل المحافظات",
+                cityValue = "",
+                central = true
+            });
+        }
+
+        /// <summary>Central delegated-manager login. No province: the account spans all branches.</summary>
+        [HttpPost("LoginDelegatedManager")]
+        public IActionResult LoginDelegatedManager([FromBody] LoginRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.UserName) || string.IsNullOrWhiteSpace(request.Password))
+            {
+                return BadRequest(new { message = "اسم المستخدم وكلمة المرور مطلوبان" });
+            }
+
+            if (!_delegatedManagerAccount.TryAuthenticate(request.UserName, request.Password, out var identity) ||
+                identity == null)
+            {
+                return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
+            }
+
+            var token = _tokens.CreateDelegatedManagerToken(identity.DisplayName, out var expiration);
+            return Ok(new
+            {
+                token,
+                expiration,
+                userId = 0,
+                userName = identity.DisplayName,
+                userType = SalesRoles.UserTypeDelegatedManager,
                 cityLink = "",
                 cityName = "كل المحافظات",
                 cityValue = "",

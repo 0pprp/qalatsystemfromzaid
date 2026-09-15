@@ -1,16 +1,19 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { formatIraqDate, formatIraqTime } from '@/composables/iraqDate'
 import {
   branchRowKey,
+  createExceptionRequest,
   evaluationLabel,
+  listExceptionRequests,
   managerSalePath,
   requestHistoryLabel,
   requestStatusLabel,
   salesManagerBase,
+  smErrorMessage,
   smGet,
   smGetBlob,
   smGetEmployees,
@@ -66,6 +69,13 @@ const rejectOpen = ref(false)
 const rejectReason = ref('')
 const pendOpen = ref(false)
 const pendNote = ref('')
+const exceptionOpen = ref(false)
+const exceptionReason = ref('')
+const exceptionBusy = ref(false)
+const exceptionTarget = ref(null)
+const exceptionRows = ref([])
+const exceptionStatus = ref('Pending')
+const exceptionListBusy = ref(false)
 const busy = ref(false)
 const excelInput = ref(null)
 const importOpen = ref(false)
@@ -123,7 +133,16 @@ const tabs = [
   { value: 'pending', title: 'معلقة' },
   { value: 'rejected', title: 'مرفوض' },
   { value: 'sold', title: 'تم البيع' },
+  { value: 'exceptions', title: 'طلبات الاستثناء' },
 ]
+
+const exceptionStatusTabs = [
+  { value: 'Pending', title: 'قيد الانتظار' },
+  { value: 'Approved', title: 'موافق عليه' },
+  { value: 'Rejected', title: 'مرفوض' },
+]
+
+const showingExceptions = computed(() => tab.value === 'exceptions')
 
 function employeeIdOf(row) {
   return Number(row?.targetEmployeeId || row?.TargetEmployeeId || row?.employeeId || row?.EmployeeId || 0)
@@ -203,6 +222,8 @@ function submittedBy(row) {
 function matchesTab(row, value = tab.value) {
   const s = requestStatus(row)
   switch (value) {
+    case 'exceptions':
+      return false
     case 'unassigned':
       return isUnassigned(row)
     case 'sent':
@@ -222,6 +243,52 @@ function matchesTab(row, value = tab.value) {
       return s === 'Completed'
     default:
       return true
+  }
+}
+
+/** MVP: show exception CTA for unassigned / assigned-flow / inspected. */
+function canRequestException(row) {
+  if (!row)
+    return false
+  const s = requestStatus(row)
+  if (s === 'Completed' || s === 'Rejected' || s === 'PreparedForSale' || s === 'InProgress' || s === 'ConvertedToSale')
+    return false
+
+  return isUnassigned(row)
+    || s === 'Assigned'
+    || s === 'Viewed'
+    || s === 'Returned'
+    || s === 'Inspected'
+    || s === 'Pending'
+    || s === 'New'
+}
+
+function exceptionStatusColor(status) {
+  switch (String(status || '')) {
+    case 'Approved':
+      return 'success'
+    case 'Rejected':
+      return 'error'
+    case 'Cancelled':
+      return 'secondary'
+    case 'Pending':
+    default:
+      return 'warning'
+  }
+}
+
+function exceptionStatusText(status) {
+  switch (String(status || '')) {
+    case 'Approved':
+      return 'موافق عليه'
+    case 'Rejected':
+      return 'مرفوض'
+    case 'Cancelled':
+      return 'ملغى'
+    case 'Pending':
+      return 'قيد الانتظار'
+    default:
+      return status || '—'
   }
 }
 
@@ -290,6 +357,9 @@ function lastUpdated(row) {
 const visibleRows = computed(() => rows.value.filter(row => matchesTab(row)))
 
 function tabCount(value) {
+  if (value === 'exceptions')
+    return exceptionRows.value.length
+
   return rows.value.filter(row => matchesTab(row, value)).length
 }
 
@@ -300,6 +370,82 @@ async function load() {
   await loadEvaluations(rows.value)
   if (selected.value)
     await openDetails(selected.value, false)
+  if (showingExceptions.value)
+    await loadExceptions()
+}
+
+async function loadExceptions() {
+  exceptionListBusy.value = true
+  try {
+    const res = await listExceptionRequests({
+      status: exceptionStatus.value || undefined,
+      cityValue: cityValue.value || undefined,
+    })
+    exceptionRows.value = res?.items || res?.Items || []
+  }
+  catch (err) {
+    exceptionRows.value = []
+    toast.error(smErrorMessage(err, 'تعذر تحميل طلبات الاستثناء'))
+  }
+  finally {
+    exceptionListBusy.value = false
+  }
+}
+
+function openExceptionRequest(row) {
+  exceptionTarget.value = row || detail.value || selected.value
+  exceptionReason.value = ''
+  exceptionOpen.value = true
+}
+
+async function submitExceptionRequest() {
+  if (exceptionBusy.value)
+    return
+  const row = exceptionTarget.value
+  const reason = exceptionReason.value.trim()
+  if (!row) {
+    toast.error('اختر طلب البيع أولاً')
+
+    return
+  }
+  if (!reason) {
+    toast.error('سبب الاستثناء مطلوب')
+
+    return
+  }
+  const city = requestCity(row) || pick(row, 'cityValue', 'CityValue') || cityValue.value
+  if (!city) {
+    toast.error('المحافظة مطلوبة')
+
+    return
+  }
+  exceptionBusy.value = true
+  try {
+    const customerIdRaw = pick(row, 'existingCustomerId', 'ExistingCustomerId', 'customerId', 'CustomerId')
+    const customerId = customerIdRaw != null && customerIdRaw !== '' ? Number(customerIdRaw) : null
+    await createExceptionRequest({
+      cityValue: city,
+      cityName: displayCityName(row, branches.value) || pick(row, 'cityName', 'CityName') || '',
+      customerId: Number.isFinite(customerId) && customerId > 0 ? customerId : null,
+      customerName: pick(row, 'customerName', 'CustomerName') || '',
+      customerPhone: pick(row, 'customerPhone', 'CustomerPhone') || '',
+      salesRequestId: requestId(row) || null,
+      reason,
+      targetApproverType: 'DelegatedManager',
+    })
+    exceptionOpen.value = false
+    exceptionReason.value = ''
+    exceptionTarget.value = null
+    toast.success('تم إرسال طلب الاستثناء — الموافقة تُعلمك فقط ولا تغني عن الإسناد أو التجهيز')
+    if (showingExceptions.value)
+      await loadExceptions()
+  }
+  catch (err) {
+    toast.error(smErrorMessage(err, 'تعذر إرسال طلب الاستثناء'))
+  }
+  finally {
+    exceptionBusy.value = false
+  }
 }
 
 function clearAllEvaluationCaches() {
@@ -1606,6 +1752,16 @@ onUnmounted(() => {
   if (shopImageUrl.value)
     URL.revokeObjectURL(shopImageUrl.value)
 })
+
+watch(tab, value => {
+  if (value === 'exceptions')
+    loadExceptions()
+})
+
+watch(exceptionStatus, () => {
+  if (showingExceptions.value)
+    loadExceptions()
+})
 </script>
 
 <template>
@@ -1679,7 +1835,137 @@ onUnmounted(() => {
         />
       </VChip>
     </VChipGroup>
-    <VRow class="mt-4">
+
+    <template v-if="showingExceptions">
+      <VAlert
+        class="mt-4"
+        type="info"
+        variant="tonal"
+        density="compact"
+      >
+        طلبات الاستثناء تُعلم مدير المبيعات عند الموافقة فقط — ما زال إسناد الطلب أو تجهيزه للبيع مطلوبًا كالمعتاد.
+      </VAlert>
+      <VChipGroup
+        v-model="exceptionStatus"
+        class="mt-3"
+        column
+      >
+        <VChip
+          v-for="item in exceptionStatusTabs"
+          :key="item.value"
+          :value="item.value"
+          filter
+        >
+          {{ item.title }}
+        </VChip>
+      </VChipGroup>
+      <div
+        v-if="exceptionListBusy"
+        class="text-medium-emphasis mt-4"
+      >
+        جاري تحميل طلبات الاستثناء...
+      </div>
+      <div
+        v-else-if="!exceptionRows.length"
+        class="text-medium-emphasis mt-4"
+      >
+        لا توجد طلبات استثناء في هذا الفلتر.
+      </div>
+      <VRow
+        v-else
+        class="mt-4"
+      >
+        <VCol
+          v-for="item in exceptionRows"
+          :key="item.id || item.Id"
+          cols="12"
+          md="6"
+        >
+          <VCard class="sales-request-card">
+            <VCardText>
+              <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
+                <div class="d-flex flex-wrap align-center gap-2">
+                  <span class="text-h6 mb-0">
+                    استثناء
+                    <template v-if="item.salesRequestId || item.SalesRequestId">
+                      — طلب #{{ item.salesRequestId || item.SalesRequestId }}
+                    </template>
+                  </span>
+                  <VChip
+                    size="small"
+                    color="primary"
+                    variant="tonal"
+                  >
+                    {{ displayCityName(item, branches) || item.cityName || item.CityName || '—' }}
+                  </VChip>
+                  <VChip
+                    size="small"
+                    :color="exceptionStatusColor(item.status || item.Status)"
+                  >
+                    {{ exceptionStatusText(item.status || item.Status) }}
+                  </VChip>
+                </div>
+              </div>
+              <VRow dense>
+                <VCol
+                  cols="12"
+                  sm="6"
+                >
+                  <div class="text-medium-emphasis text-caption">
+                    اسم الزبون
+                  </div>
+                  <strong>{{ item.customerName || item.CustomerName || '—' }}</strong>
+                </VCol>
+                <VCol
+                  cols="12"
+                  sm="6"
+                >
+                  <div class="text-medium-emphasis text-caption">
+                    تاريخ الطلب
+                  </div>
+                  {{ formatIraqDate(item.requestedAtUtc || item.RequestedAtUtc) }}
+                  {{ formatIraqTime(item.requestedAtUtc || item.RequestedAtUtc) }}
+                </VCol>
+                <VCol
+                  v-if="item.decidedAtUtc || item.DecidedAtUtc"
+                  cols="12"
+                  sm="6"
+                >
+                  <div class="text-medium-emphasis text-caption">
+                    تاريخ القرار
+                  </div>
+                  {{ formatIraqDate(item.decidedAtUtc || item.DecidedAtUtc) }}
+                  {{ formatIraqTime(item.decidedAtUtc || item.DecidedAtUtc) }}
+                </VCol>
+              </VRow>
+              <VAlert
+                v-if="String(item.status || item.Status) === 'Approved'"
+                class="mt-3"
+                type="success"
+                variant="tonal"
+                density="compact"
+              >
+                تمت الموافقة على الاستثناء من قبل المدير المفوض
+              </VAlert>
+              <VAlert
+                v-else-if="String(item.status || item.Status) === 'Rejected'"
+                class="mt-3"
+                type="error"
+                variant="tonal"
+                density="compact"
+              >
+                تم رفض طلب الاستثناء
+              </VAlert>
+            </VCardText>
+          </VCard>
+        </VCol>
+      </VRow>
+    </template>
+
+    <VRow
+      v-else
+      class="mt-4"
+    >
       <VCol
         v-for="row in visibleRows"
         :key="branchRowKey(row, 'id')"
@@ -1722,6 +2008,15 @@ onUnmounted(() => {
               <div class="d-flex flex-wrap gap-1" @click.stop>
                 <VBtn size="small" variant="tonal" @click="openEdit(row)">تعديل</VBtn>
                 <VBtn size="small" variant="tonal" color="primary" @click="openDetails(row)">تغيير الموظف</VBtn>
+                <VBtn
+                  v-if="canRequestException(row)"
+                  size="small"
+                  variant="tonal"
+                  color="warning"
+                  @click="openExceptionRequest(row)"
+                >
+                  طلب استثناء
+                </VBtn>
                 <VBtn size="small" variant="tonal" color="error" @click="confirmDelete(row)">حذف</VBtn>
               </div>
             </div>
@@ -2008,6 +2303,21 @@ onUnmounted(() => {
           </div>
           <div v-if="requestStatus(detail) === 'Inspected'" class="mt-1">
             تم الكشف — الزيارة محفوظة ولم يكتمل البيع بعد.
+          </div>
+          <div
+            v-if="canRequestException(detail)"
+            class="mt-3"
+          >
+            <VBtn
+              color="warning"
+              variant="tonal"
+              @click="openExceptionRequest(detail)"
+            >
+              طلب استثناء
+            </VBtn>
+            <div class="text-caption text-medium-emphasis mt-1">
+              الموافقة تُعلمك فقط ولا تستبدل الإسناد أو التجهيز للبيع.
+            </div>
           </div>
           <div v-if="saleDetail" class="mt-3">
             <div class="font-weight-bold mb-1">بيانات المسودة حتى الآن</div>
@@ -2615,6 +2925,60 @@ onUnmounted(() => {
             @click="pendInspected"
           >
             تعليق
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+
+    <VDialog
+      v-model="exceptionOpen"
+      max-width="480"
+    >
+      <VCard>
+        <VCardTitle>طلب استثناء</VCardTitle>
+        <VCardText>
+          <VAlert
+            class="mb-3"
+            type="info"
+            variant="tonal"
+            density="compact"
+          >
+            بعد الموافقة يبقى إسناد الطلب أو تجهيزه للبيع مطلوبًا كالمعتاد.
+          </VAlert>
+          <div
+            v-if="exceptionTarget"
+            class="mb-3 text-body-2"
+          >
+            <div>الزبون: {{ pick(exceptionTarget, 'customerName', 'CustomerName') || '—' }}</div>
+            <div>
+              طلب #
+              {{ requestId(exceptionTarget) || '—' }}
+              —
+              {{ displayCityName(exceptionTarget, branches) || '—' }}
+            </div>
+          </div>
+          <VTextarea
+            v-model="exceptionReason"
+            label="سبب الاستثناء *"
+            auto-grow
+            :disabled="exceptionBusy"
+          />
+        </VCardText>
+        <VCardActions>
+          <VBtn
+            variant="text"
+            :disabled="exceptionBusy"
+            @click="exceptionOpen = false"
+          >
+            رجوع
+          </VBtn>
+          <VBtn
+            color="warning"
+            :loading="exceptionBusy"
+            :disabled="exceptionBusy || !exceptionReason.trim()"
+            @click="submitExceptionRequest"
+          >
+            إرسال
           </VBtn>
         </VCardActions>
       </VCard>

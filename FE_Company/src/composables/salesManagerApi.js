@@ -169,6 +169,45 @@ export async function smPost(path, body) {
   return data
 }
 
+/** Create a Pending sales-manager exception for delegated-manager approval. */
+export async function createExceptionRequest({
+  cityValue,
+  cityName,
+  customerId,
+  customerName,
+  customerPhone,
+  salesRequestId,
+  reason,
+  targetApproverType = 'DelegatedManager',
+} = {}) {
+  return smPost('exceptions', {
+    cityValue,
+    cityName,
+    customerId,
+    customerName,
+    customerPhone,
+    salesRequestId,
+    reason,
+    targetApproverType,
+  })
+}
+
+/** List exception requests for the authenticated sales manager. */
+export async function listExceptionRequests({ status, cityValue, page, pageSize } = {}) {
+  const params = new URLSearchParams()
+  if (status)
+    params.set('status', status)
+  if (cityValue)
+    params.set('cityValue', cityValue)
+  if (page != null)
+    params.set('page', String(page))
+  if (pageSize != null)
+    params.set('pageSize', String(pageSize))
+  const q = params.toString()
+
+  return smGet(q ? `exceptions?${q}` : 'exceptions')
+}
+
 export async function smPut(path, body) {
   const { data } = await axios.put(`${salesManagerBase()}${path}`, body, { headers: getAuthHeaders() })
 

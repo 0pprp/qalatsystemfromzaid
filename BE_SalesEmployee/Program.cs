@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using BE_SalesEmployee.DelegatedManager.Services;
+using BE_SalesEmployee.DelegatedManager.Stores;
 using BE_SalesEmployee.Sales.Authorization;
 using BE_SalesEmployee.Sales.Services;
 using BE_SalesEmployee.Services;
@@ -17,10 +19,33 @@ builder.Services.AddHttpClient<BranchProxyService>(client =>
 });
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<SalesManagerAccountService>();
+builder.Services.AddSingleton<DelegatedManagerAccountService>();
 builder.Services.AddScoped<SalesFilterLoginService>();
 builder.Services.AddSingleton<SalesDevelopmentGuard>();
 builder.Services.AddScoped<IGlobalCustomerSearchService, GatewayGlobalCustomerSearchService>();
 builder.Services.AddScoped<ISalesManagerBranchAggregator, SalesManagerBranchAggregator>();
+
+// Delegated Manager central store. In-memory by default so demo/tests run without SQL;
+// gateway SQL takes over only once ConnectionStrings:SalesGateway is filled in.
+if (SqlGatewayConnectionFactory.IsConfigured(builder.Configuration))
+{
+    builder.Services.AddSingleton<SqlGatewayConnectionFactory>();
+    builder.Services.AddScoped<ICentralComplaintsStore, SqlCentralComplaintsStore>();
+    builder.Services.AddScoped<ISalesExceptionStore, SqlSalesExceptionStore>();
+    builder.Services.AddScoped<IMobileUpdateStore, SqlMobileUpdateStore>();
+}
+else
+{
+    builder.Services.AddSingleton<ICentralComplaintsStore, InMemoryCentralComplaintsStore>();
+    builder.Services.AddSingleton<ISalesExceptionStore, InMemorySalesExceptionStore>();
+    builder.Services.AddSingleton<IMobileUpdateStore, InMemoryMobileUpdateStore>();
+}
+builder.Services.AddSingleton<IntentRecordingBranchNotePoster>();
+builder.Services.AddScoped<IBranchNotePoster, GatewayBranchNotePoster>();
+builder.Services.AddScoped<CentralComplaintsService>();
+builder.Services.AddScoped<SalesExceptionService>();
+builder.Services.AddScoped<MobileUpdateService>();
+
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAuthorizationHandler, SalesRoleHandler>();
 builder.Services.AddAuthorization(options =>
@@ -33,6 +58,10 @@ builder.Services.AddAuthorization(options =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
     options.AddPolicy(SalesPolicies.SalesFilterEmployee, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesFilterEmployee)));
+    options.AddPolicy(SalesPolicies.DelegatedManager, p =>
+        p.Requirements.Add(new SalesRoleRequirement(SalesRoles.DelegatedManager)));
+    options.AddPolicy(SalesPolicies.SalesManagerOrDelegatedManager, p =>
+        p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager, SalesRoles.DelegatedManager)));
     options.AddPolicy(SalesPolicies.ReadGps, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
     options.AddPolicy(SalesPolicies.ReadOtherSalesEmployees, p =>

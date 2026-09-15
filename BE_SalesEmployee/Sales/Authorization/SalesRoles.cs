@@ -7,9 +7,11 @@ namespace BE_SalesEmployee.Sales.Authorization
         public const string SalesEmployee = "SalesEmployee";
         public const string SalesManager = "SalesManager";
         public const string SalesFilterEmployee = "SalesFilterEmployee";
+        public const string DelegatedManager = "DelegatedManager";
         public const string UserTypeSalesEmployee = "موظف مبيعات";
         public const string UserTypeSalesManager = "مدير مبيعات";
         public const string UserTypeSalesFilterEmployee = "موظف فلترة المبيعات";
+        public const string UserTypeDelegatedManager = "مدير مفوض";
 
         public static bool IsSalesEmployee(string? userType) =>
             string.Equals(userType, UserTypeSalesEmployee, StringComparison.Ordinal);
@@ -19,6 +21,9 @@ namespace BE_SalesEmployee.Sales.Authorization
 
         public static bool IsSalesFilterEmployee(string? userType) =>
             string.Equals(userType, UserTypeSalesFilterEmployee, StringComparison.Ordinal);
+
+        public static bool IsDelegatedManager(string? userType) =>
+            string.Equals(userType, UserTypeDelegatedManager, StringComparison.Ordinal);
 
         public static bool IsAnySales(string? userType) =>
             IsSalesEmployee(userType) || IsSalesManager(userType);
@@ -37,6 +42,10 @@ namespace BE_SalesEmployee.Sales.Authorization
             {
                 return SalesFilterEmployee;
             }
+            if (IsDelegatedManager(userType))
+            {
+                return DelegatedManager;
+            }
             return null;
         }
     }
@@ -47,8 +56,11 @@ namespace BE_SalesEmployee.Sales.Authorization
         public const string SalesEmployee = "Sales.Employee";
         public const string SalesManager = "Sales.Manager";
         public const string SalesFilterEmployee = "Sales.FilterEmployee";
+        public const string DelegatedManager = "Sales.DelegatedManager";
         public const string ReadGps = "Sales.ReadGps";
         public const string ReadOtherSalesEmployees = "Sales.ReadOtherSalesEmployees";
+        /// <summary>Authenticated sales manager or delegated manager (exception create/list vs decide).</summary>
+        public const string SalesManagerOrDelegatedManager = "Sales.ManagerOrDelegatedManager";
     }
 
     public sealed class SalesRoleRequirement : IAuthorizationRequirement

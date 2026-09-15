@@ -20,13 +20,27 @@ namespace BE_SalesEmployee.Services
 
         public string CreateCentralManagerToken(string userName, out DateTime expiration)
         {
+            return CreateCentralRoleToken(userName, "مدير مبيعات", "كل المحافظات", out expiration);
+        }
+
+        public string CreateDelegatedManagerToken(string userName, out DateTime expiration)
+        {
+            return CreateCentralRoleToken(userName, "مدير مفوض", "كل المحافظات", out expiration);
+        }
+
+        private string CreateCentralRoleToken(
+            string userName,
+            string userType,
+            string cityName,
+            out DateTime expiration)
+        {
             var claims = new List<Claim>
             {
                 new("UserID", "0"),
                 new("UserName", userName),
-                new("UserType", "مدير مبيعات"),
+                new("UserType", userType),
                 new("CityLink", ""),
-                new("CityName", "كل المحافظات"),
+                new("CityName", cityName),
                 new("CityValue", ""),
                 new(CentralClaim, "true")
             };
@@ -135,7 +149,8 @@ namespace BE_SalesEmployee.Services
                 BranchToken = user.FindFirst("BranchToken")?.Value ?? "",
                 IsCentral = string.Equals(user.FindFirst("Central")?.Value, "true", StringComparison.OrdinalIgnoreCase),
                 AllowedFilterCities = allowed,
-                IsSalesFilterEmployee = string.Equals(userType, "موظف فلترة المبيعات", StringComparison.Ordinal)
+                IsSalesFilterEmployee = string.Equals(userType, "موظف فلترة المبيعات", StringComparison.Ordinal),
+                IsDelegatedManager = string.Equals(userType, "مدير مفوض", StringComparison.Ordinal)
             };
         }
     }
@@ -152,6 +167,7 @@ namespace BE_SalesEmployee.Services
         public bool IsCentral { get; set; }
         public IReadOnlyList<string> AllowedFilterCities { get; set; } = Array.Empty<string>();
         public bool IsSalesFilterEmployee { get; set; }
+        public bool IsDelegatedManager { get; set; }
 
         public bool AllowsFilterCity(string? cityValue) =>
             !string.IsNullOrWhiteSpace(cityValue)
