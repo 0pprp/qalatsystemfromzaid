@@ -17,6 +17,20 @@ public sealed class CreateComplaintInput
     public string? MetadataJson { get; init; }
 }
 
+/// <summary>
+/// Sender identity asserted by a trusted branch backend that authenticated with the internal gateway key.
+/// The branch has already validated the end user, so these fields replace the JWT principal.
+/// </summary>
+public sealed class TrustedComplaintSender
+{
+    public string? SenderUserId { get; init; }
+    public string? SenderUserName { get; init; }
+    public string? SenderDisplayName { get; init; }
+    public string? SenderRole { get; init; }
+    public string? CityValue { get; init; }
+    public string? CityName { get; init; }
+}
+
 public sealed class CreateComplaintResult
 {
     public bool Ok { get; init; }
@@ -30,7 +44,10 @@ public sealed class CreateComplaintResult
 public sealed class CentralComplaintsService
 {
     public const int MaxSubjectLength = 256;
+    public const int MinBodyLength = 10;
+    public const int MaxBodyLength = 2000;
     public const string DefaultSourceApp = "sales-gateway";
+    public const string DefaultTrustedSubject = "شكوى مندوب";
 
     private readonly ICentralComplaintsStore _store;
 
@@ -75,6 +92,58 @@ public sealed class CentralComplaintsService
             SenderRole = SalesRoles.ToModuleRole(sender.UserType) ?? Trimmed(sender.UserType) ?? "Unknown",
             CityValue = cityValue,
             CityName = cityName,
+            Subject = subject,
+            Body = body,
+            MetadataJson = Trimmed(input.MetadataJson),
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        var created = await _store.CreateAsync(complaint, ct);
+        return CreateComplaintResult.Created(created);
+    }
+
+    /// <summary>
+    /// Creates an inbox row on behalf of a branch backend that already authenticated the end user and
+    /// proved itself with the internal gateway key. Identity and city come only from <paramref name="sender"/>.
+    /// </summary>
+    public async Task<CreateComplaintResult> CreateTrustedAsync(
+        TrustedComplaintSender sender,
+        CreateComplaintInput input,
+        CancellationToken ct = default)
+    {
+        var body = input.Body?.Trim() ?? "";
+        if (body.Length < MinBodyLength)
+        {
+            return CreateComplaintResult.Invalid($"نص الشكوى قصير جدًا (الحد الأدنى {MinBodyLength} أحرف)");
+        }
+        if (body.Length > MaxBodyLength)
+        {
+            return CreateComplaintResult.Invalid($"الحد الأقصى للشكوى {MaxBodyLength} حرف");
+        }
+
+        // Same stored-XSS hardening the branch applies before its local insert.
+        body = body.Replace('<', ' ').Replace('>', ' ');
+
+        var subject = Trimmed(input.Subject) ?? DefaultTrustedSubject;
+        if (subject.Length > MaxSubjectLength)
+        {
+            subject = subject[..MaxSubjectLength];
+        }
+
+        var complaint = new CentralComplaint
+        {
+            Id = Guid.NewGuid(),
+            SourceApp = Trimmed(input.SourceApp) ?? DefaultSourceApp,
+            SourceType = Trimmed(input.SourceType),
+            SenderUserId = Trimmed(sender.SenderUserId),
+            SenderUserName = Trimmed(sender.SenderUserName),
+            SenderDisplayName = Trimmed(sender.SenderDisplayName)
+                                ?? Trimmed(sender.SenderUserName)
+                                ?? Trimmed(sender.SenderUserId)
+                                ?? "غير معروف",
+            SenderRole = Trimmed(sender.SenderRole) ?? "Unknown",
+            CityValue = Trimmed(sender.CityValue),
+            CityName = Trimmed(sender.CityName),
             Subject = subject,
             Body = body,
             MetadataJson = Trimmed(input.MetadataJson),

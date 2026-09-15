@@ -57,40 +57,53 @@ class TodayPaymentsPageState extends State<TodayPaymentsPage>
   void _onExternalRefresh() => reload();
 
   Future<void> reload() async {
-    await DelegateBusinessDateService.instance.ensureCurrentBusinessDay();
-    final db = await DatabaseHelper().database;
-    final customers = await db.query('Customer');
-    final payments = await db.query('CustomerPayment');
-    final delegates = await db.query('SelectDelegate');
-    final names = <int, String>{};
-    for (final d in delegates) {
-      final id = int.tryParse(d['DelegateId']?.toString() ?? '') ?? 0;
-      if (id > 0) {
-        names[id] = d['DelegateName']?.toString() ?? '';
+    try {
+      await DelegateBusinessDateService.instance.ensureCurrentBusinessDay();
+      final db = await DatabaseHelper().database;
+      final customers = await db.query('Customer');
+      final payments = await db.query('CustomerPayment');
+      final delegates = await db.query('SelectDelegate');
+      final names = <int, String>{};
+      for (final d in delegates) {
+        final id = int.tryParse(d['DelegateId']?.toString() ?? '') ?? 0;
+        if (id > 0) {
+          names[id] = d['DelegateName']?.toString() ?? '';
+        }
       }
+
+      final allEligible = TodayPaymentsLogic.buildRows(
+        customers: customers,
+        localPayments: payments,
+        delegateNames: names,
+        filter: TodayPaymentFilter.all,
+      );
+      final summary = TodayPaymentsLogic.summarize(allEligible);
+      final filtered = TodayPaymentsLogic.buildRows(
+        customers: customers,
+        localPayments: payments,
+        delegateNames: names,
+        filter: _filter,
+        searchQuery: _search.text,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _summary = summary;
+        _rows = filtered;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تعذر تحديث قائمة تسديدات اليوم',
+            style: TextStyle(fontFamily: 'Cairo'),
+          ),
+        ),
+      );
     }
-
-    final allEligible = TodayPaymentsLogic.buildRows(
-      customers: customers,
-      localPayments: payments,
-      delegateNames: names,
-      filter: TodayPaymentFilter.all,
-    );
-    final summary = TodayPaymentsLogic.summarize(allEligible);
-    final filtered = TodayPaymentsLogic.buildRows(
-      customers: customers,
-      localPayments: payments,
-      delegateNames: names,
-      filter: _filter,
-      searchQuery: _search.text,
-    );
-
-    if (!mounted) return;
-    setState(() {
-      _summary = summary;
-      _rows = filtered;
-      _loading = false;
-    });
   }
 
   @override

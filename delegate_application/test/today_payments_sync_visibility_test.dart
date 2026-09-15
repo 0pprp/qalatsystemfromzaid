@@ -10,7 +10,7 @@ void main() {
         'CustomerId': '1',
         'Amount': 5000,
         'SyncStatus': 'Synced',
-        'CreatedAtUtc': '2026-09-14T07:00:00.000Z', // 10:00 Baghdad same biz day
+        'CreatedAtUtc': '2026-09-14T07:00:00.000Z', // 10:00 Baghdad same calendar day
       },
     ];
     final row = TodayPaymentsLogic.todayPaymentForCustomer(
@@ -21,12 +21,12 @@ void main() {
     expect(row, isNotNull);
     expect(row!['SyncStatus'], 'Synced');
     expect(
-      IraqDate.isCreatedOnIraqDay(row['CreatedAtUtc']?.toString(), utcNow),
+      IraqDate.isCreatedOnIraqCalendarDay(row['CreatedAtUtc']?.toString(), utcNow),
       isTrue,
     );
   });
 
-  test('TEST8/9: 02:59 previous biz day; 03:00 new counters boundary', () {
+  test('TEST8/9: 02:59 previous biz day; 03:00 new counters boundary (legacy)', () {
     final at0259 = DateTime.utc(2026, 9, 14, 23, 59); // Sep 15 02:59 Baghdad
     final at0300 = DateTime.utc(2026, 9, 15, 0, 0); // Sep 15 03:00 Baghdad
     expect(IraqDate.businessDateKey(at0259), '2026-09-14');

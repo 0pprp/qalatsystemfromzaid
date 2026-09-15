@@ -66,6 +66,19 @@ public sealed class MobileUpdateRulesTests
     }
 
     [Fact]
+    public async Task Service_SeedsDelegateRelease()
+    {
+        var service = new MobileUpdateService(new InMemoryMobileUpdateStore());
+
+        var release = await service.GetAsync(InMemoryMobileUpdateStore.DelegateAppKey);
+
+        Assert.NotNull(release);
+        Assert.Equal("1.0.0", release!.LatestVersionName);
+        Assert.Equal(1, release.LatestVersionCode);
+        Assert.Equal(MobileUpdateKind.None, (await service.EvaluateAsync("delegate", 1))!.Kind);
+    }
+
+    [Fact]
     public async Task Service_EvaluatesAgainstStoredRelease()
     {
         var store = new InMemoryMobileUpdateStore();

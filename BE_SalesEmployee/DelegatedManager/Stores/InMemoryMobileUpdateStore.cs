@@ -7,25 +7,29 @@ namespace BE_SalesEmployee.DelegatedManager.Stores;
 public sealed class InMemoryMobileUpdateStore : IMobileUpdateStore
 {
     public const string DelegatedManagerAppKey = "delegated-manager";
+    public const string DelegateAppKey = "delegate";
 
     private readonly ConcurrentDictionary<string, MobileAppRelease> _rows =
         new(StringComparer.OrdinalIgnoreCase);
 
     public InMemoryMobileUpdateStore()
     {
-        _rows[DelegatedManagerAppKey] = new MobileAppRelease
-        {
-            AppKey = DelegatedManagerAppKey,
-            LatestVersionName = "1.0.0",
-            LatestVersionCode = 1,
-            MinimumSupportedVersionCode = 1,
-            ForceUpdate = false,
-            ApkUrl = "https://example.invalid/delegated-manager.apk",
-            Sha256 = new string('0', 64),
-            ReleaseNotes = "إصدار أولي",
-            UpdatedAtUtc = DateTime.UtcNow
-        };
+        _rows[DelegatedManagerAppKey] = Seed(DelegatedManagerAppKey, "delegated-manager.apk");
+        _rows[DelegateAppKey] = Seed(DelegateAppKey, "delegate.apk");
     }
+
+    private static MobileAppRelease Seed(string appKey, string apkFileName) => new()
+    {
+        AppKey = appKey,
+        LatestVersionName = "1.0.0",
+        LatestVersionCode = 1,
+        MinimumSupportedVersionCode = 1,
+        ForceUpdate = false,
+        ApkUrl = $"https://example.invalid/{apkFileName}",
+        Sha256 = new string('0', 64),
+        ReleaseNotes = "إصدار أولي",
+        UpdatedAtUtc = DateTime.UtcNow
+    };
 
     public Task<MobileAppRelease?> GetAsync(string appKey, CancellationToken ct = default)
     {

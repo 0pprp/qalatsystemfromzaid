@@ -31,6 +31,10 @@ builder.Services.AddScoped<ITrustReceiptRepository, TrustReceiptRepository>();
 builder.Services.AddScoped<IFollowerActionsRepository, FollowerActionsRepository>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.ISharedCustomerNotesService, BE_DelegateWebApplication.Services.SharedCustomerNotesService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IDelegateComplaintsService, BE_DelegateWebApplication.Services.DelegateComplaintsService>();
+builder.Services.AddHttpClient<BE_DelegateWebApplication.Services.ICentralComplaintForwarder, BE_DelegateWebApplication.Services.CentralComplaintForwarder>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+});
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.FollowerIdentity.IFollowerIdentityService, BE_DelegateWebApplication.Services.FollowerIdentity.FollowerIdentityService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.FollowerTracking.IFollowerTrackingRepository, BE_DelegateWebApplication.Services.FollowerTracking.FollowerTrackingRepository>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.FollowerTracking.IFollowerTrackingService, BE_DelegateWebApplication.Services.FollowerTracking.FollowerTrackingService>();

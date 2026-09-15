@@ -6,6 +6,7 @@ import 'package:delegate_application/AllSale.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:delegate_application/main.dart';
 import 'package:delegate_application/customer.dart';
+import 'package:delegate_application/core/update/app_update_gate.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/ui/app_safe_scaffold.dart';
@@ -54,6 +55,9 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _initializeData() async {
     await _checkAndNavigate();
+    if (!mounted) return;
+    await AppUpdateGate.checkAndPrompt(context);
+    if (!mounted) return;
     await DelegateDataRefreshService.instance.refreshIfPossible();
     // Customer tab may have loaded empty SelectDelegate during IndexedStack build.
     await _customerKey.currentState

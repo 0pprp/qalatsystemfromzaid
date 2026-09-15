@@ -36,7 +36,14 @@ class TodayPaymentsLogic {
     return isLastPaymentRecent || isDateSaleRecent;
   }
 
-  static bool isEligibleForTodayCollection(Map<String, dynamic> customer) {
+  /// Eligible for «تسديدات اليوم»:
+  /// - has a payment today (keeps fully-paid customers visible after refresh), OR
+  /// - continuous customer with AmountRemaining > 0.
+  static bool isEligibleForTodayCollection(
+    Map<String, dynamic> customer, {
+    bool hasTodayPayment = false,
+  }) {
+    if (hasTodayPayment) return true;
     final remaining = _toDouble(customer['AmountRemaining']);
     if (remaining <= 0) return false;
     return isContinuous(
@@ -45,7 +52,7 @@ class TodayPaymentsLogic {
     );
   }
 
-  /// Latest local payment for customer today (Iraq day via CreatedAtUtc).
+  /// Latest local payment for customer today (Iraq **calendar** day via CreatedAtUtc).
   static Map<String, dynamic>? todayPaymentForCustomer({
     required int customerId,
     required List<Map<String, dynamic>> localPayments,
@@ -54,7 +61,7 @@ class TodayPaymentsLogic {
     final matches = localPayments.where((p) {
       final id = int.tryParse(p['CustomerId']?.toString() ?? '') ?? 0;
       if (id != customerId) return false;
-      return IraqDate.isCreatedOnIraqDay(
+      return IraqDate.isCreatedOnIraqCalendarDay(
           p['CreatedAtUtc']?.toString(), utcNow);
     }).toList();
     if (matches.isEmpty) return null;
@@ -78,7 +85,6 @@ class TodayPaymentsLogic {
     final rows = <TodayPaymentRow>[];
 
     for (final c in customers) {
-      if (!isEligibleForTodayCollection(c)) continue;
       final customerId = int.tryParse(c['CustomerId']?.toString() ?? '') ?? 0;
       if (customerId <= 0) continue;
 
@@ -87,6 +93,10 @@ class TodayPaymentsLogic {
         localPayments: localPayments,
         utcNow: utcNow,
       );
+      if (!isEligibleForTodayCollection(c, hasTodayPayment: pay != null)) {
+        continue;
+      }
+
       final status =
           pay != null ? TodayPaymentStatus.paid : TodayPaymentStatus.unpaid;
       if (filter == TodayPaymentFilter.paid && status != TodayPaymentStatus.paid) {

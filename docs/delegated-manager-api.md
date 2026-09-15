@@ -85,6 +85,31 @@ Arabic role claim `UserType`:
 **Identity:** taken from JWT claims — caller identity fields in body are ignored.  
 **200** created · **400** validation · **401** unauthenticated
 
+### POST `internal/complaints`
+
+Server-to-server intake for branch backends whose apps have no gateway JWT (currently BE_Delegate,
+forwarding complaints from the delegate mobile app).
+
+**Auth:** header `X-Sales-Gateway-Key` matching gateway config `InternalApiKey`. Fails closed when the
+key is unset. Mobile apps never call this route and never carry the key.  
+**Body:** `message` (or `body`), optional `subject`, `sourceApp`, `sourceType`, `cityValue`, `cityName`,
+`senderUserId`, `senderUserName`, `senderDisplayName`, `senderRole`, `metadataJson`  
+**Identity:** the calling branch has already authenticated the end user, so the `sender*` and `city*`
+fields are trusted verbatim.  
+**Validation:** body 10–2000 characters; empty subject defaults to «شكوى مندوب».  
+**200** created · **400** validation · **401** missing/wrong key
+
+Branch configuration (BE_Delegate):
+
+| Key | Demo | Local |
+|-----|------|-------|
+| `SalesGateway:BaseUrl` | `http://169.58.236.52:8080/sales-gw/api/` | `http://127.0.0.1:5280/api/` |
+| `InternalApiKey` (or `SalesGateway:ApiKey`) | shared secret | shared secret |
+| `Branch:CityValue` / `Branch:CityName` | branch city stamped on forwarded complaints | |
+
+`POST api/delegate/complaints` keeps its local audit row and then forwards; a failed forward returns
+**502** (central rejected) or **503** (unreachable/unconfigured) with an Arabic message.
+
 ---
 
 ## 5. Exception Requests (Sales Manager)

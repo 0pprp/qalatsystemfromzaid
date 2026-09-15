@@ -2,7 +2,8 @@
 /// Asia/Baghdad = UTC+3 (no DST).
 ///
 /// Two independent clocks:
-/// - [businessDayStartHour] 03:00 — UI «تسديدات اليوم» boundary
+/// - [calendarDate] midnight — business-facing «تسديدات اليوم»
+/// - [businessDayStartHour] 03:00 — legacy UI rollover helpers
 /// - [paymentSyncGateHour] 16:00 — PAYMENT HTTP upload gate (not UI day)
 class IraqDate {
   static const Duration iraqOffset = Duration(hours: 3);
@@ -64,8 +65,62 @@ class IraqDate {
     );
   }
 
+  /// Iraq calendar Y-M-D (midnight boundary, Asia/Baghdad).
+  /// Used by «تسديدات اليوم» — independent of [businessDate] 03:00 UI rollover.
+  static DateTime calendarDate([DateTime? utcNow]) {
+    final iraq = nowIraq(utcNow);
+    return DateTime(iraq.year, iraq.month, iraq.day);
+  }
+
+  static String calendarDateKey([DateTime? utcNow]) {
+    final d = calendarDate(utcNow);
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '$y-$m-$day';
+  }
+
+  /// True when [createdAtUtcIso] falls on the same Iraq **calendar** day as [utcNow].
+  /// Window: [00:00, next-day 00:00) Baghdad.
+  static bool isCreatedOnIraqCalendarDay(String? createdAtUtcIso,
+      [DateTime? utcNow]) {
+    if (createdAtUtcIso == null || createdAtUtcIso.trim().isEmpty) return false;
+    DateTime parsed;
+    try {
+      parsed = DateTime.parse(createdAtUtcIso.trim());
+    } catch (_) {
+      return false;
+    }
+    final paymentDay = calendarDate(parsed.toUtc());
+    final today = calendarDate(utcNow);
+    return paymentDay.year == today.year &&
+        paymentDay.month == today.month &&
+        paymentDay.day == today.day;
+  }
+
+  /// Inclusive UTC start of Iraq calendar day / exclusive end (for range queries).
+  static (DateTime startUtc, DateTime endUtcExclusive) iraqCalendarDayUtcRange(
+      [DateTime? utcNow]) {
+    final day = calendarDate(utcNow);
+    final startIraq = DateTime(day.year, day.month, day.day);
+    final endIraq = startIraq.add(const Duration(days: 1));
+    // Wall-clock Baghdad → UTC by subtracting offset (no DST).
+    final startUtc = DateTime.utc(
+      startIraq.year,
+      startIraq.month,
+      startIraq.day,
+    ).subtract(iraqOffset);
+    final endUtc = DateTime.utc(
+      endIraq.year,
+      endIraq.month,
+      endIraq.day,
+    ).subtract(iraqOffset);
+    return (startUtc, endUtc);
+  }
+
   /// [createdAtUtcIso] is typically CustomerPayment.CreatedAtUtc (ISO-8601 UTC).
   /// Matches the **business day** (03:00 boundary), not midnight calendar day.
+  /// Prefer [isCreatedOnIraqCalendarDay] for «تسديدات اليوم».
   static bool isCreatedOnIraqDay(String? createdAtUtcIso, [DateTime? utcNow]) {
     if (createdAtUtcIso == null || createdAtUtcIso.trim().isEmpty) return false;
     DateTime parsed;
