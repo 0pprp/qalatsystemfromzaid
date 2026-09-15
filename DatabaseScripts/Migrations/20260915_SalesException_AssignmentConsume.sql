@@ -1,6 +1,13 @@
--- Idempotent: assignment-consume markers on SalesExceptionRequests (gateway SQL).
+﻿-- Idempotent: assignment-consume markers on SalesExceptionRequests (gateway SQL).
 -- Target: ConnectionStrings:SalesGateway. Safe to re-run.
 
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET ARITHABORT ON;
+SET NUMERIC_ROUNDABORT OFF;
 SET NOCOUNT ON;
 GO
 
@@ -36,3 +43,4 @@ BEGIN
         WHERE SalesRequestId IS NOT NULL;
 END
 GO
+
