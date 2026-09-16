@@ -2,7 +2,7 @@ name: delegated_manager_application
 description: تطبيق المدير المفوض — الرسائل والشكاوى وطلبات الاستثناء.
 
 publish_to: "none"
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.5.0
@@ -20,9 +20,18 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  android: true
+  image_path: "assets/icons/logo_last.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icons/logo_last.png"
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icons/logo_last.png
   fonts:
     - family: Cairo
       fonts:
