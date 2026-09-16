@@ -21,17 +21,20 @@ namespace BE_Company.Sales.Services
 
         private readonly ISalesRequestRepository _requests;
         private readonly ISalesExcelCustomerSearchCatalog _catalog;
+        private readonly ISalesRequestEvaluationService _evaluation;
         private readonly IRatingDataSource _rating;
         private readonly IIraqClock _clock;
 
         public ExceptionReviewService(
             ISalesRequestRepository requests,
             ISalesExcelCustomerSearchCatalog catalog,
+            ISalesRequestEvaluationService evaluation,
             IRatingDataSource rating,
             IIraqClock clock)
         {
             _requests = requests;
             _catalog = catalog;
+            _evaluation = evaluation;
             _rating = rating;
             _clock = clock;
         }
@@ -60,32 +63,74 @@ namespace BE_Company.Sales.Services
 
             var requestCity = (row.CityValue ?? _catalog.CityValue ?? "").Trim();
             var branchCity = (_catalog.CityValue ?? "").Trim();
+            // Use the exact same evaluation engine as Sales Manager so DM review
+            // cannot disagree with the manager's TripleName / Phone results.
+            var triplePage = await _evaluation.ListHitsAsync(
+                actor,
+                salesRequestId,
+                "TripleName",
+                1,
+                MaxMatches,
+                ct);
+
+            var phonePage = await _evaluation.ListHitsAsync(
+                actor,
+                salesRequestId,
+                "Phone",
+                1,
+                MaxMatches,
+                ct);
+
+            var evaluationIds = triplePage.Items
+                .Concat(phonePage.Items)
+                .Select(x => x.CustomerId)
+                .Where(x => x > 0)
+                .Distinct()
+                .Take(MaxMatches)
+                .ToHashSet();
+
             var customers = await _catalog.LoadCustomersAsync(ct);
-            var candidates = customers.Select(c => new ExceptionReviewCandidate
-            {
-                CustomerId = c.CustomerId,
-                FullName = c.FullName,
-                Phone = c.Phone,
-                // Branch catalog host is the province stamp (rows themselves lack CityValue).
-                CityValue = null,
-                CityName = _catalog.CityName,
-                Province = c.Province,
-                Address = c.Address,
-                Occupation = null,
-                AmountTotalSales = c.AmountTotalSales,
-                ReceiptsTotal = c.ReceiptsTotal,
-                AmountRemaining = c.AmountRemaining
-            }).ToList();
 
-            var hits = ExceptionReviewCustomerMatcher.FindMatches(
-                row.CustomerName,
-                row.CustomerPhone,
-                requestCity,
-                branchCity,
-                candidates);
+            var candidates = customers
+                .Where(c => evaluationIds.Contains(c.CustomerId))
+                .Select(c => new ExceptionReviewCandidate
+                {
+                    CustomerId = c.CustomerId,
+                    FullName = c.FullName,
+                    Phone = c.Phone,
+                    CityValue = null,
+                    CityName = _catalog.CityName,
+                    Province = c.Province,
+                    Address = c.Address,
+                    Occupation = null,
+                    AmountTotalSales = c.AmountTotalSales,
+                    ReceiptsTotal = c.ReceiptsTotal,
+                    AmountRemaining = c.AmountRemaining
+                })
+                .ToList();
 
-            // Cap for payload size; keep stable order by customer id.
-            hits = hits.OrderBy(h => h.Customer.CustomerId).Take(MaxMatches).ToList();
+            var tripleIds = triplePage.Items
+                .Select(x => x.CustomerId)
+                .ToHashSet();
+
+            var phoneIds = phonePage.Items
+                .Select(x => x.CustomerId)
+                .ToHashSet();
+
+            var hits = candidates
+                .Select(c => new ExceptionReviewMatchHit
+                {
+                    Customer = c,
+                    TripleNameMatch = tripleIds.Contains(c.CustomerId),
+                    PhoneMatch = phoneIds.Contains(c.CustomerId),
+                    MatchReasons = ExceptionReviewCustomerMatcher.BuildReasons(
+                        phoneIds.Contains(c.CustomerId),
+                        tripleIds.Contains(c.CustomerId))
+                })
+                .Where(h => h.TripleNameMatch || h.PhoneMatch)
+                .OrderBy(h => h.Customer.CustomerId)
+                .Take(MaxMatches)
+                .ToList();
             var classification = ExceptionReviewCustomerMatcher.Classify(hits);
 
             var matchIds = hits.Select(h => h.Customer.CustomerId).ToList();
