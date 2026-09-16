@@ -102,6 +102,7 @@ namespace BE_Company.Sales.Services
                     .Take(MaxSalesPerMatch).ToList());
 
             var asOf = _clock.UtcNow.Date;
+            var friendlyCity = SalesCityDisplay.FriendlyOrUnavailable(_catalog.CityName, branchCity);
             var matching = new List<ExceptionReviewMatchCustomerDTO>();
             foreach (var hit in hits)
             {
@@ -123,8 +124,8 @@ namespace BE_Company.Sales.Services
                     FullName = hit.Customer.FullName,
                     Phone = hit.Customer.Phone,
                     CityValue = branchCity,
-                    CityName = _catalog.CityName,
-                    Province = hit.Customer.Province ?? _catalog.CityName,
+                    CityName = friendlyCity,
+                    Province = friendlyCity,
                     Address = hit.Customer.Address,
                     Occupation = hit.Customer.Occupation,
                     MatchReasons = hit.MatchReasons,
@@ -143,14 +144,7 @@ namespace BE_Company.Sales.Services
                         LegalStatus = (rating?.IsLegal ?? fact?.IsLegal ?? false) ? "قانونية" : null,
                         ReceiptCount = rating?.ReceiptCount ?? fact?.ReceiptCount ?? 0
                     },
-                    PreviousSales = prevSales.Select(s => new ExceptionReviewPreviousSaleDTO
-                    {
-                        SaleId = s.SaleId,
-                        SaleDate = s.SaleDate,
-                        SaleAmount = s.SaleAmount,
-                        AccountZero = s.AccountZero,
-                        BranchName = _catalog.CityName
-                    }).ToList()
+                    PreviousSales = prevSales.Select(s => MapPreviousSale(s, friendlyCity, asOf)).ToList()
                 });
             }
 
@@ -179,8 +173,12 @@ namespace BE_Company.Sales.Services
                 CustomerName = row.CustomerName,
                 CustomerPhone = row.CustomerPhone,
                 CityValue = row.CityValue,
-                CityName = row.CityName,
-                CustomerProvince = row.CustomerProvince,
+                CityName = SalesCityDisplay.FriendlyOrUnavailable(row.CityName, row.CityValue),
+                CustomerProvince = string.IsNullOrWhiteSpace(row.CustomerProvince)
+                    ? SalesCityDisplay.FriendlyOrUnavailable(row.CityName, row.CityValue)
+                    : (SalesCityDisplay.IsInternalKey(row.CustomerProvince, row.CityValue)
+                        ? SalesCityDisplay.FriendlyOrUnavailable(row.CustomerProvince, row.CityValue)
+                        : row.CustomerProvince),
                 CustomerAddress = row.CustomerAddress,
                 Occupation = null,
                 Notes = row.Notes,
@@ -196,6 +194,58 @@ namespace BE_Company.Sales.Services
                 TargetEmployeeName = row.TargetEmployeeName,
                 PendingNote = row.PendingNote,
                 PreparedForSaleNote = row.PreparedForSaleNote
+            };
+        }
+
+        private static ExceptionReviewPreviousSaleDTO MapPreviousSale(
+            SalesExcelSearchSaleRow s,
+            string friendlyCity,
+            DateTime asOf)
+        {
+            var saleAmount = s.SaleAmount ?? 0;
+            var paid = s.PaidAmount;
+            var remaining = s.RemainingAmount;
+            if (remaining is null && paid is not null)
+            {
+                remaining = Math.Max(0, saleAmount - paid.Value);
+            }
+
+            if (s.AccountZero == true)
+            {
+                remaining = 0;
+                paid ??= saleAmount;
+            }
+
+            var zero = s.AccountZero == true || (remaining is <= 0 && saleAmount > 0);
+            int? repaymentDays = null;
+            if (s.SaleDate is not null)
+            {
+                if (zero && s.LastPaymentDate is not null)
+                {
+                    repaymentDays = CustomerRatingCalculator.DiffDaysInclusive(
+                        s.SaleDate.Value, s.LastPaymentDate.Value);
+                }
+                else if (!zero)
+                {
+                    repaymentDays = CustomerRatingCalculator.DiffDaysInclusive(s.SaleDate.Value, asOf);
+                }
+            }
+
+            return new ExceptionReviewPreviousSaleDTO
+            {
+                SaleId = s.SaleId,
+                SaleDate = s.SaleDate,
+                ProductOrType = string.IsNullOrWhiteSpace(s.ItemsNames) ? null : s.ItemsNames.Trim(),
+                SaleAmount = saleAmount,
+                PaidAmount = paid,
+                RemainingAmount = remaining,
+                AccountZero = zero,
+                AccountStatusArabic = zero ? "مصفر" : "مفتوح",
+                PaymentCount = s.PaymentCount,
+                RepaymentDays = repaymentDays,
+                LastPaymentDate = s.LastPaymentDate,
+                BranchName = friendlyCity,
+                FriendlyCityName = friendlyCity
             };
         }
 

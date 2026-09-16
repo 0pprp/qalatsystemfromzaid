@@ -73,6 +73,23 @@ namespace BE_Company.Sales.Controllers
             }
 
             body ??= new CreateExceptionBody();
+            if (body.SalesRequestId is null or <= 0)
+            {
+                return BadRequest(new { message = "معرّف طلب البيع مطلوب لطلب الاستثناء." });
+            }
+
+            var salesRequestId = body.SalesRequestId.Value;
+            var original = await _requests.GetForManagerAsync(salesRequestId, ct);
+            if (original is null)
+            {
+                return NotFound(new { message = "طلب المبيع غير موجود." });
+            }
+
+            if (SalesExceptionHoldStatuses.IsHeld(original.ExceptionHoldStatus))
+            {
+                return Conflict(new { message = "يوجد طلب استثناء نشط لهذا الطلب مسبقاً." });
+            }
+
             if (!TryResolveCity(actor, body.CityValue, body.CityName, out var cityValue, out var cityName, out var cityError))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, new { message = cityError });
@@ -85,7 +102,7 @@ namespace BE_Company.Sales.Controllers
                 CustomerId = body.CustomerId,
                 CustomerName = body.CustomerName,
                 CustomerPhone = body.CustomerPhone,
-                SalesRequestId = body.SalesRequestId,
+                SalesRequestId = salesRequestId,
                 Reason = body.Reason,
                 TargetApproverType = body.TargetApproverType,
                 RequesterUserId = actor.EmployeeId > 0 ? actor.EmployeeId.ToString() : actor.ExternalUserId,
@@ -94,22 +111,40 @@ namespace BE_Company.Sales.Controllers
                 Role = SalesRoles.UserTypeSalesManager
             }, ct);
 
-            if (forwarded.Ok
-                && body.SalesRequestId is int salesRequestId and > 0
-                && TryReadExceptionId(forwarded.ResponseBody, out var exceptionId))
+            if (!forwarded.Ok)
             {
-                try
+                return ToActionResult(forwarded);
+            }
+
+            if (!TryReadExceptionId(forwarded.ResponseBody, out var exceptionId))
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new
                 {
-                    await _requests.SetExceptionHoldAsync(
-                        salesRequestId,
-                        SalesExceptionHoldStatuses.Pending,
-                        exceptionId,
-                        ct);
-                }
-                catch (SalesCompleteException ex)
+                    message = "تم إنشاء الاستثناء مركزياً لكن تعذر قراءة معرّفه — لم يُطبَّق الحجز على طلب المبيع."
+                });
+            }
+
+            try
+            {
+                await _requests.SetExceptionHoldAsync(
+                    salesRequestId,
+                    SalesExceptionHoldStatuses.Pending,
+                    exceptionId,
+                    ct);
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new
                 {
-                    return StatusCode(ex.StatusCode, new { message = ex.Message });
-                }
+                    message = $"تم إنشاء الاستثناء لكن فشل حجز طلب المبيع: {ex.Message}"
+                });
+            }
+            catch (Exception)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new
+                {
+                    message = "تم إنشاء الاستثناء مركزياً لكن فشل حجز طلب المبيع في الفرع."
+                });
             }
 
             return ToActionResult(forwarded);

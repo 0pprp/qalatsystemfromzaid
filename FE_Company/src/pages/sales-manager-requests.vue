@@ -154,6 +154,9 @@ function isUnassigned(row) {
   const s = requestStatus(row)
   if (s === 'Rejected' || s === 'Completed')
     return false
+  const hold = String(pick(row, 'exceptionHoldStatus', 'ExceptionHoldStatus') || '').trim()
+  if (hold === 'Pending' || hold === 'Approved' || hold === 'Rejected')
+    return false
   return s === 'New' || employeeIdOf(row) <= 0
 }
 
@@ -311,7 +314,7 @@ function exceptionAssignedLabel(item) {
     return ''
   const at = item?.assignedAtUtc || item?.AssignedAtUtc
 
-  return at ? `${name} — ${formatIraqDate(at)} ${formatIraqTime(at)}` : name
+  return at ? `${name} — ${formatIraqDate(at)}` : name
 }
 
 function statusColor(status) {
@@ -458,9 +461,10 @@ async function submitExceptionRequest() {
     exceptionOpen.value = false
     exceptionReason.value = ''
     exceptionTarget.value = null
-    toast.success('تم إرسال طلب الاستثناء — الموافقة تُعلمك فقط ولا تغني عن الإسناد أو التجهيز')
-    if (showingExceptions.value)
-      await loadExceptions()
+    toast.success('تم إرسال طلب الاستثناء — اختفى من غير مسند وينتظر موافقة المدير المفوض')
+    exceptionStatus.value = 'Pending'
+    tab.value = 'exceptions'
+    await Promise.all([load(), loadExceptions()])
   }
   catch (err) {
     toast.error(smErrorMessage(err, 'تعذر إرسال طلب الاستثناء'))
@@ -2014,7 +2018,6 @@ watch(exceptionStatus, () => {
                     تاريخ الطلب
                   </div>
                   {{ formatIraqDate(item.requestedAtUtc || item.RequestedAtUtc) }}
-                  {{ formatIraqTime(item.requestedAtUtc || item.RequestedAtUtc) }}
                 </VCol>
                 <VCol
                   v-if="item.decidedAtUtc || item.DecidedAtUtc"
@@ -2025,7 +2028,6 @@ watch(exceptionStatus, () => {
                     تاريخ القرار
                   </div>
                   {{ formatIraqDate(item.decidedAtUtc || item.DecidedAtUtc) }}
-                  {{ formatIraqTime(item.decidedAtUtc || item.DecidedAtUtc) }}
                 </VCol>
                 <VCol
                   v-if="exceptionDecisionNote(item)"
@@ -2071,7 +2073,16 @@ watch(exceptionStatus, () => {
                 variant="tonal"
                 density="compact"
               >
-                تم رفض طلب الاستثناء
+                مرفوض — مغلق ولا يعود إلى غير مسند ولا يمكن الإسناد
+              </VAlert>
+              <VAlert
+                v-else-if="String(item.status || item.Status) === 'Pending'"
+                class="mt-3"
+                type="warning"
+                variant="tonal"
+                density="compact"
+              >
+                بانتظار موافقة المدير المفوض — لا يمكن تحديد موظف الآن
               </VAlert>
               <div
                 v-if="canAssignException(item)"

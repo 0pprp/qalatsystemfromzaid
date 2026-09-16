@@ -67,12 +67,39 @@ public sealed class SalesManagerExceptionBridgeTests
             })
             .Build();
 
+    private static async Task<(RecordingForwarder Forwarder, SalesRequestService Requests, int SalesRequestId)>
+        SeedRequestAsync(
+            RecordingForwarder? forwarder = null,
+            string userName = "mgr-najaf",
+            string userId = "11",
+            IConfiguration? configuration = null)
+    {
+        forwarder ??= new RecordingForwarder();
+        var config = configuration ?? BranchConfig();
+        var requests = new SalesRequestService(new FakeRequestRepository(), new FakeClock());
+        var seedManager = new BE_Company.Sales.Models.SalesIdentity
+        {
+            EmployeeId = int.TryParse(userId, out var id) ? id : 11,
+            EmployeeName = userName,
+            BranchId = config["SalesManagement:BranchId"] ?? "najaf-demo",
+            BranchName = config["SalesManagement:BranchName"] ?? "النجف - DEMO",
+            Role = SalesRoles.SalesManager,
+            UserType = SalesRoles.UserTypeSalesManager
+        };
+        var created = await requests.CreateAsync(seedManager, new BE_Company.Sales.DTO.SalesRequestCreateDTO
+        {
+            Customer = new() { FullName = "زبون اختبار", Phone = "07801234567" }
+        }, CancellationToken.None);
+        return (forwarder, requests, created.Id);
+    }
+
     private static SalesManagerExceptionsController CreateController(
         RecordingForwarder forwarder,
         string? userType,
         string userName = "mgr-najaf",
         string userId = "11",
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        SalesRequestService? requests = null)
     {
         var config = configuration ?? BranchConfig();
         var http = new DefaultHttpContext();
@@ -91,7 +118,7 @@ public sealed class SalesManagerExceptionBridgeTests
 
         var accessor = new HttpContextAccessor { HttpContext = http };
         var identity = new SalesIdentityService(accessor, config);
-        var requests = new SalesRequestService(new FakeRequestRepository(), new FakeClock());
+        requests ??= new SalesRequestService(new FakeRequestRepository(), new FakeClock());
         var controller = new SalesManagerExceptionsController(identity, forwarder, requests)
         {
             ControllerContext = new ControllerContext { HttpContext = http }
@@ -112,14 +139,15 @@ public sealed class SalesManagerExceptionBridgeTests
     [Fact]
     public async Task AuthenticatedSalesManager_Create_ForwardsTrustedActorAndSucceeds()
     {
-        var forwarder = new RecordingForwarder();
-        var controller = CreateController(forwarder, SalesRoles.UserTypeSalesManager);
+        var (forwarder, requests, salesRequestId) = await SeedRequestAsync();
+        var controller = CreateController(forwarder, SalesRoles.UserTypeSalesManager, requests: requests);
 
         var response = await controller.Create(new SalesManagerExceptionsController.CreateExceptionBody
         {
             CityValue = "najaf-demo",
             CityName = "النجف - DEMO",
             CustomerId = 12,
+            SalesRequestId = salesRequestId,
             Reason = "سبب الاستثناء من مدير المبيعات",
             // Spoof attempt — must be ignored
             RequesterUserName = "evil-spoof",
@@ -133,6 +161,7 @@ public sealed class SalesManagerExceptionBridgeTests
         Assert.Equal(SalesRoles.UserTypeSalesManager, forwarder.LastCreate.Role);
         Assert.NotEqual("evil-spoof", forwarder.LastCreate.RequesterUserName);
         Assert.Equal("najaf-demo", forwarder.LastCreate.CityValue);
+        Assert.Equal(salesRequestId, forwarder.LastCreate.SalesRequestId);
         Assert.Equal("سبب الاستثناء من مدير المبيعات", forwarder.LastCreate.Reason);
     }
 
@@ -144,10 +173,25 @@ public sealed class SalesManagerExceptionBridgeTests
         var response = await controller.Create(new SalesManagerExceptionsController.CreateExceptionBody
         {
             CityValue = "najaf-demo",
+            SalesRequestId = 1,
             Reason = "سبب"
         }, CancellationToken.None);
 
         Assert.IsType<UnauthorizedResult>(response);
+    }
+
+    [Fact]
+    public async Task Create_WithoutSalesRequestId_Is400()
+    {
+        var controller = CreateController(new RecordingForwarder(), SalesRoles.UserTypeSalesManager);
+
+        var response = await controller.Create(new SalesManagerExceptionsController.CreateExceptionBody
+        {
+            CityValue = "najaf-demo",
+            Reason = "سبب"
+        }, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(response);
     }
 
     [Fact]
@@ -169,12 +213,14 @@ public sealed class SalesManagerExceptionBridgeTests
     [Fact]
     public async Task BodyCannotSpoofIdentity_ForwardUsesPrincipalOnly()
     {
-        var forwarder = new RecordingForwarder();
-        var controller = CreateController(forwarder, SalesRoles.UserTypeSalesManager, userName: "real-mgr", userId: "42");
+        var (forwarder, requests, salesRequestId) = await SeedRequestAsync(userName: "real-mgr", userId: "42");
+        var controller = CreateController(
+            forwarder, SalesRoles.UserTypeSalesManager, userName: "real-mgr", userId: "42", requests: requests);
 
         await controller.Create(new SalesManagerExceptionsController.CreateExceptionBody
         {
             CityValue = "najaf-demo",
+            SalesRequestId = salesRequestId,
             Reason = "سبب حقيقي",
             RequesterUserId = "999",
             RequesterUserName = "spoofed",
@@ -190,19 +236,21 @@ public sealed class SalesManagerExceptionBridgeTests
     [Fact]
     public async Task InvalidCityAccess_IsRejected()
     {
-        var forwarder = new RecordingForwarder();
+        var config = BranchConfig(branchId: "najaf-demo");
+        var (forwarder, requests, salesRequestId) = await SeedRequestAsync(configuration: config);
         var controller = CreateController(
             forwarder,
             SalesRoles.UserTypeSalesManager,
-            configuration: BranchConfig(branchId: "najaf-demo"));
+            configuration: config,
+            requests: requests);
 
         var response = await controller.Create(new SalesManagerExceptionsController.CreateExceptionBody
         {
             CityValue = "basra-demo",
+            SalesRequestId = salesRequestId,
             Reason = "محاولة محافظة أخرى"
         }, CancellationToken.None);
 
-        Assert.IsType<ObjectResult>(response);
         var status = Assert.IsType<ObjectResult>(response);
         Assert.Equal(StatusCodes.Status403Forbidden, status.StatusCode);
         Assert.Null(forwarder.LastCreate);
@@ -217,11 +265,13 @@ public sealed class SalesManagerExceptionBridgeTests
                 StatusCodes.Status503ServiceUnavailable,
                 "تعذر الاتصال")
         };
-        var controller = CreateController(forwarder, SalesRoles.UserTypeSalesManager);
+        var (_, requests, salesRequestId) = await SeedRequestAsync(forwarder);
+        var controller = CreateController(forwarder, SalesRoles.UserTypeSalesManager, requests: requests);
 
         var response = await controller.Create(new SalesManagerExceptionsController.CreateExceptionBody
         {
             CityValue = "najaf-demo",
+            SalesRequestId = salesRequestId,
             Reason = "سبب"
         }, CancellationToken.None);
 
@@ -239,11 +289,13 @@ public sealed class SalesManagerExceptionBridgeTests
                 StatusCodes.Status502BadGateway,
                 "تعذر تسليم الطلب")
         };
-        var controller = CreateController(forwarder, SalesRoles.UserTypeSalesManager);
+        var (_, requests, salesRequestId) = await SeedRequestAsync(forwarder);
+        var controller = CreateController(forwarder, SalesRoles.UserTypeSalesManager, requests: requests);
 
         var response = await controller.Create(new SalesManagerExceptionsController.CreateExceptionBody
         {
             CityValue = "najaf-demo",
+            SalesRequestId = salesRequestId,
             Reason = "سبب"
         }, CancellationToken.None);
 

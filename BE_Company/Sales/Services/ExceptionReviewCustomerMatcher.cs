@@ -178,9 +178,13 @@ namespace BE_Company.Sales.Services
 
             var sourceType = (row.CustomerSourceType ?? "").Trim();
             var person = string.IsNullOrWhiteSpace(row.CreatedByName) ? Unavailable : row.CreatedByName.Trim();
-            var branch = string.IsNullOrWhiteSpace(row.CityName)
-                ? (string.IsNullOrWhiteSpace(row.CustomerProvince) ? Unavailable : row.CustomerProvince.Trim())
-                : row.CityName.Trim();
+            var branch = SalesCityDisplay.FriendlyOrUnavailable(row.CityName, row.CityValue);
+            if (branch == "غير متوفر"
+                && !string.IsNullOrWhiteSpace(row.CustomerProvince)
+                && !SalesCityDisplay.IsInternalKey(row.CustomerProvince, row.CityValue))
+            {
+                branch = row.CustomerProvince.Trim();
+            }
 
             string label;
             string? list;

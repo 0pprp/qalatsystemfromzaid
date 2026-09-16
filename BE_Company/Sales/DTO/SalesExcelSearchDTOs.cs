@@ -76,6 +76,11 @@ namespace BE_Company.Sales.DTO
         public int SaleId { get; set; }
         public DateTime? SaleDate { get; set; }
         public double? SaleAmount { get; set; }
+        public double? PaidAmount { get; set; }
+        public double? RemainingAmount { get; set; }
         public bool? AccountZero { get; set; }
+        public string? ItemsNames { get; set; }
+        public int? PaymentCount { get; set; }
+        public DateTime? LastPaymentDate { get; set; }
     }
 }

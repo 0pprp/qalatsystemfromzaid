@@ -86,9 +86,17 @@ namespace BE_Company.Sales.DTO
     {
         public int SaleId { get; set; }
         public DateTime? SaleDate { get; set; }
+        public string? ProductOrType { get; set; }
         public double? SaleAmount { get; set; }
+        public double? PaidAmount { get; set; }
+        public double? RemainingAmount { get; set; }
         public bool? AccountZero { get; set; }
+        public string? AccountStatusArabic { get; set; }
+        public int? PaymentCount { get; set; }
+        public int? RepaymentDays { get; set; }
+        public DateTime? LastPaymentDate { get; set; }
         public string? BranchName { get; set; }
+        public string? FriendlyCityName { get; set; }
     }
 
     /// <summary>Candidate row for pure matching (unit tests + service).</summary>

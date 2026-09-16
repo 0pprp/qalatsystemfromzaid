@@ -260,22 +260,46 @@ class ExceptionReviewFinancialSummary {
 class ExceptionReviewPreviousSale {
   const ExceptionReviewPreviousSale({
     this.saleDate,
+    this.productOrType,
     this.saleAmount,
+    this.paidAmount,
+    this.remainingAmount,
     this.accountZero,
+    this.accountStatusArabic,
+    this.paymentCount,
+    this.repaymentDays,
+    this.lastPaymentDate,
     this.branchName,
+    this.friendlyCityName,
   });
 
   final DateTime? saleDate;
+  final String? productOrType;
   final double? saleAmount;
+  final double? paidAmount;
+  final double? remainingAmount;
   final bool? accountZero;
+  final String? accountStatusArabic;
+  final int? paymentCount;
+  final int? repaymentDays;
+  final DateTime? lastPaymentDate;
   final String? branchName;
+  final String? friendlyCityName;
 
   factory ExceptionReviewPreviousSale.fromJson(Map<String, dynamic> json) =>
       ExceptionReviewPreviousSale(
         saleDate: AppDate.parseUtc(json['saleDate']),
+        productOrType: JsonRead.optionalText(json['productOrType']),
         saleAmount: (json['saleAmount'] as num?)?.toDouble(),
+        paidAmount: (json['paidAmount'] as num?)?.toDouble(),
+        remainingAmount: (json['remainingAmount'] as num?)?.toDouble(),
         accountZero: json['accountZero'] as bool?,
+        accountStatusArabic: JsonRead.optionalText(json['accountStatusArabic']),
+        paymentCount: JsonRead.optionalNumber(json['paymentCount']),
+        repaymentDays: JsonRead.optionalNumber(json['repaymentDays']),
+        lastPaymentDate: AppDate.parseUtc(json['lastPaymentDate']),
         branchName: JsonRead.optionalText(json['branchName']),
+        friendlyCityName: JsonRead.optionalText(json['friendlyCityName']),
       );
 }
 

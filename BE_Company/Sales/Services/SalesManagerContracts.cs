@@ -75,8 +75,7 @@ namespace BE_Company.Sales.Services
 
         public static bool IsHeldUnassigned(SalesRequestDTO row) =>
             IsHeld(row.ExceptionHoldStatus)
-            && (string.Equals(row.Status, SalesRequestStatuses.New, StringComparison.OrdinalIgnoreCase)
-                || row.TargetEmployeeId <= 0);
+            && row.TargetEmployeeId <= 0;
     }
 
     public static class SalesRequestEvents

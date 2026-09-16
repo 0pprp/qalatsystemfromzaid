@@ -1,6 +1,6 @@
 import 'package:delegated_manager_application/core/network/api_client.dart';
 import 'package:delegated_manager_application/core/theme/app_theme.dart';
-import 'package:delegated_manager_application/core/utils/date_format.dart';
+import 'package:delegated_manager_application/core/utils/dm_format.dart';
 import 'package:delegated_manager_application/core/widgets/state_views.dart';
 import 'package:delegated_manager_application/features/exceptions/data/exceptions_repository.dart';
 import 'package:delegated_manager_application/features/exceptions/domain/sales_exception.dart';
@@ -176,10 +176,12 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
             ),
             InfoRow(
               label: 'المحافظة',
-              value: review?.currentRequest?.cityName ??
-                  review?.currentRequest?.customerProvince ??
-                  request.summary.cityName ??
-                  'غير محددة',
+              value: DmFormat.friendlyCity(
+                review?.currentRequest?.cityName ??
+                    review?.currentRequest?.customerProvince ??
+                    request.summary.cityName,
+                request.summary.cityValue,
+              ),
             ),
             InfoRow(
               label: 'العنوان',
@@ -195,7 +197,7 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
             ),
             InfoRow(
               label: 'تاريخ إنشاء الطلب',
-              value: AppDate.format(
+              value: DmFormat.dateOnly(
                   review?.currentRequest?.createdAtUtc ??
                       request.summary.requestedAtUtc),
             ),
@@ -223,9 +225,10 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
               InfoRow(label: 'القائمة', value: review!.source.listName!),
             InfoRow(
               label: 'المحافظة',
-              value: review?.source.branchName ??
-                  request.summary.cityName ??
-                  'غير متوفر',
+              value: DmFormat.friendlyCity(
+                review?.source.branchName ?? request.summary.cityName,
+                request.summary.cityValue,
+              ),
             ),
             InfoRow(
               label: 'مقدّم طلب الاستثناء',
@@ -247,7 +250,7 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
             const SizedBox(height: AppSpacing.sm),
             InfoRow(
               label: 'تاريخ الطلب',
-              value: AppDate.format(request.summary.requestedAtUtc),
+              value: DmFormat.dateOnly(request.summary.requestedAtUtc),
             ),
             StatusChip(
               label: ExceptionStatuses.arabic(request.status),
@@ -400,6 +403,7 @@ class _MatchCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fin = match.financialSummary;
+    final city = DmFormat.friendlyCity(match.cityName ?? match.province);
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: Card(
@@ -413,7 +417,10 @@ class _MatchCard extends StatelessWidget {
                 fontWeight: FontWeight.bold, color: AppColors.text),
           ),
           subtitle: Text(
-            match.matchReasons.join(' • '),
+            [
+              match.matchReasons.join(' • '),
+              if (city != 'غير متوفر') city,
+            ].where((e) => e.isNotEmpty).join(' — '),
             style: const TextStyle(fontSize: 12, color: AppColors.muted),
           ),
           children: [
@@ -423,10 +430,7 @@ class _MatchCard extends StatelessWidget {
                   style: TextStyle(fontWeight: FontWeight.bold)),
             ),
             InfoRow(label: 'الهاتف', value: match.phone ?? '-'),
-            InfoRow(
-              label: 'المحافظة',
-              value: match.cityName ?? match.province ?? '-',
-            ),
+            InfoRow(label: 'المحافظة', value: city),
             InfoRow(label: 'العنوان', value: match.address ?? '-'),
             if ((match.occupation ?? '').isNotEmpty)
               InfoRow(label: 'المهنة', value: match.occupation!),
@@ -442,50 +446,105 @@ class _MatchCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
             const Align(
               alignment: Alignment.centerRight,
-              child: Text('السجل المالي',
+              child: Text('السجل المالي (إجمالي)',
                   style: TextStyle(fontWeight: FontWeight.bold)),
             ),
-            InfoRow(
-                label: 'إجمالي المبيعات',
-                value: fin.totalSales.toStringAsFixed(0)),
-            InfoRow(
-                label: 'المدفوع', value: fin.totalPaid.toStringAsFixed(0)),
-            InfoRow(
-                label: 'المتبقي', value: fin.remaining.toStringAsFixed(0)),
+            InfoRow(label: 'إجمالي المبيعات', value: DmFormat.money(fin.totalSales)),
+            InfoRow(label: 'المدفوع', value: DmFormat.money(fin.totalPaid)),
+            InfoRow(label: 'المتبقي', value: DmFormat.money(fin.remaining)),
             InfoRow(
               label: 'حساب مسدد',
               value: fin.fullyPaid ? 'نعم' : 'لا',
             ),
             InfoRow(
               label: 'آخر بيع',
-              value: AppDate.format(fin.lastSaleDate),
+              value: DmFormat.dateOnly(fin.lastSaleDate),
             ),
             InfoRow(
               label: 'آخر دفعة',
-              value: AppDate.format(fin.lastPaymentDate),
+              value: DmFormat.dateOnly(fin.lastPaymentDate),
             ),
             if (match.previousSales.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.sm),
               const Align(
                 alignment: Alignment.centerRight,
-                child: Text('المبيعات السابقة',
+                child: Text('الحسابات السابقة',
                     style: TextStyle(fontWeight: FontWeight.bold)),
               ),
-              ...match.previousSales.take(5).map(
-                    (s) => Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        '${AppDate.format(s.saleDate)} • '
-                        '${(s.saleAmount ?? 0).toStringAsFixed(0)}'
-                        '${s.accountZero == true ? ' • مسدد' : ''}',
-                        style: const TextStyle(
-                            fontSize: 13, color: AppColors.text),
-                      ),
-                    ),
-                  ),
+              ...match.previousSales.map(
+                (s) => _SaleAccountCard(s, ratingLabel: match.ratingLabel),
+              ),
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SaleAccountCard extends StatelessWidget {
+  const _SaleAccountCard(this.sale, {this.ratingLabel});
+
+  final ExceptionReviewPreviousSale sale;
+  final String? ratingLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        border: Border.all(color: AppColors.muted.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('الحساب السابق',
+              style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          InfoRow(label: 'تاريخ المبيع', value: DmFormat.dateOnly(sale.saleDate)),
+          InfoRow(
+            label: 'نوع المبيع',
+            value: (sale.productOrType ?? '').isEmpty
+                ? 'غير متوفر'
+                : sale.productOrType!,
+          ),
+          InfoRow(label: 'المبلغ الكلي', value: DmFormat.money(sale.saleAmount)),
+          InfoRow(label: 'المبلغ المسدد', value: DmFormat.money(sale.paidAmount)),
+          InfoRow(
+            label: 'المتبقي',
+            value: DmFormat.money(sale.remainingAmount ?? 0),
+          ),
+          InfoRow(
+            label: 'عدد التسديدات',
+            value: sale.paymentCount == null
+                ? 'غير متوفر'
+                : '${sale.paymentCount}',
+          ),
+          InfoRow(
+            label: 'عدد أيام التسديد',
+            value: sale.repaymentDays == null
+                ? 'غير متوفر'
+                : '${sale.repaymentDays} يوم',
+          ),
+          InfoRow(
+            label: 'آخر تسديد',
+            value: DmFormat.dateOnly(sale.lastPaymentDate),
+          ),
+          InfoRow(
+            label: 'حالة الحساب',
+            value: sale.accountStatusArabic ??
+                (sale.accountZero == true ? 'مصفر' : 'مفتوح'),
+          ),
+          InfoRow(
+            label: 'التقييم',
+            value: (ratingLabel == null || ratingLabel!.trim().isEmpty)
+                ? 'غير متوفر'
+                : ratingLabel!,
+          ),
+        ],
       ),
     );
   }

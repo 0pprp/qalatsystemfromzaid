@@ -318,8 +318,9 @@ public sealed class SalesExceptionHoldWorkflowTests
             Reason = "تكرار"
         }, CancellationToken.None);
 
-        var status = Assert.IsType<ObjectResult>(response);
+        var status = Assert.IsAssignableFrom<ObjectResult>(response);
         Assert.Equal(StatusCodes.Status409Conflict, status.StatusCode);
+        Assert.Null(forwarder.LastCreate);
     }
 
     // 11. Assignment by manager outside city/scope rejected

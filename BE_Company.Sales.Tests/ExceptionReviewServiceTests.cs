@@ -163,4 +163,80 @@ public class ExceptionReviewServiceTests
         Assert.Equal("New", ctx.CustomerClassification.Type);
         Assert.Empty(ctx.MatchingCustomers);
     }
+
+    [Fact]
+    public async Task PreviousSales_Have_Independent_PaymentCount_And_RepaymentDays()
+    {
+        var (_, svc, catalog, _, row) = await SeedAsync();
+        catalog.CityName = "DatabaseCompanyBasra";
+        catalog.CityValue = "basra-demo";
+        catalog.Customers.Add(new()
+        {
+            CustomerId = 77,
+            FullName = row.CustomerName,
+            Phone = row.CustomerPhone,
+            Province = "البصرة"
+        });
+        catalog.Sales.Add(new()
+        {
+            CustomerId = 77,
+            SaleId = 10,
+            SaleDate = new DateTime(2026, 1, 1),
+            SaleAmount = 1_250_000,
+            PaidAmount = 1_250_000,
+            RemainingAmount = 0,
+            AccountZero = true,
+            PaymentCount = 8,
+            LastPaymentDate = new DateTime(2026, 5, 22),
+            ItemsNames = "ثلاجة"
+        });
+        catalog.Sales.Add(new()
+        {
+            CustomerId = 77,
+            SaleId = 11,
+            SaleDate = new DateTime(2026, 6, 1),
+            SaleAmount = 500_000,
+            PaidAmount = 100_000,
+            RemainingAmount = 400_000,
+            AccountZero = false,
+            PaymentCount = 2,
+            LastPaymentDate = new DateTime(2026, 7, 1),
+            ItemsNames = "مكيف"
+        });
+
+        var ctx = await svc.BuildContextAsync(Manager(), row.Id, default);
+        var sales = ctx.MatchingCustomers.Single().PreviousSales;
+        Assert.Equal(2, sales.Count);
+
+        var paid = sales.Single(s => s.SaleId == 10);
+        Assert.Equal(8, paid.PaymentCount);
+        Assert.Equal(142, paid.RepaymentDays); // 1 Jan → 22 May inclusive
+        Assert.Equal("مصفر", paid.AccountStatusArabic);
+        Assert.Equal("البصرة", paid.FriendlyCityName);
+        Assert.DoesNotContain("DatabaseCompany", paid.FriendlyCityName ?? "");
+
+        var open = sales.Single(s => s.SaleId == 11);
+        Assert.Equal(2, open.PaymentCount);
+        Assert.Equal(108, open.RepaymentDays); // 1 Jun → 16 Sep (asOf) inclusive
+        Assert.Equal("مفتوح", open.AccountStatusArabic);
+        Assert.NotEqual(paid.PaymentCount, open.PaymentCount);
+        Assert.NotEqual(paid.RepaymentDays, open.RepaymentDays);
+    }
+
+    [Fact]
+    public async Task FriendlyCity_Never_Exposes_DatabaseCompany_Keys()
+    {
+        var (repo, svc, catalog, _, row) = await SeedAsync();
+        catalog.CityName = "DatabaseCompanyNajaf";
+        catalog.CityValue = "najaf-demo";
+        row.CityName = "DatabaseCompanyNajaf";
+        row.CityValue = "najaf-demo";
+        row.CustomerProvince = "DatabaseCompanyNajaf";
+        await repo.UpdateAsync(row, default);
+
+        var ctx = await svc.BuildContextAsync(Manager(), row.Id, default);
+        Assert.Equal("النجف", ctx.CurrentRequest!.CityName);
+        Assert.Equal("النجف", ctx.Source.BranchName);
+        Assert.DoesNotContain("DatabaseCompany", ctx.CurrentRequest.CityName ?? "");
+    }
 }
