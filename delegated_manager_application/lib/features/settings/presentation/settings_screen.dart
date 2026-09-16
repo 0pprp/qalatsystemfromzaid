@@ -25,6 +25,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _progress = 0;
   String? _message;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _checkUpdate();
+      }
+    });
+  }
+
   Future<void> _checkUpdate() async {
     if (_checking) return;
     setState(() {
@@ -121,11 +131,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SectionCard(
               title: 'عن التطبيق',
               children: [
-                const InfoRow(
-                    label: 'التطبيق', value: 'تطبيق المدير المفوض'),
+                const InfoRow(label: 'التطبيق', value: 'تطبيق المدير المفوض'),
                 InfoRow(label: 'الإصدار', value: AppVersion.display),
                 InfoRow(label: 'البيئة', value: AppEnv.displayName),
-                InfoRow(label: 'بوابة المبيعات', value: ApiClient.resolveBase()),
+                InfoRow(
+                    label: 'بوابة المبيعات', value: ApiClient.resolveBase()),
               ],
             ),
             const SizedBox(height: AppSpacing.md),
@@ -144,8 +154,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   if ((update.releaseNotes ?? '').isNotEmpty)
                     InfoRow(
-                        label: 'ملاحظات الإصدار',
-                        value: update.releaseNotes!),
+                        label: 'ملاحظات الإصدار', value: update.releaseNotes!),
                   if (update.mandatory)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
@@ -155,11 +164,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
                 if (_message != null)
                   Padding(
-                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: AppSpacing.xs),
                     child: Text(
                       _message!,
-                      style: const TextStyle(
-                          fontSize: 13, color: AppColors.muted),
+                      style:
+                          const TextStyle(fontSize: 13, color: AppColors.muted),
                     ),
                   ),
                 if (_downloading) ...[
@@ -169,8 +179,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     'جارٍ التنزيل ${(_progress * 100).toStringAsFixed(0)}%',
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.muted),
+                    style:
+                        const TextStyle(fontSize: 12, color: AppColors.muted),
                   ),
                 ],
                 const SizedBox(height: AppSpacing.sm),

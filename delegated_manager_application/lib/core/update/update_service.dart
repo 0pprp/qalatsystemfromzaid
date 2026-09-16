@@ -10,7 +10,8 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 
 class UpdateDownloadResult {
-  const UpdateDownloadResult({required this.ok, required this.message, this.filePath});
+  const UpdateDownloadResult(
+      {required this.ok, required this.message, this.filePath});
 
   final bool ok;
   final String message;
@@ -23,6 +24,10 @@ class UpdateService {
   static const String appKey = AppVersion.appKey;
 
   static Future<MobileUpdateInfo> check({int? currentVersionCode}) async {
+    if (currentVersionCode == null) {
+      await AppVersion.loadInstalled();
+    }
+
     final installed = currentVersionCode ?? AppVersion.code;
     final json = await ApiClient.get(
       'mobile-updates/$appKey',
