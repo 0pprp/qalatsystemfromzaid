@@ -1,0 +1,37 @@
+Changed language setting to us_english.
+=== Delegate / Box ===
+5|الولاية نجف 2|6
+=== Box balances if columns exist ===
+6| الولاية نجف 2
+=== The two moved 70k payments ===
+418572|53338|مصطفى صادق كريم|2026-09-26 12:00:00|removed-not-in-sep29-receipt-945|6|438386|20000|2026-10-01 09:14:26|قبض من الزبون مصطفى صادق كريم
+418784|626|حيدر صاحب عباس|2026-09-26 12:00:00|removed-not-in-sep29-receipt-945|6|438603|50000|2026-10-03 00:43:28|مطابقة وصل 1/10
+=== Sep26 for list5 (where we parked them) ===
+40|1012000
+=== Sep29 / Oct1 check ===
+2026-09-26|40|1012000
+2026-09-29|39|945000
+2026-10-01|36|2370000
+=== AddToBox for list5 BoxID last 10 days sum ===
+6
+2026-09-26|38|942000
+2026-09-27|34|785000
+2026-09-28|35|808000
+2026-09-29|39|945000
+2026-09-30|18|277000
+2026-10-01|34|2260000
+2026-10-02|34|703000
+2026-10-03|57|1627000
+=== View_WeekFinal / receipt-like if exists for list ===
+2026-09-26|40|1012000
+2026-09-29|39|945000
+2026-10-01|36|2370000
+=== Any soft-delete columns on AddToBox / payments ===
+BoxID
+Amount
+Notes
+BoxID
+PaymentDate
+Location
+
+SQL_EXIT 0

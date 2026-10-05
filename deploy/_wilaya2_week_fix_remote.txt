@@ -1,0 +1,10 @@
+Changed language setting to us_english.
+BeforeUtc=2026-10-03 11:13:59
+NormalizedPaymentDates=0
+GetDateWeek_OK
+View_WeekFinal_OK
+=== VERIFY Sabah 8 (51962) ===
+51962|0.0|15000.0|0.0|15000.0|15000.0|15000.0|15000.0
+Msg 208, Level 16, State 224, Server vmi3533397, Line 74
+Invalid object name 'dbo.GetDateWeek'.
+

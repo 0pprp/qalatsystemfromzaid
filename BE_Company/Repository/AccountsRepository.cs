@@ -142,7 +142,7 @@ namespace BE_Company.Repository
             }
         }
 
-        public async Task<bool?> Boxs_Update(int? boxID,BoxsPutDTO boxsPutDTO)
+        public async Task<bool?> Boxs_Update(int? boxID, BoxsPutDTO boxsPutDTO)
         {
             using (var connection = new SqlConnection(_connectionString))
             {

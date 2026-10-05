@@ -14,16 +14,35 @@ namespace BE_SalesEmployee.Controllers
     {
         private readonly AdminCitiesService _cities;
         private readonly BranchProxyService _proxy;
+        private readonly IConfiguration _configuration;
 
-        public SalesFilterController(AdminCitiesService cities, BranchProxyService proxy)
+        public SalesFilterController(
+            AdminCitiesService cities,
+            BranchProxyService proxy,
+            IConfiguration configuration)
         {
             _cities = cities;
             _proxy = proxy;
+            _configuration = configuration;
+        }
+
+        private IActionResult? IfDisabled()
+        {
+            if (_configuration.GetValue("SalesManagement:FilterAppEnabled", false))
+            {
+                return null;
+            }
+
+            return StatusCode(StatusCodes.Status410Gone, new
+            {
+                message = "تم إيقاف تطبيق الفلترة. الطلبات تظهر مباشرة في تطبيق المبيعات — طلبات البيع."
+            });
         }
 
         [HttpGet("me/cities")]
         public async Task<IActionResult> MyCities(CancellationToken ct)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             var user = TokenService.FromPrincipal(User);
             if (!user.IsSalesFilterEmployee)
             {
@@ -58,6 +77,7 @@ namespace BE_SalesEmployee.Controllers
         [HttpGet("sales-employees")]
         public async Task<IActionResult> SalesEmployees([FromQuery] string? cityValue, CancellationToken ct = default)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             var user = TokenService.FromPrincipal(User);
             var (city, error) = await ResolveAllowedCityAsync(user, cityValue, requireValue: true, ct);
             if (error != null)
@@ -79,6 +99,7 @@ namespace BE_SalesEmployee.Controllers
             [FromQuery] int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             var user = TokenService.FromPrincipal(User);
             var (city, error) = await ResolveAllowedCityAsync(user, cityValue, requireValue: true, ct);
             if (error != null)
@@ -112,6 +133,7 @@ namespace BE_SalesEmployee.Controllers
             [FromQuery] int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             var user = TokenService.FromPrincipal(User);
             var (city, error) = await ResolveAllowedCityAsync(user, cityValue, requireValue: true, ct);
             if (error != null)
@@ -128,20 +150,32 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [HttpGet("requests/{cityValue}/{id:int}")]
-        public Task<IActionResult> Get(string cityValue, int id, CancellationToken ct) =>
-            ProxyByCityAsync(cityValue, $"sales-filter/requests/{id}", HttpMethod.Get, null, ct);
+        public Task<IActionResult> Get(string cityValue, int id, CancellationToken ct)
+        {
+            if (IfDisabled() is { } disabled) return Task.FromResult(disabled);
+            return ProxyByCityAsync(cityValue, $"sales-filter/requests/{id}", HttpMethod.Get, null, ct);
+        }
 
         [HttpPost("requests/{cityValue}/{id:int}/hold")]
-        public Task<IActionResult> Hold(string cityValue, int id, [FromBody] JsonElement? body, CancellationToken ct) =>
-            ProxyByCityAsync(cityValue, $"sales-filter/requests/{id}/hold", HttpMethod.Post, BodyText(body), ct);
+        public Task<IActionResult> Hold(string cityValue, int id, [FromBody] JsonElement? body, CancellationToken ct)
+        {
+            if (IfDisabled() is { } disabled) return Task.FromResult(disabled);
+            return ProxyByCityAsync(cityValue, $"sales-filter/requests/{id}/hold", HttpMethod.Post, BodyText(body), ct);
+        }
 
         [HttpPost("requests/{cityValue}/{id:int}/ready")]
-        public Task<IActionResult> Ready(string cityValue, int id, [FromBody] JsonElement? body, CancellationToken ct) =>
-            ProxyByCityAsync(cityValue, $"sales-filter/requests/{id}/ready", HttpMethod.Post, BodyText(body), ct);
+        public Task<IActionResult> Ready(string cityValue, int id, [FromBody] JsonElement? body, CancellationToken ct)
+        {
+            if (IfDisabled() is { } disabled) return Task.FromResult(disabled);
+            return ProxyByCityAsync(cityValue, $"sales-filter/requests/{id}/ready", HttpMethod.Post, BodyText(body), ct);
+        }
 
         [HttpPost("requests/{cityValue}/{id:int}/reject")]
-        public Task<IActionResult> Reject(string cityValue, int id, [FromBody] JsonElement? body, CancellationToken ct) =>
-            ProxyByCityAsync(cityValue, $"sales-filter/requests/{id}/reject", HttpMethod.Post, BodyText(body), ct);
+        public Task<IActionResult> Reject(string cityValue, int id, [FromBody] JsonElement? body, CancellationToken ct)
+        {
+            if (IfDisabled() is { } disabled) return Task.FromResult(disabled);
+            return ProxyByCityAsync(cityValue, $"sales-filter/requests/{id}/reject", HttpMethod.Post, BodyText(body), ct);
+        }
 
         private async Task<IActionResult> ProxyByCityAsync(
             string cityValue,

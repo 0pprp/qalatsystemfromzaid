@@ -124,7 +124,7 @@ public class SalesRequestEvaluationReceiptCountTests
         }, default);
 
         Assert.Equal(1, rating.BatchCalls);
-        Assert.Equal(CustomerRatingLabels.Legal, result.Items[0].OverallRatingLabel);
+        Assert.Equal(CustomerRatingLabels.Excellent, result.Items[0].OverallRatingLabel);
         Assert.Equal(2, result.Items[0].Phone.ResultCount);
     }
 
@@ -223,7 +223,7 @@ public class SalesRequestEvaluationReceiptCountTests
         Assert.Equal(2, summary.Items[0].FatherGrandfather.ResultCount);
         Assert.Equal(0, summary.Items[0].TripleName.ResultCount);
         Assert.Equal(0, summary.Items[0].Phone.ResultCount);
-        Assert.Equal(CustomerRatingLabels.Legal, summary.Items[0].FatherGrandfather.WorstRatingLabel);
+        Assert.Equal(CustomerRatingLabels.Excellent, summary.Items[0].FatherGrandfather.WorstRatingLabel);
 
         var hits = await svc.ListHitsAsync(
             Manager(),
@@ -273,7 +273,7 @@ public class SalesRequestProvinceTransferServiceTests
 
         Assert.Equal("basra", created.CityValue);
         Assert.Equal(0, created.TargetEmployeeId);
-        Assert.Equal(SalesFilterStatuses.PendingFilter, created.FilterStatus);
+        Assert.Equal(SalesFilterStatuses.ReadyForSale, created.FilterStatus);
         Assert.Contains(repo.History, h => h.Event == SalesRequestEvents.ProvinceTransferred && h.RequestId == created.Id);
     }
 

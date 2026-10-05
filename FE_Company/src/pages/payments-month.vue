@@ -66,7 +66,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-wallet', // سعر البيع
     value: formattedNumber(
-      monthPaymentsData.value.reduce((sum, row) => sum + (row.amountTotalSalesDenar || 0), 0),
+      monthPaymentsData.value.reduce((sum, row) => sum + (row.amountTotalSales || 0), 0),
     ),
     title: 'سعر البيع',
     color: "success",
@@ -150,7 +150,7 @@ function exportToExcel() {
       'المباع': row.itemsNames || 'لا يوجد',
       'تاريخ البيع': row.dateSale ? formattedDate(row.dateSale) : 'لا يوجد',
       'عدد الأيام': row.numberOfDayDevice || 'لا يوجد',
-      'سعر البيع': row.amountTotalSalesDenar || 'لا يوجد',
+      'سعر البيع': row.amountTotalSales || 'لا يوجد',
       'القسط': row.amountDaySales || 'لا يوجد',
       'الواصل': row.receiptsTotal || 'لا يوجد',
       'الباقي': row.amountRemaining || 'لا يوجد',
@@ -295,9 +295,9 @@ onMounted(() => {
               {{ item.numberOfDayDevice || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.amountTotalSalesDenar="{ item }">
+          <template #item.amountTotalSales="{ item }">
             <div class="premium-amount amt-total-sales">
-              {{ formattedNumber(item.amountTotalSalesDenar) }}
+              {{ formattedNumber(item.amountTotalSales) }}
             </div>
           </template>
           <template #item.amountDaySales="{ item }">

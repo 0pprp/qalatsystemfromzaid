@@ -93,7 +93,7 @@ onMounted(load)
         cols="12"
         md="4"
       >
-        <VCard><VCardText>الموظفون في الدوام<br><strong>{{ cards.employeesOnShift }}</strong></VCardText></VCard>
+        <VCard><VCardText>موظفين المبيعات في الدوام<br><strong>{{ cards.employeesOnShift }}</strong></VCardText></VCard>
       </VCol>
       <VCol
         cols="12"

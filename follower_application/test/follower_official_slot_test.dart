@@ -1,129 +1,66 @@
-import 'package:flutter_test/flutter_test.dart';
 import 'package:follower_application/tracking/official_slot.dart';
-import 'package:follower_application/tracking/tracking_config.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('official tracking interval is 10 minutes', () {
-    expect(TrackingConfig.officialInterval, const Duration(minutes: 10));
-    expect(TrackingConfig.officialIntervalMs, 600000);
-    expect(TrackingConfig.maxAcceptedAccuracyMeters, greaterThanOrEqualTo(50));
-    expect(TrackingConfig.minimumDistanceMeters, 0);
-    expect(TrackingConfig.debugIntervalMs, 0);
-  });
+  group('OfficialSlot start+end', () {
+    final start = DateTime.utc(2026, 9, 10, 7, 13, 27);
+    final cutoff = start.add(const Duration(hours: 18));
 
-  test('start shift: no point at start; first due at start+10min', () {
-    final start = DateTime.utc(2026, 9, 2, 7, 13);
-    final atStart = OfficialSlot.dueSlots(
-      shiftStartUtc: start,
-      lastOfficialSlotUtc: null,
-      nowUtc: start,
-      cutoffUtc: start.add(const Duration(hours: 18)),
-    );
-    expect(atStart, isEmpty);
-
-    expect(
-      OfficialSlot.dueSlots(
+    test('first due is start itself', () {
+      final atStart = OfficialSlot.dueSlots(
         shiftStartUtc: start,
         lastOfficialSlotUtc: null,
-        nowUtc: start.add(const Duration(minutes: 8)),
-        cutoffUtc: start.add(const Duration(hours: 18)),
-      ),
-      isEmpty,
-    );
-    expect(
-      OfficialSlot.dueSlots(
+        nowUtc: start,
+        cutoffUtc: cutoff,
+      );
+      expect(atStart, [start]);
+      expect(OfficialSlot.isExactOfficialSlot(start, start), isTrue);
+      expect(
+        OfficialSlot.isExactOfficialSlot(start, start.add(const Duration(minutes: 10))),
+        isFalse,
+      );
+    });
+
+    test('no second mid-shift slot after start recorded', () {
+      final due = OfficialSlot.dueSlots(
         shiftStartUtc: start,
-        lastOfficialSlotUtc: null,
-        nowUtc: start.add(const Duration(minutes: 9, seconds: 59)),
-        cutoffUtc: start.add(const Duration(hours: 18)),
-      ),
-      isEmpty,
-    );
-    expect(OfficialSlot.isExactOfficialSlot(start, start.add(const Duration(minutes: 8))), isFalse);
-    expect(
-      OfficialSlot.isExactOfficialSlot(start, start.add(const Duration(minutes: 9, seconds: 59))),
-      isFalse,
-    );
+        lastOfficialSlotUtc: start,
+        nowUtc: start.add(const Duration(minutes: 40)),
+        cutoffUtc: cutoff,
+      );
+      expect(due, isEmpty);
+      expect(
+        OfficialSlot.nextDueUtc(
+          shiftStartUtc: start,
+          lastOfficialSlotUtc: start,
+          cutoffUtc: cutoff,
+        ),
+        isNull,
+      );
+    });
 
-    final firstDue = OfficialSlot.dueSlots(
-      shiftStartUtc: start,
-      lastOfficialSlotUtc: null,
-      nowUtc: start.add(const Duration(minutes: 10)),
-      cutoffUtc: start.add(const Duration(hours: 18)),
-    );
-    expect(firstDue, [start.add(const Duration(minutes: 10))]);
-    expect(OfficialSlot.isExactOfficialSlot(start, firstDue.first), isTrue);
-    expect(firstDue.first, isNot(OfficialSlot.floorUtc(start)));
-  });
+    test('end slot matches closedAt', () {
+      final closed = start.add(const Duration(hours: 8));
+      expect(OfficialSlot.isEndSlot(closed, closed), isTrue);
+      expect(
+        OfficialSlot.isExactOfficialSlot(start, closed, closedAtUtc: closed),
+        isTrue,
+      );
+      expect(
+        OfficialSlot.isExactOfficialSlot(start, closed),
+        isFalse,
+      );
+    });
 
-  test('wake at 10:25 maps to official 10:23; next official 10:33', () {
-    final start = DateTime.utc(2026, 9, 2, 7, 13);
-    final due = OfficialSlot.dueSlots(
-      shiftStartUtc: start,
-      lastOfficialSlotUtc: null,
-      nowUtc: start.add(const Duration(minutes: 12)),
-      cutoffUtc: start.add(const Duration(hours: 18)),
-    );
-    expect(due, [start.add(const Duration(minutes: 10))]);
-    expect(
-      OfficialSlot.nextDueUtc(
-        shiftStartUtc: start,
-        lastOfficialSlotUtc: due.first,
-        cutoffUtc: start.add(const Duration(hours: 18)),
-      ),
-      start.add(const Duration(minutes: 20)),
-    );
-  });
-
-  test('ten minutes later a new route point is due without movement', () {
-    final start = DateTime.utc(2026, 9, 2, 8, 0);
-    final due = OfficialSlot.dueSlots(
-      shiftStartUtc: start,
-      lastOfficialSlotUtc: start.add(const Duration(minutes: 10)),
-      nowUtc: start.add(const Duration(minutes: 20)),
-      cutoffUtc: start.add(const Duration(hours: 18)),
-    );
-    expect(due, [DateTime.utc(2026, 9, 2, 8, 20)]);
-  });
-
-  test('end before first slot yields no due points', () {
-    final start = DateTime.utc(2026, 9, 2, 7, 13);
-    final due = OfficialSlot.dueSlots(
-      shiftStartUtc: start,
-      lastOfficialSlotUtc: null,
-      nowUtc: start.add(const Duration(minutes: 5)),
-      cutoffUtc: start.add(const Duration(minutes: 5)),
-    );
-    expect(due, isEmpty);
-  });
-
-  test('restart uses original shiftStart cadence not restart time', () {
-    final start = DateTime.utc(2026, 9, 2, 7, 13);
-    final last = start.add(const Duration(minutes: 10));
-    final due = OfficialSlot.dueSlots(
-      shiftStartUtc: start,
-      lastOfficialSlotUtc: last,
-      nowUtc: start.add(const Duration(minutes: 35)),
-      cutoffUtc: start.add(const Duration(hours: 18)),
-    );
-    expect(due, [
-      start.add(const Duration(minutes: 20)),
-      start.add(const Duration(minutes: 30)),
-    ]);
-    expect(
-      OfficialSlot.nextDueUtc(
-        shiftStartUtc: start,
-        lastOfficialSlotUtc: last,
-        cutoffUtc: start.add(const Duration(hours: 18)),
-      ),
-      start.add(const Duration(minutes: 20)),
-    );
-  });
-
-  test('Iraq display UTC 18:40 is Baghdad 21:40', () {
-    final utc = DateTime.utc(2026, 9, 2, 18, 40);
-    final iraq = utc.add(OfficialSlot.iraqOffset);
-    expect(iraq.hour, 21);
-    expect(iraq.minute, 40);
+    test('rejects old 10-minute mid slots', () {
+      expect(
+        OfficialSlot.isExactOfficialSlot(start, start.add(const Duration(minutes: 10))),
+        isFalse,
+      );
+      expect(
+        OfficialSlot.isExactOfficialSlot(start, start.add(const Duration(minutes: 20))),
+        isFalse,
+      );
+    });
   });
 }

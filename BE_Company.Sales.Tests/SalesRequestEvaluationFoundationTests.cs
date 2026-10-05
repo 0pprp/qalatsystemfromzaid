@@ -106,9 +106,21 @@ public class SalesRequestEvaluationRatingAggregateTests
         [
             (CustomerRatingLevel.Excellent, 10),
             (CustomerRatingLevel.Good, 5),
-            (CustomerRatingLevel.Legal, -10)
+            (CustomerRatingLevel.Bad, -10)
         ]);
-        Assert.Equal(CustomerRatingLevel.Legal, worst!.Value.Level);
+        Assert.Equal(CustomerRatingLevel.Bad, worst!.Value.Level);
+        Assert.Equal(-10, worst.Value.Score);
+    }
+
+    [Fact]
+    public void Category_Worst_Tie_Keeps_First_Minimum()
+    {
+        var worst = SalesRequestEvaluationAggregator.WorstOf(
+        [
+            (CustomerRatingLevel.Bad, -10),
+            (CustomerRatingLevel.Rejected, -5)
+        ]);
+        Assert.Equal(CustomerRatingLevel.Bad, worst!.Value.Level);
         Assert.Equal(-10, worst.Value.Score);
     }
 

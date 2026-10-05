@@ -1,3 +1,4 @@
+import 'package:delegate_application/services/receipt_week_amounts.dart';
 import 'package:delegate_application/utils/PdfAssetCache.dart';
 import 'package:delegate_application/utils/PrintUtils.dart';
 import 'package:flutter/material.dart';
@@ -21,6 +22,8 @@ class ReportReceipt {
   final List<String> lastSevenDays;
   final List<double> lastSevenAmounts;
   final String countReceiptDevice;
+  /// When true, [countReceiptDevice] is already the printed number (do not +1).
+  final bool receiptNumberAlreadyPrinted;
 
   ReportReceipt({
     required this.customerName,
@@ -35,6 +38,7 @@ class ReportReceipt {
     required this.lastSevenDays,
     required this.lastSevenAmounts,
     required this.countReceiptDevice,
+    this.receiptNumberAlreadyPrinted = false,
   });
 
   String _formatNumber(double number) {
@@ -78,8 +82,11 @@ class ReportReceipt {
                     1: const pw.FlexColumnWidth(1), // Label
                   },
                   children: [
-                    _buildRow("رقم الوصل",
-                        (int.parse(countReceiptDevice) + 1).toString()),
+                    _buildRow(
+                        "رقم الوصل",
+                        receiptNumberAlreadyPrinted
+                            ? countReceiptDevice
+                            : _safePrintedReceiptNumber(countReceiptDevice)),
                     _buildRow("الزبون", customerName),
                     _buildRow("المادة المباعة", itemsNames),
                     _buildRow("المبلغ الكلي", _formatNumber(amountTotalSales),
@@ -107,11 +114,20 @@ class ReportReceipt {
                     0: const pw.FlexColumnWidth(2),
                     1: const pw.FlexColumnWidth(1),
                   },
-                  children: List.generate(lastSevenDays.length, (index) {
-                    return _buildRow(lastSevenDays[index],
-                        _formatNumber(lastSevenAmounts[index]),
-                        isPrice: true);
-                  }),
+                  children: () {
+                    final days =
+                        ReceiptWeekAmounts.ensureDayLabels(lastSevenDays);
+                    final amounts =
+                        ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+                      weekAmounts: lastSevenAmounts,
+                      amountPush: amountPush,
+                    );
+                    return List.generate(7, (index) {
+                      return _buildRow(
+                          days[index], _formatNumber(amounts[index]),
+                          isPrice: true);
+                    });
+                  }(),
                 ),
                 pw.SizedBox(height: 20),
                 pw.Text("رقم الشكاوى: $phoneNumberCompany",
@@ -125,6 +141,14 @@ class ReportReceipt {
       ),
     );
     return pdf.save();
+  }
+
+  static String _safePrintedReceiptNumber(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return '1';
+    final n = int.tryParse(t);
+    if (n == null) return t;
+    return (n + 1).toString();
   }
 
   pw.TableRow _buildRow(String label, String value, {bool isPrice = false}) {

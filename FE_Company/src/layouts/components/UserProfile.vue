@@ -22,6 +22,8 @@ const roleLabel = computed(() => {
   if (userType.value === 'مدير فرع') return 'مدير فرع'
   if (userType.value === 'محاسب رئيسي') return 'ادمن'
   if (userType.value === 'محاسب فرعي') return 'محاسب فرعي'
+  if (userType.value === 'المدير') return 'المدير'
+  if (userType.value === 'مدير مبيعات') return 'مدير مبيعات'
 
   return userType.value || 'ادمن'
 })
@@ -49,22 +51,37 @@ const changeCity = async city => {
   }
 
 
-  const response = await axios.post(
-    `${selectedApi}Users/Users_LoginAdmin`,
-    {
-      userName: userName.value,
-      password: password.value,
-    },
-    {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    },
-  )
+  if (!userName.value || !password.value) {
+    showAlert.value = true
+    errorMessage.value = "أعد تسجيل الدخول ثم حاول تبديل المحافظة"
 
-  const resData = response.data
-  const user = jwtDecode(resData.token)
-  if(resData.token.length>0){
+    return
+  }
+
+  try {
+    const response = await axios.post(
+      `${selectedApi}Users/Users_LoginAdmin`,
+      {
+        userName: userName.value,
+        password: password.value,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        validateStatus: () => true,
+      },
+    )
+
+    const resData = response.data || {}
+    if (resData.message || !resData.token) {
+      showAlert.value = true
+      errorMessage.value = resData.message || `تعذر فتح محافظة ${cityName}`
+
+      return
+    }
+
+    const user = jwtDecode(resData.token)
     localStorage.setItem("Token", resData.token)
     localStorage.setItem('Expiration', resData.expiration)
     localStorage.setItem('UserID', user.UserID)
@@ -74,6 +91,10 @@ const changeCity = async city => {
     localStorage.setItem("CityName", cityName)
     localStorage.setItem("Database", database)
     location.reload()
+  }
+  catch {
+    showAlert.value = true
+    errorMessage.value = `تعذر الاتصال بمحافظة ${cityName}`
   }
 }
 </script>

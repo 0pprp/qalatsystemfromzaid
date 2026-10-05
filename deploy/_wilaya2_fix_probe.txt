@@ -1,0 +1,94 @@
+Changed language setting to us_english.
+=== Oct2 payments list5 not on Oct1 ===
+18|410.0
+418761|53329|80.0|محمد عبد الكريم عباس|2026-10-02 12:50:52
+418762|53192|50.0|محمد عبد الكريم عباس 7|2026-10-02 12:51:02
+418769|51997|50.0|محمد حسين عوادي 3|2026-10-02 12:52:14
+418760|53264|30.0|حيدر حسن مطرود|2026-10-02 12:52:54
+418763|51951|25.0|مصطفى عباس ناجي 2|2026-10-02 12:53:06
+418764|53239|25.0|احمد قاسم ظاهر 6|2026-10-02 12:51:16
+418765|53338|20.0|مصطفى صادق كريم|2026-10-02 12:51:33
+418766|53310|20.0|حسن كريم برهان |2026-10-02 12:51:41
+418767|53213|20.0|حسين كاظم عيسى 3|2026-10-02 12:51:56
+418745|53110|15.0|ضرغام سالم سوادي 4|2026-10-02 12:47:56
+418752|51962|15.0|صباح حسن عودة 8|2026-10-02 12:49:16
+418756|51924|10.0|محمد كريم عبد 2|2026-10-02 12:50:06
+418770|53346|10.0|احمد مهدي احمد|2026-10-02 12:52:28
+418772|53150|10.0|مهدي باقر عبد الرسول|2026-10-02 16:06:17
+418748|53111|10.0|علي عبد الصافي محيسن|2026-10-02 12:48:30
+418750|53179|10.0|محمد جواد عبود 2|2026-10-02 12:48:54
+418751|51788|5.0|جواد عبود غانم صدام 3|2026-10-02 12:49:02
+418771|51867|5.0|مهند مهدي باقر 2|2026-10-02 16:06:00
+=== Current Oct1 ===
+21|1855.0
+=== Sep30 boxed Oct1 non-overlap ===
+418574|53329|80000.0|80.0|محمد عبد الكريم عباس
+418566|53183|70000.0|70.0|حسين عوادي مهدي  4
+418567|51997|50000.0|50.0|محمد حسين عوادي 3
+418573|53192|50000.0|50.0|محمد عبد الكريم عباس 7
+418575|53239|25000.0|25.0|احمد قاسم ظاهر 6
+418577|53150|20000.0|20.0|مهدي باقر عبد الرسول
+418568|53181|20000.0|20.0|محمد علي غريب
+418570|53213|20000.0|20.0|حسين كاظم عيسى 3
+418571|53310|20000.0|20.0|حسن كريم برهان 
+418572|53338|20000.0|20.0|مصطفى صادق كريم
+418576|53111|10000.0|10.0|علي عبد الصافي محيسن
+=== UpdateCustomerPaymentDate exists? ===
+CREATE proc [dbo].[UpdateCustomerPaymentDate]
+@CustomerPaymentID int = NULL,
+@DateCreate datetime,
+@UserID int = NULL
+as 
+
+INSERT INTO [dbo].[Activities]
+           ([UserID]
+           ,[ActivityDescription]
+           ,[ActivityDate]
+           ,[AsyncState]
+           ,[AsyncID])
+     VALUES
+           (@UserID
+           ,N'تم تعديل  تاريخ التسديد '+(select AmountDenar from View_CustomersPayments where CustomerPaymentID=@CustomerPaymentID)+N' للعميل '+(select CustomerName from View_CustomersPayments where CustomerPaymentID=@CustomerPaymentID)+N' من التاريخ '+(select PaymentDate from View_CustomersPayments where CustomerPaymentID=@CustomerPaymentID)+N' الى تاريخ '+@DateCreate+' '
+           ,GETUTCDATE()
+           ,'false'
+           ,NEWID() )
+ 
+update CustomersPayments set PaymentDate=@DateCreate 
+where CustomerPaymentID=@CustomerPaymentID
+
+
+CREATE PROCEDURE [dbo].[CustomersPayments_ChangePaymentDate]
+    @Paymentlist NVARCHAR(MAX),  
+    @NewDate DATETIME,
+    @UserID INT
+AS
+BEGIN
+    UPDATE CustomersPayments
+    SET PaymentDate = @NewDate
+    WHERE CustomerPaymentID IN (
+        SELECT Value FROM dbo.SplitString(@Paymentlist, ',')
+    );
+
+    UPDATE AddToBox
+    SET DateCreate = @NewDate
+    WHERE CustomerPaymentID IN (
+        SELECT Value FROM dbo.SplitString(@Paymentlist, ',')
+    );
+
+		INSERT INTO [dbo].[Activities]
+           ([UserID]
+           ,[ActivityDescription]
+           ,[ActivityDate]
+           ,[AsyncState]
+           ,[AsyncID])
+     VALUES
+           (@UserID
+           ,N'تم تعديل تسديدات محددة'
+           ,GETUTCDATE()
+           ,'false'
+           ,NEWID() )
+END
+
+
+
+SQL_EXIT 0

@@ -37,9 +37,10 @@ function fmtDate(d) {
 }
 
 function typeColor(type) {
-  if (type === 'قانونية') return 'error'
+  if (type === 'قانونية' || type === 'طلب قانونية') return 'error'
   if (type === 'وهمي') return 'warning'
   if (type === 'متواصل') return 'info'
+  if (type === 'تنازل') return 'success'
 
   return 'primary'
 }
@@ -54,12 +55,16 @@ async function fetchNotifications() {
 
     notifications.value = rawData.map(item => ({
       id: item.notificationID,
-      title: `${item.decisionType || 'قرار'}: ${item.customerName || 'زبون'}`,
-      subtitle: `${item.userName || ''} | النسبة ${item.paidPercent ?? 0}%`,
+      title: item.decisionType === 'تنازل'
+        ? (item.note || `تم التنازل عن مبلغ من حساب الزبون ${item.customerName || ''}`)
+        : `${item.decisionType === 'طلب قانونية' ? 'طلب قانونية (بانتظار المحاسب)' : (item.decisionType || 'قرار')}: ${item.customerName || 'زبون'}`,
+      subtitle: item.decisionType === 'تنازل'
+        ? `${item.customerName || 'زبون'} | ${item.userName || ''}`
+        : `${item.userName || ''} | النسبة ${item.paidPercent ?? 0}%`,
       time: fmtDate(item.createdDate),
       isSeen: item.isRead === true,
       color: typeColor(item.decisionType),
-      icon: 'tabler-gavel',
+      icon: item.decisionType === 'تنازل' ? 'tabler-cash' : 'tabler-gavel',
       originalItem: item,
     }))
   } catch (e) {

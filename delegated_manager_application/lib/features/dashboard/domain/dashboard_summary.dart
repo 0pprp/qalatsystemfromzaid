@@ -9,6 +9,7 @@ class DashboardSummary {
     required this.rejectedExceptions,
     required this.cancelledExceptions,
     required this.totalExceptions,
+    this.unreadWrongSales = 0,
   });
 
   final int unreadComplaints;
@@ -17,8 +18,10 @@ class DashboardSummary {
   final int rejectedExceptions;
   final int cancelledExceptions;
   final int totalExceptions;
+  final int unreadWrongSales;
 
-  bool get hasWork => unreadComplaints > 0 || pendingExceptions > 0;
+  bool get hasWork =>
+      unreadComplaints > 0 || pendingExceptions > 0 || unreadWrongSales > 0;
 
   static const DashboardSummary empty = DashboardSummary(
     unreadComplaints: 0,
@@ -27,12 +30,14 @@ class DashboardSummary {
     rejectedExceptions: 0,
     cancelledExceptions: 0,
     totalExceptions: 0,
+    unreadWrongSales: 0,
   );
 
   factory DashboardSummary.fromJson(Map<String, dynamic> json) {
     final exceptions = JsonRead.map(json['exceptions']);
     return DashboardSummary(
       unreadComplaints: JsonRead.number(json['unreadComplaints']),
+      unreadWrongSales: JsonRead.number(json['unreadWrongSales']),
       pendingExceptions: JsonRead.number(exceptions['pending']),
       approvedExceptions: JsonRead.number(exceptions['approved']),
       rejectedExceptions: JsonRead.number(exceptions['rejected']),
@@ -46,10 +51,12 @@ class DashboardSummary {
   factory DashboardSummary.compose({
     required int unreadComplaints,
     required int pendingExceptions,
+    int unreadWrongSales = 0,
   }) =>
       DashboardSummary(
         unreadComplaints: unreadComplaints,
         pendingExceptions: pendingExceptions,
+        unreadWrongSales: unreadWrongSales,
         approvedExceptions: 0,
         rejectedExceptions: 0,
         cancelledExceptions: 0,

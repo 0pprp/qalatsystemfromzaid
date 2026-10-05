@@ -5,6 +5,6 @@
         public int? ItemID { get; set; }
         public string? ItemName { get; set; }
         public double ItemCostDenar { get; set; }
-        public double ItemPriceDenar { get;  set; }
+        public double ItemPriceDenar { get; set; }
     }
 }

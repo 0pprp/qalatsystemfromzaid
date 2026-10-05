@@ -1,0 +1,72 @@
+Changed language setting to us_english.
+=== 1) Mis-attributed payments (cust list5, pay other list) ===
+0|0.0
+=== 2) Box create date vs payment date ===
+21|1855.0|35|2275.0
+=== 3) Request rows near Oct1 CreatedAtUtc ===
+0|0.0
+=== 4) Last 15 request rows list5 ever ===
+=== 5) Neighbor days ===
+2026-09-28|35|808.0
+2026-09-29|39|945.0
+2026-09-30|39|832.0
+2026-10-01|21|1855.0
+2026-10-02|27|568.0
+=== 6) Full Oct1 payment running sum ===
+418680|53274|2026-10-01 07:39:49|25.0|25.0|54d84f16-9ecf-42d0-ac3c-47e2d85c2496
+418681|53268|2026-10-01 07:44:54|20.0|45.0|d6ca6c2d-8845-4078-89eb-71a416f732c7
+418682|51848|2026-10-01 07:56:34|1500.0|1545.0|9cd93c6d-f35e-43f2-9185-d8236da90f76
+418684|51955|2026-10-01 08:24:42|10.0|1555.0|03bdccaf-de47-443d-8c63-7e9f2c936677
+418685|53135|2026-10-01 08:24:53|10.0|1565.0|cb7e47c2-6a52-4794-8ada-48bbb97e3414
+418686|53178|2026-10-01 08:25:01|10.0|1575.0|5104d516-3efd-4629-bf87-f37e20eff270
+418687|53330|2026-10-01 08:34:45|20.0|1595.0|11335764-f42e-48f6-9b5c-ba596445c442
+418688|53265|2026-10-01 08:35:15|20.0|1615.0|4a63fc7f-8480-46c0-b723-c302a86406ba
+418689|53277|2026-10-01 08:37:16|20.0|1635.0|b37442a3-cfa4-43ae-b8e2-97d037246f2a
+418690|53172|2026-10-01 08:40:05|10.0|1645.0|3d35b526-052a-4657-aa54-47cf60ecbeff
+418691|53291|2026-10-01 08:59:48|30.0|1675.0|d883c4b1-08d8-4380-8256-8806e580bd36
+418693|53159|2026-10-01 09:04:11|20.0|1695.0|8e57085e-9107-41c9-8900-9b4626f9f050
+418692|53200|2026-10-01 09:12:28|15.0|1710.0|19c68844-2622-42dc-b8af-611bad8749ae
+418694|53324|2026-10-01 09:27:03|10.0|1720.0|9106015c-c958-4e31-81ab-9d4e00d7f762
+418738|53287|2026-10-01 09:34:02|20.0|1740.0|cc35a9ad-d387-433e-83e8-8cdcde602bf1
+418739|53361|2026-10-01 09:34:11|22.0|1762.0|c427e756-67fc-4e04-9558-434435756136
+418740|53365|2026-10-01 09:40:07|25.0|1787.0|fb24766b-91e7-43b3-80b4-a1e73eb6a016
+418741|53220|2026-10-01 09:41:35|15.0|1802.0|d2342dbd-c391-433e-be94-b358079a141a
+418742|53198|2026-10-01 09:43:28|25.0|1827.0|d5193e83-7777-49d5-85ea-d7bac09c065c
+418743|53315|2026-10-01 09:54:45|20.0|1847.0|837d4d4d-b8c9-45d2-b58e-eb7ce1c53618
+418744|53339|2026-10-01 10:02:45|8.0|1855.0|c372146a-bfd1-4c07-aa62-67aa41b99428
+=== 7) AmountDaySales sum for list5 customers now ===
+526|7063.0
+=== 8) Null ClientPaymentId Oct1 ===
+0|0.0
+=== 9) Payments Oct1 for list5 WITHOUT AddToBox ===
+0
+=== 10) Global Oct1 ClientPaymentId dupes (any list) ===
+
+SQL_EXIT 0
+=== NGINX payment posts Oct1 ===
+log_files 15
+payment_http {'total': 5442, '2xx': 5059, '4xx': 345, '5xx': 3, 'timeoutish': 284}
+SAMPLE 169.224.96.80 - - [02/Oct/2026:01:33:36 +0200] "OPTIONS /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 204 0 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36
+SAMPLE 169.224.96.80 - - [02/Oct/2026:01:33:36 +0200] "PUT /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 200 15 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (K
+SAMPLE 169.224.96.80 - - [02/Oct/2026:01:34:15 +0200] "OPTIONS /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 204 0 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36
+SAMPLE 169.224.96.80 - - [02/Oct/2026:01:34:16 +0200] "PUT /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 200 15 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (K
+SAMPLE 169.224.96.80 - - [02/Oct/2026:01:34:56 +0200] "OPTIONS /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 204 0 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36
+SAMPLE 169.224.96.80 - - [02/Oct/2026:01:34:56 +0200] "PUT /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 200 15 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (K
+SAMPLE 169.224.96.80 - - [02/Oct/2026:01:35:34 +0200] "OPTIONS /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 204 0 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36
+SAMPLE 169.224.96.80 - - [02/Oct/2026:01:35:35 +0200] "PUT /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 200 15 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (K
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:03 +0200] "OPTIONS /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&0&&null HTTP/1.1" 204 0 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/53
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:04 +0200] "GET /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&0&&null HTTP/1.1" 200 54018 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/53
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:13 +0200] "OPTIONS /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&1&&null HTTP/1.1" 204 0 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/53
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:14 +0200] "GET /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&1&&null HTTP/1.1" 200 24672 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/53
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:22 +0200] "OPTIONS /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&2&&null HTTP/1.1" 204 0 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/53
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:22 +0200] "GET /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&2&&null HTTP/1.1" 200 29320 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/53
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:28 +0200] "OPTIONS /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&3&&null HTTP/1.1" 204 0 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/53
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:29 +0200] "GET /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&3&&null HTTP/1.1" 200 12 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.3
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:37 +0200] "OPTIONS /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&5&&null HTTP/1.1" 204 0 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/53
+SAMPLE 82.199.217.92 - - [02/Oct/2026:07:09:37 +0200] "GET /api/CustomersPayments/CustomersPayments_GetAll/2026-10-01&&2026-10-01&&5&&null HTTP/1.1" 200 12 "http://shortnewadmin.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.3
+SAMPLE 169.224.96.80 - - [02/Oct/2026:11:01:48 +0200] "OPTIONS /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 204 0 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36
+SAMPLE 169.224.96.80 - - [02/Oct/2026:11:01:48 +0200] "PUT /api/CustomersPaymentsRequest/CustomersPaymentsRequest_ChangeDate/2026-10-01 HTTP/1.1" 200 15 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (K
+=== journal PostPaymentIdempotent count Oct1 ===
+PostPaymentIdempotent_mentions 6
+timeout_minus2 6
+constraint_2714 9

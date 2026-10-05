@@ -6,19 +6,20 @@ export function ratingChipColor(rating) {
     return 'info'
   case 'ضعيف':
     return 'warning'
-  case 'مرفوض':
-    return 'error'
-  case 'قانونية':
+  case 'متلكئ':
+  case 'مرفوض': // legacy label alias
+    return 'orange-darken-2'
+  case 'سيء':
     return 'error'
   default:
-    return 'secondary'
+    return 'grey'
   }
 }
 
 export function riskChipColor(risk) {
   switch (risk) {
   case 'None':
-    return 'secondary'
+    return 'grey'
   case 'Low':
     return 'info'
   case 'Medium':
@@ -26,7 +27,7 @@ export function riskChipColor(risk) {
   case 'High':
     return 'error'
   default:
-    return 'secondary'
+    return 'grey'
   }
 }
 

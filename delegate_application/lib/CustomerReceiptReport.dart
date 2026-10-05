@@ -1,6 +1,7 @@
 import 'package:delegate_application/utils/PdfAssetCache.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
 import 'package:delegate_application/utils/PrintUtils.dart';
+import 'package:delegate_application/utils/safe_num.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -44,19 +45,24 @@ class CustomerReceiptReport {
       final Database db = await DatabaseHelper().database;
 
       // Fetch all required installments at once
-      final List<int> customerIds =
-          receiptData.map((e) => e['CustomerId'] as int).toList();
-      final List<Map<String, dynamic>> installments = await db.query(
-        'Customer',
-        columns: ['CustomerId', 'AmountDaySales'],
-        where:
-            'CustomerId IN (${List.filled(customerIds.length, '?').join(',')})',
-        whereArgs: customerIds,
-      );
+      final List<int> customerIds = receiptData
+          .map((e) => int.tryParse(e['CustomerId']?.toString() ?? '') ?? 0)
+          .where((id) => id > 0)
+          .toList();
+      final List<Map<String, dynamic>> installments = customerIds.isEmpty
+          ? <Map<String, dynamic>>[]
+          : await db.query(
+              'Customer',
+              columns: ['CustomerId', 'AmountDaySales'],
+              where:
+                  'CustomerId IN (${List.filled(customerIds.length, '?').join(',')})',
+              whereArgs: customerIds,
+            );
 
       final Map<int, double> installmentMap = {
         for (var item in installments)
-          item['CustomerId'] as int: (item['AmountDaySales'] as num).toDouble()
+          SafeNum.toInt(item['CustomerId']):
+              SafeNum.toDouble(item['AmountDaySales']),
       };
 
       // Pre-calculate data rows
@@ -64,16 +70,18 @@ class CustomerReceiptReport {
       double totalAmountDaySale = 0;
 
       for (var customer in receiptData) {
-        int customerId = customer['CustomerId'];
+        final customerId =
+            int.tryParse(customer['CustomerId']?.toString() ?? '') ?? 0;
         double amountDaySales = installmentMap[customerId] ?? 0.0;
+        final amount = (customer['Amount'] as num?)?.toDouble() ?? 0.0;
 
-        if (customer['Amount'] > 0) {
+        if (amount > 0) {
           totalAmountDaySale += amountDaySales;
         }
         rows.add([
-          customer['CustomerName'],
+          customer['CustomerName']?.toString() ?? '',
           "${_formatNumber(amountDaySales)} دع",
-          "${_formatNumber((customer['Amount'] as num).toDouble())} دع",
+          "${_formatNumber(amount)} دع",
         ]);
       }
 

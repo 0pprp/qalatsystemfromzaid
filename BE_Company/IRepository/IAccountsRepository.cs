@@ -17,6 +17,6 @@ namespace BE_Company.IRepository
         Task<bool?> WithdrawalFromBox_Create(AccountsPostDTO accountsPostDTO);
         Task<bool?> TransferBoxs_Create(AccountsPostDTO accountsPostDTO);
         Task<bool?> Boxs_Create(BoxsPostDTO boxsPostDTO);
-        Task<bool?> Boxs_Update(int? boxID,BoxsPutDTO boxsPutDTO);
+        Task<bool?> Boxs_Update(int? boxID, BoxsPutDTO boxsPutDTO);
     }
 }

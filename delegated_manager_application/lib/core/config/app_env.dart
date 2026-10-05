@@ -69,6 +69,20 @@ class AppEnv {
 
   static bool isDemoHost(String url) => url.contains(demoHostMarker);
 
+  /// True when a persisted session base belongs to a different environment
+  /// than the running build (demo JWT cannot validate on production and
+  /// vice versa — the gateway signing keys differ).
+  static bool isSessionBaseMismatched({
+    required String env,
+    String? sessionBase,
+  }) {
+    final stored = (sessionBase ?? '').trim();
+    if (stored.isEmpty) return false;
+    if (isDemoEnv(env)) return !isDemoHost(stored);
+    if (isLocalEnv(env)) return isDemoHost(stored);
+    return isDemoHost(stored);
+  }
+
   /// Keeps the gateway path (`sales-gw`) intact and only fixes duplicated
   /// `/api/api` segments plus a missing trailing slash.
   static String normalizeBase(String url) {

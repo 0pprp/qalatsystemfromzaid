@@ -1,8 +1,12 @@
+import 'package:follower_application/follower_payers_split.dart';
+import 'package:follower_application/follower_unpaid_days_split.dart';
 import 'package:follower_application/tracking/follower_shift_debug.dart';
 import 'package:follower_application/tracking/shift_gate_coordinator.dart';
 import 'package:follower_application/tracking/shift_tracking_controller.dart';
 import 'package:follower_application/tracking/work_shift.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
+import 'package:follower_application/ui/follower_complaint_sheet.dart';
+import 'package:follower_application/core/update/app_update_gate.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/utils/Formatters.dart';
 import 'package:follower_application/utils/iraq_datetime.dart';
@@ -13,6 +17,8 @@ import 'package:follower_application/AsyncIdChecker.dart';
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/main.dart';
 import 'package:follower_application/services/follower_tracking_repository.dart';
+import 'package:follower_application/services/tutorial_video_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 
 
@@ -38,8 +44,11 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> _lists = [];
   int? _selectedChildId;
   List<Map<String, dynamic>> _customers = [];
+  /// customerId -> last field-followup note
+  final Map<int, String> _latestFollowupNotes = {};
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -67,12 +76,16 @@ class _HomePageState extends State<HomePage> {
       );
       return;
     }
+    ShiftGateCoordinator.markHomeOk();
     if (mounted) {
       setState(() {
         _activeShift = _tracking.activeShift;
       });
     }
     await _loadLists();
+    if (mounted) {
+      await AppUpdateGate.checkAndPrompt(context);
+    }
   }
 
   Future<void> _startShift() async {
@@ -243,6 +256,7 @@ class _HomePageState extends State<HomePage> {
           'amountTotalSales': _toDouble(item['amountTotalSales'] ?? item['AmountTotalSales']),
           'countReceiptDevice': _toInt(item['countReceiptDevice'] ?? item['CountReceiptDevice']),
           'numberOfDayDevice': _toInt(item['numberOfDayDevice'] ?? item['NumberOfDayDevice']),
+          'numberOfDayPayment': _toInt(item['numberOfDayPayment'] ?? item['NumberOfDayPayment']),
         };
       }).toList();
 
@@ -258,6 +272,7 @@ class _HomePageState extends State<HomePage> {
           _loadingFollow = false;
         });
       }
+      await _loadLatestFollowupNotes();
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -265,6 +280,38 @@ class _HomePageState extends State<HomePage> {
           _error = 'تعذر جلب المسددين / غير المسددين';
         });
       }
+    }
+  }
+
+  Future<void> _loadLatestFollowupNotes() async {
+    if (_selectedChildId == null) return;
+    try {
+      final session = await _session();
+      final uri = Uri.parse('${session['link']}Followers/FieldFollowups/latest-notes')
+          .replace(queryParameters: {
+        'asyncId': session['asyncId'],
+        'listId': '${_selectedChildId}',
+      });
+      final res = await http.get(uri).timeout(const Duration(seconds: 30));
+      if (res.statusCode != 200) return;
+      final data = json.decode(res.body);
+      final raw = data is Map ? (data['items'] ?? data['Items'] ?? []) : [];
+      final map = <int, String>{};
+      for (final e in (raw as List)) {
+        if (e is! Map) continue;
+        final id = int.tryParse('${e['customerId'] ?? e['CustomerId'] ?? 0}') ?? 0;
+        final note = '${e['note'] ?? e['Note'] ?? ''}'.trim();
+        if (id > 0 && note.isNotEmpty) map[id] = note;
+      }
+      if (mounted) {
+        setState(() {
+          _latestFollowupNotes
+            ..clear()
+            ..addAll(map);
+        });
+      }
+    } catch (_) {
+      // optional enrichment
     }
   }
 
@@ -363,9 +410,217 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _openTutorialVideo() async {
+    final nav = Navigator.of(context, rootNavigator: true);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(),
+            ),
+          ),
+        ),
+      ),
+    );
+    Uri? uri;
+    try {
+      uri = await TutorialVideoService.resolveLaunchUri();
+    } finally {
+      if (nav.canPop()) nav.pop();
+    }
+    if (!mounted) return;
+    if (uri == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'لم يُحدَّد رابط الفيديو بعد. عدّله من لوحة مدير المبيعات.',
+            style: TextStyle(fontFamily: 'Cairo'),
+          ),
+        ),
+      );
+      return;
+    }
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر فتح الفيديو التعليمي',
+                style: TextStyle(fontFamily: 'Cairo')),
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تعذر فتح الفيديو التعليمي',
+              style: TextStyle(fontFamily: 'Cairo')),
+        ),
+      );
+    }
+  }
+
   Future<void> _logout() async {
     await AsyncIdChecker.logout();
     if (mounted) Navigator.pushReplacementNamed(context, '/Login');
+  }
+
+  String _selectedListName() {
+    final list = _lists.cast<Map<String, dynamic>?>().firstWhere(
+          (item) => item?['id'] == _selectedChildId,
+          orElse: () => null,
+        );
+    return list?['name']?.toString() ?? 'قائمة';
+  }
+
+  Future<void> _moveToFieldFollowup(Map<String, dynamic> item) async {
+    if (_selectedChildId == null) return;
+    final customerId = item['customerId'] as int? ?? 0;
+    if (customerId <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('بيانات الزبون غير كاملة', style: TextStyle(fontFamily: 'Cairo'))),
+      );
+      return;
+    }
+    try {
+      final session = await _session();
+      final uri = Uri.parse('${session['link']}Followers/FieldFollowups');
+      final response = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'asyncId': session['asyncId'],
+              'listId': _selectedChildId,
+              'listName': _selectedListName(),
+              'customerId': customerId,
+              'customerName': item['customerName']?.toString() ?? '',
+              'phoneNumber': item['phoneNumber']?.toString() ?? '',
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (!mounted) return;
+      final msg = response.statusCode == 200
+          ? 'تم الإرسال إلى المتابعة الميدانية'
+          : response.statusCode == 404
+              ? '404: مسار المتابعة الميدانية غير موجود على السيرفر'
+              : 'تعذر الإرسال (HTTP ${response.statusCode})';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg, style: const TextStyle(fontFamily: 'Cairo'))),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر الإرسال إلى المتابعة الميدانية', style: TextStyle(fontFamily: 'Cairo')),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _recordFieldFollowupDone(Map<String, dynamic> item) async {
+    if (_selectedChildId == null) return;
+    final customerId = item['customerId'] as int? ?? 0;
+    if (customerId <= 0) return;
+
+    var draft = '';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تمت المتابعة', style: TextStyle(fontFamily: 'Cairo')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${item['customerName'] ?? ''}',
+              style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              maxLines: 3,
+              onChanged: (v) => draft = v,
+              decoration: const InputDecoration(
+                labelText: 'ملاحظة إجبارية',
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء', style: TextStyle(fontFamily: 'Cairo')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('اعتماد', style: TextStyle(fontFamily: 'Cairo')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final note = draft.trim();
+    if (note.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('الملاحظة إجبارية', style: TextStyle(fontFamily: 'Cairo'))),
+        );
+      }
+      return;
+    }
+
+    try {
+      final session = await _session();
+      final uri = Uri.parse('${session['link']}Followers/FieldFollowups/record-complete');
+      final res = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'asyncId': session['asyncId'],
+              'listId': _selectedChildId,
+              'listName': _selectedListName(),
+              'customerId': customerId,
+              'customerName': item['customerName']?.toString() ?? '',
+              'phoneNumber': item['phoneNumber']?.toString() ?? '',
+              'note': note,
+            }),
+          )
+          .timeout(const Duration(seconds: 45));
+      if (!mounted) return;
+      if (res.statusCode != 200) {
+        final msg = () {
+          try {
+            final j = json.decode(res.body);
+            return '${j['message'] ?? j['Message'] ?? 'تعذر الاعتماد'}';
+          } catch (_) {
+            return 'تعذر الاعتماد (HTTP ${res.statusCode})';
+          }
+        }();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg, style: const TextStyle(fontFamily: 'Cairo'))),
+        );
+        return;
+      }
+      setState(() => _latestFollowupNotes[customerId] = note);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تسجيل المتابعة في الملف', style: TextStyle(fontFamily: 'Cairo'))),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر تسجيل المتابعة', style: TextStyle(fontFamily: 'Cairo'))),
+        );
+      }
+    }
   }
 
   double get _totalReceipt =>
@@ -384,12 +639,99 @@ class _HomePageState extends State<HomePage> {
     }).toList();
   }
 
+  List<Map<String, dynamic>> get _underDueCustomers =>
+      FollowerPayersSplit.underDue(_visibleCustomers);
+
+  List<Map<String, dynamic>> get _correctPaidCustomers =>
+      FollowerPayersSplit.correct(_visibleCustomers);
+
+  List<Map<String, dynamic>> get _unpaidDays1to3 =>
+      FollowerUnpaidDaysSplit.days1to3(_visibleCustomers);
+
+  List<Map<String, dynamic>> get _unpaidDays4to7 =>
+      FollowerUnpaidDaysSplit.days4to7(_visibleCustomers);
+
+  List<Map<String, dynamic>> get _unpaidDays8to14 =>
+      FollowerUnpaidDaysSplit.days8to14(_visibleCustomers);
+
+  List<Map<String, dynamic>> get _unpaidDays15Plus =>
+      FollowerUnpaidDaysSplit.days15Plus(_visibleCustomers);
+
   @override
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: AppSafeScaffold(
+        scaffoldKey: _scaffoldKey,
         backgroundColor: AppTheme.backgroundColor,
+        drawer: Drawer(
+          child: SafeArea(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                DrawerHeader(
+                  decoration: BoxDecoration(color: AppTheme.primaryColor),
+                  child: const Align(
+                    alignment: Alignment.bottomRight,
+                    child: Text(
+                      'القائمة',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.point_of_sale),
+                  title: const Text('المبيعات', style: TextStyle(fontFamily: 'Cairo')),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/PendingSales');
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.bar_chart),
+                  title: const Text('الإحصائيات', style: TextStyle(fontFamily: 'Cairo')),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/ListStats');
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.directions_walk),
+                  title: const Text('المتابعة الميدانية', style: TextStyle(fontFamily: 'Cairo')),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/FieldFollowups');
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.gavel),
+                  title: const Text('الزبائن القديمة', style: TextStyle(fontFamily: 'Cairo')),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/LegalFollowups');
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          heroTag: 'follower_complaint_fab',
+          tooltip: 'شكوى إلى المدير المفوض',
+          backgroundColor: AppTheme.primaryColor,
+          foregroundColor: Colors.white,
+          icon: const Icon(Icons.report_gmailerrorred_outlined),
+          label: const Text(
+            'شكوى',
+            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+          ),
+          onPressed: () => FollowerComplaintSheet.show(context),
+        ),
         body: RefreshIndicator(
             onRefresh: _loadFollow,
             color: AppTheme.primaryColor,
@@ -398,6 +740,11 @@ class _HomePageState extends State<HomePage> {
               children: [
                 Row(
                   children: [
+                    IconButton(
+                      tooltip: 'القائمة',
+                      onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                      icon: const Icon(Icons.menu),
+                    ),
                     IconButton(
                       onPressed: () {
                         MyApp.themeNotifier.value =
@@ -615,6 +962,30 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _openTutorialVideo,
+                      icon: const Icon(Icons.play_circle_filled_rounded,
+                          color: Colors.white, size: 28),
+                      label: const Text(
+                        'مشاهدة الفيديو التعليمي',
+                        style: TextStyle(
+                          fontFamily: 'Cairo',
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFC107),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(child: _typeChip('المسددين')),
@@ -670,6 +1041,26 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ],
                   ),
+                  if (_showType == 'المسددين' && !_loadingFollow && _customers.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _statBox(
+                            'دون القسط المستحق',
+                            '${_underDueCustomers.length}',
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _statBox(
+                            'مسدد بشكل صحيح',
+                            '${_correctPaidCustomers.length}',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   if (_error.isNotEmpty)
                     Text(_error,
@@ -702,7 +1093,49 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                     )
-                  else
+                  else if (_showType == 'المسددين') ...[
+                    _payersSection(
+                      title: 'المسددين دون القسط المستحق',
+                      subtitle: 'مسدد أقل من القسط المستحق',
+                      accent: Colors.orange.shade700,
+                      rows: _underDueCustomers,
+                    ),
+                    const SizedBox(height: 14),
+                    _payersSection(
+                      title: 'الزبائن المسددين بشكل صحيح',
+                      subtitle: 'مسدد يساوي أو أكثر من القسط المستحق',
+                      accent: Colors.green.shade700,
+                      rows: _correctPaidCustomers,
+                    ),
+                  ] else if (_showType == 'الغير مسددين') ...[
+                    _payersSection(
+                      title: 'غير المسددين من يوم الى 3 ايام',
+                      subtitle: 'بدون تسديد 1–3 أيام',
+                      accent: Colors.blue.shade700,
+                      rows: _unpaidDays1to3,
+                    ),
+                    const SizedBox(height: 14),
+                    _payersSection(
+                      title: 'من 4 ايام الى 7 ايام',
+                      subtitle: 'بدون تسديد 4–7 أيام',
+                      accent: Colors.teal.shade700,
+                      rows: _unpaidDays4to7,
+                    ),
+                    const SizedBox(height: 14),
+                    _payersSection(
+                      title: 'من 8 ايام الى 14 يوم',
+                      subtitle: 'بدون تسديد 8–14 يوم',
+                      accent: Colors.deepOrange.shade700,
+                      rows: _unpaidDays8to14,
+                    ),
+                    const SizedBox(height: 14),
+                    _payersSection(
+                      title: '15 يوم واكثر',
+                      subtitle: 'بدون تسديد 15 يوم فأكثر',
+                      accent: Colors.red.shade700,
+                      rows: _unpaidDays15Plus,
+                    ),
+                  ] else
                     ..._visibleCustomers.map(_customerCard),
                   ],
                   const SizedBox(height: 20),
@@ -782,11 +1215,83 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _payersSection({
+    required String title,
+    required String subtitle,
+    required Color accent,
+    required List<Map<String, dynamic>> rows,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: accent,
+                      ),
+                    ),
+                    Text(
+                      '$subtitle — ${rows.length}',
+                      style: const TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 11,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (rows.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Center(
+                child: Text(
+                  'لا يوجد زبائن في هذا القسم',
+                  style: TextStyle(fontFamily: 'Cairo', color: Colors.grey),
+                ),
+              ),
+            )
+          else
+            ...rows.map(_customerCard),
+        ],
+      ),
+    );
+  }
+
   Widget _customerCard(Map<String, dynamic> item) {
     final remaining = Formatters.formatNumber(item['amountRemaining']);
     final due = Formatters.formatNumber(item['amountDaySales']);
     final paid = Formatters.formatNumber(item['amountReceipt']);
     final paymentDays = item['numberOfDayDevice'] as int;
+    final unpaidDays = FollowerUnpaidDaysSplit.daysSincePayment(item);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -812,10 +1317,17 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                item['customerName'].toString(),
-                style: const TextStyle(
-                    fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      item['customerName'].toString(),
+                      style: const TextStyle(
+                          fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 4),
               Text(
@@ -832,16 +1344,56 @@ class _HomePageState extends State<HomePage> {
                 ),
               ],
               const SizedBox(height: 10),
+              if (_showType == 'الغير مسددين') ...[
+                _amountRow('أيام بدون تسديد', '$unpaidDays', Colors.red.shade700),
+                const SizedBox(height: 4),
+              ],
               _amountRow('القسط المستحق', '$due دع', AppTheme.primaryColor),
               const SizedBox(height: 4),
-              _amountRow('القسط المدفوع', '$paid دع', Colors.green.shade700),
-              const SizedBox(height: 4),
+              if (_showType == 'المسددين') ...[
+                _amountRow('القسط المدفوع', '$paid دع', Colors.green.shade700),
+                const SizedBox(height: 4),
+              ],
               _amountRow('عدد أيام التسديدات', '$paymentDays', AppTheme.textColor),
               const SizedBox(height: 4),
               _amountRow('الباقي', '$remaining دع', Colors.orange),
-              const SizedBox(height: 8),
+              if ((_latestFollowupNotes[item['customerId'] as int? ?? 0] ?? '').isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'آخر متابعة: ${_latestFollowupNotes[item['customerId'] as int? ?? 0]}',
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 12,
+                    color: Colors.blueGrey.shade700,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => _moveToFieldFollowup(item),
+                    child: const Text(
+                      'إرسال للمتابعة الميدانية',
+                      style: TextStyle(fontFamily: 'Cairo', fontSize: 12),
+                    ),
+                  ),
+                  FilledButton(
+                    style: FilledButton.styleFrom(backgroundColor: AppTheme.primaryColor),
+                    onPressed: () => _recordFieldFollowupDone(item),
+                    child: const Text(
+                      'تمت المتابعة',
+                      style: TextStyle(fontFamily: 'Cairo', fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
               const Text(
-                'اضغط لفتح الملف / الملاحظات / طلب مبيع',
+                'اضغط على الكارت لفتح الملف / الملاحظات',
                 style: TextStyle(fontFamily: 'Cairo', fontSize: 11, color: Colors.grey),
               ),
             ],

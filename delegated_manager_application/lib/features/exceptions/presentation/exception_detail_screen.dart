@@ -1,5 +1,6 @@
 import 'package:delegated_manager_application/core/network/api_client.dart';
 import 'package:delegated_manager_application/core/theme/app_theme.dart';
+import 'package:delegated_manager_application/core/utils/date_format.dart';
 import 'package:delegated_manager_application/core/utils/dm_format.dart';
 import 'package:delegated_manager_application/core/widgets/state_views.dart';
 import 'package:delegated_manager_application/features/exceptions/data/exceptions_repository.dart';
@@ -50,6 +51,12 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
         _detail = detail;
         _loading = false;
       });
+      if (detail.request.summary.isUnread ||
+          (detail.request.isWrongSale && detail.request.summary.readAtUtc == null)) {
+        try {
+          await ExceptionsRepository.markRead(widget.requestId);
+        } catch (_) {}
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -238,16 +245,32 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
         ),
         const SizedBox(height: AppSpacing.md),
 
-        // 4. Exception reason
+        // 4. Exception reason / wrong-sale evaluation block
         SectionCard(
-          title: 'سبب الاستثناء',
+          title: request.isWrongSale ? 'مبيعات خاطئة — تقييم المحل' : 'سبب الاستثناء',
           children: [
+            if (request.isWrongSale)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: StatusChip(
+                  label: 'مبيعات خاطئة',
+                  color: Colors.orange.shade800,
+                ),
+              ),
             Text(
               request.reason ?? '-',
               style: const TextStyle(
                   fontSize: 14, height: 1.6, color: AppColors.text),
             ),
             const SizedBox(height: AppSpacing.sm),
+            InfoRow(
+              label: 'اسم الزبون',
+              value: request.summary.customerName,
+            ),
+            InfoRow(
+              label: 'الهاتف',
+              value: request.customerPhone ?? '-',
+            ),
             InfoRow(
               label: 'تاريخ الطلب',
               value: DmFormat.dateOnly(request.summary.requestedAtUtc),
@@ -259,6 +282,22 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
           ],
         ),
         const SizedBox(height: AppSpacing.md),
+
+        if (detail.customerProfile != null) ...[
+          ..._customerProfileSections(detail.customerProfile!),
+          const SizedBox(height: AppSpacing.md),
+        ] else if ((detail.reviewError ?? '').isNotEmpty) ...[
+          SectionCard(
+            title: 'ملاحظة التحميل',
+            children: [
+              Text(
+                detail.reviewError!,
+                style: const TextStyle(color: AppColors.muted, height: 1.5),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
 
         // 5–7. Matches / financial / rating
         if (classification?.isExisting == true &&
@@ -305,8 +344,8 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
           const SizedBox(height: AppSpacing.md),
         ],
 
-        // 8. Approve / reject
-        if (pending) ...[
+        // 8. Approve / reject — never for WrongSale (notice-only).
+        if (pending && !request.isWrongSale) ...[
           TextField(
             controller: _noteController,
             maxLines: 3,
@@ -350,6 +389,177 @@ class _ExceptionDetailScreenState extends State<ExceptionDetailScreen> {
         ],
       ],
     );
+  }
+
+  List<Widget> _customerProfileSections(Map<String, dynamic> p) {
+    final follower = _asMap(p['followerShopEval'] ?? p['FollowerShopEval']);
+    final del = _asMap(p['delegateShopEval'] ?? p['DelegateShopEval']);
+    final paySum = _asMap(p['paymentSummary'] ?? p['PaymentSummary']);
+    final payments = (p['payments'] ?? p['Payments'] ?? []) as List? ?? [];
+    final official = (p['officialSales'] ?? p['OfficialSales'] ?? []) as List? ?? [];
+    final history = (p['history'] ?? p['History'] ?? []) as List? ?? [];
+    final notes = (p['notes'] ?? p['Notes'] ?? []) as List? ?? [];
+
+    return [
+      SectionCard(
+        title: 'تقرير بروفايل الزبون',
+        children: [
+          InfoRow(
+            label: 'الاسم',
+            value: '${p['customerName'] ?? p['CustomerName'] ?? '-'}',
+          ),
+          InfoRow(
+            label: 'الهاتف',
+            value: '${p['phone'] ?? p['Phone'] ?? '-'}',
+          ),
+          InfoRow(
+            label: 'العنوان',
+            value: '${p['address'] ?? p['Address'] ?? '-'}',
+          ),
+          InfoRow(
+            label: 'المحافظة',
+            value: '${p['province'] ?? p['Province'] ?? p['cityName'] ?? '-'}',
+          ),
+          InfoRow(
+            label: 'القائمة / المندوب',
+            value:
+                '${p['customerListName'] ?? p['CustomerListName'] ?? p['delegateName'] ?? p['DelegateName'] ?? '-'}',
+          ),
+          if (paySum != null) ...[
+            InfoRow(
+              label: 'سعر البيع',
+              value: _num(paySum['amountTotalSales'] ?? paySum['AmountTotalSales']),
+            ),
+            InfoRow(
+              label: 'المدفوع',
+              value: _num(paySum['receiptsTotal'] ?? paySum['ReceiptsTotal']),
+            ),
+            InfoRow(
+              label: 'المتبقي',
+              value: _num(paySum['amountRemaining'] ?? paySum['AmountRemaining']),
+            ),
+            InfoRow(
+              label: 'عدد السندات',
+              value: '${paySum['countReceiptDevice'] ?? paySum['CountReceiptDevice'] ?? '-'}',
+            ),
+          ],
+        ],
+      ),
+      if (del != null) ...[
+        const SizedBox(height: AppSpacing.md),
+        SectionCard(
+          title: 'تقييم المندوب / بيانات المحل',
+          children: _shopEvalRows(del),
+        ),
+      ],
+      if (follower != null) ...[
+        const SizedBox(height: AppSpacing.md),
+        SectionCard(
+          title: 'تقييم المتابع',
+          children: _shopEvalRows(follower),
+        ),
+      ],
+      if (payments.isNotEmpty) ...[
+        const SizedBox(height: AppSpacing.md),
+        SectionCard(
+          title: 'التسديدات (${payments.length})',
+          children: payments.take(12).map((raw) {
+            final m = _asMap(raw) ?? {};
+            return InfoRow(
+              label: _shortDate(m['paymentDate'] ?? m['PaymentDate']),
+              value:
+                  '${_num(m['amount'] ?? m['Amount'])} — سند ${m['boundNumber'] ?? m['BoundNumber'] ?? '-'}',
+            );
+          }).toList(),
+        ),
+      ],
+      if (official.isNotEmpty) ...[
+        const SizedBox(height: AppSpacing.md),
+        SectionCard(
+          title: 'المبيعات الرسمية / أسماء قديمة',
+          children: official.take(8).map((raw) {
+            final m = _asMap(raw) ?? {};
+            return InfoRow(
+              label: _shortDate(m['dateCreate'] ?? m['DateCreate']),
+              value:
+                  '${m['saleName'] ?? m['SaleName'] ?? m['itemsNames'] ?? m['ItemsNames'] ?? '-'} · ${_num(m['amountTotalSales'] ?? m['AmountTotalSales'])}',
+            );
+          }).toList(),
+        ),
+      ],
+      if (history.isNotEmpty) ...[
+        const SizedBox(height: AppSpacing.md),
+        SectionCard(
+          title: 'سجل الطلبات',
+          children: history.take(8).map((raw) {
+            final m = _asMap(raw) ?? {};
+            return InfoRow(
+              label: _shortDate(m['createdAtUtc'] ?? m['CreatedAtUtc']),
+              value: '${m['action'] ?? m['Action'] ?? m['status'] ?? m['Status'] ?? '-'}',
+            );
+          }).toList(),
+        ),
+      ],
+      if (notes.isNotEmpty) ...[
+        const SizedBox(height: AppSpacing.md),
+        SectionCard(
+          title: 'ملاحظات البروفايل',
+          children: notes.take(8).map((raw) {
+            final m = _asMap(raw) ?? {};
+            return InfoRow(
+              label: '${m['createdByName'] ?? m['CreatedByName'] ?? 'ملاحظة'}',
+              value: '${m['noteText'] ?? m['NoteText'] ?? m['text'] ?? '-'}',
+            );
+          }).toList(),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _shopEvalRows(Map<String, dynamic> e) => [
+        InfoRow(
+          label: 'المقيّم',
+          value: '${e['evaluatorName'] ?? e['EvaluatorName'] ?? '-'}',
+        ),
+        InfoRow(
+          label: 'التقييم',
+          value: '${e['rating'] ?? e['Rating'] ?? '-'}',
+        ),
+        InfoRow(
+          label: 'الملاحظة',
+          value: '${e['note'] ?? e['Note'] ?? '-'}',
+        ),
+        InfoRow(
+          label: 'قيمة بضاعة المحل',
+          value: _num(e['shopStockEstimatedValue'] ?? e['ShopStockEstimatedValue']),
+        ),
+        InfoRow(
+          label: 'واردات المحل اليومية',
+          value: _num(e['estimatedDailyRevenue'] ?? e['EstimatedDailyRevenue']),
+        ),
+        if ((e['saleAmount'] ?? e['SaleAmount']) != null)
+          InfoRow(
+            label: 'سعر البيع',
+            value: _num(e['saleAmount'] ?? e['SaleAmount']),
+          ),
+      ];
+
+  Map<String, dynamic>? _asMap(dynamic v) {
+    if (v is Map<String, dynamic>) return v;
+    if (v is Map) return Map<String, dynamic>.from(v);
+    return null;
+  }
+
+  String _num(dynamic v) {
+    if (v == null) return '-';
+    final n = v is num ? v.toDouble() : double.tryParse('$v');
+    if (n == null) return '$v';
+    return DmFormat.money(n);
+  }
+
+  String _shortDate(dynamic v) {
+    final d = AppDate.parseUtc(v) ?? (v is DateTime ? v : null);
+    return d == null ? '-' : DmFormat.dateOnly(d);
   }
 }
 
@@ -464,6 +674,37 @@ class _MatchCard extends StatelessWidget {
               label: 'آخر دفعة',
               value: DmFormat.dateOnly(fin.lastPaymentDate),
             ),
+            const SizedBox(height: AppSpacing.sm),
+            const Align(
+              alignment: Alignment.centerRight,
+              child: Text('تفاصيل التسديدات',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            if (match.payments.isEmpty)
+              const InfoRow(label: 'التسديدات', value: 'لا توجد تسديدات مسجلة')
+            else
+              ...match.payments.map(
+                (p) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          DmFormat.dateOnly(p.paymentDate),
+                          style: const TextStyle(color: AppColors.text),
+                        ),
+                      ),
+                      Text(
+                        DmFormat.money(p.amount),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.text,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             if (match.previousSales.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.sm),
               const Align(

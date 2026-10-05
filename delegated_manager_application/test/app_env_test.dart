@@ -78,6 +78,56 @@ void main() {
     });
   });
 
+  group('AppEnv.isSessionBaseMismatched', () {
+    test('production rejects a stored demo session base', () {
+      expect(
+        AppEnv.isSessionBaseMismatched(
+          env: 'production',
+          sessionBase: 'http://169.58.236.52:8080/sales-gw/api/',
+        ),
+        isTrue,
+      );
+    });
+
+    test('demo rejects a stored production session base', () {
+      expect(
+        AppEnv.isSessionBaseMismatched(
+          env: 'demo',
+          sessionBase: 'http://admincompany.alsaaeidy.com/sales-gw/api/',
+        ),
+        isTrue,
+      );
+    });
+
+    test('matching bases are accepted', () {
+      expect(
+        AppEnv.isSessionBaseMismatched(
+          env: 'production',
+          sessionBase: 'http://admincompany.alsaaeidy.com/sales-gw/api/',
+        ),
+        isFalse,
+      );
+      expect(
+        AppEnv.isSessionBaseMismatched(
+          env: 'demo',
+          sessionBase: AppEnv.demoHostFallback,
+        ),
+        isFalse,
+      );
+    });
+
+    test('empty session is not a mismatch', () {
+      expect(
+        AppEnv.isSessionBaseMismatched(env: 'production', sessionBase: null),
+        isFalse,
+      );
+      expect(
+        AppEnv.isSessionBaseMismatched(env: 'production', sessionBase: ''),
+        isFalse,
+      );
+    });
+  });
+
   group('AppEnv local targeting', () {
     test('local resolves to the local gateway without sales-gw', () {
       final base = AppEnv.resolveApiBase(env: 'local');

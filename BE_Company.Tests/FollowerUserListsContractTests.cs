@@ -79,6 +79,22 @@ namespace BE_Company.Tests
         }
 
         [Fact]
+        public void AvailableListsQuery_DoesNotFilterByDevicePaymentState()
+        {
+            var path = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory,
+                "..", "..", "..", "..",
+                "BE_Company", "Repository", "FollowerUserListsRepository.cs"));
+            Assert.True(File.Exists(path), path);
+            var src = File.ReadAllText(path);
+            Assert.Contains("GetAvailableListsAsync", src, StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "WHERE ISNULL(d.DevicePaymentState, 0) = 1",
+                src,
+                StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void ListId_MeansDelegatesDelegateId()
         {
             const int listId = 42;

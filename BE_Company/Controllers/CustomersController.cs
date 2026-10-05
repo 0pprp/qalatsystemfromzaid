@@ -1,5 +1,6 @@
-﻿using BE_Company.IRepository;
+using BE_Company.IRepository;
 using BE_Company.DTO;
+using BE_Company.Services.LegalSearch;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -13,10 +14,14 @@ namespace BE_Company.Controllers
     public class CustomersController : ControllerBase
     {
         private readonly ICustomersRepository _customersRepository;
+        private readonly ILegalCustomerSearchService _legalSearch;
 
-        public CustomersController(ICustomersRepository customersRepository)
+        public CustomersController(
+            ICustomersRepository customersRepository,
+            ILegalCustomerSearchService legalSearch)
         {
             _customersRepository = customersRepository;
+            _legalSearch = legalSearch;
         }
 
         [HttpPost("CustomersSalesCustomer_Create")]
@@ -94,7 +99,9 @@ namespace BE_Company.Controllers
         {
             try
             {
-                var result = await _customersRepository.Customers_GetWeekReceipt(delegateID, showType);
+                // FE sends 0 for "all delegates"; SP treats only NULL as all.
+                int? delegate_ID = delegateID is > 0 ? delegateID : null;
+                var result = await _customersRepository.Customers_GetWeekReceipt(delegate_ID, showType);
                 return Ok(result);
             }
             catch (Exception ex)
@@ -108,7 +115,8 @@ namespace BE_Company.Controllers
         {
             try
             {
-                var result = await _customersRepository.Customers_GetMonthReceipt(delegateID, showType);
+                int? delegate_ID = delegateID is > 0 ? delegateID : null;
+                var result = await _customersRepository.Customers_GetMonthReceipt(delegate_ID, showType);
                 return Ok(result);
             }
             catch (Exception ex)
@@ -146,7 +154,7 @@ namespace BE_Company.Controllers
         }
 
         [HttpPut("Customers_Update/{customerID}")]
-        public async Task<ActionResult<CustomersSalesGetDTO?>> Customers_Update(int? customerID,[FromBody] CustomersPutDTO customersPutDTO)
+        public async Task<ActionResult<CustomersSalesGetDTO?>> Customers_Update(int? customerID, [FromBody] CustomersPutDTO customersPutDTO)
         {
             try
             {
@@ -216,6 +224,64 @@ namespace BE_Company.Controllers
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// بحث القانونية: استيراد أسماء/هواتف من إكسل العملاء → تطابق اسم ثلاثي كامل + هاتف (محافظة الفرع فقط).
+        /// </summary>
+        [HttpPost("LegalExcelSearch")]
+        public async Task<IActionResult> LegalExcelSearch(
+            [FromBody] LegalExcelSearchRequest? body,
+            CancellationToken ct)
+        {
+            try
+            {
+                body ??= new LegalExcelSearchRequest();
+                var queries = body.Queries ?? new List<LegalSearchQueryInput>();
+                if (queries.Count == 0)
+                {
+                    return BadRequest(new { message = "لا توجد صفوف للبحث" });
+                }
+
+                var result = await _legalSearch.SearchAsync(queries, ct);
+                return Ok(new
+                {
+                    nameHitCount = result.NameHitCount,
+                    phoneHitCount = result.PhoneHitCount,
+                    uniqueCustomerCount = result.UniqueCustomerCount,
+                    queries = result.Queries.Select(q => new
+                    {
+                        index = q.Index,
+                        requestedName = q.RequestedName,
+                        requestedPhone = q.RequestedPhone,
+                        nameMatches = q.NameMatches,
+                        phoneMatches = q.PhoneMatches,
+                        nameMatchCount = q.NameMatches.Count,
+                        phoneMatchCount = q.PhoneMatches.Count
+                    }),
+                    exportRows = result.ExportRows.Select(r => new
+                    {
+                        matchKinds = r.MatchKinds,
+                        sourceQueryIndex = r.SourceQueryIndex,
+                        requestedName = r.RequestedName,
+                        requestedPhone = r.RequestedPhone,
+                        customer = r.Customer
+                    })
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        public sealed class LegalExcelSearchRequest
+        {
+            public List<LegalSearchQueryInput>? Queries { get; set; }
         }
     }
 }

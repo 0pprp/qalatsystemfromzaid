@@ -6,11 +6,15 @@ import { useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useUserRole } from '@/composables/useUserRole'
 import { ratingChipColor } from '@/composables/useCustomerRating'
+import {
+  accountantGetRatingEquation,
+  accountantSetRatingEquation,
+} from '@/composables/accountantRatingsApi'
 
 const apiUrl = localStorage.getItem('LinkCity')
 const route = useRoute()
 const toast = useToast()
-const { canWriteNotes } = useUserRole()
+const { canWriteNotes, isAdmin } = useUserRole()
 
 const customerID = computed(() => Number(route.query.customerID) || 0)
 const customer = ref(null)
@@ -20,6 +24,52 @@ const decisions = ref([])
 const loading = ref(false)
 const savingNote = ref(false)
 const newNote = ref('')
+
+const ratingEquationDialog = ref(false)
+const ratingEquationSaving = ref(false)
+const ratingEquationLoading = ref(false)
+const ratingEquationFactor = ref(1)
+
+async function openRatingEquation() {
+  if (!isAdmin.value || !customerID.value) return
+  ratingEquationFactor.value = Number(ratingDetail.value?.ratingEquationFactor) || 1
+  ratingEquationDialog.value = true
+  ratingEquationLoading.value = true
+  try {
+    const data = await accountantGetRatingEquation(customerID.value)
+    ratingEquationFactor.value = Number(data?.ratingEquationFactor ?? data?.RatingEquationFactor ?? 1) || 1
+  }
+  catch (e) {
+    console.error(e)
+    toast.error('تعذر جلب معادلة التقييم')
+  }
+  finally {
+    ratingEquationLoading.value = false
+  }
+}
+
+async function saveRatingEquation() {
+  const factor = Number(ratingEquationFactor.value)
+  if (!(factor > 0)) {
+    toast.warning('أدخل رقماً أكبر من صفر')
+
+    return
+  }
+  ratingEquationSaving.value = true
+  try {
+    await accountantSetRatingEquation(customerID.value, factor)
+    toast.success('تم حفظ معادلة التقييم (للتقييم فقط)')
+    ratingEquationDialog.value = false
+    await fetchProfile()
+  }
+  catch (e) {
+    console.error(e)
+    toast.error(e.response?.data?.message || 'فشل حفظ معادلة التقييم')
+  }
+  finally {
+    ratingEquationSaving.value = false
+  }
+}
 
 const formattedNumber = num => {
   if (num === 0) return "0"
@@ -171,6 +221,14 @@ onMounted(fetchProfile)
           </div>
         </div>
         <VSpacer />
+        <VBtn
+          v-if="isAdmin"
+          class="me-3 rating-equation-btn"
+          prepend-icon="tabler-math-function"
+          @click="openRatingEquation"
+        >
+          معادلة التقييم
+        </VBtn>
         <VChip
           v-if="ratingDetail"
           size="large"
@@ -191,6 +249,9 @@ onMounted(fetchProfile)
         <div class="text-body-2">
           قانونية: {{ ratingDetail.isLegal ? 'نعم' : 'لا' }}
           · مصفر: {{ ratingDetail.isSettled ? 'نعم' : 'لا' }}
+          <template v-if="ratingDetail.ratingEquationFactor != null">
+            · معادلة التقييم: ×{{ Number(ratingDetail.ratingEquationFactor).toFixed(2) }}
+          </template>
           <template v-if="ratingDetail.daysToSettle != null">
             · أيام الإغلاق: {{ ratingDetail.daysToSettle }}
           </template>
@@ -323,5 +384,72 @@ onMounted(fetchProfile)
         </VTimelineItem>
       </VTimeline>
     </div>
+
+    <VDialog
+      v-model="ratingEquationDialog"
+      max-width="480"
+    >
+      <VCard>
+        <VCardTitle class="text-h6">
+          معادلة التقييم
+        </VCardTitle>
+        <VCardText>
+          <VAlert
+            type="info"
+            variant="tonal"
+            class="mb-4"
+            density="comfortable"
+          >
+            يضرب التسديدات بشكل وهمي للتقييم فقط. الحساب الحقيقي (الواصل/الباقي) لا يتغير.
+            الافتراضي = 1.
+          </VAlert>
+          <VTextField
+            v-model.number="ratingEquationFactor"
+            type="number"
+            step="0.1"
+            min="0.5"
+            max="10"
+            label="معامل المعادلة"
+            :disabled="ratingEquationLoading || ratingEquationSaving"
+            hint="مثلاً 1.5 أو 2"
+            persistent-hint
+          />
+        </VCardText>
+        <VCardActions>
+          <VSpacer />
+          <VBtn
+            variant="text"
+            :disabled="ratingEquationSaving"
+            @click="ratingEquationDialog = false"
+          >
+            إلغاء
+          </VBtn>
+          <VBtn
+            color="primary"
+            :loading="ratingEquationSaving"
+            :disabled="ratingEquationLoading"
+            @click="saveRatingEquation"
+          >
+            حفظ
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
   </VCard>
 </template>
+
+<style scoped>
+.rating-equation-btn {
+  background-color: #b45309 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+}
+.rating-equation-btn:hover {
+  background-color: #92400e !important;
+  color: #ffffff !important;
+}
+.rating-equation-btn :deep(.v-btn__content) {
+  color: #ffffff !important;
+  font-weight: 700 !important;
+}
+</style>

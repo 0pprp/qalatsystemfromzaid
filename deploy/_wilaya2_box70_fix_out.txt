@@ -1,0 +1,19 @@
+Changed language setting to us_english.
+UserDeleteID=1
+=== BEFORE View_Box ===
+6| الولاية نجف 2|1|LO8ESq3Qpwf|1|1097000.0|0
+=== BEFORE AddToBox sum ===
+41316|782938000
+=== Targets ===
+418572|438386|مصطفى صادق كريم|20000|2026-09-26 12:00:00
+418784|438603|حيدر صاحب عباس|50000|2026-09-26 12:00:00
+=== AFTER delete existence ===
+0|0
+=== AFTER AddToBox sum ===
+41314|782868000
+=== AFTER View_Box ===
+6| الولاية نجف 2|1|LO8ESq3Qpwf|1|1027000.0|0
+Sep29=39/945000 Oct1=36/2370000
+COMMITTED_BOX_MINUS_70K
+
+SQL_EXIT 0

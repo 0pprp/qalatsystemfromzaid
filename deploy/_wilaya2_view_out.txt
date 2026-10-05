@@ -1,0 +1,4 @@
+Msg 207, Level 16, State 1, Server vmi3533397, Line 21
+Invalid column name 'Amount'.
+
+SQL_EXIT 0

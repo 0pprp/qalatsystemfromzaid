@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
 using Microsoft.Data.SqlClient;
@@ -69,7 +69,7 @@ namespace BE_DelegateWebApplication.Repository
                     },
                     commandType: CommandType.StoredProcedure,
                     commandTimeout: 600);
-                return result;
+                return DelegateListDedupe.DistinctByDelegateId(result).ToList();
             }
         }
 
@@ -81,6 +81,7 @@ namespace BE_DelegateWebApplication.Repository
         {
             using var connection = new SqlConnection(_connectionString);
             await EnsureFollowerUserListsSchemaAsync(connection);
+            await EnsureFollowerCollectionColumnAsync(connection);
             return await connection.QueryAsync<SelectDelegateGetDTO>(@"
 DECLARE @IsFollower BIT = (
     SELECT TOP 1 CASE
@@ -101,7 +102,8 @@ SELECT
     d.ReceiptName,
     CAST(ISNULL(d.UpdateReceipt, 0) AS BIT) AS UpdateReceipt,
     CAST(ISNULL(d.DeleteReceipt, 0) AS BIT) AS DeleteReceipt,
-    CAST(ISNULL(d.DevicePaymentState, 0) AS BIT) AS DevicePaymentState
+    CAST(ISNULL(d.DevicePaymentState, 0) AS BIT) AS DevicePaymentState,
+    CAST(ISNULL(d.FollowerCollectionEnabled, 0) AS BIT) AS FollowerCollectionEnabled
 FROM dbo.FollowerUserLists ful
 INNER JOIN dbo.Delegates d ON d.DelegateID = ful.ListId
 WHERE ful.UserId = @UserId
@@ -165,6 +167,17 @@ BEGIN
         CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_FollowerUserLists_CreatedAtUtc DEFAULT (SYSUTCDATETIME()),
         CONSTRAINT UQ_FollowerUserLists_User_List UNIQUE (UserId, ListId)
     );
+END");
+        }
+
+        private static async Task EnsureFollowerCollectionColumnAsync(SqlConnection connection)
+        {
+            await connection.ExecuteAsync(@"
+IF COL_LENGTH(N'dbo.Delegates', N'FollowerCollectionEnabled') IS NULL
+BEGIN
+    ALTER TABLE dbo.Delegates
+        ADD FollowerCollectionEnabled BIT NOT NULL
+            CONSTRAINT DF_Delegates_FollowerCollectionEnabled DEFAULT (0);
 END");
         }
     }

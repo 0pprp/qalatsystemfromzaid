@@ -323,6 +323,39 @@ public sealed class SalesExceptionHoldWorkflowTests
         Assert.Null(forwarder.LastCreate);
     }
 
+    // 10b. Hold missing on branch but gateway already has Pending — repair hold from conflict body
+    [Fact]
+    public async Task DuplicateActiveException_WhenHoldMissing_ResyncsHoldFromConflictBody()
+    {
+        var repo = new FakeRequestRepository();
+        var created = await NewUnassignedAsync(Svc(repo));
+        Assert.Null(created.ExceptionHoldStatus);
+        var existingId = Guid.Parse("bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var forwarder = new WorkflowForwarder
+        {
+            CreateResult = SalesExceptionGatewayForwardResult.Failure(
+                StatusCodes.Status409Conflict,
+                "يوجد طلب استثناء نشط لهذا الطلب",
+                $$"""{"message":"يوجد طلب استثناء نشط لهذا الطلب","existingExceptionId":"{{existingId}}","status":"Pending","salesRequestId":{{created.Id}}}""")
+        };
+        var controller = CreateExceptionsController(forwarder, repo);
+
+        var response = await controller.Create(new SalesManagerExceptionsController.CreateExceptionBody
+        {
+            CityValue = "najaf-demo",
+            SalesRequestId = created.Id,
+            Reason = "تكرار بعد فقدان الحجز"
+        }, CancellationToken.None);
+
+        var status = Assert.IsAssignableFrom<ObjectResult>(response);
+        Assert.Equal(StatusCodes.Status409Conflict, status.StatusCode);
+        Assert.NotNull(forwarder.LastCreate);
+
+        var row = Assert.Single(repo.Rows);
+        Assert.Equal(SalesExceptionHoldStatuses.Pending, row.ExceptionHoldStatus);
+        Assert.Equal(existingId, row.ActiveExceptionId);
+    }
+
     // 11. Assignment by manager outside city/scope rejected
     [Fact]
     public async Task Assign_OutsideCityScope_Is403()

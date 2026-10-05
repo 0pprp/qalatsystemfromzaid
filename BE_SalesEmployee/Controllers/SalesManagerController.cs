@@ -7,7 +7,8 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace BE_SalesEmployee.Controllers
 {
-    [Authorize(Policy = SalesPolicies.SalesManager)]
+    [Authorize(Policy = SalesPolicies.SalesManagerOrDirector)]
+    [DenyDirectorWrites]
     [Route("api/sales-manager")]
     [ApiController]
     public class SalesManagerController : ControllerBase
@@ -61,6 +62,66 @@ namespace BE_SalesEmployee.Controllers
             return await ListAsync(null, path, ct);
         }
 
+        [HttpGet("delegates")]
+        public Task<IActionResult> Delegates([FromQuery] string? cityValue, CancellationToken ct) =>
+            ListAsync(cityValue, "sales-manager/delegates", ct);
+
+        /// <summary>Sales Manager Followers tab — mirrors /employees routing (cityValue picks one branch).</summary>
+        [HttpGet("followers")]
+        public async Task<IActionResult> Followers(
+            [FromQuery] string? cityValue,
+            [FromQuery] string? shiftStatus,
+            [FromQuery] string? locationStatus,
+            CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var path = "sales-manager/followers" + Query(
+                ("shiftStatus", shiftStatus),
+                ("locationStatus", locationStatus));
+
+            // Selected province must pick ONE branch DB — never silently reuse Najaf.
+            if (!string.IsNullOrWhiteSpace(cityValue))
+            {
+                var (status, payload) = await _aggregator.GetExactBranchArrayAsync(user, cityValue, path, ct);
+                return StatusCode(status, payload);
+            }
+
+            return await ListAsync(null, path, ct);
+        }
+
+        [HttpGet("followers/live-locations")]
+        public async Task<IActionResult> FollowerLiveLocations([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            const string path = "sales-manager/followers/live-locations";
+            if (!string.IsNullOrWhiteSpace(cityValue))
+            {
+                var (status, payload) = await _aggregator.GetExactBranchArrayAsync(user, cityValue, path, ct);
+                return StatusCode(status, payload);
+            }
+
+            return await ListAsync(null, path, ct);
+        }
+
+        [HttpGet("followers/{cityValue}/{followerId:int}/rating-trend")]
+        public Task<IActionResult> FollowerRatingTrend(string cityValue, int followerId, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/followers/{followerId}/rating-trend", ct);
+
+        [HttpGet("followers/{cityValue}/{followerId:int}/rating-customers")]
+        public Task<IActionResult> FollowerRatingCustomers(
+            string cityValue,
+            int followerId,
+            [FromQuery] string? level,
+            CancellationToken ct)
+        {
+            var q = string.IsNullOrWhiteSpace(level) ? "" : $"?level={Uri.EscapeDataString(level)}";
+            return OneAsync(cityValue, $"sales-manager/followers/{followerId}/rating-customers{q}", ct);
+        }
+
+        [HttpGet("followers/{cityValue}/{followerId:int}/route")]
+        public Task<IActionResult> FollowerRoute(string cityValue, int followerId, [FromQuery] DateTime? date, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/followers/{followerId}/route{(date == null ? "" : $"?date={date:yyyy-MM-dd}")}", ct);
+
         [HttpGet("live-locations")]
         public async Task<IActionResult> LiveLocations([FromQuery] string? cityValue, CancellationToken ct)
         {
@@ -86,6 +147,21 @@ namespace BE_SalesEmployee.Controllers
         [HttpGet("employees/{cityValue}/{employeeId:int}/tracking-events")]
         public Task<IActionResult> Events(string cityValue, int employeeId, [FromQuery] DateTime? date, CancellationToken ct) =>
             OneAsync(cityValue, $"sales-manager/employees/{employeeId}/tracking-events{(date == null ? "" : $"?date={date:yyyy-MM-dd}")}", ct);
+
+        [HttpGet("employees/{cityValue}/{employeeId:int}/rating-trend")]
+        public Task<IActionResult> EmployeeRatingTrend(string cityValue, int employeeId, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/employees/{employeeId}/rating-trend", ct);
+
+        [HttpGet("employees/{cityValue}/{employeeId:int}/rating-customers")]
+        public Task<IActionResult> EmployeeRatingCustomers(
+            string cityValue,
+            int employeeId,
+            [FromQuery] string? level,
+            CancellationToken ct)
+        {
+            var q = string.IsNullOrWhiteSpace(level) ? "" : $"?level={Uri.EscapeDataString(level)}";
+            return OneAsync(cityValue, $"sales-manager/employees/{employeeId}/rating-customers{q}", ct);
+        }
 
         [HttpGet("sales")]
         public Task<IActionResult> Sales(
@@ -290,23 +366,75 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [HttpGet("sales-requests")]
-        public Task<IActionResult> Requests(
+        public async Task<IActionResult> Requests(
             [FromQuery] string? cityValue,
             [FromQuery] int? employeeId,
             [FromQuery] string? status,
             [FromQuery] DateTime? date,
-            CancellationToken ct)
+            [FromQuery] int? page,
+            [FromQuery] int pageSize = 40,
+            [FromQuery] string? tab = null,
+            [FromQuery] string? q = null,
+            CancellationToken ct = default)
         {
-            var q = Query(
+            if (page is > 0)
+            {
+                var path = "sales-manager/sales-requests" + Query(
+                    ("employeeId", employeeId?.ToString()),
+                    ("page", page.Value.ToString()),
+                    ("pageSize", pageSize.ToString()),
+                    ("tab", tab),
+                    ("q", q));
+                // الكل: soft fan-out (~2s). محافظة واحدة: direct proxy.
+                if (string.IsNullOrWhiteSpace(cityValue))
+                {
+                    var user = TokenService.FromPrincipal(User);
+                    var (httpStatus, payload) = await _aggregator.GetSalesRequestsPageFanoutAsync(
+                        user, path, page.Value, pageSize, ct);
+                    return StatusCode(httpStatus, payload);
+                }
+
+                return await OneAsync(cityValue, path, ct);
+            }
+
+            var legacy = Query(
                 ("employeeId", employeeId?.ToString()),
                 ("status", status),
                 ("date", date?.ToString("yyyy-MM-dd")));
-            return ListAsync(cityValue, "sales-manager/sales-requests" + q, ct);
+            return await ListAsync(cityValue, "sales-manager/sales-requests" + legacy, ct);
         }
 
         [HttpGet("sales-requests/employee-submitted")]
         public Task<IActionResult> EmployeeSubmitted([FromQuery] string? cityValue, CancellationToken ct) =>
             ListAsync(cityValue, "sales-manager/sales-requests/employee-submitted", ct);
+
+        [HttpGet("sales-requests/deleted")]
+        public async Task<IActionResult> DeletedRequests(
+            [FromQuery] string? cityValue,
+            [FromQuery] int? page,
+            [FromQuery] int pageSize = 40,
+            [FromQuery] string? q = null,
+            CancellationToken ct = default)
+        {
+            if (page is > 0)
+            {
+                var path = "sales-manager/sales-requests/deleted" + Query(
+                    ("page", page.Value.ToString()),
+                    ("pageSize", pageSize.ToString()),
+                    ("q", q));
+                if (string.IsNullOrWhiteSpace(cityValue))
+                {
+                    var user = TokenService.FromPrincipal(User);
+                    var (httpStatus, payload) = await _aggregator.GetSalesRequestsPageFanoutAsync(
+                        user, path, page.Value, pageSize, ct);
+                    return StatusCode(httpStatus, payload);
+                }
+
+                return await OneAsync(cityValue, path, ct);
+            }
+
+            return await ListAsync(cityValue, "sales-manager/sales-requests/deleted", ct);
+        }
 
         [HttpGet("sales-requests/unread-count")]
         public async Task<IActionResult> UnreadCount([FromQuery] string? cityValue, CancellationToken ct)
@@ -390,6 +518,15 @@ namespace BE_SalesEmployee.Controllers
             return StatusCode(status, payload);
         }
 
+        [HttpPost("sales-requests/{cityValue}/assign-batch")]
+        public async Task<IActionResult> AssignBatch(string cityValue, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, "sales-manager/sales-requests/assign-batch", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
         [HttpPost("sales-requests/{cityValue}/{id:int}/return")]
         public async Task<IActionResult> Return(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
         {
@@ -399,6 +536,8 @@ namespace BE_SalesEmployee.Controllers
             return StatusCode(status, payload);
         }
 
+        /// <summary>Read-only scoring against branch catalogs — director may call.</summary>
+        [AllowDirectorReadPost]
         [HttpPost("sales-requests/{cityValue}/evaluate")]
         public async Task<IActionResult> Evaluate(string cityValue, [FromBody] JsonElement body, CancellationToken ct)
         {
@@ -411,7 +550,9 @@ namespace BE_SalesEmployee.Controllers
         /// <summary>
         /// Evaluate each request only against its sourceCity / home province catalog.
         /// Groups by sourceCityValue (one HTTP call per distinct province), ACL-gated.
+        /// Read-only — director may call (same chips as sales manager).
         /// </summary>
+        [AllowDirectorReadPost]
         [HttpPost("sales-requests/evaluate")]
         public async Task<IActionResult> EvaluateAcrossBranches([FromBody] JsonElement body, CancellationToken ct)
         {
@@ -433,6 +574,8 @@ namespace BE_SalesEmployee.Controllers
             return OneAsync(cityValue, $"sales-manager/sales-requests/{id}/evaluation-hits{q}", ct);
         }
 
+        /// <summary>Read-only match list for a criterion — director may open تفاصيل التطابقات.</summary>
+        [AllowDirectorReadPost]
         [HttpPost("sales-requests/evaluation-hits")]
         public async Task<IActionResult> EvaluationHitsAcrossBranches([FromBody] JsonElement body, CancellationToken ct)
         {
@@ -473,12 +616,34 @@ namespace BE_SalesEmployee.Controllers
             return StatusCode(status, payload);
         }
 
-        [HttpDelete("sales-requests/{cityValue}/{id:int}")]
-        public async Task<IActionResult> DeleteRequest(string cityValue, int id, CancellationToken ct)
+        [HttpGet("sales-requests/{cityValue}/{id:int}/soft-delete-impact")]
+        public async Task<IActionResult> SoftDeleteImpact(string cityValue, int id, CancellationToken ct)
         {
             var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/soft-delete-impact", ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpDelete("sales-requests/{cityValue}/{id:int}")]
+        public async Task<IActionResult> DeleteRequest(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var json = body.ValueKind == JsonValueKind.Undefined || body.ValueKind == JsonValueKind.Null
+                ? "{}"
+                : body.GetRawText();
+            using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
             var (status, payload) = await _aggregator.SendContentAsync(
-                user, cityValue, $"sales-manager/sales-requests/{id}", HttpMethod.Delete, null, ct);
+                user, cityValue, $"sales-manager/sales-requests/{id}", HttpMethod.Delete, content, ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/{cityValue}/{id:int}/soft-delete")]
+        public async Task<IActionResult> SoftDeleteRequest(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/soft-delete", body.GetRawText(), ct);
             return StatusCode(status, payload);
         }
 
@@ -543,6 +708,54 @@ namespace BE_SalesEmployee.Controllers
             return StatusCode(status, payload);
         }
 
+        [HttpGet("legal-followups")]
+        public Task<IActionResult> LegalFollowups([FromQuery] string? cityValue, [FromQuery] string? status, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+                return Task.FromResult<IActionResult>(BadRequest(new { message = "يجب تحديد المحافظة." }));
+            return OneAsync(cityValue, "sales-manager/legal-followups" + Query(("status", status)), ct);
+        }
+
+        [HttpGet("legal-followups/followers")]
+        public Task<IActionResult> LegalFollowupFollowers([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+                return Task.FromResult<IActionResult>(BadRequest(new { message = "يجب تحديد المحافظة." }));
+            return OneAsync(cityValue, "sales-manager/legal-followups/followers", ct);
+        }
+
+        [HttpGet("legal-followups/{cityValue}/{id:int}")]
+        public Task<IActionResult> LegalFollowup(string cityValue, int id, CancellationToken ct) =>
+            OneAsync(cityValue, $"sales-manager/legal-followups/{id}", ct);
+
+        [HttpGet("legal-followups/{cityValue}/{id:int}/case-documents/{documentId:int}/file")]
+        public async Task<IActionResult> LegalFollowupCaseDocumentFile(
+            string cityValue, int id, int documentId, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetFileAsync(
+                user, cityValue, $"sales-manager/legal-followups/{id}/case-documents/{documentId}/file", ct);
+            if (payload is ValueTuple<byte[], string> file)
+            {
+                return File(file.Item1, file.Item2);
+            }
+
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("legal-followups")]
+        public async Task<IActionResult> CreateLegalFollowup([FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var city = Read(body, "cityValue", "CityValue");
+            if (string.IsNullOrWhiteSpace(city))
+                return BadRequest(new { message = "يجب تحديد المحافظة." });
+
+            var (status, payload) = await _aggregator.PostAsync(
+                user, city, "sales-manager/legal-followups", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
         private async Task<IActionResult> ListAsync(string? cityValue, string companyPath, CancellationToken ct)
         {
             var user = TokenService.FromPrincipal(User);
@@ -580,6 +793,89 @@ namespace BE_SalesEmployee.Controllers
                 }
             }
             return null;
+        }
+
+        /// <summary>Ratings catalog — same as director/delegated (BranchManagerStatsService).</summary>
+        [HttpGet("stats/catalog")]
+        public async Task<IActionResult> StatsCatalog([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return BadRequest(new { message = "يجب تحديد المحافظة." });
+            }
+
+            var actor = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetOneAsync(
+                actor,
+                cityValue,
+                BE_SalesEmployee.DelegatedManager.DelegatedManagerStatsPaths.CompanyCatalog,
+                ct);
+            return StatusCode(status, payload);
+        }
+
+        /// <summary>
+        /// Sale-date window [from,to]; scores/payments evaluated through today (company GetTrendAsync).
+        /// </summary>
+        [HttpGet("stats/trend")]
+        public async Task<IActionResult> StatsTrend(
+            [FromQuery] string? cityValue,
+            [FromQuery] string? scope,
+            [FromQuery] int id,
+            [FromQuery] DateTime? fromDate,
+            [FromQuery] DateTime? toDate,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return BadRequest(new { message = "يجب تحديد المحافظة." });
+            }
+
+            var today = DateTime.UtcNow.AddHours(3).Date;
+            var from = (fromDate ?? new DateTime(today.Year, today.Month, 1)).Date;
+            var to = (toDate ?? today).Date;
+            var actor = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetOneAsync(
+                actor,
+                cityValue,
+                BE_SalesEmployee.DelegatedManager.DelegatedManagerStatsPaths.CompanyTrend(scope, id, from, to),
+                ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpGet("stats/rating-customers")]
+        public async Task<IActionResult> StatsRatingCustomers(
+            [FromQuery] string? cityValue,
+            [FromQuery] string? scope,
+            [FromQuery] int id,
+            [FromQuery] string? level,
+            [FromQuery] DateTime? fromDate,
+            [FromQuery] DateTime? toDate,
+            [FromQuery] int take = 500,
+            [FromQuery] int skip = 0,
+            [FromQuery] string? q = null,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(cityValue))
+            {
+                return BadRequest(new { message = "يجب تحديد المحافظة." });
+            }
+
+            if (string.IsNullOrWhiteSpace(level))
+            {
+                return BadRequest(new { message = "يجب تحديد مستوى التقييم." });
+            }
+
+            var today = DateTime.UtcNow.AddHours(3).Date;
+            var from = (fromDate ?? new DateTime(today.Year, today.Month, 1)).Date;
+            var to = (toDate ?? today).Date;
+            var actor = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetOneAsync(
+                actor,
+                cityValue,
+                BE_SalesEmployee.DelegatedManager.DelegatedManagerStatsPaths.CompanyRatingCustomers(
+                    scope, id, level, from, to, take, skip, q),
+                ct);
+            return StatusCode(status, payload);
         }
     }
 }

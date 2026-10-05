@@ -15,6 +15,10 @@ class ExceptionSummary {
     this.targetApproverType,
     this.requestedAtUtc,
     this.decidedAtUtc,
+    this.isWrongSale = false,
+    this.requestKind,
+    this.readAtUtc,
+    this.isUnread = false,
   });
 
   final String id;
@@ -28,23 +32,39 @@ class ExceptionSummary {
   final String? targetApproverType;
   final DateTime? requestedAtUtc;
   final DateTime? decidedAtUtc;
+  final bool isWrongSale;
+  final String? requestKind;
+  final DateTime? readAtUtc;
+  final bool isUnread;
 
-  factory ExceptionSummary.fromJson(Map<String, dynamic> json) =>
-      ExceptionSummary(
-        id: JsonRead.text(json['id']),
-        status: JsonRead.text(json['status']),
-        customerName:
-            JsonRead.text(json['customerName'], fallback: 'غير محدد'),
-        cityValue: JsonRead.optionalText(json['cityValue']),
-        cityName: JsonRead.optionalText(json['cityName']),
-        customerId: JsonRead.optionalNumber(json['customerId']),
-        salesRequestId: JsonRead.optionalNumber(json['salesRequestId']),
-        requestingManagerDisplayName:
-            JsonRead.optionalText(json['requestingManagerDisplayName']),
-        targetApproverType: JsonRead.optionalText(json['targetApproverType']),
-        requestedAtUtc: AppDate.parseUtc(json['requestedAtUtc']),
-        decidedAtUtc: AppDate.parseUtc(json['decidedAtUtc']),
-      );
+  factory ExceptionSummary.fromJson(Map<String, dynamic> json) {
+    final wrong = JsonRead.flag(json['isWrongSale']) ||
+        JsonRead.text(json['requestKind']).toLowerCase() == 'wrongsale';
+    final readAt = AppDate.parseUtc(json['readAtUtc']);
+    final unreadFlag = json.containsKey('isUnread')
+        ? JsonRead.flag(json['isUnread'])
+        : readAt == null;
+    return ExceptionSummary(
+      id: JsonRead.text(json['id']),
+      status: JsonRead.text(json['status']),
+      customerName:
+          JsonRead.text(json['customerName'], fallback: 'غير محدد'),
+      cityValue: JsonRead.optionalText(json['cityValue']),
+      cityName: JsonRead.optionalText(json['cityName']),
+      customerId: JsonRead.optionalNumber(json['customerId']),
+      salesRequestId: JsonRead.optionalNumber(json['salesRequestId']),
+      requestingManagerDisplayName:
+          JsonRead.optionalText(json['requestingManagerDisplayName']),
+      targetApproverType: JsonRead.optionalText(json['targetApproverType']),
+      requestedAtUtc: AppDate.parseUtc(json['requestedAtUtc']),
+      decidedAtUtc: AppDate.parseUtc(json['decidedAtUtc']),
+      isWrongSale: wrong,
+      requestKind: JsonRead.optionalText(json['requestKind']),
+      readAtUtc: readAt,
+      // WrongSale defaults to unread until opened; Hold keeps visual calm.
+      isUnread: wrong ? unreadFlag : false,
+    );
+  }
 }
 
 class ExceptionRequest {
@@ -70,6 +90,10 @@ class ExceptionRequest {
 
   String get id => summary.id;
   String get status => summary.status;
+  bool get isWrongSale =>
+      summary.isWrongSale ||
+      (reason ?? '').contains('مبيعات خاطئة') ||
+      (reason ?? '').contains('تقييم المتجر');
 
   factory ExceptionRequest.fromJson(Map<String, dynamic> json) =>
       ExceptionRequest(
@@ -86,6 +110,8 @@ class ExceptionRequest {
         branchCustomerNotePosted:
             JsonRead.flag(json['branchCustomerNotePosted']),
       );
+
+  bool get isUnread => summary.isUnread;
 }
 
 class ExceptionAuditEntry {
@@ -303,10 +329,40 @@ class ExceptionReviewPreviousSale {
       );
 }
 
+class ExceptionReviewPayment {
+  const ExceptionReviewPayment({
+    this.paymentDate,
+    this.amount,
+    this.boundNumber,
+    this.note,
+  });
+
+  final DateTime? paymentDate;
+  final double? amount;
+  final int? boundNumber;
+  final String? note;
+
+  factory ExceptionReviewPayment.fromJson(Map<String, dynamic> json) =>
+      ExceptionReviewPayment(
+        paymentDate: AppDate.parseUtc(
+            json['paymentDate'] ?? json['PaymentDate']),
+        amount: ((json['amount'] ??
+                    json['Amount'] ??
+                    json['amountDenar'] ??
+                    json['AmountDenar']) as num?)
+                ?.toDouble(),
+        boundNumber: JsonRead.optionalNumber(
+            json['boundNumber'] ?? json['BoundNumber']),
+        note: JsonRead.optionalText(json['note'] ?? json['Note']) ??
+            JsonRead.optionalText(json['itemsNames'] ?? json['ItemsNames']),
+      );
+}
+
 class ExceptionReviewMatchCustomer {
   const ExceptionReviewMatchCustomer({
     required this.fullName,
     required this.matchReasons,
+    this.customerId,
     this.phone,
     this.cityName,
     this.province,
@@ -317,8 +373,10 @@ class ExceptionReviewMatchCustomer {
     this.isLegal = false,
     this.financialSummary = const ExceptionReviewFinancialSummary(),
     this.previousSales = const [],
+    this.payments = const [],
   });
 
+  final int? customerId;
   final String fullName;
   final String? phone;
   final String? cityName;
@@ -331,9 +389,15 @@ class ExceptionReviewMatchCustomer {
   final bool isLegal;
   final ExceptionReviewFinancialSummary financialSummary;
   final List<ExceptionReviewPreviousSale> previousSales;
+  final List<ExceptionReviewPayment> payments;
+
+  /// Self-row from waiver context — not a true prior/similar match.
+  bool get isCurrentCustomer =>
+      matchReasons.any((r) => r.contains('الزبون الحالي'));
 
   factory ExceptionReviewMatchCustomer.fromJson(Map<String, dynamic> json) =>
       ExceptionReviewMatchCustomer(
+        customerId: JsonRead.optionalNumber(json['customerId']),
         fullName: JsonRead.text(json['fullName'], fallback: 'غير محدد'),
         phone: JsonRead.optionalText(json['phone']),
         cityName: JsonRead.optionalText(json['cityName']),
@@ -348,6 +412,9 @@ class ExceptionReviewMatchCustomer {
             JsonRead.map(json['financialSummary'])),
         previousSales: JsonRead.list(json['previousSales'])
             .map(ExceptionReviewPreviousSale.fromJson)
+            .toList(),
+        payments: JsonRead.list(json['payments'] ?? json['Payments'])
+            .map(ExceptionReviewPayment.fromJson)
             .toList(),
       );
 }
@@ -365,19 +432,41 @@ class ExceptionReview {
   final ExceptionReviewSource source;
   final List<ExceptionReviewMatchCustomer> matchingCustomers;
 
-  factory ExceptionReview.fromJson(Map<String, dynamic> json) =>
-      ExceptionReview(
-        customerClassification: ExceptionReviewClassification.fromJson(
-            JsonRead.map(json['customerClassification'])),
-        currentRequest: json['currentRequest'] == null
-            ? null
-            : ExceptionReviewCurrentRequest.fromJson(
-                JsonRead.map(json['currentRequest'])),
-        source: ExceptionReviewSource.fromJson(JsonRead.map(json['source'])),
-        matchingCustomers: JsonRead.list(json['matchingCustomers'])
-            .map(ExceptionReviewMatchCustomer.fromJson)
-            .toList(),
+  factory ExceptionReview.fromJson(Map<String, dynamic> json) {
+    ExceptionReviewClassification classification;
+    try {
+      classification = ExceptionReviewClassification.fromJson(
+          JsonRead.map(json['customerClassification']));
+    } catch (_) {
+      classification = const ExceptionReviewClassification(
+        type: 'Unknown',
+        labelArabic: '—',
+        matchCount: 0,
+        explanationArabic: '',
       );
+    }
+    ExceptionReviewSource source;
+    try {
+      source = ExceptionReviewSource.fromJson(JsonRead.map(json['source']));
+    } catch (_) {
+      source = const ExceptionReviewSource(
+        displayLabel: '—',
+        personName: '—',
+        branchName: '—',
+      );
+    }
+    return ExceptionReview(
+      customerClassification: classification,
+      currentRequest: json['currentRequest'] == null
+          ? null
+          : ExceptionReviewCurrentRequest.fromJson(
+              JsonRead.map(json['currentRequest'])),
+      source: source,
+      matchingCustomers: JsonRead.list(json['matchingCustomers'])
+          .map(ExceptionReviewMatchCustomer.fromJson)
+          .toList(),
+    );
+  }
 }
 
 class ExceptionDetail {
@@ -385,24 +474,38 @@ class ExceptionDetail {
     required this.request,
     required this.audit,
     this.review,
+    this.customerProfile,
+    this.reviewError,
   });
 
   final ExceptionRequest request;
   final List<ExceptionAuditEntry> audit;
   final ExceptionReview? review;
+  final Map<String, dynamic>? customerProfile;
+  final String? reviewError;
 
   factory ExceptionDetail.fromJson(Map<String, dynamic> json) {
     final reviewRaw = json['review'];
+    final profileRaw = json['customerProfile'] ?? json['CustomerProfile'];
+    ExceptionReview? review;
+    if (reviewRaw is Map) {
+      try {
+        review = ExceptionReview.fromJson(Map<String, dynamic>.from(reviewRaw));
+      } catch (_) {
+        // Waiver/exception review shapes can differ; keep profile usable.
+        review = null;
+      }
+    }
     return ExceptionDetail(
       request: ExceptionRequest.fromJson(JsonRead.map(json['request'])),
       audit: JsonRead.list(json['audit'])
           .map(ExceptionAuditEntry.fromJson)
           .toList(),
-      review: reviewRaw is Map<String, dynamic>
-          ? ExceptionReview.fromJson(reviewRaw)
-          : reviewRaw is Map
-              ? ExceptionReview.fromJson(Map<String, dynamic>.from(reviewRaw))
-              : null,
+      review: review,
+      customerProfile: profileRaw is Map
+          ? Map<String, dynamic>.from(profileRaw)
+          : null,
+      reviewError: JsonRead.optionalText(json['reviewError']),
     );
   }
 }

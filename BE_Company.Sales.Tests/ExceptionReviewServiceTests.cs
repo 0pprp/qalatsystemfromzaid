@@ -1,3 +1,6 @@
+using System.Data;
+using BE_Company.DTO;
+using BE_Company.IRepository;
 using BE_Company.Sales.Authorization;
 using BE_Company.Sales.DTO;
 using BE_Company.Sales.Models;
@@ -57,6 +60,110 @@ public class ExceptionReviewServiceTests
             Task.FromResult<IReadOnlyList<CustomerRatingFacts>>([]);
     }
 
+    private sealed class FakePayments : ICustomersPaymentsRepository
+    {
+        public List<CustomersPaymentsGetDTO> Rows { get; } = [];
+
+        public Task<CustomersPaymentsGetDTO?> CustomersPayments_Create(CustomersPaymentsPostDTO dto) =>
+            Task.FromResult<CustomersPaymentsGetDTO?>(null);
+
+        public Task<CustomersPaymentsGetDTO?> CustomersPayments_Create(
+            CustomersPaymentsPostDTO dto,
+            IDbConnection connection,
+            IDbTransaction? transaction,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<CustomersPaymentsGetDTO?>(null);
+
+        public Task<bool?> CustomersPayments_Delete(int? customerPaymentID, int? userID) =>
+            Task.FromResult<bool?>(true);
+
+        public Task<bool?> CustomersPayments_Delete(
+            int? customerPaymentID,
+            int? userID,
+            IDbConnection connection,
+            IDbTransaction? transaction,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<bool?>(true);
+
+        public Task<IEnumerable<CustomersPaymentsGetDTO>?> CustomersPayments_GetAll(
+            DateTime? fromDate, DateTime? toDate, int? delegateID, string? textSearch) =>
+            Task.FromResult<IEnumerable<CustomersPaymentsGetDTO>?>(Rows);
+
+        public Task<IEnumerable<CustomersPaymentsGetDTO>?> CustomersPayments_GetByCustomerID(int? customerID) =>
+            Task.FromResult<IEnumerable<CustomersPaymentsGetDTO>?>(
+                Rows.Where(r => r.CustomerID == customerID).ToList());
+
+        public Task<bool?> CustomersPayments_ChangePaymentDate(string? paymentlist, DateTime? newDate, int? userID) =>
+            Task.FromResult<bool?>(true);
+
+        public Task<bool?> CustomersPayments_DeleteSelect(string? paymentlist, int? userID) =>
+            Task.FromResult<bool?>(true);
+    }
+
+    private sealed class FakeEvaluation : ISalesRequestEvaluationService
+    {
+        public required FakeRequestRepository Repo { get; init; }
+        public required FakeCatalog Catalog { get; init; }
+
+        public Task<SalesRequestEvaluationBatchResultDTO> EvaluateBatchAsync(
+            SalesIdentity actor,
+            SalesRequestEvaluationBatchRequestDTO body,
+            CancellationToken ct) =>
+            Task.FromResult(new SalesRequestEvaluationBatchResultDTO());
+
+        public async Task<SalesRequestEvaluationHitsPageDTO> ListHitsAsync(
+            SalesIdentity actor,
+            int requestId,
+            string category,
+            int page,
+            int pageSize,
+            CancellationToken ct)
+        {
+            var row = await Repo.GetByIdAsync(requestId, ct)
+                      ?? throw new SalesCompleteException(404, "missing");
+            var requestCity = (row.CityValue ?? Catalog.CityValue ?? "").Trim();
+            var branchCity = (Catalog.CityValue ?? "").Trim();
+            var candidates = Catalog.Customers.Select(c => new ExceptionReviewCandidate
+            {
+                CustomerId = c.CustomerId,
+                FullName = c.FullName,
+                Phone = c.Phone,
+                CityName = Catalog.CityName,
+                Province = c.Province,
+                Address = c.Address
+            }).ToList();
+            var hits = ExceptionReviewCustomerMatcher.FindMatches(
+                row.CustomerName, row.CustomerPhone, requestCity, branchCity, candidates);
+            var cat = (category ?? "").Trim().ToLowerInvariant();
+            var filtered = hits.Where(h =>
+                cat is "phone" ? h.PhoneMatch :
+                cat is "triplename" or "triple_name" ? h.TripleNameMatch :
+                false).ToList();
+            var items = filtered.Select(h => new SalesRequestEvaluationHitDTO
+            {
+                CustomerId = h.Customer.CustomerId,
+                FullName = h.Customer.FullName,
+                Phone = h.Customer.Phone,
+                Province = h.Customer.Province
+            }).ToList();
+            return new SalesRequestEvaluationHitsPageDTO
+            {
+                RequestId = requestId,
+                Category = category ?? "",
+                Total = items.Count,
+                Page = page,
+                PageSize = pageSize,
+                Items = items
+            };
+        }
+
+        public Task<SalesRequestEvaluationHitsPageDTO> ListHitsByPayloadAsync(
+            SalesIdentity actor,
+            SalesRequestEvaluationHitsRequestDTO body,
+            CancellationToken ct) =>
+            ListHitsAsync(actor, body.RequestId, body.Category ?? "", body.Page, body.PageSize, ct);
+    }
+
     private static async Task<(FakeRequestRepository Repo, ExceptionReviewService Svc, FakeCatalog Catalog, FakeRating Rating, SalesRequestDTO Row)>
         SeedAsync(
             string name = "محمد علي حسن",
@@ -82,7 +189,8 @@ public class ExceptionReviewServiceTests
         row.Notes = "نوع المبيع: ثلاجة";
         await repo.UpdateAsync(row, default);
 
-        var svc = new ExceptionReviewService(repo, catalog, rating, clock);
+        var evaluation = new FakeEvaluation { Repo = repo, Catalog = catalog };
+        var svc = new ExceptionReviewService(repo, catalog, evaluation, rating, clock, new FakePayments());
         return (repo, svc, catalog, rating, row);
     }
 
@@ -104,11 +212,14 @@ public class ExceptionReviewServiceTests
     public async Task Missing_SalesRequest_Returns_Clear_Error()
     {
         var repo = new FakeRequestRepository();
+        var catalog = new FakeCatalog();
         var svc = new ExceptionReviewService(
             repo,
-            new FakeCatalog(),
+            catalog,
+            new FakeEvaluation { Repo = repo, Catalog = catalog },
             new FakeRating(),
-            new FakeClock { UtcNow = DateTime.UtcNow });
+            new FakeClock { UtcNow = DateTime.UtcNow },
+            new FakePayments());
         var ex = await Assert.ThrowsAsync<SalesCompleteException>(
             () => svc.BuildContextAsync(Manager(), 99999, default));
         Assert.Equal(404, ex.StatusCode);
@@ -141,7 +252,7 @@ public class ExceptionReviewServiceTests
         Assert.Equal("Existing", ctx.CustomerClassification.Type);
         Assert.Single(ctx.MatchingCustomers);
         var m = ctx.MatchingCustomers[0];
-        Assert.Equal(CustomerRatingLabels.Legal, m.RatingLabel);
+        Assert.Equal(CustomerRatingLabels.Bad, m.RatingLabel); // payment-speed only; IsLegal ignored
         Assert.True(m.IsLegal);
         Assert.Equal("قانونية", m.FinancialSummary.LegalStatus);
         Assert.Equal(2, m.PreviousSales[0].SaleId); // newest first

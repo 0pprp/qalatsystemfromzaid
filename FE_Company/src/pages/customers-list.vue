@@ -9,11 +9,69 @@ import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
 import { ratingChipColor } from '@/composables/useCustomerRating'
+import { useUserRole } from '@/composables/useUserRole'
+import { useToast } from '@/composables/useToast'
+import {
+  accountantGetRatingEquation,
+  accountantSetRatingEquation,
+} from '@/composables/accountantRatingsApi'
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
 const router = useRouter()
+const toast = useToast()
+const { isAdmin } = useUserRole()
 const salesData = ref([])
+
+const ratingEquationDialog = ref(false)
+const ratingEquationSaving = ref(false)
+const ratingEquationLoading = ref(false)
+const ratingEquationTarget = ref(null)
+const ratingEquationFactor = ref(1)
+
+async function openRatingEquation(item) {
+  if (!isAdmin.value || !item?.customerID) return
+  ratingEquationTarget.value = item
+  ratingEquationFactor.value = 1
+  ratingEquationDialog.value = true
+  ratingEquationLoading.value = true
+  try {
+    const data = await accountantGetRatingEquation(item.customerID)
+    ratingEquationFactor.value = Number(data?.ratingEquationFactor ?? data?.RatingEquationFactor ?? 1) || 1
+  }
+  catch (e) {
+    console.error(e)
+    toast.error('تعذر جلب معادلة التقييم')
+  }
+  finally {
+    ratingEquationLoading.value = false
+  }
+}
+
+async function saveRatingEquation() {
+  const id = ratingEquationTarget.value?.customerID
+  if (!id) return
+  const factor = Number(ratingEquationFactor.value)
+  if (!(factor > 0)) {
+    toast.warning('أدخل رقماً أكبر من صفر')
+
+    return
+  }
+  ratingEquationSaving.value = true
+  try {
+    await accountantSetRatingEquation(id, factor)
+    toast.success('تم حفظ معادلة التقييم (للتقييم فقط — التسديد الحقيقي بدون تغيير)')
+    ratingEquationDialog.value = false
+    await enrichCustomerRatings(getAuthHeaders())
+  }
+  catch (e) {
+    console.error(e)
+    toast.error(e.response?.data?.message || 'فشل حفظ معادلة التقييم')
+  }
+  finally {
+    ratingEquationSaving.value = false
+  }
+}
 
 // بيانات العملاء وقائمة المندوبين
 const customersData = ref([])
@@ -1209,7 +1267,7 @@ onMounted(() => {
           </template>
 
           <template #item.isLegal="{ item }">
-            <div class="d-flex gap-1">
+            <div class="d-flex align-center gap-2 flex-nowrap">
               <VBtn
                 :color="getLegalColor(item.isLegal)"
                 class="mb-0"
@@ -1217,6 +1275,14 @@ onMounted(() => {
                 @click="moveCustomerLegal(item)"
               >
                 {{ getLegalText(item.isLegal) }}
+              </VBtn>
+              <VBtn
+                v-if="isAdmin"
+                class="mb-0 rating-equation-btn"
+                title="معادلة التقييم — تضاعف التسديد للتقييم فقط"
+                @click.stop="openRatingEquation(item)"
+              >
+                معادلة التقييم
               </VBtn>
             </div>
           </template>
@@ -2317,10 +2383,82 @@ onMounted(() => {
         </VCardActions>
       </VCard>
     </VDialog>
+
+    <VDialog
+      v-model="ratingEquationDialog"
+      max-width="480"
+    >
+      <VCard>
+        <VCardTitle class="text-h6">
+          معادلة التقييم
+        </VCardTitle>
+        <VCardText>
+          <div class="mb-3 text-body-2">
+            العميل:
+            <strong>{{ ratingEquationTarget?.customerName || '—' }}</strong>
+          </div>
+          <VAlert
+            type="info"
+            variant="tonal"
+            class="mb-4"
+            density="comfortable"
+          >
+            يضرب التسديدات بشكل وهمي للتقييم فقط.
+            مثال: تسديد 40,000 × 2 = 80,000 للتقييم، بينما الحساب الحقيقي يبقى 40,000.
+            الافتراضي = 1.
+          </VAlert>
+          <VTextField
+            v-model.number="ratingEquationFactor"
+            type="number"
+            step="0.1"
+            min="0.5"
+            max="10"
+            label="معامل المعادلة"
+            :disabled="ratingEquationLoading || ratingEquationSaving"
+            hint="مثلاً 1.5 أو 2"
+            persistent-hint
+          />
+        </VCardText>
+        <VCardActions>
+          <VSpacer />
+          <VBtn
+            variant="text"
+            :disabled="ratingEquationSaving"
+            @click="ratingEquationDialog = false"
+          >
+            إلغاء
+          </VBtn>
+          <VBtn
+            color="primary"
+            :loading="ratingEquationSaving"
+            :disabled="ratingEquationLoading"
+            @click="saveRatingEquation"
+          >
+            حفظ
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
   </VCard>
 </template>
 
 <style scoped>
+.rating-equation-btn {
+  background-color: #b45309 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.2px;
+  box-shadow: none !important;
+}
+.rating-equation-btn:hover {
+  background-color: #92400e !important;
+  color: #ffffff !important;
+}
+.rating-equation-btn :deep(.v-btn__content) {
+  color: #ffffff !important;
+  font-weight: 700 !important;
+}
+
 /* Premium numeric badges style */
 :deep(.premium-amount) {
   display: inline-block !important;

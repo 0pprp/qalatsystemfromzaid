@@ -41,8 +41,14 @@ class ShiftStartDebug {
   }
 
   static String apiFailure(Object error) {
-    if (!showDetail) return generic;
     if (error is ApiException) {
+      final serverMessage = (error.message).trim();
+      if (serverMessage.isNotEmpty &&
+          serverMessage != 'فشل الطلب (${error.statusCode})' &&
+          !serverMessage.startsWith('فشل الطلب')) {
+        return serverMessage;
+      }
+      if (!showDetail) return generic;
       final code = error.statusCode?.toString() ?? '-';
       final raw = (error.body != null && error.body!.trim().isNotEmpty)
           ? error.body!.trim()
@@ -50,6 +56,7 @@ class ShiftStartDebug {
       final body = sanitize(_clip(raw));
       return '$generic: $code - $body (${error.runtimeType})';
     }
+    if (!showDetail) return generic;
     return '$generic: ${error.runtimeType} - ${sanitize(error.toString())}';
   }
 

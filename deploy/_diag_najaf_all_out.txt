@@ -1,0 +1,35 @@
+Msg 207, Level 16, State 1, Server vmi3533397, Line 38
+Invalid column name 'Amount'.
+
+
+  qalaa-delegatehaidernajaflast.service          loaded    active   running Qalaa Delegate API - delegatehaidernajaflast.alsaaeidy.com
+Sep 20 22:16:14 vmi3533397 systemd[1]: Started qalaa-delegatehaidernajaflast.service - Qalaa Delegate API - delegatehaidernajaflast.alsaaeidy.com.
+Sep 20 22:16:15 vmi3533397 dotnet[337903]: warn: Microsoft.AspNetCore.StaticFiles.StaticFileMiddleware[16]
+Sep 20 22:16:15 vmi3533397 dotnet[337903]:       The WebRootPath was not found: /opt/qalaa-runtime/DelegateHaiderNajafLast/wwwroot. Static files may be unavailable.
+Sep 20 22:16:15 vmi3533397 dotnet[337903]: info: Microsoft.Hosting.Lifetime[14]
+Sep 20 22:16:15 vmi3533397 dotnet[337903]:       Now listening on: http://127.0.0.1:5207
+Sep 20 22:16:15 vmi3533397 dotnet[337903]: info: Microsoft.Hosting.Lifetime[0]
+Sep 20 22:16:15 vmi3533397 dotnet[337903]:       Application started. Press Ctrl+C to shut down.
+Sep 20 22:16:15 vmi3533397 dotnet[337903]: info: Microsoft.Hosting.Lifetime[0]
+Sep 20 22:16:15 vmi3533397 dotnet[337903]:       Hosting environment: Production
+Sep 20 22:16:15 vmi3533397 dotnet[337903]: info: Microsoft.Hosting.Lifetime[0]
+Sep 20 22:16:15 vmi3533397 dotnet[337903]:       Content root path: /opt/qalaa-runtime/DelegateHaiderNajafLast
+Sep 20 22:17:03 vmi3533397 systemd[1]: Stopping qalaa-delegatehaidernajaflast.service - Qalaa Delegate API - delegatehaidernajaflast.alsaaeidy.com...
+Sep 20 22:17:03 vmi3533397 dotnet[337903]: info: Microsoft.Hosting.Lifetime[0]
+Sep 20 22:17:03 vmi3533397 dotnet[337903]:       Application is shutting down...
+Sep 20 22:17:03 vmi3533397 systemd[1]: qalaa-delegatehaidernajaflast.service: Deactivated successfully.
+Sep 20 22:17:03 vmi3533397 systemd[1]: Stopped qalaa-delegatehaidernajaflast.service - Qalaa Delegate API - delegatehaidernajaflast.alsaaeidy.com.
+Sep 20 22:17:03 vmi3533397 systemd[1]: qalaa-delegatehaidernajaflast.service: Consumed 1.048s CPU time, 26.0M memory peak, 0B memory swap peak.
+Sep 20 22:17:03 vmi3533397 systemd[1]: Started qalaa-delegatehaidernajaflast.service - Qalaa Delegate API - delegatehaidernajaflast.alsaaeidy.com.
+Sep 20 22:17:05 vmi3533397 dotnet[338659]: warn: Microsoft.AspNetCore.StaticFiles.StaticFileMiddleware[16]
+Sep 20 22:17:05 vmi3533397 dotnet[338659]:       The WebRootPath was not found: /opt/qalaa-runtime/DelegateHaiderNajafLast/wwwroot. Static files may be unavailable.
+Sep 20 22:17:05 vmi3533397 dotnet[338659]: info: Microsoft.Hosting.Lifetime[14]
+Sep 20 22:17:05 vmi3533397 dotnet[338659]:       Now listening on: http://127.0.0.1:5207
+Sep 20 22:17:05 vmi3533397 dotnet[338659]: info: Microsoft.Hosting.Lifetime[0]
+Sep 20 22:17:05 vmi3533397 dotnet[338659]:       Application started. Press Ctrl+C to shut down.
+Sep 20 22:17:05 vmi3533397 dotnet[338659]: info: Microsoft.Hosting.Lifetime[0]
+Sep 20 22:17:05 vmi3533397 dotnet[338659]:       Hosting environment: Production
+Sep 20 22:17:05 vmi3533397 dotnet[338659]: info: Microsoft.Hosting.Lifetime[0]
+Sep 20 22:17:05 vmi3533397 dotnet[338659]:       Content root path: /opt/qalaa-runtime/DelegateHaiderNajafLast
+Sep 20 22:17:41 vmi3533397 dotnet[338659]: warn: Microsoft.AspNetCore.HttpsPolicy.HttpsRedirectionMiddleware[3]
+Sep 20 22:17:41 vmi3533397 dotnet[338659]:       Failed to determine the https port for redirect.

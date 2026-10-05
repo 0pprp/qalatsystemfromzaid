@@ -1,0 +1,4 @@
+branch-manager|تطبيق مدير الفرع|https://youtu.be/cdAtAIuyk7I|1
+
+SQL_EXIT 0
+API_OK {"appKey":"branch-manager","titleAr":"تطبيق مدير الفرع","videoUrl":"https://youtu.be/cdAtAIuyk7I","updatedAtUtc":"2026-10-03T20:55:23.8"}

@@ -18,6 +18,44 @@ namespace BE_Company.Sales.DTO
         public int? CurrentShiftId { get; set; }
         public int SalesTodayCount { get; set; }
         public int PendingSalesCount { get; set; }
+        /// <summary>All-time average score (latest as-of today) — التقييم الحقيقي.</summary>
+        public double? LatestRating { get; set; }
+        public string? RatingLabel { get; set; }
+        public int? RatedCustomerCount { get; set; }
+        /// <summary>«التقييم الوهمي» for the same cohort.</summary>
+        public double? PhantomLatestRating { get; set; }
+        public string? PhantomRatingLabel { get; set; }
+    }
+
+    /// <summary>
+    /// Same shape as <see cref="SalesManagerEmployeeDTO"/> for the parallel Followers tab.
+    /// GPS comes from the Delegate FollowerTracking proxy — not sales shift tables.
+    /// </summary>
+    public sealed class SalesManagerFollowerDTO
+    {
+        public int FollowerId { get; set; }
+        public string FollowerName { get; set; } = string.Empty;
+        public string CityValue { get; set; } = string.Empty;
+        public string CityName { get; set; } = string.Empty;
+        public string ShiftStatus { get; set; } = "NoShift";
+        public DateTime? ShiftStartedAt { get; set; }
+        public DateTime? ShiftCutoffAt { get; set; }
+        public DateTime? LastLocationAt { get; set; }
+        public double? LastLatitude { get; set; }
+        public double? LastLongitude { get; set; }
+        public double? LastAccuracy { get; set; }
+        public string LocationStatus { get; set; } = "NoShift";
+        public string? LastTrackingEvent { get; set; }
+        public int? CurrentShiftId { get; set; }
+        public int SalesTodayCount { get; set; }
+        public int PendingSalesCount { get; set; }
+        /// <summary>All-time average score (latest as-of today) from assigned lists — التقييم الحقيقي.</summary>
+        public double? LatestRating { get; set; }
+        public string? RatingLabel { get; set; }
+        public int? RatedCustomerCount { get; set; }
+        /// <summary>«التقييم الوهمي» for the same cohort.</summary>
+        public double? PhantomLatestRating { get; set; }
+        public string? PhantomRatingLabel { get; set; }
     }
 
     public sealed class SalesManagerRouteDTO

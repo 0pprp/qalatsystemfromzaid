@@ -46,7 +46,7 @@ const headers = [
 ]
 
 const typeColor = type => {
-  if (type === 'قانونية') return 'error'
+  if (type === 'قانونية' || type === 'طلب قانونية') return 'error'
   if (type === 'وهمي') return 'warning'
   if (type === 'متواصل') return 'info'
 
@@ -145,7 +145,7 @@ onMounted(() => {
         <VLabel class="mb-2">نوع القرار</VLabel>
         <VAutocomplete
           v-model="filters.decisionType"
-          :items="['الكل', 'متواصل', 'قانونية', 'وهمي']"
+          :items="['الكل', 'متواصل', 'قانونية', 'طلب قانونية', 'وهمي']"
           prepend-inner-icon="tabler-filter"
         />
       </VCol>

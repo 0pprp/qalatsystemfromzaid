@@ -2,6 +2,7 @@ using BE_Company.DTO;
 using BE_Company.Sales.DTO;
 using Dapper;
 using Microsoft.Data.SqlClient;
+using System.Collections.Concurrent;
 using System.Data;
 
 namespace BE_Company.Sales.Services
@@ -17,6 +18,9 @@ namespace BE_Company.Sales.Services
 
     public sealed class SalesExcelCustomerSearchCatalog : ISalesExcelCustomerSearchCatalog
     {
+        private static readonly ConcurrentDictionary<string, (DateTimeOffset At, IReadOnlyList<SalesExcelSearchCustomerRow> Rows)> CustomerCache = new();
+        private static readonly TimeSpan CustomerCacheTtl = TimeSpan.FromMinutes(3);
+
         private readonly SalesDevelopmentGuard _guard;
         private readonly IConfiguration _configuration;
 
@@ -40,6 +44,20 @@ namespace BE_Company.Sales.Services
         public int WriteCount => 0;
 
         public async Task<IReadOnlyList<SalesExcelSearchCustomerRow>> LoadCustomersAsync(CancellationToken ct)
+        {
+            var cacheKey = RequireConnection();
+            if (CustomerCache.TryGetValue(cacheKey, out var hit)
+                && DateTimeOffset.UtcNow - hit.At < CustomerCacheTtl)
+            {
+                return hit.Rows;
+            }
+
+            var rows = await LoadCustomersUncachedAsync(ct);
+            CustomerCache[cacheKey] = (DateTimeOffset.UtcNow, rows);
+            return rows;
+        }
+
+        private async Task<IReadOnlyList<SalesExcelSearchCustomerRow>> LoadCustomersUncachedAsync(CancellationToken ct)
         {
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);

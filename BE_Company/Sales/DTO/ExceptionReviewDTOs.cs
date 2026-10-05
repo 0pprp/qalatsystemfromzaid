@@ -67,6 +67,8 @@ namespace BE_Company.Sales.DTO
         public bool IsLegal { get; set; }
         public ExceptionReviewFinancialSummaryDTO FinancialSummary { get; set; } = new();
         public List<ExceptionReviewPreviousSaleDTO> PreviousSales { get; set; } = [];
+        /// <summary>Per-payment lines (amount + date) for review UI.</summary>
+        public List<SalesCustomerPaymentDTO> Payments { get; set; } = [];
     }
 
     public sealed class ExceptionReviewFinancialSummaryDTO

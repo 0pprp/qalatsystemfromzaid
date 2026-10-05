@@ -235,13 +235,19 @@ WHERE Id = @Id",
             await using var connection = new SqlConnection(cs);
             var row = await connection.QueryFirstOrDefaultAsync<SalesCustomerDocumentDTO>(new CommandDefinition(
                 SelectSql + " WHERE Id = @Id", new { Id = id }, cancellationToken: ct));
-            if (row == null || string.IsNullOrWhiteSpace(row.FileKey))
+            if (row == null)
             {
                 return null;
             }
 
-            var path = ResolvePath(row.FileKey);
-            if (!File.Exists(path))
+            var path = !string.IsNullOrWhiteSpace(row.FileKey) ? ResolvePath(row.FileKey) : null;
+            if (path == null || !File.Exists(path))
+            {
+                // Recover when FileKey is stale but file still exists under customer-docs/{id}.*
+                path = FindCustomerDocOnDisk(id);
+            }
+
+            if (path == null || !File.Exists(path))
             {
                 return null;
             }
@@ -250,7 +256,27 @@ WHERE Id = @Id",
             var contentType = string.IsNullOrWhiteSpace(row.ContentType)
                 ? GuessContentType(Path.GetExtension(path))
                 : row.ContentType!;
-            return (row.FileName, bytes, contentType);
+            return (row.FileName ?? Path.GetFileName(path), bytes, contentType);
+        }
+
+        private string? FindCustomerDocOnDisk(int id)
+        {
+            var folder = Path.Combine(_env.ContentRootPath, "App_Data", "sales", "customer-docs");
+            if (!Directory.Exists(folder))
+            {
+                return null;
+            }
+
+            foreach (var ext in new[] { ".jpg", ".jpeg", ".png", ".webp" })
+            {
+                var candidate = Path.Combine(folder, id + ext);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return Directory.GetFiles(folder, id + ".*").FirstOrDefault();
         }
 
         public async Task DeleteAsync(int id, int? employeeId, CancellationToken ct)

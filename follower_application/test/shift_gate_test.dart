@@ -12,7 +12,11 @@ class _FakeRepo implements FollowerTrackingRepository {
   Future<WorkShift?> currentShift() async => current;
 
   @override
-  Future<void> endShift() async {
+  Future<void> endShift({
+    double? latitude,
+    double? longitude,
+    double? accuracy,
+  }) async {
     endCalled = true;
     current = null;
   }
@@ -41,8 +45,10 @@ class _FakeRepo implements FollowerTrackingRepository {
 void main() {
   test('operational routes are gated', () {
     expect(ShiftGateCoordinator.isOperationalRoute('/HomePage'), isTrue);
-    expect(ShiftGateCoordinator.isOperationalRoute('/CustomerProfile'), isTrue);
-    expect(ShiftGateCoordinator.isOperationalRoute('/FollowerSalesRequest'), isTrue);
+    // Sub-pages no longer re-hit the remote gate (avoids 20s stalls).
+    expect(ShiftGateCoordinator.isOperationalRoute('/CustomerProfile'), isFalse);
+    expect(
+        ShiftGateCoordinator.isOperationalRoute('/FollowerSalesRequest'), isFalse);
     expect(ShiftGateCoordinator.isOperationalRoute('/StartShift'), isFalse);
     expect(ShiftGateCoordinator.isOperationalRoute('/Login'), isFalse);
   });

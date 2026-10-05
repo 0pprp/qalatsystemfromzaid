@@ -485,7 +485,7 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task Assign_SetsPendingFilter()
+        public async Task Assign_SetsReadyForSale_NotPendingFilter()
         {
             var requests = new FakeRequestRepository();
             requests.Rows.Add(new SalesRequestDTO
@@ -509,11 +509,11 @@ namespace BE_Company.Sales.Tests
                 CityValue = "baghdad-karkh",
                 CityName = "بغداد الكرخ",
             }, default);
-            Assert.Equal(SalesFilterStatuses.PendingFilter, updated.FilterStatus);
+            Assert.Equal(SalesFilterStatuses.ReadyForSale, updated.FilterStatus);
         }
 
         [Fact]
-        public async Task PendingFilter_NotVisibleToSalesEmployee()
+        public async Task PendingFilter_IsVisibleToSalesEmployee_AfterFilterRetired()
         {
             var requests = new FakeRequestRepository();
             requests.Rows.Add(new SalesRequestDTO
@@ -523,7 +523,7 @@ namespace BE_Company.Sales.Tests
                 FilterStatus = SalesFilterStatuses.PendingFilter, CreatedAtUtc = DateTime.UtcNow,
             });
             var svc = new SalesRequestService(requests, new FakeClock { UtcNow = DateTime.UtcNow });
-            Assert.Empty(await svc.ListForEmployeeAsync(7, default));
+            Assert.Single(await svc.ListForEmployeeAsync(7, default));
         }
 
         [Fact]

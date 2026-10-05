@@ -113,6 +113,24 @@ namespace BE_Company.Sales.Controllers
 
             if (!forwarded.Ok)
             {
+                // Gateway already has an active exception but branch hold was lost — repair denormalized hold.
+                if (forwarded.FailureStatusCode == StatusCodes.Status409Conflict
+                    && TryReadExceptionId(forwarded.ResponseBody, out var existingId))
+                {
+                    try
+                    {
+                        await _requests.SetExceptionHoldAsync(
+                            salesRequestId,
+                            SalesExceptionHoldStatuses.Pending,
+                            existingId,
+                            ct);
+                    }
+                    catch
+                    {
+                        // Still return the gateway conflict; hold repair is best-effort.
+                    }
+                }
+
                 return ToActionResult(forwarded);
             }
 
@@ -282,6 +300,19 @@ namespace BE_Company.Sales.Controllers
         {
             if (!forwarded.Ok)
             {
+                if (forwarded.FailureStatusCode == StatusCodes.Status409Conflict
+                    && TryReadExceptionId(forwarded.ResponseBody, out var existingId))
+                {
+                    return new ObjectResult(new
+                    {
+                        message = forwarded.ErrorMessage,
+                        existingExceptionId = existingId
+                    })
+                    {
+                        StatusCode = StatusCodes.Status409Conflict
+                    };
+                }
+
                 return new ObjectResult(new { message = forwarded.ErrorMessage })
                 {
                     StatusCode = forwarded.FailureStatusCode
@@ -341,18 +372,14 @@ namespace BE_Company.Sales.Controllers
             try
             {
                 using var doc = JsonDocument.Parse(body);
-                if (doc.RootElement.TryGetProperty("id", out var idProp)
-                    && idProp.ValueKind == JsonValueKind.String
-                    && Guid.TryParse(idProp.GetString(), out id))
+                foreach (var name in new[] { "id", "Id", "existingExceptionId", "ExistingExceptionId" })
                 {
-                    return true;
-                }
-
-                if (doc.RootElement.TryGetProperty("Id", out idProp)
-                    && idProp.ValueKind == JsonValueKind.String
-                    && Guid.TryParse(idProp.GetString(), out id))
-                {
-                    return true;
+                    if (doc.RootElement.TryGetProperty(name, out var idProp)
+                        && idProp.ValueKind == JsonValueKind.String
+                        && Guid.TryParse(idProp.GetString(), out id))
+                    {
+                        return true;
+                    }
                 }
             }
             catch (JsonException)

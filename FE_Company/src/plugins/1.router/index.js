@@ -30,9 +30,13 @@ const router = createRouter({
 
 
 function homePath() {
-  return localStorage.getItem('UserType') === 'مدير مبيعات'
-    ? '/sales-manager-dashboard'
-    : '/'
+  const t = localStorage.getItem('UserType')
+  if (t === 'المدير')
+    return '/director-ratings'
+  if (t === 'مدير مبيعات')
+    return '/sales-manager-dashboard'
+
+  return '/'
 }
 
 router.beforeEach((to, from, next) => {
@@ -65,19 +69,81 @@ router.beforeEach((to, from, next) => {
   const userType = localStorage.getItem('UserType') || ''
   if (userType === 'مدير مبيعات' && to.path === '/')
     return next('/sales-manager-dashboard')
+  if (userType === 'المدير' && to.path === '/')
+    return next('/director-ratings')
 
-  const adminOnlyPaths = ['/users-list', '/user-active', '/backup-database']
+  const adminOnlyPaths = [
+    '/users-list',
+    '/user-active',
+    '/backup-database',
+    '/accountant-legal-search',
+    '/accountant-tutorial-video',
+  ]
   if (adminOnlyPaths.includes(to.path) && userType !== 'محاسب رئيسي') {
     return next(homePath())
   }
 
-  const decisionPaths = ['/decision-board', '/decisions-list']
+  // لوحة ضعفاء التسديد لمدير الفرع فقط — مش للمحاسب
+  if (to.path === '/decision-board' && userType !== 'مدير فرع') {
+    return next(homePath())
+  }
+
+  const decisionPaths = ['/decisions-list', '/legal-conversion-requests']
   if (decisionPaths.includes(to.path) && userType !== 'مدير فرع' && userType !== 'محاسب رئيسي') {
     return next(homePath())
   }
 
-  const salesManagerPaths = ['/sales-manager-dashboard', '/sales-manager-employees', '/sales-manager-map', '/sales-manager-routes', '/sales-manager-sales', '/sales-manager-requests', '/sales-manager-request-create', '/sales-manager-purchases', '/sales-manager-excel-search']
+  const salesManagerPaths = [
+    '/sales-manager-dashboard',
+    '/sales-manager-employees',
+    '/sales-manager-map',
+    '/sales-manager-routes',
+    '/sales-manager-sales',
+    '/sales-manager-legal-followups',
+    '/sales-manager-request-create',
+    '/sales-manager-excel-search',
+  ]
   if (salesManagerPaths.includes(to.path) && userType !== 'مدير مبيعات') {
+    return next(homePath())
+  }
+
+  // تبويبات أُزيلت من قائمة مدير المبيعات — منع الدخول المباشر
+  const salesManagerHiddenPaths = [
+    '/sales-manager-ratings',
+    '/sales-manager-followers',
+    '/sales-manager-followers-map',
+    '/sales-manager-followers-routes',
+    '/sales-manager-purchases',
+    '/sales-manager-tutorial-links',
+  ]
+  if (userType === 'مدير مبيعات' && salesManagerHiddenPaths.includes(to.path)) {
+    return next('/sales-manager-dashboard')
+  }
+
+  // طلبات البيع: مدير المبيعات + المدير (نفس الصفحة)
+  if (to.path === '/sales-manager-requests'
+    && userType !== 'مدير مبيعات'
+    && userType !== 'المدير') {
+    return next(homePath())
+  }
+
+  if (to.path === '/director-ratings' && userType !== 'المدير') {
+    return next(homePath())
+  }
+
+  if (to.path === '/accountant-ratings' && userType !== 'محاسب رئيسي') {
+    return next(homePath())
+  }
+
+  const directorAllowed = ['/director-ratings', '/sales-manager-customer-profile', '/sales-manager-requests']
+  // Director: ratings + sales requests + customer profile drill-down
+  if (userType === 'المدير' && !directorAllowed.includes(to.path) && to.path !== '/logout') {
+    return next('/director-ratings')
+  }
+
+  if (to.path === '/sales-manager-customer-profile'
+    && userType !== 'مدير مبيعات'
+    && userType !== 'المدير') {
     return next(homePath())
   }
 

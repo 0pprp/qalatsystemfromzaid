@@ -118,11 +118,21 @@ class _LoginScreenState extends State<LoginScreen> {
         _alert(payload['message']?.toString() ?? 'فشل تسجيل الدخول');
         return;
       }
+      final userType = '${payload['userType'] ?? payload['UserType'] ?? ''}'.trim();
+      if (userType != 'موظف مبيعات') {
+        _alert(
+          userType.isEmpty
+              ? 'هذا التطبيق مخصص لحسابات «موظف مبيعات» فقط.'
+              : 'نوع حسابك «$userType» غير مسموح في تطبيق موظف المبيعات.\nاستخدم حساباً نوعه «موظف مبيعات».',
+        );
+        return;
+      }
       await _kickPreviousUserIfNeeded(_userCtrl.text.trim(), payload);
       await Session.saveLogin({
         ...payload,
         'token': token,
         'userName': _userCtrl.text.trim(),
+        'userType': userType,
         'cityName': _selectedBranch?.name ?? AppEnv.loginCityLabel(),
       });
       if (!mounted) return;

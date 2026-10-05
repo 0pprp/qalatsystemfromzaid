@@ -49,6 +49,7 @@ const decisionOptions = [
   { title: 'متواصل معه', value: 'متواصل', color: 'info', icon: 'tabler-phone-call' },
   { title: 'إرسال للقانونية', value: 'قانونية', color: 'error', icon: 'tabler-scale' },
   { title: 'مبيع وهمي', value: 'وهمي', color: 'warning', icon: 'tabler-alert-octagon' },
+  { title: 'التنازل', value: 'تنازل', color: 'success', icon: 'tabler-cash' },
 ]
 
 const totals = computed(() => [
@@ -93,7 +94,9 @@ async function fetchWeakPayers() {
     loading.value = true
     const authHeader = getAuthHeaders()
     const response = await axios.get(`${apiUrl}CustomerDecisions/WeakWeekPayers`, { headers: authHeader })
-    payersData.value = response.data || []
+    const rows = response.data || []
+    // مصفرون (الباقي ≤ 0) لا يحتاجون قراراً
+    payersData.value = rows.filter(r => Number(r.amountRemaining ?? r.AmountRemaining ?? 0) > 0)
   } catch (error) {
     console.error(error)
     toast.error('تعذر جلب لوحة ضعفاء التسديد')
@@ -131,24 +134,52 @@ async function submitDecision() {
     return
   }
 
+  const type = decisionForm.value.decisionType
+  const note = (decisionForm.value.note || '').trim()
+  if ((type === 'متواصل' || type === 'تنازل') && !note) {
+    toast.warning(type === 'تنازل'
+      ? 'الملاحظة إجبارية لطلب التنازل'
+      : 'الملاحظة إجبارية لقرار متواصل')
+
+    return
+  }
+
   try {
     submitting.value = true
     const authHeader = getAuthHeaders()
-    await axios.post(`${apiUrl}CustomerDecisions/Decide`, {
-      customerID: selectedCustomer.value.customerID,
-      decisionType: decisionForm.value.decisionType,
-      note: decisionForm.value.note || null,
-    }, { headers: authHeader })
+    const decidedId = selectedCustomer.value.customerID
+
+    if (type === 'تنازل') {
+      await axios.post(`${apiUrl}branch-manager/waivers`, {
+        customerId: decidedId,
+        customerName: selectedCustomer.value.customerName || null,
+        customerPhone: selectedCustomer.value.phoneNumber || null,
+        note,
+      }, { headers: authHeader })
+      toast.success('تم إرسال طلب التنازل إلى المدير المفوض')
+    }
+    else {
+      await axios.post(`${apiUrl}CustomerDecisions/Decide`, {
+        customerID: decidedId,
+        decisionType: type,
+        note: note || null,
+      }, { headers: authHeader })
+
+      const isLegalRequest = type === 'قانونية'
+      toast.success(isLegalRequest
+        ? 'تم إرسال طلب القانونية للمحاسب — خرج من ضعفاء المدير ويبقى عند المندوب حتى الموافقة'
+        : 'تم حفظ القرار')
+    }
 
     decideDialog.value = false
-    toast.success('تم حفظ القرار')
-    const decidedId = selectedCustomer.value.customerID
     payersData.value = payersData.value.filter(row => row.customerID !== decidedId)
     await fetchWeakPayers()
-  } catch (error) {
+  }
+  catch (error) {
     console.error(error)
     toast.error(error.response?.data?.message || 'فشل حفظ القرار')
-  } finally {
+  }
+  finally {
     submitting.value = false
   }
 }
@@ -315,7 +346,9 @@ onMounted(() => {
         </VRadioGroup>
         <VTextarea
           v-model="decisionForm.note"
-          label="ملاحظة (اختياري)"
+          :label="decisionForm.decisionType === 'تنازل' || decisionForm.decisionType === 'متواصل'
+            ? 'ملاحظة (إجبارية)'
+            : 'ملاحظة (اختياري)'"
           rows="3"
           class="mt-4"
         />

@@ -13,7 +13,8 @@ namespace BE_Company.Sales.Services
             AddPostingColumnsSql,
             BackfillPostingSql,
             PostingIndexesSql,
-            AddWizardStepSql
+            AddWizardStepSql,
+            AddCustomerSaleIdSql
         ];
 
         public const string CoreSql = @"
@@ -137,5 +138,9 @@ END;";
         public const string AddWizardStepSql = @"
 IF COL_LENGTH(N'dbo.SalesDrafts', N'WizardCurrentStep') IS NULL
     ALTER TABLE dbo.SalesDrafts ADD WizardCurrentStep INT NULL;";
+
+        public const string AddCustomerSaleIdSql = @"
+IF COL_LENGTH(N'dbo.SalesDrafts', N'CustomerSaleId') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD CustomerSaleId INT NULL;";
     }
 }

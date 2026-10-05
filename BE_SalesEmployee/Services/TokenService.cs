@@ -28,6 +28,16 @@ namespace BE_SalesEmployee.Services
             return CreateCentralRoleToken(userName, "مدير مفوض", "كل المحافظات", out expiration);
         }
 
+        public string CreateMainFollowerToken(string userName, out DateTime expiration)
+        {
+            return CreateCentralRoleToken(userName, "متابع رئيسي", "مهام متعددة المحافظات", out expiration);
+        }
+
+        public string CreateDirectorToken(string userName, out DateTime expiration)
+        {
+            return CreateCentralRoleToken(userName, "المدير", "كل المحافظات", out expiration);
+        }
+
         private string CreateCentralRoleToken(
             string userName,
             string userType,

@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'package:delegate_application/services/business_day_collection_store.dart';
 import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/utils/iraq_date.dart';
@@ -6,11 +10,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Idempotent daily rollover for «تسديدات اليوم» (Baghdad business day @ 03:00).
 ///
-  /// Does **not** delete server history or local payment rows. Only advances
-  /// [lastBusinessDate] and refreshes the today-list UI.
-  ///
-  /// Payment HTTP upload is gated separately at 16:00 ([PaymentSyncService]);
-  /// a rollover at 03:00 may call sync but the gate will SKIP until 16:00.
+/// Before switching the UI day: last-chance flush of previous-day pending
+/// (bypass 16:00 gate once — those rows were already eligible after 16:00).
+/// Then purges **Synced** local rows from prior business days. PendingSync /
+/// SyncFailed that remain offline are kept until the next send window.
+///
+/// Schedules an in-process timer for the next 03:00 so a foreground app that
+/// never backgrounds still zeroes day counters.
+///
+/// Payment HTTP upload window: [16:00 → 02:59] Baghdad ([PaymentSyncService]).
 class DelegateBusinessDateService with WidgetsBindingObserver {
   DelegateBusinessDateService._();
   static final DelegateBusinessDateService instance =
@@ -20,23 +28,32 @@ class DelegateBusinessDateService with WidgetsBindingObserver {
 
   bool _started = false;
   bool _rolling = false;
+  Timer? _nextRolloverTimer;
 
   Future<void> start() async {
     if (_started) return;
     _started = true;
     WidgetsBinding.instance.addObserver(this);
     await ensureCurrentBusinessDay();
+    _scheduleNextRollover();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      ensureCurrentBusinessDay();
+      unawaited(_onResume());
     }
+  }
+
+  Future<void> _onResume() async {
+    await ensureCurrentBusinessDay();
+    _scheduleNextRollover();
   }
 
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
+    _nextRolloverTimer?.cancel();
+    _nextRolloverTimer = null;
     _started = false;
   }
 
@@ -57,9 +74,18 @@ class DelegateBusinessDateService with WidgetsBindingObserver {
         return false;
       }
 
-      // Flush pending uploads from previous business day(s) before UI switch.
-      // CreatedAtUtc on each row preserves the original event time.
-      await PaymentSyncService.instance.syncPendingPayments();
+      // Last-chance upload of previous business-day leftovers before UI zeroes.
+      // Bypass gate: at 03:00 the new day's send window is not open yet, but
+      // these rows already passed yesterday's 16:00 eligibility.
+      await PaymentSyncService.instance
+          .flushPendingForBusinessDayRollover(utcNow: utcNow);
+
+      // Dedupe exact ClientPaymentId copies before purge.
+      await DatabaseHelper().deleteDuplicateClientPaymentIds();
+
+      // Physical local wipe: Synced rows outside this business day only.
+      await DatabaseHelper().purgeSyncedPaymentsBeforeBusinessDay(utcNow: utcNow);
+      await BusinessDayCollectionStore.purgeOlderThanDays(utcNow: utcNow);
 
       await prefs.setString(prefsKey, current);
       TodayPaymentsRefresh.notify();
@@ -67,5 +93,18 @@ class DelegateBusinessDateService with WidgetsBindingObserver {
     } finally {
       _rolling = false;
     }
+  }
+
+  void _scheduleNextRollover({DateTime? utcNow}) {
+    _nextRolloverTimer?.cancel();
+    final delay = IraqDate.delayUntilNextBusinessDayStart(utcNow);
+    // Clamp tiny delays so we never busy-loop if clock jumps.
+    final safe = delay < const Duration(seconds: 1)
+        ? const Duration(seconds: 1)
+        : delay;
+    _nextRolloverTimer = Timer(safe, () async {
+      await ensureCurrentBusinessDay();
+      _scheduleNextRollover();
+    });
   }
 }

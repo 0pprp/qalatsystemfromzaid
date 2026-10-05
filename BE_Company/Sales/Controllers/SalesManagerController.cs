@@ -1,3 +1,4 @@
+using BE_Company.IRepository;
 using BE_Company.Sales.Authorization;
 using BE_Company.Sales.DTO;
 using BE_Company.Sales.Services;
@@ -26,6 +27,12 @@ namespace BE_Company.Sales.Controllers
         private readonly ISalesRequestEvaluationService _evaluation;
         private readonly IExceptionReviewService _exceptionReview;
         private readonly ISharedCustomerNotesService _sharedNotes;
+        private readonly ILegalFollowupService _legalFollowups;
+        private readonly IFollowerDirectoryService _followers;
+        private readonly IDelegatesRepository _delegates;
+        private readonly IBranchManagerStatsService _stats;
+        private readonly IBranchMonthStatsService _monthStats;
+        private readonly ISalesManagerFollowerQueryService _followerQuery;
 
         public SalesManagerController(
             SalesDevelopmentGuard guard,
@@ -39,9 +46,15 @@ namespace BE_Company.Sales.Controllers
             ISalesCustomerDocumentService customerDocs,
             ISalesPurchaseService purchases,
             ISalesExcelCustomerSearchService excelSearch,
-            ISalesRequestEvaluationService evaluation,
             IExceptionReviewService exceptionReview,
-            ISharedCustomerNotesService sharedNotes)
+            ISalesRequestEvaluationService evaluation,
+            ISharedCustomerNotesService sharedNotes,
+            ILegalFollowupService legalFollowups,
+            IFollowerDirectoryService followers,
+            IDelegatesRepository delegates,
+            IBranchManagerStatsService stats,
+            IBranchMonthStatsService monthStats,
+            ISalesManagerFollowerQueryService followerQuery)
         {
             _guard = guard;
             _identity = identity;
@@ -57,6 +70,12 @@ namespace BE_Company.Sales.Controllers
             _evaluation = evaluation;
             _exceptionReview = exceptionReview;
             _sharedNotes = sharedNotes;
+            _legalFollowups = legalFollowups;
+            _followers = followers;
+            _delegates = delegates;
+            _stats = stats;
+            _monthStats = monthStats;
+            _followerQuery = followerQuery;
         }
 
         [HttpGet("dashboard")]
@@ -76,7 +95,30 @@ namespace BE_Company.Sales.Controllers
             // do not equality-filter rows by GetAdmin numeric ids (that emptied or mis-routed lists).
             _ = cityValue;
             var rows = await _query.ListEmployeesAsync(shiftStatus, locationStatus, ct);
+            await _stats.AttachEmployeeLatestRatingsAsync(rows, ct);
             return Ok(rows);
+        }
+
+        /// <summary>Active sales lists (delegates) for main-follower committee reviews.</summary>
+        [HttpGet("delegates")]
+        public async Task<IActionResult> Delegates([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            _ = cityValue;
+            var rows = await _delegates.Delegates_GetAll(null) ?? [];
+            return Ok(rows
+                .Where(d => d.DelegateID is > 0)
+                .Where(d => d.DelegateState != false)
+                .Select(d => new
+                {
+                    delegateId = d.DelegateID,
+                    delegateName = d.DelegateName,
+                    phone = d.PhoneNumber,
+                    notes = d.Notes,
+                    cityId = d.CityID,
+                    customerCount = d.NumberOfCustomer
+                }));
         }
 
         [HttpGet("live-locations")]
@@ -248,8 +290,11 @@ namespace BE_Company.Sales.Controllers
                 return BadRequest(new { message = "حدد الزبون." });
             }
 
-            var profile = await _shops.GetCustomerProfileAsync(customerId, name, phone, ct);
-            profile.CustomerDocuments = await _customerDocs.ListForCustomerAsync(customerId, name, phone, true, ct);
+            var profileTask = _shops.GetCustomerProfileAsync(customerId, name, phone, ct);
+            var docsTask = _customerDocs.ListForCustomerAsync(customerId, name, phone, true, ct);
+            await Task.WhenAll(profileTask, docsTask);
+            var profile = await profileTask;
+            profile.CustomerDocuments = await docsTask;
             var identity = _identity.FromAuthenticatedUser();
             if (identity != null)
             {
@@ -381,10 +426,15 @@ namespace BE_Company.Sales.Controllers
             var image = await _customerDocs.ReadFileAsync(documentId, ct);
             if (image == null)
             {
-                return NotFound();
+                return NotFound(new { message = "الملف غير موجود على السيرفر." });
             }
 
-            return File(image.Value.Bytes, image.Value.ContentType, image.Value.FileName);
+            // Browsers + gateway blob clients handle jpeg/png better than octet-stream.
+            var type = string.IsNullOrWhiteSpace(image.Value.ContentType)
+                       || image.Value.ContentType.Contains("octet-stream", StringComparison.OrdinalIgnoreCase)
+                ? GuessImageContentType(image.Value.FileName)
+                : image.Value.ContentType;
+            return File(image.Value.Bytes, type, image.Value.FileName);
         }
 
         [HttpPost("customers/documents")]
@@ -478,11 +528,51 @@ namespace BE_Company.Sales.Controllers
             }
         }
 
-        [HttpGet("sales-requests")]
-        public async Task<IActionResult> Requests([FromQuery] string? cityValue, [FromQuery] int? employeeId, [FromQuery] string? status, [FromQuery] DateTime? date, CancellationToken ct)
+        [HttpGet("sales-requests/deleted")]
+        public async Task<IActionResult> DeletedRequests(
+            [FromQuery] string? cityValue,
+            [FromQuery] int? page,
+            [FromQuery] int pageSize = 40,
+            [FromQuery] string? q = null,
+            CancellationToken ct = default)
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
+            _ = cityValue;
+            // Paged path for FE board; legacy callers without page still get capped list.
+            if (page is > 0)
+            {
+                return Ok(await _requests.ListDeletedForManagerPageAsync(q, page.Value, pageSize, ct));
+            }
+
+            var rows = await _requests.ListDeletedForManagerAsync(ct);
+            return Ok(rows);
+        }
+
+        [HttpGet("sales-requests")]
+        public async Task<IActionResult> Requests(
+            [FromQuery] string? cityValue,
+            [FromQuery] int? employeeId,
+            [FromQuery] string? status,
+            [FromQuery] DateTime? date,
+            [FromQuery] int? page,
+            [FromQuery] int pageSize = 40,
+            [FromQuery] string? tab = null,
+            [FromQuery] string? q = null,
+            CancellationToken ct = default)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+
+            // Production board: page+tab+q → lean paged JSON (20k+ safe).
+            if (page is > 0)
+            {
+                _ = cityValue;
+                _ = status;
+                _ = date;
+                return Ok(await _requests.ListForManagerPageAsync(tab, employeeId, q, page.Value, pageSize, ct));
+            }
+
             DateTime? from = date?.Date;
             DateTime? to = from?.AddDays(1);
             var rows = await _requests.ListForManagerAsync(status, employeeId, from, to, ct);
@@ -513,13 +603,10 @@ namespace BE_Company.Sales.Controllers
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
-            var rows = await _requests.ListEmployeeSubmittedAsync(ct);
-            if (!string.IsNullOrWhiteSpace(cityValue))
-            {
-                rows = rows.Where(r => string.Equals(r.CityValue, cityValue, StringComparison.OrdinalIgnoreCase)).ToList();
-            }
-
-            return Ok(new { count = rows.Count(r => r.ManagerReadAtUtc == null) });
+            // Always SQL COUNT — never hydrate employee-submitted rows for a badge.
+            // cityValue is gateway routing only; each branch DB is one province.
+            _ = cityValue;
+            return Ok(new { count = await _requests.CountUnreadEmployeeSubmittedAsync(ct) });
         }
 
         [HttpPost("sales-requests/{id:int}/mark-read")]
@@ -681,6 +768,22 @@ namespace BE_Company.Sales.Controllers
             public Guid? ExceptionId { get; set; }
         }
 
+        [HttpPost("sales-requests/assign-batch")]
+        public async Task<IActionResult> AssignBatch([FromBody] SalesRequestAssignBatchDTO? body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _requests.AssignBatchAsync(identity!, body ?? new SalesRequestAssignBatchDTO(), ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+
         [HttpPost("sales-requests/{id:int}/assign")]
         public async Task<IActionResult> AssignRequest(int id, [FromBody] SalesRequestAssignDTO body, CancellationToken ct)
         {
@@ -698,14 +801,18 @@ namespace BE_Company.Sales.Controllers
         }
 
         [HttpPost("sales-requests/{id:int}/return")]
-        public async Task<IActionResult> ReturnRequest(int id, [FromBody] SalesRequestNoteDTO body, CancellationToken ct)
+        public async Task<IActionResult> ReturnRequest(int id, [FromBody] SalesRequestNoteDTO? body, CancellationToken ct)
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
             var identity = _identity.FromAuthenticatedUser();
             try
             {
-                return Ok(await _requests.ReturnAsync(identity!, id, body.Note ?? body.Reason ?? string.Empty, ct));
+                return Ok(await _requests.ReturnAsync(
+                    identity!,
+                    id,
+                    body?.Note ?? body?.Reason ?? string.Empty,
+                    ct));
             }
             catch (SalesCompleteException ex)
             {
@@ -857,20 +964,63 @@ namespace BE_Company.Sales.Controllers
             }
         }
 
-        [HttpDelete("sales-requests/{id:int}")]
-        public async Task<IActionResult> DeleteRequest(int id, CancellationToken ct)
+        [HttpGet("sales-requests/{id:int}/soft-delete-impact")]
+        public async Task<IActionResult> SoftDeleteImpact(int id, CancellationToken ct)
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
             var identity = _identity.FromAuthenticatedUser();
             try
             {
-                await _requests.SoftDeleteAsync(identity!, id, ct);
+                return Ok(await _requests.GetSoftDeleteImpactAsync(identity!, id, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message, code = ex.Code });
+            }
+        }
+
+        [HttpDelete("sales-requests/{id:int}")]
+        public async Task<IActionResult> DeleteRequest(int id, [FromBody] SalesRequestSoftDeleteDTO? body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                await _requests.SoftDeleteAsync(
+                    identity!,
+                    id,
+                    body?.Reason ?? "",
+                    body?.ConfirmCascadePayments ?? false,
+                    ct);
                 return Ok(new { message = "تم حذف الطلب." });
             }
             catch (SalesCompleteException ex)
             {
-                return StatusCode(ex.StatusCode, new { message = ex.Message });
+                return StatusCode(ex.StatusCode, new { message = ex.Message, code = ex.Code });
+            }
+        }
+
+        [HttpPost("sales-requests/{id:int}/soft-delete")]
+        public async Task<IActionResult> SoftDeleteRequest(int id, [FromBody] SalesRequestSoftDeleteDTO? body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                await _requests.SoftDeleteAsync(
+                    identity!,
+                    id,
+                    body?.Reason ?? "",
+                    body?.ConfirmCascadePayments ?? false,
+                    ct);
+                return Ok(new { message = "تم حذف الطلب." });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message, code = ex.Code });
             }
         }
 
@@ -937,6 +1087,240 @@ namespace BE_Company.Sales.Controllers
             {
                 return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
+        }
+
+        [HttpGet("legal-followups")]
+        public async Task<IActionResult> LegalFollowups([FromQuery] string? status, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            try
+            {
+                return Ok(await _legalFollowups.ListAsync(status, ct));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("legal-followups/followers")]
+        public async Task<IActionResult> LegalFollowupFollowers(CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var rows = await _followers.ListActiveFollowersAsync(ct);
+            return Ok(rows.Select(f => new
+            {
+                userId = f.UserId,
+                followerId = f.FollowerId,
+                followerName = f.FollowerName,
+                cityName = f.CityName,
+                cityId = f.CityId
+            }));
+        }
+
+        [HttpGet("legal-followups/{id:int}")]
+        public async Task<IActionResult> LegalFollowup(int id, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var item = await _legalFollowups.GetAsync(id, ct);
+            return item == null ? NotFound(new { message = "المتابعة غير موجودة" }) : Ok(item);
+        }
+
+        [HttpGet("legal-followups/{id:int}/case-documents/{documentId:int}/file")]
+        public async Task<IActionResult> LegalFollowupCaseDocumentFile(int id, int documentId, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var file = await _legalFollowups.ReadCaseDocumentAsync(id, documentId, ct);
+            if (file == null) return NotFound(new { message = "المستند غير موجود" });
+            return File(file.Value.Bytes, file.Value.ContentType, file.Value.FileName);
+        }
+
+        [HttpPost("legal-followups")]
+        public async Task<IActionResult> CreateLegalFollowup([FromBody] LegalFollowupCreateRequest body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                var created = await _legalFollowups.CreateAsync(
+                    body ?? new LegalFollowupCreateRequest(),
+                    identity!.EmployeeId,
+                    identity.EmployeeName,
+                    ct);
+                return Ok(created);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Same ratings catalog as branch-manager/stats/catalog.
+        /// Gateway (مدير مفوض / مدير مبيعات) uses this so city BM role is not required.
+        /// </summary>
+        [HttpGet("stats/catalog")]
+        public async Task<IActionResult> StatsCatalog(CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            return Ok(await _stats.GetCatalogAsync(ct));
+        }
+
+        /// <summary>Branch new/zeroed/net for current + previous calendar month (new = any sale in month).</summary>
+        [HttpGet("stats/branch-month")]
+        public async Task<IActionResult> StatsBranchMonth(CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            return Ok(await _monthStats.GetAsync(ct));
+        }
+
+        [HttpGet("stats/trend")]
+        public async Task<IActionResult> StatsTrend(
+            [FromQuery] string? scope,
+            [FromQuery] int id,
+            [FromQuery] DateTime? fromDate,
+            [FromQuery] DateTime? toDate,
+            [FromQuery] bool fullHistory = false,
+            CancellationToken ct = default)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+
+            var today = DateTime.UtcNow.AddHours(3).Date;
+            var from = (fromDate ?? new DateTime(today.Year, today.Month, 1)).Date;
+            var to = (toDate ?? today).Date;
+            return Ok(await _stats.GetTrendAsync(scope ?? "branch", id, from, to, ct, fullHistory));
+        }
+
+        /// <summary>
+        /// زبائن مستوى تقييم (ممتاز/جيد/…) لنطاق الفرع/قائمة/متابع/موظف — drill-down للمدير.
+        /// Page-capped for production (~100k customers).
+        /// </summary>
+        [HttpGet("stats/rating-customers")]
+        public async Task<IActionResult> StatsRatingCustomers(
+            [FromQuery] string? scope,
+            [FromQuery] int id,
+            [FromQuery] string? level,
+            [FromQuery] DateTime? fromDate,
+            [FromQuery] DateTime? toDate,
+            [FromQuery] int take = 500,
+            [FromQuery] int skip = 0,
+            [FromQuery] string? q = null,
+            CancellationToken ct = default)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+
+            var today = DateTime.UtcNow.AddHours(3).Date;
+            var from = (fromDate ?? new DateTime(today.Year, today.Month, 1)).Date;
+            var to = (toDate ?? today).Date;
+            return Ok(await _stats.GetRatingCustomersAsync(
+                scope ?? "branch", id, level, from, to, ct, take, skip, q));
+        }
+
+        /// <summary>Lifetime daily rating for one sales employee (first sale → today).</summary>
+        [HttpGet("employees/{employeeId:int}/rating-trend")]
+        public async Task<IActionResult> EmployeeRatingTrend(int employeeId, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            return Ok(await _stats.GetEmployeeLifetimeTrendAsync(employeeId, ct));
+        }
+
+        /// <summary>Customers in one rating bucket for an employee (ممتاز/جيد/…).</summary>
+        [HttpGet("employees/{employeeId:int}/rating-customers")]
+        public async Task<IActionResult> EmployeeRatingCustomers(
+            int employeeId,
+            [FromQuery] string? level,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            return Ok(await _stats.GetEmployeeRatingCustomersAsync(employeeId, level, ct));
+        }
+
+        /// <summary>
+        /// Followers tab — parallel to /employees. GPS is enriched from the Delegate
+        /// FollowerTracking proxy (same config as the Accountant follower-tracking pages).
+        /// </summary>
+        [HttpGet("followers")]
+        public async Task<IActionResult> Followers(
+            [FromQuery] string? cityValue,
+            [FromQuery] string? shiftStatus,
+            [FromQuery] string? locationStatus,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            _ = cityValue;
+            var rows = await _followerQuery.ListFollowersAsync(shiftStatus, locationStatus, ct);
+            await _stats.AttachFollowerLatestRatingsAsync(rows, ct);
+            return Ok(rows);
+        }
+
+        [HttpGet("followers/live-locations")]
+        public async Task<IActionResult> FollowerLiveLocations([FromQuery] string? cityValue, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            _ = cityValue;
+            var rows = await _followerQuery.ListLiveLocationsAsync(ct);
+            return Ok(rows);
+        }
+
+        [HttpGet("followers/{followerId:int}/route")]
+        public async Task<IActionResult> FollowerRoute(int followerId, [FromQuery] DateTime? date, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var day = date?.Date ?? IraqTimeService.IraqNow(_clock).Date;
+            var json = await _followerQuery.GetRouteJsonAsync(followerId, day, ct);
+            if (json == null)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { message = "تعذر الوصول لخدمة تتبع المتابعين." });
+            }
+
+            return Content(json, "application/json");
+        }
+
+        /// <summary>Lifetime daily rating for one follower's assigned lists (first sale → today).</summary>
+        [HttpGet("followers/{followerId:int}/rating-trend")]
+        public async Task<IActionResult> FollowerRatingTrend(int followerId, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            return Ok(await _stats.GetFollowerLifetimeTrendAsync(followerId, ct));
+        }
+
+        /// <summary>Customers in one rating bucket for a follower's assigned lists (ممتاز/جيد/…).</summary>
+        [HttpGet("followers/{followerId:int}/rating-customers")]
+        public async Task<IActionResult> FollowerRatingCustomers(
+            int followerId,
+            [FromQuery] string? level,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            return Ok(await _stats.GetFollowerRatingCustomersAsync(followerId, level, ct));
+        }
+
+        private static string GuessImageContentType(string? fileName)
+        {
+            var ext = Path.GetExtension(fileName ?? "").ToLowerInvariant();
+            return ext switch
+            {
+                ".png" => "image/png",
+                ".webp" => "image/webp",
+                ".gif" => "image/gif",
+                _ => "image/jpeg"
+            };
         }
 
         private async Task<IActionResult?> GateAsync(CancellationToken ct)

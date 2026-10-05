@@ -36,8 +36,9 @@ public class RatingServiceTests
 
         var rows = await svc.GetCustomerSummariesAsync([1, 2]);
         Assert.Equal(2, rows.Count);
-        Assert.Equal("قانونية", rows.First(r => r.CustomerId == 1).Rating);
-        Assert.Equal(-10, rows.First(r => r.CustomerId == 1).Score);
+        // IsLegal=true still rates by settle days (10 days → ممتاز), not قانونية.
+        Assert.Equal("ممتاز", rows.First(r => r.CustomerId == 1).Rating);
+        Assert.Equal(10, rows.First(r => r.CustomerId == 1).Score);
         Assert.Equal("ممتاز", rows.First(r => r.CustomerId == 2).Rating);
         Assert.Equal(10, rows.First(r => r.CustomerId == 2).Score);
     }
@@ -45,10 +46,12 @@ public class RatingServiceTests
     [Fact]
     public async Task List_Summary_Includes_Historical_And_Recent()
     {
+        // List/follower cohort uses open-balance only (AmountRemaining > 0).
         var source = new FakeSource();
         var cutoff = ListRatingAggregator.RecentCutoffDate;
-        source.Facts.Add(new CustomerRatingFacts(1, 5, false, false, cutoff, cutoff.AddDays(100), 1_000_000, 1_000_000, 0));
-        source.Facts.Add(new CustomerRatingFacts(2, 5, false, false, cutoff.AddDays(-30), cutoff.AddDays(70), 1_000_000, 1_000_000, 0));
+        // High payment rate → ممتاز; remaining still open.
+        source.Facts.Add(OpenExcellent(1, 5, cutoff));
+        source.Facts.Add(OpenExcellent(2, 5, cutoff.AddDays(-30)));
         var svc = new RatingService(source, new FixedClock(AsOf));
 
         var rows = await svc.GetListSummariesAsync([5]);
@@ -64,6 +67,24 @@ public class RatingServiceTests
     {
         var svc = new RatingService(new FakeSource(), new FixedClock(AsOf));
         Assert.Null(await svc.GetCustomerDetailAsync(99));
+    }
+
+    private static CustomerRatingFacts OpenExcellent(int id, int listId, DateTime saleDate)
+    {
+        // Score as-of AsOf: set receipts so rate ≥ ExcellentRate for the real day span.
+        const double sales = 1_000_000;
+        var days = CustomerRatingCalculator.DiffDaysInclusive(saleDate, AsOf);
+        var receipts = CustomerRatingCalculator.ExcellentRate * sales * days / 1000.0;
+        return new CustomerRatingFacts(
+            id,
+            listId,
+            false,
+            false,
+            saleDate,
+            AsOf.AddDays(-1),
+            sales,
+            receipts,
+            Math.Max(1, sales - receipts));
     }
 
     private sealed class FixedClock : IIraqClock

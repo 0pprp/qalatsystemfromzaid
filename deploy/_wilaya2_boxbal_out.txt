@@ -1,0 +1,26 @@
+Changed language setting to us_english.
+=== Boxes columns ===
+BoxID
+BoxName
+AsyncState
+AsyncID
+BoxState
+CreatedDate
+UpdatedDate
+=== Box row ===
+6| الولاية نجف 2|1|LO8ESq3Qpwf|1|2025-11-06 08:55:18.013|NULL
+=== Sum AddToBox for box ===
+41316|782938000|540703.03867402626
+=== tables like %Box% ===
+AddToBox
+Boxes
+SelectedBoxes
+TransferBoxs
+WithdrawalFromBox
+=== The 70k AddToBox IDs ===
+438386|418572|6|20000|قبض من الزبون مصطفى صادق كريم|2026-10-01 09:14:26
+438603|418784|6|50000|مطابقة وصل 1/10|2026-10-03 00:43:28
+=== If we zero/delete those two, delta ===
+776636000
+
+SQL_EXIT 0

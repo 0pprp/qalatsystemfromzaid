@@ -128,6 +128,12 @@ namespace BE_Company.Sales.Services
                 {
                     customerId = linked.ExistingCustomerId;
                 }
+
+                var ceilingError = SalesRequestPriceCeiling.Validate(snapshot.FinalTotalSalePrice, linked.MaxSalePrice);
+                if (ceilingError != null)
+                {
+                    throw new ArgumentException(ceilingError);
+                }
             }
 
             if (customerId.HasValue && customerId.Value > 0)
@@ -230,16 +236,22 @@ namespace BE_Company.Sales.Services
                 var existing = await _requests.GetForEmployeeAsync(request.SalesRequestId.Value, employeeId, ct);
                 if (existing.ConvertedToSaleId is > 0)
                 {
-                    var current = await _drafts.GetByIdAsync(existing.ConvertedToSaleId.Value, employeeId, ct)
-                                  ?? throw new ArgumentException("الطلب مرتبط بعملية بيع أخرى.");
-                    if (SalesCompleteRules.AlreadyCompleted(current.Status))
+                    var current = await _drafts.GetByIdAsync(existing.ConvertedToSaleId.Value, employeeId, ct);
+                    if (current == null)
+                    {
+                        // Stale link (reassigned request / deleted draft): clear and continue.
+                        await _requests.AttachDraftAsync(request.SalesRequestId.Value, employeeId, 0, ct);
+                    }
+                    else if (SalesCompleteRules.AlreadyCompleted(current.Status))
                     {
                         throw new ArgumentException("الطلب مرتبط بعملية بيع مكتملة.");
                     }
-
-                    draft.SaleId = current.SaleId;
-                    draft.Status = SalesStatuses.Pending;
-                    return await _drafts.ReplaceContentsAsync(draft, ct);
+                    else
+                    {
+                        draft.SaleId = current.SaleId;
+                        draft.Status = SalesStatuses.Pending;
+                        return await _drafts.ReplaceContentsAsync(draft, ct);
+                    }
                 }
             }
 
@@ -328,6 +340,15 @@ namespace BE_Company.Sales.Services
                 if (customerId is not > 0 && linked.ExistingCustomerId is > 0)
                 {
                     customerId = linked.ExistingCustomerId;
+                }
+
+                if (draftItems.Count > 0)
+                {
+                    var ceilingError = SalesRequestPriceCeiling.Validate(snapshot.FinalTotalSalePrice, linked.MaxSalePrice);
+                    if (ceilingError != null)
+                    {
+                        throw new ArgumentException(ceilingError);
+                    }
                 }
             }
 
@@ -424,16 +445,25 @@ namespace BE_Company.Sales.Services
                 var existing = await _requests.GetForEmployeeAsync(request.SalesRequestId.Value, employeeId, ct);
                 if (existing.ConvertedToSaleId is > 0)
                 {
-                    var current = await _drafts.GetByIdAsync(existing.ConvertedToSaleId.Value, employeeId, ct)
-                                  ?? throw new ArgumentException("الطلب مرتبط بعملية بيع أخرى.");
-                    if (SalesCompleteRules.AlreadyCompleted(current.Status))
+                    var current = await _drafts.GetByIdAsync(existing.ConvertedToSaleId.Value, employeeId, ct);
+                    if (current == null)
+                    {
+                        // Stale link (reassigned request / deleted draft): clear and create a new draft.
+                        await _requests.AttachDraftAsync(request.SalesRequestId.Value, employeeId, 0, ct);
+                        saved = await _drafts.CreateAsync(draft, ct);
+                        await _requests.AttachDraftAsync(request.SalesRequestId.Value, employeeId, saved.SaleId, ct);
+                        saved.SalesRequestId = request.SalesRequestId;
+                    }
+                    else if (SalesCompleteRules.AlreadyCompleted(current.Status))
                     {
                         throw new ArgumentException("الطلب مرتبط بعملية بيع مكتملة.");
                     }
-
-                    draft.SaleId = current.SaleId;
-                    draft.Status = SalesStatuses.Pending;
-                    saved = await _drafts.ReplaceContentsAsync(draft, ct);
+                    else
+                    {
+                        draft.SaleId = current.SaleId;
+                        draft.Status = SalesStatuses.Pending;
+                        saved = await _drafts.ReplaceContentsAsync(draft, ct);
+                    }
                 }
                 else
                 {

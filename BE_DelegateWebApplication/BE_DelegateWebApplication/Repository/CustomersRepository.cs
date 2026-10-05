@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
 using Microsoft.Data.SqlClient;
@@ -41,7 +41,7 @@ namespace BE_DelegateWebApplication.Repository
                 },
                 commandType: CommandType.StoredProcedure,
                 commandTimeout: 600);
-                return result;
+                return DelegateListDedupe.DistinctByCustomerId(result).ToList();
             }
         }
 
@@ -56,7 +56,7 @@ namespace BE_DelegateWebApplication.Repository
                 },
                 commandType: CommandType.StoredProcedure,
                 commandTimeout: 600);
-                return result;
+                return DelegateListDedupe.DistinctByCustomerId(result).ToList();
             }
         }
 

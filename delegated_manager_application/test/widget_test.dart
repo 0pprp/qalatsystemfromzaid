@@ -35,6 +35,7 @@ void main() {
       (tester) async {
     await tester.pumpWidget(_wrap(const LoginScreen()));
 
+    await tester.enterText(find.byType(TextFormField).first, '');
     await tester.tap(find.text('تسجيل الدخول'));
     await tester.pump();
 

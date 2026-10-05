@@ -34,7 +34,7 @@ namespace BE_Company.Controllers
                 {
                     return Unauthorized("User is not authenticated.");
                 }
-                
+
                 customersPaymentsPostDTO.UserCreateID = userID;
                 var result = await _customersPaymentsRepository.CustomersPayments_Create(customersPaymentsPostDTO);
                 return Ok(result);
@@ -114,7 +114,7 @@ namespace BE_Company.Controllers
                 {
                     return Unauthorized("User is not authenticated.");
                 }
- 
+
                 string idsFinal = string.Join(",", request.Ids);
                 var result = await _customersPaymentsRepository.CustomersPayments_ChangePaymentDate(idsFinal, request.NewDate, userID);
                 return Ok(result);

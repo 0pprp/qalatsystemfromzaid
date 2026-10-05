@@ -16,6 +16,7 @@ namespace BE_Company.Sales.Services
         public const string Rejected = "Rejected";
         public const string Returned = "Returned";
         public const string Completed = "Completed";
+        public const string LegalFollowup = "LegalFollowup";
 
         public static bool IsUnassigned(string? status) =>
             string.Equals(status, New, StringComparison.OrdinalIgnoreCase);
@@ -103,6 +104,7 @@ namespace BE_Company.Sales.Services
         public const string ManagerRequestDeleted = "ManagerRequestDeleted";
         public const string ManagerProvinceChanged = "ManagerProvinceChanged";
         public const string ProvinceTransferred = "ProvinceTransferred";
+        public const string LegalFollowupSent = "LegalFollowupSent";
     }
 
     public static class SalesRequestSources
@@ -211,9 +213,24 @@ namespace BE_Company.Sales.Services
         Task<SalesRequestDTO> InsertAsync(SalesRequestDTO row, CancellationToken ct);
         Task<SalesRequestDTO?> GetByIdAsync(int id, CancellationToken ct);
         Task<SalesRequestDTO?> GetByIdIncludingDeletedAsync(int id, CancellationToken ct);
-        Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null);
+        Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null, int? take = null);
+        Task<(IReadOnlyList<SalesRequestDTO> Items, int Total)> ListManagerPageAsync(
+            string? tab,
+            int? targetEmployeeId,
+            string? q,
+            int skip,
+            int take,
+            CancellationToken ct);
+        Task<Dictionary<string, int>> CountManagerTabsAsync(CancellationToken ct);
+        Task<(IReadOnlyList<SalesRequestDTO> Items, int Total)> ListDeletedPageAsync(
+            string? q,
+            int skip,
+            int take,
+            CancellationToken ct);
+        Task<IReadOnlyList<SalesRequestDTO>> ListDeletedAsync(CancellationToken ct);
         Task UpdateAsync(SalesRequestDTO row, CancellationToken ct);
         Task<int> CountByStatusAsync(string status, CancellationToken ct);
+        Task<int> CountUnreadEmployeeSubmittedAsync(CancellationToken ct);
         Task InsertHistoryAsync(SalesRequestHistoryDTO row, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestHistoryDTO>> ListHistoryAsync(int requestId, CancellationToken ct);
         Task InsertNameTransferAsync(SalesRequestNameTransferDTO row, CancellationToken ct);
@@ -236,6 +253,18 @@ namespace BE_Company.Sales.Services
         Task<SalesRequestImportResultDTO> ImportRowsAsync(SalesIdentity actor, SalesRequestImportDTO import, CancellationToken ct);
         Task<SalesRequestDTO> SubmitByEmployeeAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForManagerAsync(string? status, int? employeeId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct);
+        Task<SalesRequestManagerListPageDTO> ListForManagerPageAsync(
+            string? tab,
+            int? employeeId,
+            string? q,
+            int page,
+            int pageSize,
+            CancellationToken ct);
+        Task<SalesRequestManagerListPageDTO> ListDeletedForManagerPageAsync(
+            string? q,
+            int page,
+            int pageSize,
+            CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListEmployeeSubmittedAsync(CancellationToken ct);
         Task<int> CountUnreadEmployeeSubmittedAsync(CancellationToken ct);
         Task<SalesRequestDTO> MarkReadAsync(SalesIdentity manager, int id, CancellationToken ct);
@@ -257,6 +286,10 @@ namespace BE_Company.Sales.Services
             SalesRequestAssignDTO request,
             CancellationToken ct,
             Guid? exceptionAssignId = null);
+        Task<SalesRequestAssignBatchResultDTO> AssignBatchAsync(
+            SalesIdentity manager,
+            SalesRequestAssignBatchDTO request,
+            CancellationToken ct);
         Task SetExceptionHoldAsync(int id, string? holdStatus, Guid? exceptionId, CancellationToken ct);
         Task<SalesRequestDTO> ReturnAsync(SalesIdentity manager, int id, string note, CancellationToken ct);
         Task MarkConvertedAsync(int requestId, int employeeId, int saleId, DateTime utcNow, CancellationToken ct);
@@ -267,7 +300,10 @@ namespace BE_Company.Sales.Services
         Task<SalesRequestDTO> TransferNameAsync(SalesIdentity actor, int requestId, SalesRequestTransferDTO request, CancellationToken ct);
         Task<SalesRequestDTO> ManagerUpdateAsync(SalesIdentity manager, int id, SalesRequestManagerUpdateDTO body, CancellationToken ct);
         Task<SalesRequestDTO> ManagerReassignAsync(SalesIdentity manager, int id, SalesRequestManagerReassignDTO body, CancellationToken ct);
-        Task SoftDeleteAsync(SalesIdentity manager, int id, CancellationToken ct);
+        Task SoftDeleteAsync(SalesIdentity manager, int id, string reason, CancellationToken ct);
+        Task SoftDeleteAsync(SalesIdentity manager, int id, string reason, bool confirmCascadePayments, CancellationToken ct);
+        Task<SalesRequestSoftDeleteImpactDTO> GetSoftDeleteImpactAsync(SalesIdentity manager, int id, CancellationToken ct);
+        Task<IReadOnlyList<SalesRequestDTO>> ListDeletedForManagerAsync(CancellationToken ct);
         Task<SalesRequestDTO> AcceptProvinceTransferAsync(SalesIdentity manager, SalesRequestAcceptTransferDTO body, CancellationToken ct);
         Task MarkProvinceTransferredOutAsync(SalesIdentity manager, int id, SalesRequestMarkTransferredOutDTO body, CancellationToken ct);
     }
@@ -283,6 +319,12 @@ namespace BE_Company.Sales.Services
         Task<int> CountRouteAsync(int employeeId, DateTime fromUtc, DateTime toUtc, CancellationToken ct);
         Task<IReadOnlyList<SalesManagerTrackingEventDTO>> GetEventsAsync(int employeeId, DateTime fromUtc, DateTime toUtc, CancellationToken ct);
         Task<IReadOnlyList<SalesDraftDTO>> ListSalesAsync(int? employeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct);
+        Task<IReadOnlyList<SalesDraftDTO>> ListSalesForCustomerAsync(
+            int? customerId,
+            string? phone,
+            string? customerName,
+            CancellationToken ct,
+            int take = 30);
         Task<SalesDraftDTO?> GetSaleAsync(int saleId, CancellationToken ct);
         Task<int> CountSalesTodayAsync(int employeeId, DateTime fromUtc, DateTime toUtc, CancellationToken ct);
         Task<int> CountPendingSalesAsync(int? employeeId, CancellationToken ct);

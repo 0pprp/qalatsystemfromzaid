@@ -1,3 +1,4 @@
+using System.Threading;
 using BE_SalesEmployee.DelegatedManager.Domain;
 using BE_SalesEmployee.DelegatedManager.Models;
 using Dapper;
@@ -10,10 +11,12 @@ namespace BE_SalesEmployee.DelegatedManager.Stores;
 /// </summary>
 public sealed class SqlSalesExceptionStore : ISalesExceptionStore
 {
+    private int _schemaReady;
+
     private const string Columns = """
         Id, CityValue, CityName, CustomerId, CustomerName, CustomerPhone, SalesRequestId,
         RequestingManagerUserName, RequestingManagerDisplayName, Reason, TargetApproverType, Status,
-        RequestedAtUtc, DecidedAtUtc, DecisionMakerUserName, DecisionMakerDisplayName, DecisionNote,
+        RequestedAtUtc, ReadAtUtc, DecidedAtUtc, DecisionMakerUserName, DecisionMakerDisplayName, DecisionNote,
         BranchCustomerNotePosted, AssignmentConsumed, AssignedEmployeeId, AssignedEmployeeName,
         AssignedAtUtc, AssignedByManagerUserName
         """;
@@ -32,11 +35,34 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
         _factory = factory;
     }
 
+    public async Task EnsureSchemaAsync(CancellationToken ct = default)
+    {
+        if (Interlocked.CompareExchange(ref _schemaReady, 1, 0) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            using var connection = await _factory.OpenAsync(ct);
+            await connection.ExecuteAsync(new CommandDefinition("""
+IF COL_LENGTH(N'dbo.SalesExceptionRequests', N'ReadAtUtc') IS NULL
+    ALTER TABLE dbo.SalesExceptionRequests ADD ReadAtUtc DATETIME2(3) NULL;
+""", cancellationToken: ct));
+        }
+        catch
+        {
+            Interlocked.Exchange(ref _schemaReady, 0);
+            throw;
+        }
+    }
+
     public async Task<SalesExceptionRequest> CreateAsync(
         SalesExceptionRequest request,
         SalesExceptionAuditEntry audit,
         CancellationToken ct = default)
     {
+        await EnsureSchemaAsync(ct);
         var row = request.Clone();
         if (row.Id == Guid.Empty)
         {
@@ -47,6 +73,7 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
             row.RequestedAtUtc = DateTime.UtcNow;
         }
         row.Status = ExceptionStatuses.Pending;
+        row.ReadAtUtc = null;
         row.BranchCustomerNotePosted = false;
         row.AssignmentConsumed = false;
         row.AssignedEmployeeId = null;
@@ -66,7 +93,7 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
             INSERT INTO dbo.SalesExceptionRequests ({Columns})
             VALUES (@Id, @CityValue, @CityName, @CustomerId, @CustomerName, @CustomerPhone, @SalesRequestId,
                     @RequestingManagerUserName, @RequestingManagerDisplayName, @Reason, @TargetApproverType, @Status,
-                    @RequestedAtUtc, @DecidedAtUtc, @DecisionMakerUserName, @DecisionMakerDisplayName, @DecisionNote,
+                    @RequestedAtUtc, @ReadAtUtc, @DecidedAtUtc, @DecisionMakerUserName, @DecisionMakerDisplayName, @DecisionNote,
                     @BranchCustomerNotePosted, @AssignmentConsumed, @AssignedEmployeeId, @AssignedEmployeeName,
                     @AssignedAtUtc, @AssignedByManagerUserName);
             """, row, cancellationToken: ct));
@@ -76,6 +103,7 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
 
     public async Task<PagedResult<SalesExceptionRequest>> QueryAsync(SalesExceptionQuery query, CancellationToken ct = default)
     {
+        await EnsureSchemaAsync(ct);
         var (page, pageSize) = PagingDefaults.Normalize(query.Page, query.PageSize);
         var parameters = new DynamicParameters();
         parameters.Add("Offset", (page - 1) * pageSize);
@@ -117,7 +145,22 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
 
     public async Task<SalesExceptionRequest?> GetAsync(Guid id, CancellationToken ct = default)
     {
+        await EnsureSchemaAsync(ct);
         using var connection = await _factory.OpenAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<SalesExceptionRequest>(new CommandDefinition($"""
+            SELECT {Columns} FROM dbo.SalesExceptionRequests WHERE Id = @id;
+            """, new { id }, cancellationToken: ct));
+    }
+
+    public async Task<SalesExceptionRequest?> MarkReadAsync(Guid id, DateTime readAtUtc, CancellationToken ct = default)
+    {
+        await EnsureSchemaAsync(ct);
+        using var connection = await _factory.OpenAsync(ct);
+        await connection.ExecuteAsync(new CommandDefinition("""
+            UPDATE dbo.SalesExceptionRequests
+            SET ReadAtUtc = COALESCE(ReadAtUtc, @readAtUtc)
+            WHERE Id = @id;
+            """, new { id, readAtUtc }, cancellationToken: ct));
         return await connection.QuerySingleOrDefaultAsync<SalesExceptionRequest>(new CommandDefinition($"""
             SELECT {Columns} FROM dbo.SalesExceptionRequests WHERE Id = @id;
             """, new { id }, cancellationToken: ct));
@@ -191,6 +234,7 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
 
     public async Task<IReadOnlyDictionary<string, int>> CountByStatusAsync(string? cityValue, CancellationToken ct = default)
     {
+        await EnsureSchemaAsync(ct);
         using var connection = await _factory.OpenAsync(ct);
         var rows = await connection.QueryAsync<StatusCountRow>(new CommandDefinition("""
             SELECT Status, COUNT(1) AS Total
@@ -200,6 +244,38 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
             """, new { cityValue = Trimmed(cityValue) }, cancellationToken: ct));
 
         return rows.ToDictionary(r => r.Status, r => r.Total, StringComparer.Ordinal);
+    }
+
+    private const string WrongSaleReasonSql = """
+        (Reason LIKE N'%مبيعات خاطئة%' OR Reason LIKE N'%تقييم المتجر%')
+        """;
+
+    public async Task<IReadOnlyDictionary<string, int>> CountHoldByStatusAsync(string? cityValue, CancellationToken ct = default)
+    {
+        await EnsureSchemaAsync(ct);
+        using var connection = await _factory.OpenAsync(ct);
+        var rows = await connection.QueryAsync<StatusCountRow>(new CommandDefinition($"""
+            SELECT Status, COUNT(1) AS Total
+            FROM dbo.SalesExceptionRequests
+            WHERE (@cityValue IS NULL OR CityValue = @cityValue)
+              AND NOT {WrongSaleReasonSql}
+            GROUP BY Status;
+            """, new { cityValue = Trimmed(cityValue) }, cancellationToken: ct));
+
+        return rows.ToDictionary(r => r.Status, r => r.Total, StringComparer.Ordinal);
+    }
+
+    public async Task<int> CountUnreadWrongSalesAsync(string? cityValue, CancellationToken ct = default)
+    {
+        await EnsureSchemaAsync(ct);
+        using var connection = await _factory.OpenAsync(ct);
+        return await connection.ExecuteScalarAsync<int>(new CommandDefinition($"""
+            SELECT COUNT(1)
+            FROM dbo.SalesExceptionRequests
+            WHERE (@cityValue IS NULL OR CityValue = @cityValue)
+              AND ReadAtUtc IS NULL
+              AND {WrongSaleReasonSql};
+            """, new { cityValue = Trimmed(cityValue) }, cancellationToken: ct));
     }
 
     public async Task<SalesExceptionRequest?> FindActiveBySalesRequestIdAsync(int salesRequestId, CancellationToken ct = default)
@@ -217,7 +293,20 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
             """, new { salesRequestId }, cancellationToken: ct));
     }
 
-    public async Task<SalesExceptionRequest?> TryConsumeAsync(
+    public async Task<SalesExceptionRequest?> FindPendingWrongSaleByCustomerIdAsync(int customerId, CancellationToken ct = default)
+    {
+        using var connection = await _factory.OpenAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<SalesExceptionRequest>(new CommandDefinition($"""
+            SELECT TOP (1) {Columns}
+            FROM dbo.SalesExceptionRequests
+            WHERE CustomerId = @customerId
+              AND Status = N'Pending'
+              AND {WrongSaleReasonSql}
+            ORDER BY RequestedAtUtc DESC;
+            """, new { customerId }, cancellationToken: ct));
+    }
+
+        public async Task<SalesExceptionRequest?> TryConsumeAsync(
         Guid id,
         int employeeId,
         string? employeeName,

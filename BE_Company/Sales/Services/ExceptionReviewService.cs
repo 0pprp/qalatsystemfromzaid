@@ -1,8 +1,10 @@
+using BE_Company.IRepository;
 using BE_Company.Sales.Authorization;
 using BE_Company.Sales.DTO;
 using BE_Company.Sales.Models;
 using BE_Company.Sales.Rating;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace BE_Company.Sales.Services
 {
@@ -12,31 +14,44 @@ namespace BE_Company.Sales.Services
             SalesIdentity actor,
             int salesRequestId,
             CancellationToken ct);
+
+        /// <summary>Waiver review: customer payments, financials, previous sales/names (same shape as exception review).</summary>
+        Task<ExceptionReviewContextDTO> BuildByCustomerIdAsync(
+            SalesIdentity actor,
+            int customerId,
+            CancellationToken ct);
     }
 
     public sealed class ExceptionReviewService : IExceptionReviewService
     {
         public const int MaxMatches = 20;
         public const int MaxSalesPerMatch = 10;
+        public const int MaxPaymentsPerMatch = 50;
 
         private readonly ISalesRequestRepository _requests;
         private readonly ISalesExcelCustomerSearchCatalog _catalog;
         private readonly ISalesRequestEvaluationService _evaluation;
         private readonly IRatingDataSource _rating;
         private readonly IIraqClock _clock;
+        private readonly ICustomersPaymentsRepository _payments;
+        private readonly ILogger<ExceptionReviewService>? _logger;
 
         public ExceptionReviewService(
             ISalesRequestRepository requests,
             ISalesExcelCustomerSearchCatalog catalog,
             ISalesRequestEvaluationService evaluation,
             IRatingDataSource rating,
-            IIraqClock clock)
+            IIraqClock clock,
+            ICustomersPaymentsRepository payments,
+            ILogger<ExceptionReviewService>? logger = null)
         {
             _requests = requests;
             _catalog = catalog;
             _evaluation = evaluation;
             _rating = rating;
             _clock = clock;
+            _payments = payments ?? throw new ArgumentNullException(nameof(payments));
+            _logger = logger;
         }
 
         public async Task<ExceptionReviewContextDTO> BuildContextAsync(
@@ -189,7 +204,8 @@ namespace BE_Company.Sales.Services
                         LegalStatus = (rating?.IsLegal ?? fact?.IsLegal ?? false) ? "قانونية" : null,
                         ReceiptCount = rating?.ReceiptCount ?? fact?.ReceiptCount ?? 0
                     },
-                    PreviousSales = prevSales.Select(s => MapPreviousSale(s, friendlyCity, asOf)).ToList()
+                    PreviousSales = prevSales.Select(s => MapPreviousSale(s, friendlyCity, asOf)).ToList(),
+                    Payments = await LoadPaymentsAsync(hit.Customer.CustomerId, ct)
                 });
             }
 
@@ -205,6 +221,157 @@ namespace BE_Company.Sales.Services
                 CustomerClassification = classification,
                 CurrentRequest = MapCurrentRequest(row),
                 Source = ExceptionReviewSourceMapper.FromRequest(row, listName),
+                MatchingCustomers = matching
+            };
+        }
+
+        public async Task<ExceptionReviewContextDTO> BuildByCustomerIdAsync(
+            SalesIdentity actor,
+            int customerId,
+            CancellationToken ct)
+        {
+            EnsureManagerOrGateway(actor);
+            if (customerId <= 0)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status400BadRequest,
+                    "معرّف الزبون مطلوب.");
+            }
+
+            var customers = await _catalog.LoadCustomersAsync(ct);
+            var target = customers.FirstOrDefault(c => c.CustomerId == customerId);
+            if (target is null)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status404NotFound,
+                    "الزبون غير موجود في فرع المحافظة.");
+            }
+
+            var branchCity = (_catalog.CityValue ?? "").Trim();
+            var friendlyCity = SalesCityDisplay.FriendlyOrUnavailable(_catalog.CityName, branchCity);
+            var phone = (target.Phone ?? "").Trim();
+            var name = (target.FullName ?? "").Trim();
+
+            // Related accounts = same phone or same triple-name (previous names)
+            var related = customers
+                .Where(c =>
+                {
+                    if (c.CustomerId == customerId) return true;
+                    var samePhone = !string.IsNullOrWhiteSpace(phone)
+                                    && string.Equals((c.Phone ?? "").Trim(), phone, StringComparison.Ordinal);
+                    var sameName = !string.IsNullOrWhiteSpace(name)
+                                   && SalesCustomerNameMatch.IsMatch(c.FullName, name);
+                    return samePhone || sameName;
+                })
+                .Take(MaxMatches)
+                .ToList();
+
+            var matchIds = related.Select(c => c.CustomerId).ToList();
+            var facts = matchIds.Count == 0
+                ? []
+                : await _rating.GetFactsByCustomerIdsAsync(matchIds, ct);
+            var factMap = facts.ToDictionary(f => f.CustomerId);
+            var sales = matchIds.Count == 0
+                ? []
+                : await _catalog.LoadSalesAsync(matchIds, ct);
+            var salesByCustomer = sales
+                .GroupBy(s => s.CustomerId)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.SaleDate).ThenByDescending(s => s.SaleId)
+                    .Take(MaxSalesPerMatch).ToList());
+
+            var asOf = _clock.UtcNow.Date;
+            var matching = new List<ExceptionReviewMatchCustomerDTO>();
+            foreach (var c in related)
+            {
+                factMap.TryGetValue(c.CustomerId, out var fact);
+                var rating = fact is null ? null : CustomerRatingCalculator.Evaluate(fact, asOf);
+                salesByCustomer.TryGetValue(c.CustomerId, out var prevSales);
+                prevSales ??= [];
+
+                var totalSales = fact?.AmountTotalSales ?? c.AmountTotalSales ?? 0;
+                var totalPaid = fact?.ReceiptsTotal ?? c.ReceiptsTotal ?? 0;
+                var remaining = fact?.AmountRemaining ?? c.AmountRemaining ?? 0;
+                var fullyPaid = remaining <= 0 && totalSales > 0;
+                var lastSale = prevSales.FirstOrDefault()?.SaleDate ?? rating?.DateSaleDevice ?? fact?.DateSaleDevice;
+                var lastPayment = fact?.LastPaymentDate;
+
+                var reasons = new List<string>();
+                if (c.CustomerId == customerId) reasons.Add("الزبون الحالي");
+                if (!string.IsNullOrWhiteSpace(phone)
+                    && string.Equals((c.Phone ?? "").Trim(), phone, StringComparison.Ordinal)
+                    && c.CustomerId != customerId)
+                {
+                    reasons.Add("نفس الهاتف");
+                }
+
+                if (!string.IsNullOrWhiteSpace(name)
+                    && SalesCustomerNameMatch.IsMatch(c.FullName, name)
+                    && c.CustomerId != customerId)
+                {
+                    reasons.Add("اسم سابق / مطابق");
+                }
+
+                matching.Add(new ExceptionReviewMatchCustomerDTO
+                {
+                    CustomerId = c.CustomerId,
+                    FullName = c.FullName,
+                    Phone = c.Phone,
+                    CityValue = branchCity,
+                    CityName = friendlyCity,
+                    Province = friendlyCity,
+                    Address = c.Address,
+                    MatchReasons = reasons,
+                    RatingLabel = rating?.RatingLabel ?? (fact is null ? null : CustomerRatingLabels.Weak),
+                    RatingScore = rating?.Score,
+                    IsLegal = rating?.IsLegal ?? fact?.IsLegal ?? false,
+                    FinancialSummary = new ExceptionReviewFinancialSummaryDTO
+                    {
+                        TotalSales = totalSales,
+                        TotalPaid = totalPaid,
+                        Remaining = remaining,
+                        CurrentDebt = remaining > 0 ? remaining : 0,
+                        LastSaleDate = lastSale,
+                        LastPaymentDate = lastPayment,
+                        FullyPaid = fullyPaid || (rating?.IsSettled ?? false),
+                        LegalStatus = (rating?.IsLegal ?? fact?.IsLegal ?? false) ? "قانونية" : null,
+                        ReceiptCount = rating?.ReceiptCount ?? fact?.ReceiptCount ?? 0
+                    },
+                    PreviousSales = prevSales.Select(s => MapPreviousSale(s, friendlyCity, asOf)).ToList(),
+                    Payments = await LoadPaymentsAsync(c.CustomerId, ct)
+                });
+            }
+
+            var classification = new ExceptionReviewClassificationDTO
+            {
+                Type = "Existing",
+                LabelArabic = "زبون قائم",
+                MatchCount = matching.Count,
+                ExplanationArabic = matching.Count > 1
+                    ? $"يوجد {matching.Count} حسابات مرتبطة (أسماء/هاتف)."
+                    : "تفاصيل الزبون والتسديدات والحسابات السابقة."
+            };
+
+            return new ExceptionReviewContextDTO
+            {
+                CustomerClassification = classification,
+                CurrentRequest = new ExceptionReviewCurrentRequestDTO
+                {
+                    CustomerName = target.FullName ?? "",
+                    CustomerPhone = target.Phone,
+                    CityValue = branchCity,
+                    CityName = friendlyCity,
+                    CustomerProvince = friendlyCity,
+                    CustomerAddress = target.Address,
+                    ExistingCustomerId = customerId,
+                    Status = "طلب تنازل"
+                },
+                Source = new ExceptionReviewSourceDTO
+                {
+                    Type = "Waiver",
+                    DisplayLabel = "طلب تنازل",
+                    PersonName = target.FullName ?? "غير متوفر",
+                    BranchName = friendlyCity
+                },
                 MatchingCustomers = matching
             };
         }
@@ -240,6 +407,42 @@ namespace BE_Company.Sales.Services
                 PendingNote = row.PendingNote,
                 PreparedForSaleNote = row.PreparedForSaleNote
             };
+        }
+
+        private async Task<List<SalesCustomerPaymentDTO>> LoadPaymentsAsync(int customerId, CancellationToken ct)
+        {
+            if (customerId <= 0)
+            {
+                return [];
+            }
+
+            try
+            {
+                var raw = await _payments.CustomersPayments_GetByCustomerID(customerId);
+                if (raw is null)
+                {
+                    return [];
+                }
+
+                return raw
+                    .OrderByDescending(p => p.PaymentDate)
+                    .Take(MaxPaymentsPerMatch)
+                    .Select(p => new SalesCustomerPaymentDTO
+                    {
+                        CustomerPaymentId = p.CustomerPaymentID,
+                        PaymentDate = p.PaymentDate,
+                        Amount = p.AmountDenar,
+                        BoundNumber = p.BoundNumber,
+                        Note = p.Location,
+                        ItemsNames = p.ItemsNames
+                    })
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Exception review payments failed for customer {CustomerId}", customerId);
+                return [];
+            }
         }
 
         private static ExceptionReviewPreviousSaleDTO MapPreviousSale(

@@ -4,20 +4,20 @@ namespace BE_Company.IRepository
 {
     public interface IUsersRepository
     {
-        Task<UsersGetDTO?> Users_GetUserLoginAdmin(string? userName,string? password);
-        Task<UsersGetDTO?> Users_GetUserLogin(string? userName,string? password);
-        Task<UsersGetDTO?> Users_GetUserLoginEmployee(string? userName,string? password);
+        Task<UsersGetDTO?> Users_GetUserLoginAdmin(string? userName, string? password);
+        Task<UsersGetDTO?> Users_GetUserLogin(string? userName, string? password);
+        Task<UsersGetDTO?> Users_GetUserLoginEmployee(string? userName, string? password);
         Task<int> BumpSalesEmployeeSessionVersionAsync(int userId);
         Task<int> GetSalesEmployeeSessionVersionAsync(int userId);
         Task<UsersGetDTO?> Users_Create(UsersPostDTO usersPostDTO);
-        Task<UsersGetDTO?> Users_Update(int? userID,UsersPutDTO usersPutDTO);
+        Task<UsersGetDTO?> Users_Update(int? userID, UsersPutDTO usersPutDTO);
         /// <summary>
         /// Returns true if another user already has this UserName (trimmed, case-insensitive).
         /// Pass excludeUserId on update to ignore the current row.
         /// </summary>
         Task<bool> UserNameExistsAsync(string userName, int? excludeUserId = null, CancellationToken ct = default);
-        Task<bool?> Users_Delete(int? userID,int? userDeleteID);
+        Task<bool?> Users_Delete(int? userID, int? userDeleteID);
         Task<IEnumerable<UsersGetDTO>?> Users_GetAll(string? textSearch);
-        Task<IEnumerable<ActiveDTO>?> Activities_GetByDate(DateTime? fromDate,DateTime? toDate);
+        Task<IEnumerable<ActiveDTO>?> Activities_GetByDate(DateTime? fromDate, DateTime? toDate);
     }
 }

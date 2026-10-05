@@ -30,14 +30,24 @@ builder.Services.AddScoped<IDelegateRepository, DelegateRepository>();
 builder.Services.AddScoped<ITrustReceiptRepository, TrustReceiptRepository>();
 builder.Services.AddScoped<IFollowerActionsRepository, FollowerActionsRepository>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.ISharedCustomerNotesService, BE_DelegateWebApplication.Services.SharedCustomerNotesService>();
-builder.Services.AddScoped<BE_DelegateWebApplication.Services.IDelegateComplaintsService, BE_DelegateWebApplication.Services.DelegateComplaintsService>();
-builder.Services.AddHttpClient<BE_DelegateWebApplication.Services.ICentralComplaintForwarder, BE_DelegateWebApplication.Services.CentralComplaintForwarder>(client =>
+        builder.Services.AddScoped<BE_DelegateWebApplication.Services.IDelegateComplaintsService, BE_DelegateWebApplication.Services.DelegateComplaintsService>();
+        builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerComplaintsService, BE_DelegateWebApplication.Services.FollowerComplaintsService>();
+        builder.Services.AddHttpClient<BE_DelegateWebApplication.Services.ICentralComplaintForwarder, BE_DelegateWebApplication.Services.CentralComplaintForwarder>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+});
+builder.Services.AddHttpClient<BE_DelegateWebApplication.Services.IWrongSaleExceptionForwarder, BE_DelegateWebApplication.Services.WrongSaleExceptionForwarder>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(20);
 });
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.FollowerIdentity.IFollowerIdentityService, BE_DelegateWebApplication.Services.FollowerIdentity.FollowerIdentityService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.FollowerTracking.IFollowerTrackingRepository, BE_DelegateWebApplication.Services.FollowerTracking.FollowerTrackingRepository>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.FollowerTracking.IFollowerTrackingService, BE_DelegateWebApplication.Services.FollowerTracking.FollowerTrackingService>();
+builder.Services.AddScoped<BE_DelegateWebApplication.Services.ILegalFollowupFollowerService, BE_DelegateWebApplication.Services.LegalFollowupFollowerService>();
+builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerFieldFollowupService, BE_DelegateWebApplication.Services.FollowerFieldFollowupService>();
+builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerSaleAuthService, BE_DelegateWebApplication.Services.FollowerSaleAuthService>();
+builder.Services.AddScoped<BE_DelegateWebApplication.Services.IDelegateFirstCollectionEvalService, BE_DelegateWebApplication.Services.DelegateFirstCollectionEvalService>();
+builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerListStatsService, BE_DelegateWebApplication.Services.FollowerListStatsService>();
 
 
 builder.Services.AddControllers();

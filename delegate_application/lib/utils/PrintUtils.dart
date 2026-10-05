@@ -52,8 +52,9 @@ class PrintUtils {
 
     if (!context.mounted) return;
 
-    await Navigator.push(
-      context,
+    // Always push on the root navigator so a payment Dialog cannot orphan
+    // the PDF route (blank/black screen after the dialog is dismissed).
+    await Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute(
         builder: (context) => Scaffold(
           appBar: AppBar(

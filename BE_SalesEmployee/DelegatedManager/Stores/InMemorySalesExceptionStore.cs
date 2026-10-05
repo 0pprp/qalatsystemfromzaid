@@ -28,6 +28,7 @@ public sealed class InMemorySalesExceptionStore : ISalesExceptionStore
                 row.RequestedAtUtc = DateTime.UtcNow;
             }
             row.Status = ExceptionStatuses.Pending;
+            row.ReadAtUtc = null;
             row.DecidedAtUtc = null;
             row.DecisionMakerUserName = null;
             row.DecisionMakerDisplayName = null;
@@ -153,22 +154,71 @@ public sealed class InMemorySalesExceptionStore : ISalesExceptionStore
         }
     }
 
+    public Task EnsureSchemaAsync(CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<SalesExceptionRequest?> MarkReadAsync(Guid id, DateTime readAtUtc, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var row = _rows.FirstOrDefault(r => r.Id == id);
+            if (row is null)
+            {
+                return Task.FromResult<SalesExceptionRequest?>(null);
+            }
+
+            row.ReadAtUtc ??= readAtUtc;
+            return Task.FromResult<SalesExceptionRequest?>(row.Clone());
+        }
+    }
+
     public Task<IReadOnlyDictionary<string, int>> CountByStatusAsync(string? cityValue, CancellationToken ct = default)
     {
         lock (_gate)
         {
-            IEnumerable<SalesExceptionRequest> rows = _rows;
-            if (!string.IsNullOrWhiteSpace(cityValue))
-            {
-                rows = rows.Where(r => string.Equals(r.CityValue, cityValue.Trim(), StringComparison.OrdinalIgnoreCase));
-            }
-
+            IEnumerable<SalesExceptionRequest> rows = FilterCity(_rows, cityValue);
             IReadOnlyDictionary<string, int> counts = rows
                 .GroupBy(r => r.Status, StringComparer.Ordinal)
                 .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
             return Task.FromResult(counts);
         }
     }
+
+    public Task<IReadOnlyDictionary<string, int>> CountHoldByStatusAsync(string? cityValue, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            IEnumerable<SalesExceptionRequest> rows = FilterCity(_rows, cityValue)
+                .Where(r => !IsWrongSaleReason(r.Reason));
+            IReadOnlyDictionary<string, int> counts = rows
+                .GroupBy(r => r.Status, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+            return Task.FromResult(counts);
+        }
+    }
+
+    public Task<int> CountUnreadWrongSalesAsync(string? cityValue, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var n = FilterCity(_rows, cityValue)
+                .Count(r => r.ReadAtUtc is null && IsWrongSaleReason(r.Reason));
+            return Task.FromResult(n);
+        }
+    }
+
+    private static IEnumerable<SalesExceptionRequest> FilterCity(
+        IEnumerable<SalesExceptionRequest> rows,
+        string? cityValue)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue)) return rows;
+        return rows.Where(r =>
+            string.Equals(r.CityValue, cityValue.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsWrongSaleReason(string? reason) =>
+        !string.IsNullOrWhiteSpace(reason)
+        && (reason.Contains("مبيعات خاطئة", StringComparison.Ordinal)
+            || reason.Contains("تقييم المتجر", StringComparison.Ordinal));
 
     public Task<SalesExceptionRequest?> FindActiveBySalesRequestIdAsync(int salesRequestId, CancellationToken ct = default)
     {
@@ -182,6 +232,21 @@ public sealed class InMemorySalesExceptionStore : ISalesExceptionStore
             return Task.FromResult(row?.Clone());
         }
     }
+
+    public Task<SalesExceptionRequest?> FindPendingWrongSaleByCustomerIdAsync(int customerId, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var row = _rows
+                .Where(r => r.CustomerId == customerId
+                            && string.Equals(r.Status, ExceptionStatuses.Pending, StringComparison.Ordinal)
+                            && IsWrongSaleReason(r.Reason))
+                .OrderByDescending(r => r.RequestedAtUtc)
+                .FirstOrDefault();
+            return Task.FromResult(row);
+        }
+    }
+
 
     public Task<SalesExceptionRequest?> TryConsumeAsync(
         Guid id,

@@ -111,7 +111,8 @@ GROUP BY
     C.Longitude, C.Latitude, C.Notes, C.PhoneNumber, C.CustomerState, C.ShopName,
     C.StoreAddress, C.NearestFunctionPoint, C.StorePhoneNumber, C.Neighborhood,
     C.AmountReceverDay, C.AsyncID, C.AsyncState, C.SelectState, C.SaleName,
-    C.IsLegal, C.IsFakeSale, C.ReceiptName, C.CustomerImage, C.CreatedDate, C.UpdatedDate;
+    C.IsLegal, C.IsFakeSale, C.ReceiptName, C.CustomerImage, C.CreatedDate, C.UpdatedDate,
+    C.RatingEquationFactor;
 GO
 
 CREATE OR ALTER VIEW [dbo].[View_CustomerMonthPaymentDevice]
@@ -223,7 +224,8 @@ GROUP BY
     C.Longitude, C.Latitude, C.Notes, C.PhoneNumber, C.CustomerState, C.ShopName,
     C.StoreAddress, C.NearestFunctionPoint, C.StorePhoneNumber, C.Neighborhood,
     C.AmountReceverDay, C.AsyncID, C.AsyncState, C.SelectState, C.SaleName,
-    C.IsLegal, C.IsFakeSale, C.ReceiptName, C.CustomerImage, C.CreatedDate, C.UpdatedDate;
+    C.IsLegal, C.IsFakeSale, C.ReceiptName, C.CustomerImage, C.CreatedDate, C.UpdatedDate,
+    C.RatingEquationFactor;
 GO
 
 CREATE OR ALTER VIEW [dbo].[View_CustomersDelegate]

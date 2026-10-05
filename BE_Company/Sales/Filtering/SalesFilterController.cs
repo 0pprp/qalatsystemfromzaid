@@ -13,20 +13,39 @@ namespace BE_Company.Sales.Filtering
     {
         private readonly ISalesFilterService _service;
         private readonly SalesIdentityService _identity;
+        private readonly IConfiguration _configuration;
 
-        public SalesFilterController(ISalesFilterService service, SalesIdentityService identity)
+        public SalesFilterController(
+            ISalesFilterService service,
+            SalesIdentityService identity,
+            IConfiguration configuration)
         {
             _service = service;
             _identity = identity;
+            _configuration = configuration;
         }
 
         private SalesIdentity RequireActor() =>
             _identity.FromAuthenticatedUser()
             ?? throw new SalesCompleteException(StatusCodes.Status401Unauthorized, "غير مصرح.");
 
+        private IActionResult? IfDisabled()
+        {
+            if (_configuration.GetValue("SalesManagement:FilterAppEnabled", false))
+            {
+                return null;
+            }
+
+            return StatusCode(StatusCodes.Status410Gone, new
+            {
+                message = "تم إيقاف تطبيق الفلترة. الطلبات تظهر مباشرة في تطبيق المبيعات — طلبات البيع."
+            });
+        }
+
         [HttpGet("me/cities")]
         public async Task<IActionResult> MyCities(CancellationToken ct)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             try
             {
                 return Ok(await _service.MyCitiesAsync(RequireActor(), ct));
@@ -40,6 +59,7 @@ namespace BE_Company.Sales.Filtering
         [HttpGet("sales-employees")]
         public async Task<IActionResult> SalesEmployees([FromQuery] string? city, CancellationToken ct = default)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             try
             {
                 return Ok(await _service.ListSalesEmployeesAsync(RequireActor(), city, ct));
@@ -60,6 +80,7 @@ namespace BE_Company.Sales.Filtering
             [FromQuery] int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             try
             {
                 return Ok(await _service.ListAsync(
@@ -77,6 +98,7 @@ namespace BE_Company.Sales.Filtering
             [FromQuery] int? targetEmployeeId = null,
             CancellationToken ct = default)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             try
             {
                 return Ok(await _service.CountsAsync(RequireActor(), city, targetEmployeeId, ct));
@@ -90,6 +112,7 @@ namespace BE_Company.Sales.Filtering
         [HttpGet("requests/{id:int}")]
         public async Task<IActionResult> Get(int id, CancellationToken ct)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             try
             {
                 return Ok(await _service.GetAsync(RequireActor(), id, ct));
@@ -103,6 +126,7 @@ namespace BE_Company.Sales.Filtering
         [HttpPost("requests/{id:int}/hold")]
         public async Task<IActionResult> Hold(int id, [FromBody] SalesFilterNoteDTO? body, CancellationToken ct)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             try
             {
                 return Ok(await _service.HoldAsync(RequireActor(), id, body?.Note, ct));
@@ -116,6 +140,7 @@ namespace BE_Company.Sales.Filtering
         [HttpPost("requests/{id:int}/ready")]
         public async Task<IActionResult> Ready(int id, [FromBody] SalesFilterNoteDTO? body, CancellationToken ct)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             try
             {
                 return Ok(await _service.ReadyAsync(RequireActor(), id, body?.Note, ct));
@@ -129,6 +154,7 @@ namespace BE_Company.Sales.Filtering
         [HttpPost("requests/{id:int}/reject")]
         public async Task<IActionResult> Reject(int id, [FromBody] SalesFilterRejectDTO? body, CancellationToken ct)
         {
+            if (IfDisabled() is { } disabled) return disabled;
             try
             {
                 return Ok(await _service.RejectAsync(RequireActor(), id, body?.Reason, body?.Note, ct));

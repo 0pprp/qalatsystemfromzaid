@@ -26,6 +26,11 @@ class ExceptionsRepository {
     return ExceptionDetail.fromJson(JsonRead.map(json));
   }
 
+  static Future<ExceptionRequest> markRead(String id) async {
+    final json = await ApiClient.post('$_base/$id/read');
+    return ExceptionRequest.fromJson(JsonRead.map(json));
+  }
+
   /// `decision` is `Approved` or `Rejected`; the gateway rejects any other
   /// value and returns 409 when the request was already decided.
   static Future<ExceptionRequest> decide({

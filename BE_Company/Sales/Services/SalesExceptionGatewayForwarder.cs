@@ -48,8 +48,17 @@ namespace BE_Company.Sales.Services
         public static SalesExceptionGatewayForwardResult Success(string body, string contentType = "application/json") =>
             new() { Ok = true, ResponseBody = body, ContentType = contentType };
 
-        public static SalesExceptionGatewayForwardResult Failure(int failureStatusCode, string errorMessage) =>
-            new() { Ok = false, FailureStatusCode = failureStatusCode, ErrorMessage = errorMessage };
+        public static SalesExceptionGatewayForwardResult Failure(
+            int failureStatusCode,
+            string errorMessage,
+            string? responseBody = null) =>
+            new()
+            {
+                Ok = false,
+                FailureStatusCode = failureStatusCode,
+                ErrorMessage = errorMessage,
+                ResponseBody = responseBody
+            };
     }
 
     public interface ISalesExceptionGatewayForwarder
@@ -206,7 +215,8 @@ namespace BE_Company.Sales.Services
                                           ?? "تعذر إكمال العملية بسبب تعارض";
                     return SalesExceptionGatewayForwardResult.Failure(
                         StatusCodes.Status409Conflict,
-                        conflictMessage);
+                        conflictMessage,
+                        responseBody);
                 }
 
                 if (response.StatusCode == System.Net.HttpStatusCode.NotFound)

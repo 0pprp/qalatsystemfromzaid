@@ -7,7 +7,11 @@ import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:delegate_application/main.dart';
 import 'package:delegate_application/customer.dart';
 import 'package:delegate_application/core/update/app_update_gate.dart';
+import 'package:delegate_application/core/update/app_version.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
+import 'package:delegate_application/services/manual_payment_sync_result.dart';
+import 'package:delegate_application/services/payment_sync_service.dart';
+import 'package:delegate_application/services/tutorial_video_service.dart';
 import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:delegate_application/ui/delegate_complaint_sheet.dart';
@@ -18,6 +22,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:delegate_application/utils/Formatters.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'package:delegate_application/services/phantom_customer_rating.dart';
+import 'package:delegate_application/utils/iraq_date.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -38,8 +45,10 @@ class _HomePageState extends State<HomePage> {
   double amountRecever = 0;
   double amountRemaining = 0;
   double amountTotal = 0;
+  bool _sendingPayments = false;
   double amountDay = 0;
   bool isLoading = true;
+  double _overallPhantomScore = 0;
 
   int _selectedIndex = 2; // Default to Home
   final GlobalKey<TodayPaymentsPageState> _todayKey =
@@ -119,6 +128,101 @@ class _HomePageState extends State<HomePage> {
         // Log error
       }
     }
+    await _refreshOverallPhantomScore();
+  }
+
+  Future<void> _refreshOverallPhantomScore() async {
+    try {
+      final db = await DatabaseHelper().database;
+      final rows = await db.query('Customer');
+      // تقييمك = متوسط من سدّد خلال 30 يوم فقط (الباقي > 0).
+      final score = PhantomCustomerRating.averageCustomerScore(
+        rows,
+        IraqDate.calendarDate(),
+      );
+      if (!mounted) return;
+      setState(() => _overallPhantomScore = score);
+    } catch (_) {
+      // Keep last known score if local DB is unavailable.
+    }
+  }
+
+  Future<void> _sendPendingPayments() async {
+    if (_sendingPayments) return;
+    setState(() => _sendingPayments = true);
+    try {
+      final result =
+          await PaymentSyncService.instance.sendPendingPaymentsNow();
+      if (!mounted) return;
+      final message = result.summaryMessage();
+      final ok = result.isCompleteSuccess ||
+          (result.outcome == ManualPaymentSyncOutcome.nothingPending &&
+              result.permanentFailures == 0);
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message, style: const TextStyle(fontFamily: 'Cairo')),
+          backgroundColor:
+              ok ? Colors.teal.shade700 : Colors.orange.shade800,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      if (result.outcome == ManualPaymentSyncOutcome.uploaded ||
+          result.outcome == ManualPaymentSyncOutcome.partial) {
+        TodayPaymentsRefresh.notify();
+        await _customerKey.currentState
+            ?.reloadLists(attemptNetworkRefreshIfEmpty: false);
+        await fetchData();
+      }
+    } finally {
+      if (mounted) setState(() => _sendingPayments = false);
+    }
+  }
+
+  Future<void> _openTutorialVideo() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    Uri? uri;
+    try {
+      uri = await TutorialVideoService.resolveLaunchUri();
+    } finally {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    }
+    if (!mounted) return;
+    if (uri == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'لم يُحدَّد رابط الفيديو بعد. عدّله من لوحة مدير المبيعات.',
+            style: TextStyle(fontFamily: 'Cairo'),
+          ),
+        ),
+      );
+      return;
+    }
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر فتح الفيديو التعليمي',
+                style: TextStyle(fontFamily: 'Cairo')),
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تعذر فتح الفيديو التعليمي',
+              style: TextStyle(fontFamily: 'Cairo')),
+        ),
+      );
+    }
   }
 
   Future<void> _logout() async {
@@ -157,6 +261,22 @@ class _HomePageState extends State<HomePage> {
                             borderRadius: BorderRadius.circular(10)),
                       ),
                       onPressed: () async {
+                        final unresolved =
+                            await DatabaseHelper().countUnresolvedPayments();
+                        if (unresolved > 0) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'لا يمكن حذف البيانات: يوجد $unresolved تسديد غير مُرسَل/مرفوض. احفظ البيانات أو أرسل التسديدات أولاً.',
+                                  style: const TextStyle(fontFamily: 'Cairo'),
+                                ),
+                                backgroundColor: Colors.red.shade700,
+                              ),
+                            );
+                          }
+                          return;
+                        }
                         await DatabaseHelper().clearAllTables();
                         await AsyncIdChecker.logout();
                         if (context.mounted) {
@@ -211,6 +331,7 @@ class _HomePageState extends State<HomePage> {
       // IndexedStack may have created Customer before SelectDelegate was filled.
       _customerKey.currentState
           ?.reloadLists(attemptNetworkRefreshIfEmpty: true);
+      unawaited(DelegateBusinessDateService.instance.ensureCurrentBusinessDay());
     }
     if (index == 2) {
       fetchData();
@@ -282,10 +403,36 @@ class _HomePageState extends State<HomePage> {
                     );
                   },
                 ),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _openTutorialVideo,
+                    icon: const Icon(Icons.play_circle_filled_rounded,
+                        color: Colors.white, size: 28),
+                    label: const Text(
+                      'مشاهدة الفيديو التعليمي',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFFC107),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
                 _buildHeader(),
                 const SizedBox(height: 30),
                 _buildSummaryCard(),
                 const SizedBox(height: 20),
+                _buildOverallRatingSection(),
+                const SizedBox(height: 12),
                 _buildReportSection(),
                 const SizedBox(height: 20),
                 SizedBox(
@@ -313,6 +460,40 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _sendingPayments ? null : _sendPendingPayments,
+                    icon: _sendingPayments
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.4,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.cloud_upload_rounded,
+                            color: Colors.white),
+                    label: Text(
+                      _sendingPayments
+                          ? 'جاري إرسال التسديدات...'
+                          : 'إرسال التسديدات',
+                      style: const TextStyle(
+                        fontFamily: 'Cairo',
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.teal.shade700,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 20),
                 TextButton.icon(
                   onPressed: _logout,
@@ -321,9 +502,9 @@ class _HomePageState extends State<HomePage> {
                       style: TextStyle(fontFamily: 'Cairo', color: Colors.red)),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  'الإصدار 30',
-                  style: TextStyle(
+                Text(
+                  'الإصدار ${AppVersion.display}',
+                  style: const TextStyle(
                       fontFamily: 'Cairo', color: Colors.grey, fontSize: 12),
                 ),
               ],
@@ -495,6 +676,49 @@ class _HomePageState extends State<HomePage> {
               fontFamily: 'Cairo',
               color: Colors.grey,
               fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOverallRatingSection() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(25),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          )
+        ],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text(
+            'تقييمك :',
+            style: TextStyle(
+              fontFamily: 'Cairo',
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+              color: AppTheme.textColor,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            PhantomCustomerRating.formatAverageScore(_overallPhantomScore),
+            style: const TextStyle(
+              fontFamily: 'Cairo',
+              fontWeight: FontWeight.w800,
+              fontSize: 22,
+              color: Color(0xFFE6A800),
             ),
           ),
         ],

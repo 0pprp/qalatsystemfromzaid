@@ -223,7 +223,7 @@ namespace BE_SalesEmployee.Tests
                 "sourceCityValue": "najaf",
                 "tripleName": { "resultCount": 2, "worstScore": 0, "worstRatingLevel": "Weak", "worstRatingLabel": "ضعيف" },
                 "phone": { "resultCount": 2, "worstScore": -10, "worstRatingLevel": "Legal", "worstRatingLabel": "قانونية" },
-                "fatherGrandfather": { "resultCount": 2, "worstScore": -5, "worstRatingLevel": "Rejected", "worstRatingLabel": "مرفوض" }
+                "fatherGrandfather": { "resultCount": 2, "worstScore": -5, "worstRatingLevel": "Rejected", "worstRatingLabel": "متلكئ" }
               }]
             }
             """)!;

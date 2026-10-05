@@ -1,6 +1,6 @@
 /**
  * Pure helpers for SalesRequest evaluation summary indexing / lookup.
- * Fixes silent "0 نتائج" when API returned counts under a different key alias.
+ * Fixes silent "0 نتائج" when API returned counts under a different city key alias.
  */
 
 export function requestCityOf(row) {
@@ -29,11 +29,18 @@ export function evaluationKeyFromRow(row) {
   return buildEvaluationKey(requestCityOf(row), requestIdOf(row))
 }
 
+export function requestIdOnlyKey(requestId) {
+  const id = Number(requestId ?? 0)
+
+  return `id:${Number.isFinite(id) ? id : 0}`
+}
+
 export function evaluationKeysFromItem(item) {
   if (!item || typeof item !== 'object')
     return []
   const requestId = item.requestId ?? item.RequestId
   const source = String(item.sourceCityValue ?? item.SourceCityValue ?? '').trim()
+  // Never index by bare request id — same numeric id exists in every province DB.
   const keys = [
     item.key,
     item.Key,
@@ -45,6 +52,9 @@ export function evaluationKeysFromItem(item) {
 
 /**
  * Index API evaluation items under every stable alias so FE cards can resolve them.
+ * Always maps each matching request row's stamped cityValue — even when it differs
+ * from gateway DatabaseCompany* sourceCityValue (that mismatch caused "0 نتيجة").
+ * Must stay city-scoped: director/SM switch provinces and request ids collide across DBs.
  */
 export function indexEvaluationItems(items, requestRows = []) {
   const map = Object.create(null)
@@ -54,13 +64,11 @@ export function indexEvaluationItems(items, requestRows = []) {
       continue
     const keys = evaluationKeysFromItem(item)
     const rid = Number(item.requestId ?? item.RequestId ?? 0)
-    const src = String(item.sourceCityValue ?? item.SourceCityValue ?? '').trim()
     for (const row of rows) {
       if (requestIdOf(row) !== rid)
         continue
-      const rowCity = requestCityOf(row)
-      if (!src || !rowCity || rowCity.toLowerCase() === src.toLowerCase())
-        keys.push(evaluationKeyFromRow(row))
+      keys.push(evaluationKeyFromRow(row))
+      keys.push(buildEvaluationKey(requestCityOf(row), rid))
     }
     for (const key of [...new Set(keys)])
       map[key] = item
@@ -77,6 +85,8 @@ export function lookupEvaluation(map, row) {
     return map[primary]
   const id = requestIdOf(row)
   const city = requestCityOf(row)
+  if (!id || !city)
+    return null
   const aliases = [
     buildEvaluationKey(city, id),
     `${city}:${id}`,
@@ -86,15 +96,19 @@ export function lookupEvaluation(map, row) {
       return map[key]
   }
   // Case-insensitive city scan for same request id (Admin value vs legacy stamp).
+  // Never fall back to another province's id — that mixed director ratings/requests.
   const cityLower = city.toLowerCase()
   for (const [key, item] of Object.entries(map)) {
     const itemId = Number(item?.requestId ?? item?.RequestId ?? 0)
     if (itemId !== id)
       continue
     const itemCity = String(item?.sourceCityValue ?? item?.SourceCityValue ?? '').trim()
-    if (itemCity.toLowerCase() === cityLower)
+    if (itemCity && itemCity.toLowerCase() === cityLower)
       return item
     if (String(key).toLowerCase() === primary.toLowerCase())
+      return item
+    const keyCity = String(key).split(':')[0] || ''
+    if (keyCity && keyCity.toLowerCase() === cityLower)
       return item
   }
 
@@ -140,6 +154,50 @@ export function categoryWorstScore(cat) {
   const num = Number(n)
 
   return Number.isFinite(num) ? num : null
+}
+
+/** Patch category counts after hits load so the metric chips match the list. */
+export function patchCategoryFromHits(evalRow, categoryKey, total, sampleHit) {
+  if (!evalRow || !categoryKey)
+    return evalRow
+  const next = { ...evalRow }
+  const prev = categoryBlock(evalRow, categoryKey) || {}
+  const count = Math.max(0, Number(total) || 0)
+  const ratingLabel = sampleHit?.ratingLabel || sampleHit?.RatingLabel || prev.worstRatingLabel || prev.WorstRatingLabel
+  const score = sampleHit?.score ?? sampleHit?.Score ?? prev.worstScore ?? prev.WorstScore
+  const patched = {
+    ...prev,
+    resultCount: count,
+    ResultCount: count,
+    worstRatingLabel: count > 0 ? (ratingLabel || 'يوجد تطابق') : 'لا توجد نتائج',
+    WorstRatingLabel: count > 0 ? (ratingLabel || 'يوجد تطابق') : 'لا توجد نتائج',
+    worstScore: count > 0 ? score : null,
+    WorstScore: count > 0 ? score : null,
+  }
+  if (categoryKey === 'tripleName') {
+    next.tripleName = patched
+    next.TripleName = patched
+  }
+  else if (categoryKey === 'phone') {
+    next.phone = patched
+    next.Phone = patched
+  }
+  else if (categoryKey === 'fatherGrandfather') {
+    next.fatherGrandfather = patched
+    next.FatherGrandfather = patched
+  }
+  const has = ['tripleName', 'phone', 'fatherGrandfather']
+    .some(k => (categoryResultCount(categoryBlock(next, k)) || 0) > 0)
+  next.hasAnyMatch = has
+  next.HasAnyMatch = has
+  if (has && count > 0 && (score != null || ratingLabel)) {
+    next.overallScore = score
+    next.OverallScore = score
+    next.overallRatingLabel = ratingLabel || next.overallRatingLabel
+    next.OverallRatingLabel = ratingLabel || next.OverallRatingLabel
+  }
+
+  return next
 }
 
 export function settlementDaysDisplay(hit) {

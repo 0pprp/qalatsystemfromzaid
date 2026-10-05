@@ -27,13 +27,13 @@ public sealed class DelegatedManagerAccountService
             return false;
         }
 
-        var normalized = userName.Trim();
+        var normalized = NormalizeUserName(userName);
         var primaryUser = _configuration["DelegatedManagerAccount:UserName"] ?? "";
         var primaryPass = _configuration["DelegatedManagerAccount:Password"];
         var primaryDisplay = _configuration["DelegatedManagerAccount:DisplayName"] ?? "المدير المفوض";
 
         if (!string.IsNullOrWhiteSpace(primaryUser) &&
-            string.Equals(normalized, primaryUser, StringComparison.OrdinalIgnoreCase) &&
+            UserNamesEqual(normalized, primaryUser) &&
             !string.IsNullOrWhiteSpace(primaryPass) &&
             PasswordEquals(password, primaryPass))
         {
@@ -55,7 +55,7 @@ public sealed class DelegatedManagerAccountService
                 continue;
             }
 
-            if (!string.Equals(normalized, u.Trim(), StringComparison.OrdinalIgnoreCase))
+            if (!UserNamesEqual(normalized, u))
             {
                 continue;
             }
@@ -75,6 +75,41 @@ public sealed class DelegatedManagerAccountService
 
         return false;
     }
+
+    /// <summary>
+    /// Arabic keyboards often insert alef-with-hamza (أ/إ/آ) while config stores plain alef (ا).
+    /// Normalize both sides so login matches what ops typed on the server.
+    /// </summary>
+    internal static string NormalizeUserName(string userName)
+    {
+        var trimmed = userName.Trim();
+        if (trimmed.Length == 0)
+        {
+            return trimmed;
+        }
+
+        var sb = new StringBuilder(trimmed.Length);
+        foreach (var ch in trimmed)
+        {
+            sb.Append(ch switch
+            {
+                '\u0623' or // أ ALEF WITH HAMZA ABOVE
+                '\u0625' or // إ ALEF WITH HAMZA BELOW
+                '\u0622' or // آ ALEF WITH MADDA ABOVE
+                '\u0671' // ٱ ALEF WASLA
+                    => '\u0627', // ا ALEF
+                _ => ch
+            });
+        }
+
+        return sb.ToString();
+    }
+
+    private static bool UserNamesEqual(string suppliedNormalized, string configured) =>
+        string.Equals(
+            NormalizeUserName(suppliedNormalized),
+            NormalizeUserName(configured),
+            StringComparison.OrdinalIgnoreCase);
 
     private static bool PasswordEquals(string supplied, string expected)
     {

@@ -54,7 +54,8 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
       unawaited(refreshIfPossible());
     });
 
-    await refreshIfPossible();
+    // Do not block app start on full customer refresh.
+    unawaited(refreshIfPossible());
   }
 
   @override
@@ -190,13 +191,13 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
     return _RefreshSnapshot(
       selectDelegates: selectRows,
       dateWeek: {
-        'Date1': week['date1']?.toString() ?? '',
-        'Date2': week['date2']?.toString() ?? '',
-        'Date3': week['date3']?.toString() ?? '',
-        'Date4': week['date4']?.toString() ?? '',
-        'Date5': week['date5']?.toString() ?? '',
-        'Date6': week['date6']?.toString() ?? '',
-        'Date7': week['date7']?.toString() ?? '',
+        'Date1': (week['date1'] ?? week['Date1'])?.toString() ?? '',
+        'Date2': (week['date2'] ?? week['Date2'])?.toString() ?? '',
+        'Date3': (week['date3'] ?? week['Date3'])?.toString() ?? '',
+        'Date4': (week['date4'] ?? week['Date4'])?.toString() ?? '',
+        'Date5': (week['date5'] ?? week['Date5'])?.toString() ?? '',
+        'Date6': (week['date6'] ?? week['Date6'])?.toString() ?? '',
+        'Date7': (week['date7'] ?? week['Date7'])?.toString() ?? '',
       },
       customers: customers,
     );
@@ -223,30 +224,43 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
   }
 
   Map<String, dynamic> _mapCustomer(dynamic customerElement) {
+    double n(dynamic v) {
+      if (v == null) return 0;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString().replaceAll(',', '')) ?? 0;
+    }
+
+    int i(dynamic v) {
+      if (v == null) return 0;
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return int.tryParse(v.toString()) ?? 0;
+    }
+
     return {
-      'CustomerId': customerElement['customerId'],
+      'CustomerId': i(customerElement['customerId']),
       'CustomerName': customerElement['customerName']?.toString() ?? '',
-      'DelegateId': customerElement['delegateId'],
+      'DelegateId': i(customerElement['delegateId']),
       'PhoneNumber': customerElement['phoneNumber']?.toString() ?? '',
-      'AmountTotalSales': customerElement['amountTotalSales'],
-      'AmountDaySales': customerElement['amountDaySales'],
-      'ReceiptsTotal': customerElement['receiptsTotal'],
-      'AmountRemaining': customerElement['amountRemaining'],
+      'AmountTotalSales': n(customerElement['amountTotalSales']),
+      'AmountDaySales': n(customerElement['amountDaySales']),
+      'ReceiptsTotal': n(customerElement['receiptsTotal']),
+      'AmountRemaining': n(customerElement['amountRemaining']),
       'ItemsNames': customerElement['itemsNames']?.toString() ?? '',
-      'CityId': customerElement['cityId'],
-      'Amount1': customerElement['amount1'],
-      'Amount2': customerElement['amount2'],
-      'Amount3': customerElement['amount3'],
-      'Amount4': customerElement['amount4'],
-      'Amount5': customerElement['amount5'],
-      'Amount6': customerElement['amount6'],
-      'Amount7': customerElement['amount7'],
+      'CityId': i(customerElement['cityId']),
+      'Amount1': n(customerElement['amount1']),
+      'Amount2': n(customerElement['amount2']),
+      'Amount3': n(customerElement['amount3']),
+      'Amount4': n(customerElement['amount4']),
+      'Amount5': n(customerElement['amount5']),
+      'Amount6': n(customerElement['amount6']),
+      'Amount7': n(customerElement['amount7']),
       'PhoneNumberCompany':
           customerElement['phoneNumberCompany']?.toString() ?? '',
-      'CountReceiptDevice': customerElement['countReceiptDevice'],
+      'CountReceiptDevice': customerElement['countReceiptDevice'] ?? 0,
       'Address': customerElement['address']?.toString() ?? '',
       'ShopName': customerElement['shopName']?.toString() ?? '',
-      'NumberOfDayPayment': customerElement['numberOfDayPayment'],
+      'NumberOfDayPayment': customerElement['numberOfDayPayment'] ?? 0,
       'IsLegal': customerElement['isLegal']?.toString() ?? 'false',
       'LastPaymentDate': customerElement['lastPaymentDate']?.toString() ?? '',
       'DateSaleDevice': customerElement['dateSaleDevice']?.toString() ?? '',

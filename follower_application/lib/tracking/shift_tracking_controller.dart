@@ -12,6 +12,7 @@ import 'package:follower_application/tracking/sqlite_location_store.dart';
 import 'package:follower_application/tracking/tracking_channel.dart';
 import 'package:follower_application/tracking/tracking_config.dart';
 import 'package:follower_application/tracking/work_shift.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 typedef PermissionFn = Future<bool> Function();
@@ -274,8 +275,20 @@ class ShiftTrackingController {
     await _netSub?.cancel();
     _netSub = null;
 
-    // 1) Backend end first (source of truth).
-    await _repo.endShift();
+    double? lat;
+    double? lng;
+    double? acc;
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      ).timeout(const Duration(seconds: 8));
+      lat = pos.latitude;
+      lng = pos.longitude;
+      acc = pos.accuracy;
+    } catch (_) {}
+
+    // 1) Backend end first (source of truth) — includes end GPS pin.
+    await _repo.endShift(latitude: lat, longitude: lng, accuracy: acc);
 
     // 2) Stop GPS / foreground tracking.
     try {

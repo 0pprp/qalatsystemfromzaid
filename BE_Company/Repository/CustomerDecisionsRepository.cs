@@ -19,8 +19,10 @@ namespace BE_Company.Repository
         {
             using var connection = new SqlConnection(_connectionString);
             return await connection.QueryAsync<CustomerWeekPaymentsGetDTO>(
-                "Customers_GetWeakWeekPayers",
-                commandType: CommandType.StoredProcedure);
+                new CommandDefinition(
+                    "Customers_GetWeakWeekPayers",
+                    commandType: CommandType.StoredProcedure,
+                    commandTimeout: 90));
         }
 
         public async Task<CustomerWeekDecisionGetDTO?> Customers_PostWeekDecision(int? customerID, int? userID, string? decisionType, string? note)

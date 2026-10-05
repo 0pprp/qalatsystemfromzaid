@@ -3,7 +3,7 @@ description: "A new Flutter project."
 
 publish_to: "none"
 
-version: 1.0.0+19
+version: 1.0.14+43
 
 environment:
   sdk: ">=3.3.3 <4.0.0"
@@ -37,6 +37,8 @@ dependencies:
   crypto: ^3.0.6
   path_provider: ^2.1.5
   open_filex: ^4.7.0
+  audioplayers: ^6.8.1
+  package_info_plus: ^8.0.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -66,6 +68,7 @@ flutter:
     - assets/images/data-transfer.png
     - assets/images/billing.png
     - assets/icons/logo_last.png
+    - assets/sounds/payment_ding.wav
 
   fonts:
     - family: Cairo

@@ -92,13 +92,16 @@ namespace BE_DelegateWebApplication.Controllers
         }
 
         [HttpPost("shifts/end")]
-        public async Task<IActionResult> EndShift([FromQuery] string asyncId, CancellationToken ct)
+        public async Task<IActionResult> EndShift(
+            [FromQuery] string asyncId,
+            [FromBody] FollowerLocationPointDto? endPoint,
+            CancellationToken ct)
         {
             var follower = await Auth(asyncId, ct);
             if (follower == null) return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مصرح." });
             try
             {
-                return Ok(await _tracking.EndAsync(follower, ct));
+                return Ok(await _tracking.EndAsync(follower, endPoint, ct));
             }
             catch (FollowerTrackingException ex)
             {

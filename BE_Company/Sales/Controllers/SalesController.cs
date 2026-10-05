@@ -670,11 +670,34 @@ namespace BE_Company.Sales.Controllers
             var identity = _identity.FromAuthenticatedUser();
             if (identity == null)
             {
-                return Unauthorized();
+                return Unauthorized(new { message = "تعذر التعرف على هوية الموظف." });
             }
 
-            var shift = await _shifts.StartAsync(identity, ct);
-            return Ok(shift);
+            if (!SalesRoles.IsSalesEmployee(identity.UserType))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    message = "هذا الحساب غير مخوّل لبدء دوام موظف المبيعات. سجّل دخول بحساب نوعه «موظف مبيعات» فقط."
+                });
+            }
+
+            try
+            {
+                var shift = await _shifts.StartAsync(identity, ct);
+                return Ok(shift);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return StatusCode(StatusCodes.Status409Conflict, new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "تعذر بدء الدوام بسبب خطأ في السيرفر.",
+                    detail = ex.Message
+                });
+            }
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]

@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""Finish Kufa reset: unlink AddToBox, delete payment+DFCE; clear shop-eval WrongSales for 53388/53385."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import paramiko
+
+HOST = "169.58.236.52"
+SSH_PASS = os.environ.get("SSH_PASS", "")
+
+
+def main() -> int:
+    remote = r'''
+import json, os, re, subprocess
+from pathlib import Path
+
+def grab(cs, key):
+    m = re.search(rf'(?:^|;){re.escape(key)}=([^;]+)', cs, re.I)
+    return m.group(1) if m else ''
+
+def sqlbin():
+    return '/opt/mssql-tools18/bin/sqlcmd' if os.path.isfile('/opt/mssql-tools18/bin/sqlcmd') else 'sqlcmd'
+
+def run(server, db, user, pwd, sql):
+    p = subprocess.run(
+        [sqlbin(), '-C', '-f', '65001', '-I', '-S', server, '-d', db, '-U', user, '-P', pwd, '-W', '-s', '|', '-Q', sql],
+        capture_output=True, text=True, encoding='utf-8', errors='replace',
+    )
+    return ((p.stdout or '') + (('\n' + p.stderr) if p.stderr else '')).strip()
+
+najaf = json.loads(Path('/opt/qalaa-runtime/DelegateHaiderNajafLast/appsettings.json').read_text(encoding='utf-8'))
+ncs = najaf['ConnectionStrings']['DataBaseConnection']
+ns = grab(ncs,'Data Source') or grab(ncs,'Server')
+ndb = grab(ncs,'Initial Catalog') or grab(ncs,'Database')
+nu = grab(ncs,'User ID') or grab(ncs,'User Id')
+np = grab(ncs,'Password')
+
+pid = subprocess.getoutput('systemctl show -p MainPID --value qalaa-sales-gateway').strip()
+gcs = ''
+for b in Path(f'/proc/{pid}/environ').read_bytes().split(b'\0'):
+    s = b.decode('utf-8','replace')
+    if s.startswith('ConnectionStrings__SalesGateway='):
+        gcs = s.split('=',1)[1]
+        break
+gs = grab(gcs,'Data Source') or grab(gcs,'Server') or 'localhost'
+gdb = grab(gcs,'Initial Catalog') or grab(gcs,'Database')
+gu = grab(gcs,'User ID') or grab(gcs,'User Id')
+gp = grab(gcs,'Password')
+
+print('=== AddToBox for 419158 ===')
+print(run(ns, ndb, nu, np, """
+SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
+SELECT TOP 20 * FROM dbo.AddToBox WHERE CustomerPaymentID=419158;
+SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=N'AddToBox' ORDER BY ORDINAL_POSITION;
+"""))
+
+print('=== NAJAF APPLY ===')
+print(run(ns, ndb, nu, np, """
+SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+SET XACT_ABORT ON;
+BEGIN TRAN;
+DELETE FROM dbo.AddToBox WHERE CustomerPaymentID=419158;
+PRINT CONCAT('AddToBox=', @@ROWCOUNT);
+DELETE FROM dbo.CustomersPaymentsRequest
+WHERE CustomerID=53388 AND ClientPaymentId=N'17fb84bf-b0b1-4b44-91e9-baba5ee4ff5b';
+PRINT CONCAT('PayReq=', @@ROWCOUNT);
+DELETE FROM dbo.CustomersPayments WHERE CustomerPaymentID=419158;
+PRINT CONCAT('Pay=', @@ROWCOUNT);
+DELETE FROM dbo.DelegateFirstCollectionEvaluations WHERE CustomerId=53388;
+PRINT CONCAT('DFCE=', @@ROWCOUNT);
+COMMIT;
+"""))
+
+print('=== GW shop-eval WrongSale cleanup 53385 + any leftover ===')
+print(run(gs, gdb, gu, gp, """
+SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+SET XACT_ABORT ON;
+BEGIN TRAN;
+DECLARE @ids TABLE (Id uniqueidentifier PRIMARY KEY);
+INSERT INTO @ids(Id)
+SELECT Id FROM dbo.SalesExceptionRequests
+WHERE CustomerId IN (53388, 53385)
+   OR (Reason LIKE N'%تقييم المتجر%' AND Reason LIKE N'%مبيعات خاطئة%'
+       AND RequestedAtUtc >= DATEADD(day,-2,SYSUTCDATETIME())
+       AND CityValue IN (N'DatabaseCompanyNajaf', N'النجف'));
+IF OBJECT_ID(N'dbo.SalesExceptionAudit', N'U') IS NOT NULL
+BEGIN
+  DELETE a FROM dbo.SalesExceptionAudit a INNER JOIN @ids i ON i.Id = a.ExceptionRequestId;
+  PRINT CONCAT('Audit=', @@ROWCOUNT);
+END
+DELETE r FROM dbo.SalesExceptionRequests r INNER JOIN @ids i ON i.Id = r.Id;
+PRINT CONCAT('WS=', @@ROWCOUNT);
+COMMIT;
+"""))
+
+# Also reset DFCE for 53385 if present (krar tests)
+print('=== DFCE 53385 ===')
+print(run(ns, ndb, nu, np, """
+SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
+SELECT Id, CustomerId, Rating, CONVERT(varchar(19), CreatedAtUtc, 120) AS CreatedAtUtc
+FROM dbo.DelegateFirstCollectionEvaluations WHERE CustomerId=53385;
+DELETE FROM dbo.DelegateFirstCollectionEvaluations WHERE CustomerId=53385;
+PRINT CONCAT('DFCE53385=', @@ROWCOUNT);
+"""))
+
+print('=== VERIFY ===')
+print(run(ns, ndb, nu, np, """
+SET NOCOUNT ON;
+SELECT CustomerPaymentID, BoundNumber, CONVERT(varchar(19), PaymentDate, 120) AS PaymentDate, ClientPaymentId
+FROM dbo.CustomersPayments WHERE CustomerID=53388 ORDER BY PaymentDate DESC;
+SELECT COUNT(*) AS Dfce53388 FROM dbo.DelegateFirstCollectionEvaluations WHERE CustomerId=53388;
+SELECT COUNT(*) AS Dfce53385 FROM dbo.DelegateFirstCollectionEvaluations WHERE CustomerId=53385;
+SELECT CustomerID, CustomerName, DelegateID FROM dbo.Customers WHERE CustomerID IN (53388,53385);
+"""))
+print(run(gs, gdb, gu, gp, """
+SET NOCOUNT ON;
+SELECT COUNT(*) AS WsShopEvalLeft
+FROM dbo.SalesExceptionRequests
+WHERE (CustomerId IN (53388,53385))
+   OR (Reason LIKE N'%تقييم المتجر%' AND Reason LIKE N'%مبيعات خاطئة%'
+       AND RequestedAtUtc >= DATEADD(day,-2,SYSUTCDATETIME()));
+SELECT TOP 5 Id, CustomerId, CustomerName, Status,
+  CONVERT(varchar(19), RequestedAtUtc, 120) AS RequestedAtUtc,
+  LEFT(Reason,40) AS Reason
+FROM dbo.SalesExceptionRequests
+WHERE Reason LIKE N'%مبيعات خاطئة%'
+ORDER BY RequestedAtUtc DESC;
+"""))
+print('OK')
+'''
+
+    c = paramiko.SSHClient()
+    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    c.connect(HOST, username='root', password=SSH_PASS, timeout=60, allow_agent=False, look_for_keys=False)
+    try:
+        path = '/tmp/reset_kufa_box.py'
+        sftp = c.open_sftp()
+        with sftp.file(path, 'w') as f:
+            f.write(remote)
+        sftp.close()
+        _, o, e = c.exec_command(f'python3 {path}', timeout=180)
+        out = o.read().decode('utf-8', 'replace')
+        err = e.read().decode('utf-8', 'replace')
+        print(out)
+        if err.strip():
+            print('STDERR', err[:2000])
+        Path(r'C:\GitHub\SalesHaider-main\SalesHaider-main\_ops_tmp_kufa_reset5.txt').write_text(out, encoding='utf-8')
+        return o.channel.recv_exit_status()
+    finally:
+        c.close()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

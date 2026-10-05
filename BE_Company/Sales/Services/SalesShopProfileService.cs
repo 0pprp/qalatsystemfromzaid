@@ -244,61 +244,51 @@ VALUES
             CancellationToken ct)
         {
             await EnsureSchemaAsync(ct);
-            var sales = await _sales.ListSalesAsync(null, null, null, null, ct);
-            var matchedSales = sales.Where(s => MatchesCustomer(s.CustomerId, s.FullName, s.Phone, customerId, customerName, phone)).ToList();
-            var requests = await _requests.ListForManagerAsync(null, null, null, null, ct);
-            var matchedRequests = requests.Where(r =>
-                MatchesCustomer(r.ExistingCustomerId, r.CustomerName, r.CustomerPhone, customerId, customerName, phone)).ToList();
+            // Production: never scan all drafts / TOP-400 requests — scoped SQL only.
+            var salesTask = _sales.ListSalesForCustomerAsync(customerId, phone, customerName, ct, take: 30);
+            var requestsTask = ListRequestsForCustomerAsync(customerId, customerName, phone, ct);
+            await Task.WhenAll(salesTask, requestsTask);
+            var matchedSales = (await salesTask).ToList();
+            var matchedRequests = await requestsTask;
 
-            var shops = new List<SalesShopProfileDTO>();
-            var profileSales = new List<SalesCustomerProfileSaleDTO>();
-            foreach (var sale in matchedSales.OrderByDescending(s => s.CompletedAt ?? s.CreatedAt))
+            // Cap detail hydrate — profile UI does not need dozens of full sales. Parallel for <1s.
+            var topSales = matchedSales
+                .OrderByDescending(s => s.CompletedAt ?? s.CreatedAt)
+                .Take(8)
+                .ToList();
+            var notesTask = ListStoredNotesAsync(customerId, customerName, phone, ct);
+            var profileSaleParts = await Task.WhenAll(topSales.Select(async sale =>
             {
-                var full = await _sales.GetSaleAsync(sale.SaleId, ct) ?? sale;
-                var shop = await GetBySaleIdAsync(sale.SaleId, ct);
-                if (shop != null)
+                var fullTask = _sales.GetSaleAsync(sale.SaleId, ct);
+                var shopTask = GetBySaleIdAsync(sale.SaleId, ct);
+                async Task<List<SalesDocumentDTO>> LoadDocsAsync()
                 {
-                    shops.Add(shop);
-                }
-
-                var documents = new List<SalesDocumentDTO>();
-                try
-                {
-                    IReadOnlyList<SalesDocumentDTO> raw;
-                    if (SalesCompleteRules.AlreadyCompleted(sale.Status) || sale.Status == SalesStatuses.Completed)
+                    try
                     {
-                        try
-                        {
-                            raw = await _documents.EnsureGeneratedAsync(full, ct);
-                        }
-                        catch
-                        {
-                            raw = (await _complete.GetDocumentsAsync(sale.SaleId, sale.EmployeeId, ct))
-                                .Select(SalesDocumentMapper.ToDto)
-                                .ToList();
-                        }
-                    }
-                    else
-                    {
-                        raw = (await _complete.GetDocumentsAsync(sale.SaleId, sale.EmployeeId, ct))
+                        // Metadata only — never regenerate PDFs on profile open (was multi-second CPU).
+                        var raw = (await _complete.GetDocumentsAsync(sale.SaleId, sale.EmployeeId, ct))
                             .Select(SalesDocumentMapper.ToDto)
                             .ToList();
+                        return PreferFinalDocuments(raw
+                            .Select(d =>
+                            {
+                                d.DownloadUrl = $"/api/sales-manager/sales/{sale.SaleId}/documents/{d.DocumentId}/download";
+                                return d;
+                            })
+                            .ToList());
                     }
-
-                    documents = PreferFinalDocuments(raw
-                        .Select(d =>
-                        {
-                            d.DownloadUrl = $"/api/sales-manager/sales/{sale.SaleId}/documents/{d.DocumentId}/download";
-                            return d;
-                        })
-                        .ToList());
-                }
-                catch
-                {
-                    documents = [];
+                    catch
+                    {
+                        return [];
+                    }
                 }
 
-                profileSales.Add(new SalesCustomerProfileSaleDTO
+                var docsTask = LoadDocsAsync();
+                await Task.WhenAll(fullTask, shopTask, docsTask);
+                var full = await fullTask ?? sale;
+                var shop = await shopTask;
+                var documents = await docsTask;
+                return (shop, dto: new SalesCustomerProfileSaleDTO
                 {
                     SaleId = full.SaleId,
                     Date = full.CompletedAt ?? full.CreatedAt,
@@ -318,9 +308,11 @@ VALUES
                     Shop = shop,
                     Documents = documents
                 });
-            }
+            }));
+            var shops = profileSaleParts.Select(p => p.shop).Where(s => s != null).Cast<SalesShopProfileDTO>().ToList();
+            var profileSales = profileSaleParts.Select(p => p.dto).ToList();
 
-            var notes = await ListStoredNotesAsync(customerId, customerName, phone, ct);
+            var notes = await notesTask;
             foreach (var sale in matchedSales.Where(s => !string.IsNullOrWhiteSpace(s.EvaluationNote)))
             {
                 notes.Add(new SalesCustomerNoteDTO
@@ -360,34 +352,31 @@ VALUES
             var resolvedCustomerId = customerId ?? sample.CustomerId ?? matchedRequests.FirstOrDefault()?.ExistingCustomerId;
             if (resolvedCustomerId is > 0)
             {
-                try
+                async Task<CustomersGetDTO?> LoadAccountAsync()
                 {
-                    account = await _customerSales.Customers_GetByCustomerID(resolvedCustomerId);
-                }
-                catch
-                {
-                    account = null;
+                    try { return await _customerSales.Customers_GetByCustomerID(resolvedCustomerId); }
+                    catch { return null; }
                 }
 
-                try
+                async Task<IEnumerable<CustomersPaymentsGetDTO>> LoadPaymentsAsync()
                 {
-                    payments = await _payments.CustomersPayments_GetByCustomerID(resolvedCustomerId)
-                               ?? [];
-                }
-                catch
-                {
-                    payments = [];
+                    try { return await _payments.CustomersPayments_GetByCustomerID(resolvedCustomerId) ?? []; }
+                    catch { return Array.Empty<CustomersPaymentsGetDTO>(); }
                 }
 
-                try
+                async Task<IEnumerable<CustomersSalesGetDTO>> LoadOfficialAsync()
                 {
-                    officialSales = await _customerSales.CustomersSales_GetByCustomerIDNew(resolvedCustomerId, null, null)
-                                    ?? [];
+                    try { return await _customerSales.CustomersSales_GetByCustomerIDNew(resolvedCustomerId, null, null) ?? []; }
+                    catch { return Array.Empty<CustomersSalesGetDTO>(); }
                 }
-                catch
-                {
-                    officialSales = [];
-                }
+
+                var accountTask = LoadAccountAsync();
+                var paymentsTask = LoadPaymentsAsync();
+                var officialTask = LoadOfficialAsync();
+                await Task.WhenAll(accountTask, paymentsTask, officialTask);
+                account = await accountTask;
+                payments = await paymentsTask;
+                officialSales = await officialTask;
             }
 
             var history = matchedRequests.SelectMany(r => r.History ?? []).OrderBy(h => h.CreatedAtUtc).ToList();
@@ -410,6 +399,21 @@ VALUES
                     await using var connection = new SqlConnection(cs);
                     listName = await SalesInventoryService.NameAsync(connection, listId, ct);
                 }
+            }
+
+            ShopFieldEvaluationDTO? followerShopEval = null;
+            ShopFieldEvaluationDTO? delegateShopEval = null;
+            if (resolvedCustomerId is > 0)
+            {
+                (followerShopEval, delegateShopEval) =
+                    await LoadShopFieldEvaluationsAsync(resolvedCustomerId.Value, ct);
+            }
+
+            var paymentSummary = BuildPaymentSummary(account, officialSales, payments, profileSales);
+            if (paymentSummary != null)
+            {
+                paymentSummary.AmountDaySales = account?.AmountDaySales
+                    ?? profileSales.OrderByDescending(s => s.Date).Select(s => (double?)s.DailyInstallment).FirstOrDefault();
             }
 
             return new SalesCustomerProfileDTO
@@ -442,14 +446,7 @@ VALUES
                 CustomerListName = listName,
                 CityValue = sample.CityValue ?? firstRequest?.CityValue,
                 CityName = account?.CityName ?? sample.CityName ?? firstRequest?.CityName,
-                PaymentSummary = account == null ? null : new SalesPaymentSummaryDTO
-                {
-                    AmountTotalSales = account.AmountTotalSales,
-                    ReceiptsTotal = account.ReceiptsTotal,
-                    AmountRemaining = account.AmountRemaining,
-                    LastPaymentDate = account.LastPaymentDate,
-                    CountReceiptDevice = account.CountReceiptDevice
-                },
+                PaymentSummary = paymentSummary,
                 Payments = payments
                     .OrderByDescending(p => p.PaymentDate)
                     .Select(p => new SalesCustomerPaymentDTO
@@ -486,10 +483,99 @@ VALUES
                     EvaluationName = SalesEvaluationLevels.DisplayName(s.EvaluationLevel),
                     EvaluationNote = s.EvaluationNote
                 }).ToList(),
+                FollowerShopEval = followerShopEval,
+                DelegateShopEval = delegateShopEval,
                 SalesRequests = matchedRequests.ToList(),
                 History = history,
                 Notes = notes.OrderBy(n => n.CreatedAtUtc).ToList()
             };
+        }
+
+        private async Task<(ShopFieldEvaluationDTO? Follower, ShopFieldEvaluationDTO? Delegate)> LoadShopFieldEvaluationsAsync(
+            int customerId,
+            CancellationToken ct)
+        {
+            var cs = _guard.GetSalesConnectionString();
+            if (string.IsNullOrWhiteSpace(cs))
+            {
+                return (null, null);
+            }
+
+            try
+            {
+                await using var connection = new SqlConnection(cs);
+                await connection.OpenAsync(ct);
+
+                ShopFieldEvaluationDTO? follower = null;
+                if (await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                        "SELECT CASE WHEN OBJECT_ID(N'dbo.FollowerSaleAuthentications', N'U') IS NULL THEN 0 ELSE 1 END",
+                        cancellationToken: ct)) == 1)
+                {
+                    follower = await connection.QueryFirstOrDefaultAsync<ShopFieldEvaluationDTO>(new CommandDefinition("""
+SELECT TOP 1
+    N'Follower' AS Source,
+    Rating,
+    Note,
+    FollowerName AS EvaluatorName,
+    ShopStockEstimatedValue,
+    EstimatedDailyRevenue,
+    CAST(NULL AS DECIMAL(18,0)) AS SaleAmount,
+    AuthenticatedAtUtc AS EvaluatedAtUtc
+FROM dbo.FollowerSaleAuthentications
+WHERE CustomerId = @CustomerId
+ORDER BY AuthenticatedAtUtc DESC;
+""", new { CustomerId = customerId }, cancellationToken: ct));
+                }
+
+                ShopFieldEvaluationDTO? del = null;
+                if (await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                        "SELECT CASE WHEN OBJECT_ID(N'dbo.DelegateFirstCollectionEvaluations', N'U') IS NULL THEN 0 ELSE 1 END",
+                        cancellationToken: ct)) == 1)
+                {
+                    del = await connection.QueryFirstOrDefaultAsync<ShopFieldEvaluationDTO>(new CommandDefinition("""
+SELECT TOP 1
+    N'Delegate' AS Source,
+    Rating,
+    Note,
+    DelegateName AS EvaluatorName,
+    ShopStockEstimatedValue,
+    EstimatedDailyRevenue,
+    SaleAmount,
+    CreatedAtUtc AS EvaluatedAtUtc
+FROM dbo.DelegateFirstCollectionEvaluations
+WHERE CustomerId = @CustomerId
+ORDER BY CreatedAtUtc DESC;
+""", new { CustomerId = customerId }, cancellationToken: ct));
+                }
+
+                // Also surface ShopRating from latest WrongSale / new-sale SalesRequest if no first-collection row.
+                if (del is null
+                    && await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                        "SELECT CASE WHEN COL_LENGTH(N'dbo.SalesRequests', N'ShopRating') IS NULL THEN 0 ELSE 1 END",
+                        cancellationToken: ct)) == 1)
+                {
+                    del = await connection.QueryFirstOrDefaultAsync<ShopFieldEvaluationDTO>(new CommandDefinition("""
+SELECT TOP 1
+    N'Delegate' AS Source,
+    ShopRating AS Rating,
+    ShopRatingNote AS Note,
+    CreatedByName AS EvaluatorName,
+    ISNULL(ShopStockEstimatedValue, 0) AS ShopStockEstimatedValue,
+    ISNULL(EstimatedDailyRevenue, 0) AS EstimatedDailyRevenue,
+    CAST(NULL AS DECIMAL(18,0)) AS SaleAmount,
+    CreatedAtUtc AS EvaluatedAtUtc
+FROM dbo.SalesRequests
+WHERE ExistingCustomerId = @CustomerId AND ShopRating IS NOT NULL
+ORDER BY CreatedAtUtc DESC;
+""", new { CustomerId = customerId }, cancellationToken: ct));
+                }
+
+                return (follower, del);
+            }
+            catch
+            {
+                return (null, null);
+            }
         }
 
         public async Task<SalesCustomerProfileDTO> UpdateCustomerProfileAsync(
@@ -600,12 +686,107 @@ VALUES (@CustomerId, @CustomerName, @CustomerPhone, @AuthorRole, @AuthorName, @N
         {
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
+            var phoneNorm = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
+            var nameNorm = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim();
+            if (customerId is null or <= 0 && phoneNorm is null && nameNorm is null)
+            {
+                return [];
+            }
+
             var rows = await connection.QueryAsync<SalesCustomerNoteDTO>(new CommandDefinition(@"
 SELECT Id, CustomerId, CustomerName, CustomerPhone, AuthorRole, AuthorName, Note, CreatedAtUtc, N'Manual' AS Source
 FROM dbo.SalesCustomerNotes
-ORDER BY CreatedAtUtc", cancellationToken: ct));
-            return rows.Where(n =>
-                MatchesCustomer(n.CustomerId, n.CustomerName, n.CustomerPhone, customerId, customerName, phone)).ToList();
+WHERE (@CustomerId IS NOT NULL AND CustomerId = @CustomerId)
+   OR (@Phone IS NOT NULL AND CustomerPhone = @Phone)
+   OR (@Name IS NOT NULL AND CustomerName = @Name)
+ORDER BY CreatedAtUtc DESC",
+                new
+                {
+                    CustomerId = customerId is > 0 ? customerId : null,
+                    Phone = phoneNorm,
+                    Name = nameNorm
+                },
+                cancellationToken: ct));
+            return rows.ToList();
+        }
+
+        private async Task<List<SalesRequestDTO>> ListRequestsForCustomerAsync(
+            int? customerId,
+            string? customerName,
+            string? phone,
+            CancellationToken ct)
+        {
+            var phoneNorm = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
+            var nameNorm = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim();
+            if (customerId is null or <= 0 && phoneNorm is null && nameNorm is null)
+            {
+                return [];
+            }
+
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            var rows = await connection.QueryAsync<SalesRequestDTO>(new CommandDefinition(@"
+SELECT TOP (40) Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, TargetEmployeeName,
+ CityValue, CityName, CustomerSourceType, ExistingCustomerId, CustomerSourceCityValue,
+ CustomerName, CustomerPhone, CustomerProvince, CustomerAddress, Notes, MaxSalePrice, Status,
+ CreatedAtUtc, ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
+ AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc,
+ SaleRequestType, SourceListId,
+ FilterStatus, FilteredByUserId, FilterNote, FilterRejectReason, FilteredAtUtc,
+ ISNULL(IsDeleted, 0) AS IsDeleted, DeletedAtUtc, DeletedByUserId, DeletedByName, DeleteReason,
+ ExceptionHoldStatus, ActiveExceptionId
+FROM dbo.SalesRequests
+WHERE ISNULL(IsDeleted, 0) = 0
+  AND (
+    (@CustomerId IS NOT NULL AND ExistingCustomerId = @CustomerId)
+    OR (@Phone IS NOT NULL AND CustomerPhone = @Phone)
+    OR (@Name IS NOT NULL AND CustomerName = @Name)
+  )
+ORDER BY CreatedAtUtc DESC",
+                new
+                {
+                    CustomerId = customerId is > 0 ? customerId : null,
+                    Phone = phoneNorm,
+                    Name = nameNorm
+                },
+                cancellationToken: ct));
+            return rows.ToList();
+        }
+
+        private static SalesPaymentSummaryDTO? BuildPaymentSummary(
+            CustomersGetDTO? account,
+            IEnumerable<CustomersSalesGetDTO> officialSales,
+            IEnumerable<CustomersPaymentsGetDTO> payments,
+            IReadOnlyList<SalesCustomerProfileSaleDTO> profileSales)
+        {
+            var paymentList = payments?.ToList() ?? [];
+            var officialList = officialSales?.ToList() ?? [];
+            var completedModule = profileSales
+                .Where(s => SalesCompleteRules.AlreadyCompleted(s.Status)
+                            || string.Equals(s.Status, SalesStatuses.Completed, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            DateTime? lastFromPayments = null;
+            var paymentDates = paymentList
+                .Where(p => p.PaymentDate.HasValue)
+                .Select(p => p.PaymentDate!.Value)
+                .ToList();
+            if (paymentDates.Count > 0)
+            {
+                lastFromPayments = paymentDates.Max();
+            }
+
+            return SalesCustomerPaymentSummaryBuilder.Build(
+                accountTotal: account?.AmountTotalSales,
+                accountReceipts: account?.ReceiptsTotal,
+                accountRemaining: account?.AmountRemaining,
+                accountLastPayment: account?.LastPaymentDate,
+                accountReceiptCount: account?.CountReceiptDevice,
+                officialSaleTotals: officialList.Select(s => s.AmountTotalSalesDenar ?? s.AmountTotalDenar ?? 0),
+                paymentReceipts: paymentList.Sum(p => p.AmountDenar ?? 0),
+                lastPaymentFromPayments: lastFromPayments,
+                completedModuleSaleTotals: completedModule.Select(s => (double)s.FinalSalePrice),
+                moduleDownPayments: completedModule.Select(s => (double)s.DownPayment));
         }
 
         private static void AddRequestNote(

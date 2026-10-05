@@ -34,10 +34,14 @@ export function salesManagerBase() {
   if (isDemo())
     return `${DEMO_API}sales-manager/`
 
-  if (isCentralSalesManager())
-    return `${salesGatewayBase()}sales-manager/`
+  // المدير ومدير المبيعات المركزي — دائماً عبر بوابة المبيعات
+  if (isCentralSalesManager() || localStorage.getItem('UserType') === 'المدير') {
+    const gw = salesGatewayBase()
+    return `${gw}sales-manager/`
+  }
 
-  return `${localStorage.getItem('LinkCity') || ''}sales-manager/`
+  const link = localStorage.getItem('LinkCity') || ''
+  return `${link}sales-manager/`
 }
 
 export function withCityQuery(path, cityValue) {
@@ -53,6 +57,14 @@ export function employeeApiPath(cityValue, employeeId, suffix = '') {
     return `employees/${employeeId}${suffix}`
 
   return `employees/${encodeURIComponent(cityValue)}/${employeeId}${suffix}`
+}
+
+/** Parallel to employeeApiPath — Sales Manager Followers tab (GPS via Delegate proxy). */
+export function followerApiPath(cityValue, followerId, suffix = '') {
+  if (isDemo() || !isCentralSalesManager())
+    return `followers/${followerId}${suffix}`
+
+  return `followers/${encodeURIComponent(cityValue)}/${followerId}${suffix}`
 }
 
 export function normalizeEmployeeRows(data) {
@@ -72,6 +84,11 @@ export function normalizeEmployeeRows(data) {
     employeeName: row.employeeName || row.EmployeeName || '',
     cityValue: row.cityValue || row.CityValue || '',
     cityName: row.cityName || row.CityName || '',
+    latestRating: row.latestRating ?? row.LatestRating ?? null,
+    ratingLabel: row.ratingLabel || row.RatingLabel || '',
+    ratedCustomerCount: row.ratedCustomerCount ?? row.RatedCustomerCount ?? null,
+    phantomLatestRating: row.phantomLatestRating ?? row.PhantomLatestRating ?? null,
+    phantomRatingLabel: row.phantomRatingLabel || row.PhantomRatingLabel || '',
   }))
 }
 
@@ -153,23 +170,227 @@ export async function smGetLiveLocations(cityValue) {
   }))
 }
 
+/** Parallel to normalizeEmployeeRows — Sales Manager Followers tab. */
+export function normalizeFollowerRows(data) {
+  const list = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.followers)
+        ? data.followers
+        : Array.isArray(data?.Followers)
+          ? data.Followers
+          : []
+
+  return list.map(row => ({
+    ...row,
+    followerId: row.followerId ?? row.FollowerId,
+    followerName: row.followerName || row.FollowerName || '',
+    cityValue: row.cityValue || row.CityValue || '',
+    cityName: row.cityName || row.CityName || '',
+    latestRating: row.latestRating ?? row.LatestRating ?? null,
+    ratingLabel: row.ratingLabel || row.RatingLabel || '',
+    ratedCustomerCount: row.ratedCustomerCount ?? row.RatedCustomerCount ?? null,
+    phantomLatestRating: row.phantomLatestRating ?? row.PhantomLatestRating ?? null,
+    phantomRatingLabel: row.phantomRatingLabel || row.PhantomRatingLabel || '',
+  }))
+}
+
+/** Parallel to smGetEmployees — Sales Manager Followers tab. */
+export async function smGetFollowers(cityValue, extraQuery = '') {
+  const extra = String(extraQuery || '').replace(/^\?/, '')
+  const apply = path => {
+    if (!extra)
+      return path
+
+    return `${path}${path.includes('?') ? '&' : '?'}${extra}`
+  }
+
+  // Production: one canonical cityValue → one gateway/branch call.
+  // Demo may retry alternate keys when the catalog uses DatabaseCompanyNajaf_DEMO.
+  const keys = []
+  const add = value => {
+    if (value == null)
+      return
+    const key = String(value).trim()
+    if (key !== '' && !keys.includes(key))
+      keys.push(key)
+  }
+
+  add(cityValue)
+  if (isDemo()) {
+    add(DEMO_BRANCH_VALUE)
+    add('najaf-demo')
+  }
+
+  // Empty cityValue = fan-out all branches (central manager "الكل")
+  if (!keys.length) {
+    return normalizeFollowerRows(await smGet(apply('followers')))
+  }
+
+  let last = []
+  let lastError = null
+  for (const key of keys) {
+    try {
+      const path = apply(withCityQuery('followers', key))
+      last = normalizeFollowerRows(await smGet(path))
+
+      // Do not fall through to another key after a successful empty branch response
+      // in production — that previously could surface Najaf via demo-style retries.
+      if (!isDemo())
+        return last
+
+      if (last.length)
+        return last
+    }
+    catch (err) {
+      lastError = err
+      if (!isDemo())
+        throw err
+    }
+  }
+
+  if (lastError)
+    throw lastError
+
+  return last
+}
+
+/** Parallel to smGetLiveLocations — Sales Manager Followers tab. */
+export async function smGetFollowerLiveLocations(cityValue) {
+  const path = withCityQuery('followers/live-locations', cityValue)
+  const rows = await smGet(path) || []
+  return (Array.isArray(rows) ? rows : []).map(row => ({
+    ...row,
+    employeeId: row.employeeId ?? row.EmployeeId,
+    employeeName: row.employeeName || row.EmployeeName || '',
+    cityValue: row.cityValue || row.CityValue || '',
+    cityName: row.cityName || row.CityName || '',
+    lastLatitude: row.latitude ?? row.Latitude ?? row.lastLatitude ?? row.LastLatitude,
+    lastLongitude: row.longitude ?? row.Longitude ?? row.lastLongitude ?? row.LastLongitude,
+    lastAccuracy: row.accuracy ?? row.Accuracy ?? row.lastAccuracy ?? row.LastAccuracy,
+    lastLocationAt: row.capturedAt ?? row.CapturedAt ?? row.deviceTimestampUtc ?? row.DeviceTimestampUtc ?? row.lastLocationAt ?? row.LastLocationAt,
+    locationStatus: row.locationStatus || row.LocationStatus || 'Live',
+    shiftStatus: row.shiftStatus || row.ShiftStatus || 'Active',
+    shiftId: row.shiftId ?? row.ShiftId,
+  }))
+}
+
 export function branchRowKey(row, idField = 'employeeId') {
   return `${row.cityValue || row.branchName || ''}:${row[idField]}`
 }
 
-export async function smGet(path) {
-  const { data } = await axios.get(`${salesManagerBase()}${path}`, { headers: getAuthHeaders() })
+export async function smStatsCatalog(cityValue) {
+  return smGet(withCityQuery('stats/catalog', cityValue), { timeoutMs: 60000 })
+}
+
+export async function smStatsTrend({ cityValue, scope, id, fromDate, toDate }) {
+  const params = new URLSearchParams({
+    scope: String(scope || 'branch'),
+    id: String(id ?? 0),
+  })
+  if (fromDate)
+    params.set('fromDate', fromDate)
+  if (toDate)
+    params.set('toDate', toDate)
+
+  return smGet(withCityQuery(`stats/trend?${params}`, cityValue), { timeoutMs: 120000 })
+}
+
+export async function smStatsRatingCustomers({
+  cityValue,
+  scope,
+  id,
+  level,
+  fromDate,
+  toDate,
+  take = 500,
+  skip = 0,
+  q,
+} = {}) {
+  const params = new URLSearchParams({
+    scope: String(scope || 'branch'),
+    id: String(id ?? 0),
+    take: String(take),
+    skip: String(skip),
+  })
+  if (level)
+    params.set('level', level)
+  if (fromDate)
+    params.set('fromDate', fromDate)
+  if (toDate)
+    params.set('toDate', toDate)
+  if (q)
+    params.set('q', q)
+
+  return smGet(withCityQuery(`stats/rating-customers?${params}`, cityValue), { timeoutMs: 120000 })
+}
+
+function assertSmWriteAllowed() {
+  if (localStorage.getItem('UserType') === 'المدير') {
+    const err = new Error('عرض فقط — لا يمكن تنفيذ الإجراء من حساب المدير')
+    err.response = { status: 403, data: { message: err.message } }
+    throw err
+  }
+}
+
+/** POST bodies that only read (evaluate / hits) — allowed for المدير. */
+export function isDirectorReadPostPath(path) {
+  const p = String(path || '').split('?')[0].replace(/^\/+|\/+$/g, '')
+  if (p === 'sales-requests/evaluate' || p === 'sales-requests/evaluation-hits')
+    return true
+  // sales-requests/{cityValue}/evaluate
+  if (/^sales-requests\/[^/]+\/evaluate$/.test(p))
+    return true
+
+  return false
+}
+
+export async function smGet(path, { timeoutMs } = {}) {
+  const { data } = await axios.get(`${salesManagerBase()}${path}`, {
+    headers: getAuthHeaders(),
+    timeout: timeoutMs ?? 30000,
+  })
 
   return data
 }
 
-export async function smPost(path, body) {
-  const { data } = await axios.post(`${salesManagerBase()}${path}`, body, { headers: getAuthHeaders() })
+export async function smPost(path, body, { timeoutMs } = {}) {
+  if (!isDirectorReadPostPath(path))
+    assertSmWriteAllowed()
+  const { data } = await axios.post(`${salesManagerBase()}${path}`, body, {
+    headers: getAuthHeaders(),
+    timeout: timeoutMs ?? 60000,
+  })
 
   return data
 }
 
-/** Create a Pending sales-manager exception for delegated-manager approval. */
+/** Bulk-assign unassigned requests to one employee (separate Assign per id). */
+export async function assignSalesRequestsBatch({
+  cityValue,
+  employeeId,
+  employeeName,
+  requestIds,
+  cityName,
+} = {}) {
+  const ids = (requestIds || []).map(Number).filter(id => id > 0)
+  const body = {
+    employeeId: Number(employeeId) || 0,
+    employeeName,
+    cityValue,
+    cityName,
+    requestIds: ids,
+  }
+  if (isDemo())
+    return smPost('sales-requests/assign-batch', body)
+
+  const city = String(cityValue || '').trim()
+  if (!city)
+    throw new Error('المحافظة مطلوبة للإسناد الجماعي')
+
+  return smPost(`sales-requests/${encodeURIComponent(city)}/assign-batch`, body)
+}
 export async function createExceptionRequest({
   cityValue,
   cityName,
@@ -217,12 +438,14 @@ export async function assignExceptionRequest(exceptionId, { employeeId, employee
 }
 
 export async function smPut(path, body) {
+  assertSmWriteAllowed()
   const { data } = await axios.put(`${salesManagerBase()}${path}`, body, { headers: getAuthHeaders() })
 
   return data
 }
 
 export async function smPostForm(path, formData) {
+  assertSmWriteAllowed()
   const token = getToken()
   const { data } = await axios.post(`${salesManagerBase()}${path}`, formData, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -257,16 +480,34 @@ export function smErrorMessage(err, fallback) {
 }
 
 export async function smDelete(path) {
+  assertSmWriteAllowed()
   const { data } = await axios.delete(`${salesManagerBase()}${path}`, { headers: getAuthHeaders() })
 
   return data
 }
 
-export async function smGetBlob(path) {
-  const { data } = await axios.get(`${salesManagerBase()}${path}`, {
+export async function smGetBlob(path, { timeoutMs } = {}) {
+  const response = await axios.get(`${salesManagerBase()}${path}`, {
     headers: getAuthHeaders(),
     responseType: 'blob',
+    timeout: timeoutMs ?? 120000,
+    validateStatus: () => true,
   })
+  const data = response.data
+  if (response.status < 200 || response.status >= 300) {
+    let message = `HTTP ${response.status}`
+    try {
+      if (data instanceof Blob) {
+        const text = await data.text()
+        const parsed = JSON.parse(text)
+        message = parsed?.message || parsed?.Message || message
+      }
+    }
+    catch { /* keep status message */ }
+    const err = new Error(message)
+    err.response = { status: response.status, data: { message } }
+    throw err
+  }
 
   return data
 }
@@ -303,6 +544,7 @@ export const requestStatusLabel = {
   Inspected: 'تم الكشف',
   Completed: 'تم البيع',
   Rejected: 'تم الرفض',
+  LegalFollowup: 'القانونية',
 }
 
 export function isInternalCityKey(value, cityValue = '') {
@@ -361,6 +603,7 @@ export const requestHistoryLabel = {
   ConvertedToSale: 'تحويل إلى بيع',
   Inspected: 'تم الكشف',
   Completed: 'اكتمال',
+  LegalFollowupSent: 'إرسال للقانونية',
 }
 
 export function customerProfileApiPath(city, { customerId, name, phone } = {}) {

@@ -1,0 +1,23 @@
+Changed language setting to us_english.
+=== Customers of list5 who paid Sep29 and Oct2 same amount but NOT Oct1 ===
+=== Any payment Oct1 for list5 customers on OTHER delegate ===
+=== Combinations: two payments on Sep30 all-list5 totaling 130 not in Oct1 set ===
+80.00|1
+70.00|1
+50.00|2
+30.00|1
+25.00|3
+22.00|2
+20.00|14
+15.00|3
+10.00|9
+8.00|1
+5.00|2
+=== Box-create Oct1 ALL amounts sum (should be 2275) vs receipt ===
+35|2275.0|95.0
+=== If PaymentDate:=BoxCreate for all box-Oct1 ===
+35|2275.0
+=== Customers with Oct1 BoxCreate, unique count ===
+30
+
+SQL_EXIT 0

@@ -1,4 +1,5 @@
 import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'package:delegate_application/services/business_day_collection_store.dart';
 import 'package:delegate_application/services/delegate_business_date_service.dart';
 import 'package:delegate_application/services/today_payments_logic.dart';
 import 'package:delegate_application/ui/app_safe_scaffold.dart';
@@ -62,6 +63,19 @@ class TodayPaymentsPageState extends State<TodayPaymentsPage>
       final db = await DatabaseHelper().database;
       final customers = await db.query('Customer');
       final payments = await db.query('CustomerPayment');
+      final ledger = await BusinessDayCollectionStore.forBusinessDay();
+      final nameById = <int, String>{};
+      for (final c in customers) {
+        final id = int.tryParse(c['CustomerId']?.toString() ?? '') ?? 0;
+        if (id > 0) {
+          nameById[id] = c['CustomerName']?.toString() ?? '';
+        }
+      }
+      final merged = TodayPaymentsLogic.mergeLocalDayPayments(
+        localPayments: payments,
+        ledgerRows: ledger,
+        customerNames: nameById,
+      );
       final delegates = await db.query('SelectDelegate');
       final names = <int, String>{};
       for (final d in delegates) {
@@ -73,14 +87,14 @@ class TodayPaymentsPageState extends State<TodayPaymentsPage>
 
       final allEligible = TodayPaymentsLogic.buildRows(
         customers: customers,
-        localPayments: payments,
+        localPayments: merged,
         delegateNames: names,
         filter: TodayPaymentFilter.all,
       );
       final summary = TodayPaymentsLogic.summarize(allEligible);
       final filtered = TodayPaymentsLogic.buildRows(
         customers: customers,
-        localPayments: payments,
+        localPayments: merged,
         delegateNames: names,
         filter: _filter,
         searchQuery: _search.text,

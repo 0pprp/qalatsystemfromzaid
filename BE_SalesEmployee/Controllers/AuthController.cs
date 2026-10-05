@@ -14,6 +14,8 @@ namespace BE_SalesEmployee.Controllers
         private readonly TokenService _tokens;
         private readonly SalesManagerAccountService _managerAccount;
         private readonly DelegatedManagerAccountService _delegatedManagerAccount;
+        private readonly MainFollowerAccountService _mainFollowerAccount;
+        private readonly DirectorAccountService _directorAccount;
         private readonly SalesFilterLoginService _filterLogin;
 
         public AuthController(
@@ -22,6 +24,8 @@ namespace BE_SalesEmployee.Controllers
             TokenService tokens,
             SalesManagerAccountService managerAccount,
             DelegatedManagerAccountService delegatedManagerAccount,
+            MainFollowerAccountService mainFollowerAccount,
+            DirectorAccountService directorAccount,
             SalesFilterLoginService filterLogin)
         {
             _cities = cities;
@@ -29,6 +33,8 @@ namespace BE_SalesEmployee.Controllers
             _tokens = tokens;
             _managerAccount = managerAccount;
             _delegatedManagerAccount = delegatedManagerAccount;
+            _mainFollowerAccount = mainFollowerAccount;
+            _directorAccount = directorAccount;
             _filterLogin = filterLogin;
         }
 
@@ -68,6 +74,36 @@ namespace BE_SalesEmployee.Controllers
             });
         }
 
+        /// <summary>Central director login. No province — ratings across all branches.</summary>
+        [HttpPost("LoginDirector")]
+        public IActionResult LoginDirector([FromBody] LoginRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.UserName) || string.IsNullOrWhiteSpace(request.Password))
+            {
+                return BadRequest(new { message = "اسم المستخدم وكلمة المرور مطلوبان" });
+            }
+
+            if (!_directorAccount.TryAuthenticate(request.UserName, request.Password, out var identity) ||
+                identity == null)
+            {
+                return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
+            }
+
+            var token = _tokens.CreateDirectorToken(identity.DisplayName, out var expiration);
+            return Ok(new
+            {
+                token,
+                expiration,
+                userId = 0,
+                userName = identity.DisplayName,
+                userType = "المدير",
+                cityLink = "",
+                cityName = "كل المحافظات",
+                cityValue = "",
+                central = true
+            });
+        }
+
         /// <summary>Central delegated-manager login. No province: the account spans all branches.</summary>
         [HttpPost("LoginDelegatedManager")]
         public IActionResult LoginDelegatedManager([FromBody] LoginRequest request)
@@ -93,6 +129,38 @@ namespace BE_SalesEmployee.Controllers
                 userType = SalesRoles.UserTypeDelegatedManager,
                 cityLink = "",
                 cityName = "كل المحافظات",
+                cityValue = "",
+                central = true
+            });
+        }
+
+        /// <summary>Central main-follower login. Provinces come from assigned missions.</summary>
+        [HttpPost("LoginMainFollower")]
+        public IActionResult LoginMainFollower([FromBody] LoginRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.UserName) || string.IsNullOrWhiteSpace(request.Password))
+            {
+                return BadRequest(new { message = "اسم المستخدم وكلمة المرور مطلوبان" });
+            }
+
+            if (!_mainFollowerAccount.TryAuthenticate(request.UserName, request.Password, out var identity) ||
+                identity == null)
+            {
+                return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
+            }
+
+            // JWT UserName must be the login id so mission membership matches.
+            var token = _tokens.CreateMainFollowerToken(identity.UserName, out var expiration);
+            return Ok(new
+            {
+                token,
+                expiration,
+                userId = 0,
+                userName = identity.UserName,
+                displayName = identity.DisplayName,
+                userType = SalesRoles.UserTypeMainFollower,
+                cityLink = "",
+                cityName = "مهام متعددة المحافظات",
                 cityValue = "",
                 central = true
             });

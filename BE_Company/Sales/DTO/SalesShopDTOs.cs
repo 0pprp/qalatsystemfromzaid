@@ -93,15 +93,32 @@ namespace BE_Company.Sales.DTO
         public List<SalesShopProfileDTO> Shops { get; set; } = [];
         public SalesShopProfileDTO? LatestShop { get; set; }
         public List<SalesCustomerProfileEvaluationDTO> Evaluations { get; set; } = [];
+        /// <summary>تقييم المتابع عند مصادقة المبيع (إن وُجد).</summary>
+        public ShopFieldEvaluationDTO? FollowerShopEval { get; set; }
+        /// <summary>تقييم المندوب عند أول تسديد / طلب مبيع جديد (إن وُجد).</summary>
+        public ShopFieldEvaluationDTO? DelegateShopEval { get; set; }
         public List<SalesRequestDTO> SalesRequests { get; set; } = [];
         public List<SalesRequestHistoryDTO> History { get; set; } = [];
         public List<SalesCustomerNoteDTO> Notes { get; set; } = [];
         public List<SalesCustomerDocumentDTO> CustomerDocuments { get; set; } = [];
     }
 
+    public sealed class ShopFieldEvaluationDTO
+    {
+        public string Source { get; set; } = ""; // Follower | Delegate
+        public int Rating { get; set; }
+        public string? Note { get; set; }
+        public string? EvaluatorName { get; set; }
+        public decimal ShopStockEstimatedValue { get; set; }
+        public decimal EstimatedDailyRevenue { get; set; }
+        public decimal? SaleAmount { get; set; }
+        public DateTime? EvaluatedAtUtc { get; set; }
+    }
+
     public sealed class SalesPaymentSummaryDTO
     {
         public double? AmountTotalSales { get; set; }
+        public double? AmountDaySales { get; set; }
         public double? ReceiptsTotal { get; set; }
         public double? AmountRemaining { get; set; }
         public DateTime? LastPaymentDate { get; set; }

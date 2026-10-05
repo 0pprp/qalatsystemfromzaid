@@ -1,11 +1,13 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useDebounceFn } from '@vueuse/core'
 import { useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { formatIraqDate, formatIraqTime } from '@/composables/iraqDate'
 import {
   assignExceptionRequest,
+  assignSalesRequestsBatch,
   branchRowKey,
   createExceptionRequest,
   evaluationLabel,
@@ -20,16 +22,23 @@ import {
   smGetEmployees,
   smPost,
   smPut,
-  smDelete,
   withCityQuery,
   displayCityName,
 } from '@/composables/salesManagerApi'
 import { saleDisplayDocuments, saleDocumentTitle } from '@/composables/saleDocuments'
+import { canManagerRejectRequest } from '@/utils/salesManagerRejectRules'
+import {
+  countDuplicateRequests,
+  findDuplicateRequests,
+} from '@/utils/salesRequestDuplicateSearch'
+import { capEvaluationRows, createCityListCache } from '@/utils/salesRequestsListCache'
 import ShopLocationLink from '@/components/ShopLocationLink.vue'
 import { isDemo } from '@/composables/useCities'
 import { useSalesBranches } from '@/composables/useSalesBranches'
+import { useUserRole } from '@/composables/useUserRole'
 import { useToast } from '@/composables/useToast'
 import { markAllSalesRequestsRead, refreshSalesRequestUnread, salesRequestUnreadCount } from '@/composables/useSalesRequestUnread'
+import { findProvince } from '@/utils/provinceCatalog'
 import {
   buildEvaluationKey,
   categoryBlock,
@@ -39,6 +48,7 @@ import {
   evaluationKeyFromRow,
   indexEvaluationItems,
   lookupEvaluation,
+  patchCategoryFromHits,
   receiptCountDisplay,
   requestCityOf,
   requestIdOf,
@@ -49,10 +59,23 @@ import { normalizeIraqPhone } from '@core/utils/validators'
 
 const toast = useToast()
 const router = useRouter()
+const { isDirector } = useUserRole()
+/** المدير: اطلاع فقط — بدون أكشنات مدير المبيعات */
+const readOnly = computed(() => isDirector.value)
 const { branches } = useSalesBranches()
 const rows = ref([])
 const tab = ref('all')
 const cityValue = ref('')
+const CITY_PREF_KEY = 'sm-requests-city-v1'
+const RETURN_KEY = 'sm-requests-return-v1'
+try {
+  const saved = sessionStorage.getItem(CITY_PREF_KEY)
+  if (saved != null)
+    cityValue.value = saved
+}
+catch {
+  /* private mode */
+}
 const selected = ref(null)
 const detail = ref(null)
 const profile = ref(null)
@@ -64,10 +87,15 @@ const managerNote = ref('')
 const employees = ref([])
 const assignEmployeeId = ref(null)
 const assignCityValue = ref('')
+const legalFollowers = ref([])
+const legalFollowerUserId = ref(null)
+const legalNote = ref('')
+const legalBusy = ref(false)
 const returnOpen = ref(false)
 const returnNote = ref('')
 const rejectOpen = ref(false)
 const rejectReason = ref('')
+const rejectTarget = ref(null)
 const pendOpen = ref(false)
 const pendNote = ref('')
 const exceptionOpen = ref(false)
@@ -79,6 +107,11 @@ const exceptionStatus = ref('Pending')
 const exceptionListBusy = ref(false)
 const exceptionAssignId = ref(null)
 const busy = ref(false)
+const bulkSelectedKeys = ref([])
+const bulkEmployeeId = ref(null)
+const bulkBusy = ref(false)
+const bulkReport = ref(null)
+const bulkEmployees = ref([])
 const excelInput = ref(null)
 const importOpen = ref(false)
 const importBusy = ref(false)
@@ -95,6 +128,32 @@ const EVAL_CRITERIA = [
   { key: 'phone', title: 'تشابه رقم الهاتف' },
   { key: 'fatherGrandfather', title: 'تشابه اسم الأب والجد' },
 ]
+/** Search within sales-request rows (not ERP catalog). */
+const REQ_DUP_CRITERIA = [
+  { key: 'tripleName', title: 'تشابه الاسم الثلاثي' },
+  { key: 'phone', title: 'تشابه رقم الهاتف' },
+  { key: 'fatherGrandfather', title: 'تشابه اسم الأب والجد' },
+]
+const listSearchQuery = ref('')
+/** Debounced search text — keeps typing responsive on large lists. */
+const listSearchApplied = ref('')
+const applyListSearch = useDebounceFn((value) => {
+  listSearchApplied.value = String(value || '')
+}, 300)
+watch(listSearchQuery, value => applyListSearch(value))
+/** Per-request panel: { criterion, title, hits } */
+const requestDupPanels = ref({})
+const listLoading = ref(false)
+const loadingMore = ref(false)
+const listPage = ref(1)
+const listPageSize = 40
+const listTotal = ref(0)
+const hasMore = ref(false)
+const serverTabCounts = ref({})
+const cityListCache = createCityListCache(90_000)
+let loadGeneration = 0
+let evalGeneration = 0
+let deletedLoadGeneration = 0
 const editOpen = ref(false)
 const editBusy = ref(false)
 const editForm = ref({
@@ -115,6 +174,11 @@ const editCityChanged = computed(() =>
 const deleteOpen = ref(false)
 const deleteBusy = ref(false)
 const deleteTarget = ref(null)
+const deleteReason = ref('')
+const deleteImpact = ref(null)
+const deleteImpactBusy = ref(false)
+const deleteConfirmPayments = ref(false)
+const deletedRows = ref([])
 const intakeCustomers = ref([])
 const intakeSelected = ref(null)
 const intakeForm = ref({
@@ -123,11 +187,13 @@ const intakeForm = ref({
   province: '',
   address: '',
   notes: '',
+  maxSalePrice: '',
 })
 
 const tabs = [
   { value: 'all', title: 'الكل' },
   { value: 'unassigned', title: 'غير مسند' },
+  { value: 'legal', title: 'القانونية' },
   { value: 'sent', title: 'الطلبات المرسلة' },
   { value: 'incoming', title: 'طلبات البيع' },
   { value: 'prepared', title: 'جاهز للبيع' },
@@ -135,6 +201,7 @@ const tabs = [
   { value: 'pending', title: 'معلقة' },
   { value: 'rejected', title: 'مرفوض' },
   { value: 'sold', title: 'تم البيع' },
+  { value: 'deleted', title: 'المحذوفين' },
   { value: 'exceptions', title: 'طلبات الاستثناء' },
 ]
 
@@ -144,18 +211,33 @@ const exceptionStatusTabs = [
   { value: 'Rejected', title: 'مرفوض' },
 ]
 
-const showingExceptions = computed(() => tab.value === 'exceptions')
-
 function employeeIdOf(row) {
   return Number(row?.targetEmployeeId || row?.TargetEmployeeId || row?.employeeId || row?.EmployeeId || 0)
 }
 
+/** Employee to return a rejected request to (assigned target, else employee submitter). */
+function returnEmployeeIdOf(row) {
+  const assigned = employeeIdOf(row)
+  if (assigned > 0)
+    return assigned
+  if (isEmployeeSubmitted(row))
+    return Number(pick(row, 'createdByUserId', 'CreatedByUserId') || 0)
+
+  return 0
+}
+
+function returnEmployeeNameOf(row) {
+  return pick(row, 'targetEmployeeName', 'TargetEmployeeName')
+    || (isEmployeeSubmitted(row) ? submittedBy(row) : '')
+    || '—'
+}
+
 function isUnassigned(row) {
   const s = requestStatus(row)
-  if (s === 'Rejected' || s === 'Completed')
+  if (s === 'Rejected' || s === 'Completed' || s === 'LegalFollowup')
     return false
-  const hold = String(pick(row, 'exceptionHoldStatus', 'ExceptionHoldStatus') || '').trim()
-  if (hold === 'Pending' || hold === 'Approved' || hold === 'Rejected')
+  const hold = String(pick(row, 'exceptionHoldStatus', 'ExceptionHoldStatus') || '').trim().toLowerCase()
+  if (hold === 'pending' || hold === 'approved' || hold === 'rejected')
     return false
   return s === 'New' || employeeIdOf(row) <= 0
 }
@@ -198,12 +280,13 @@ function saleRequestTypeLabel(row) {
 }
 
 function requestSourceLabel(row) {
+  const who = (submittedBy(row) || '').trim()
   if (isFollowerSubmitted(row))
-    return 'المتابع'
+    return who && who !== 'متابع' ? `المتابع ${who}` : 'المتابع'
   if (isDelegateSubmitted(row))
-    return 'المندوب'
+    return who && who !== 'مندوب' ? `المندوب ${who}` : 'المندوب'
   if (isEmployeeSubmitted(row))
-    return 'موظف المبيعات'
+    return who && who !== 'موظف مبيعات' ? `موظف المبيعات ${who}` : 'موظف المبيعات'
   return 'مدير المبيعات'
 }
 
@@ -231,6 +314,8 @@ function matchesTab(row, value = tab.value) {
       return false
     case 'unassigned':
       return isUnassigned(row)
+    case 'legal':
+      return s === 'LegalFollowup'
     case 'sent':
       // الطلبات المرسلة: متابع أو مندوب أو موظف مبيعات، والحالة New فقط (غير مسند).
       return (isEmployeeSubmitted(row) || isFollowerSubmitted(row) || isDelegateSubmitted(row)) && s === 'New'
@@ -251,9 +336,30 @@ function matchesTab(row, value = tab.value) {
   }
 }
 
-/** MVP: show exception CTA for unassigned / assigned-flow / inspected. */
+/** True when branch already has a denormalized exception hold. */
+function hasExceptionHold(row) {
+  const hold = String(pick(row, 'exceptionHoldStatus', 'ExceptionHoldStatus') || '').trim().toLowerCase()
+  return hold === 'pending' || hold === 'approved' || hold === 'rejected'
+}
+
+function hasActiveExceptionInList(row) {
+  const rid = Number(requestId(row) || 0)
+  if (rid <= 0)
+    return false
+  return (exceptionRows.value || []).some((e) => {
+    const sid = Number(pick(e, 'salesRequestId', 'SalesRequestId') || 0)
+    const st = String(pick(e, 'status', 'Status') || '')
+    return sid === rid && (st === 'Pending' || st === 'Approved')
+  })
+}
+
+/** MVP: show exception CTA for unassigned / assigned-flow / inspected — never when hold/active exists. */
 function canRequestException(row) {
+  if (readOnly.value)
+    return false
   if (!row)
+    return false
+  if (hasExceptionHold(row) || hasActiveExceptionInList(row))
     return false
   const s = requestStatus(row)
   if (s === 'Completed' || s === 'Rejected' || s === 'PreparedForSale' || s === 'InProgress' || s === 'ConvertedToSale')
@@ -298,10 +404,22 @@ function exceptionStatusText(status) {
 }
 
 function canAssignException(item) {
+  if (readOnly.value)
+    return false
   const status = String(item?.status || item?.Status || '')
   const consumed = !!(item?.assignmentConsumed ?? item?.AssignmentConsumed)
 
   return status === 'Approved' && !consumed
+}
+
+/** Detail assign panel: normal unassigned OR approved-exception flow (hold still Approved). */
+function canShowAssignPanel(row) {
+  if (readOnly.value)
+    return false
+  if (exceptionAssignId.value)
+    return requestStatus(row) === 'New' || employeeIdOf(row) <= 0
+
+  return isUnassigned(row)
 }
 
 function exceptionDecisionNote(item) {
@@ -379,24 +497,252 @@ function lastUpdated(row) {
   return formatIraqTime(times[0])
 }
 
-const visibleRows = computed(() => rows.value.filter(row => matchesTab(row)))
+const showingExceptions = computed(() => tab.value === 'exceptions')
+const showingDeleted = computed(() => tab.value === 'deleted')
 
-function tabCount(value) {
-  if (value === 'exceptions')
-    return exceptionRows.value.length
+const isListSearching = computed(() => !!String(listSearchApplied.value || '').trim())
 
-  return rows.value.filter(row => matchesTab(row, value)).length
+const visibleRows = computed(() => {
+  // Server already filters by tab + q; keep a light client pass for responsiveness.
+  if (showingDeleted.value)
+    return deletedRows.value
+
+  return rows.value
+})
+
+const duplicateSearchPoolMemo = computed(() => [...(rows.value || []), ...(deletedRows.value || [])])
+
+function duplicateSearchPool() {
+  return duplicateSearchPoolMemo.value
 }
 
-async function load() {
-  clearAllEvaluationCaches()
-  rows.value = await smGet(withCityQuery('sales-requests', cityValue.value)) || []
-  await refreshSalesRequestUnread(cityValue.value)
-  await loadEvaluations(rows.value)
-  if (selected.value)
-    await openDetails(selected.value, false)
-  if (showingExceptions.value)
-    await loadExceptions()
+function requestDupKey(row) {
+  return branchRowKey(row, 'id')
+}
+
+function requestDupPanelOf(row) {
+  return requestDupPanels.value[requestDupKey(row)] || null
+}
+
+/** One-pass memo: avoid O(cards × criteria × pool) on every keystroke/render. */
+const requestDupCountsByKey = computed(() => {
+  const pool = duplicateSearchPoolMemo.value
+  const map = Object.create(null)
+  const list = visibleRows.value || []
+  // Keep first paint fast; skip full scans on huge filtered sets.
+  if (list.length > 80)
+    return map
+  for (const row of list) {
+    const id = requestDupKey(row)
+    if (!id || map[id])
+      continue
+    const entry = Object.create(null)
+    for (const item of REQ_DUP_CRITERIA)
+      entry[item.key] = countDuplicateRequests(row, pool, item.key)
+    map[id] = entry
+  }
+
+  return map
+})
+
+function requestDupCount(row, category) {
+  const id = requestDupKey(row)
+  const cached = requestDupCountsByKey.value[id]
+
+  return cached?.[category] ?? 0
+}
+
+function openRequestDuplicates(row, category, title) {
+  const hits = findDuplicateRequests(row, duplicateSearchPool(), category)
+  requestDupPanels.value = {
+    ...requestDupPanels.value,
+    [requestDupKey(row)]: { criterion: category, title, hits },
+  }
+}
+
+function closeRequestDuplicates(row) {
+  const next = { ...requestDupPanels.value }
+  delete next[requestDupKey(row)]
+  requestDupPanels.value = next
+}
+
+async function jumpToDuplicateRequest(hit) {
+  if (!hit)
+    return
+  tab.value = 'all'
+  listSearchQuery.value = ''
+  await nextTick()
+  scrollToDomId(requestDomId(hit))
+}
+
+function tabCount(value) {
+  return tabCounts.value[value] ?? 0
+}
+
+const tabCounts = computed(() => {
+  const counts = Object.create(null)
+  for (const item of tabs)
+    counts[item.value] = Number(serverTabCounts.value?.[item.value] ?? 0)
+  counts.exceptions = exceptionRows.value.length
+  if (serverTabCounts.value?.deleted != null)
+    counts.deleted = Number(serverTabCounts.value.deleted)
+
+  return counts
+})
+
+function unwrapPage(data) {
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      total: data.length,
+      page: 1,
+      pageSize: data.length,
+      hasMore: false,
+      tabCounts: {},
+    }
+  }
+  const items = Array.isArray(data?.items)
+    ? data.items
+    : (Array.isArray(data?.Items) ? data.Items : [])
+  const tabCountsRaw = data?.tabCounts || data?.TabCounts || {}
+  const normalizedCounts = Object.create(null)
+  for (const [k, v] of Object.entries(tabCountsRaw))
+    normalizedCounts[String(k).toLowerCase()] = Number(v) || 0
+
+  return {
+    items,
+    total: Number(data?.total ?? data?.Total ?? items.length) || 0,
+    page: Number(data?.page ?? data?.Page ?? 1) || 1,
+    pageSize: Number(data?.pageSize ?? data?.PageSize ?? listPageSize) || listPageSize,
+    hasMore: !!(data?.hasMore ?? data?.HasMore),
+    tabCounts: normalizedCounts,
+  }
+}
+
+function buildRequestsQuery({ page, tabKey, q }) {
+  const params = new URLSearchParams()
+  params.set('page', String(page))
+  params.set('pageSize', String(listPageSize))
+  if (tabKey && tabKey !== 'deleted' && tabKey !== 'exceptions')
+    params.set('tab', tabKey)
+  if (q)
+    params.set('q', q)
+  const city = String(cityValue.value || '').trim()
+  if (city)
+    params.set('cityValue', city)
+
+  return params.toString()
+}
+
+async function load(options = {}) {
+  const force = !!options.force
+  const append = !!options.append
+  const gen = ++loadGeneration
+  const city = String(cityValue.value || '').trim()
+
+  if (showingExceptions.value) {
+    listLoading.value = true
+    try {
+      await loadExceptions()
+      // Still refresh tab badges cheaply via page=1 all (small).
+      const badge = unwrapPage(await smGet(`sales-requests?${buildRequestsQuery({ page: 1, tabKey: 'all', q: '' })}`))
+      if (gen === loadGeneration)
+        serverTabCounts.value = { ...serverTabCounts.value, ...badge.tabCounts }
+    }
+    finally {
+      if (gen === loadGeneration)
+        listLoading.value = false
+    }
+
+    return
+  }
+
+  if (!append) {
+    listPage.value = 1
+    listLoading.value = true
+  }
+  else {
+    loadingMore.value = true
+  }
+
+  try {
+    const page = append ? listPage.value + 1 : 1
+    const q = String(listSearchApplied.value || '').trim()
+    // Search spans all statuses (same as previous client behavior).
+    const tabKey = showingDeleted.value
+      ? 'deleted'
+      : (isListSearching.value ? 'all' : tab.value)
+    const path = showingDeleted.value
+      ? `sales-requests/deleted?${buildRequestsQuery({ page, tabKey: 'deleted', q })}`
+      : `sales-requests?${buildRequestsQuery({ page, tabKey, q })}`
+
+    // الكل (كل المحافظات): fan-out يحتاج وقت أطول من محافظة واحدة
+    const timeoutMs = city ? 45000 : 120000
+    const data = await smGet(path, { timeoutMs })
+    if (gen !== loadGeneration)
+      return
+
+    const pageData = unwrapPage(data)
+    if (showingDeleted.value) {
+      deletedRows.value = append
+        ? [...deletedRows.value, ...pageData.items]
+        : pageData.items
+    }
+    else {
+      rows.value = append
+        ? [...rows.value, ...pageData.items]
+        : pageData.items
+    }
+
+    listPage.value = pageData.page
+    listTotal.value = pageData.total
+    hasMore.value = pageData.hasMore
+      || (pageData.page * pageData.pageSize < pageData.total)
+    if (Object.keys(pageData.tabCounts).length)
+      serverTabCounts.value = { ...serverTabCounts.value, ...pageData.tabCounts }
+
+    // Store under the city captured at request start — never the UI city after a switch.
+    cityListCache.set(city, rows.value, deletedRows.value)
+    void refreshSalesRequestUnread(city)
+    // تقييم البرنامج والبحث قراءة فقط — المدير يرى التطابقات مثل مدير المبيعات
+    if (!showingDeleted.value)
+      scheduleEvaluations()
+    pruneBulkSelection()
+  }
+  catch (err) {
+    if (gen !== loadGeneration)
+      return
+    if (!append) {
+      rows.value = []
+      if (showingDeleted.value)
+        deletedRows.value = []
+    }
+    toast.error(smErrorMessage(err, 'تعذر تحميل طلبات البيع'))
+  }
+  finally {
+    if (gen === loadGeneration) {
+      listLoading.value = false
+      loadingMore.value = false
+    }
+  }
+}
+
+async function loadMore() {
+  if (!hasMore.value || loadingMore.value || listLoading.value)
+    return
+  await load({ append: true })
+}
+
+function scheduleEvaluations() {
+  if (showingDeleted.value || showingExceptions.value)
+    return
+  const list = visibleRows.value
+  // Only evaluate the currently loaded page window.
+  void loadEvaluations(capEvaluationRows(list, 24))
+}
+
+function invalidateListCache(city = cityValue.value) {
+  cityListCache.invalidate(city)
 }
 
 async function loadExceptions() {
@@ -418,7 +764,15 @@ async function loadExceptions() {
 }
 
 function openExceptionRequest(row) {
-  exceptionTarget.value = row || detail.value || selected.value
+  const target = row || detail.value || selected.value
+  if (hasExceptionHold(target) || hasActiveExceptionInList(target)) {
+    toast.error('يوجد طلب استثناء نشط لهذا الطلب')
+    exceptionStatus.value = 'Pending'
+    tab.value = 'exceptions'
+    loadExceptions()
+    return
+  }
+  exceptionTarget.value = target
   exceptionReason.value = ''
   exceptionOpen.value = true
 }
@@ -458,15 +812,51 @@ async function submitExceptionRequest() {
       reason,
       targetApproverType: 'DelegatedManager',
     })
+    // Optimistic: hide from «غير مسند» immediately (hold Pending).
+    const rid = Number(requestId(row) || 0)
+    if (rid > 0) {
+      rows.value = rows.value.map(r => (
+        Number(requestId(r)) === rid
+          ? { ...r, exceptionHoldStatus: 'Pending', ExceptionHoldStatus: 'Pending' }
+          : r
+      ))
+    }
     exceptionOpen.value = false
     exceptionReason.value = ''
     exceptionTarget.value = null
     toast.success('تم إرسال طلب الاستثناء — اختفى من غير مسند وينتظر موافقة المدير المفوض')
     exceptionStatus.value = 'Pending'
     tab.value = 'exceptions'
-    await Promise.all([load(), loadExceptions()])
+    await Promise.all([load({ force: true }), loadExceptions()])
   }
   catch (err) {
+    const status = err?.response?.status
+    const data = err?.response?.data || {}
+    const existingId = data.existingExceptionId || data.ExistingExceptionId
+    if (status === 409) {
+      const rid = Number(requestId(row) || 0)
+      if (rid > 0) {
+        rows.value = rows.value.map(r => (
+          Number(requestId(r)) === rid
+            ? {
+                ...r,
+                exceptionHoldStatus: 'Pending',
+                ExceptionHoldStatus: 'Pending',
+                activeExceptionId: existingId || pick(r, 'activeExceptionId', 'ActiveExceptionId'),
+                ActiveExceptionId: existingId || pick(r, 'activeExceptionId', 'ActiveExceptionId'),
+              }
+            : r
+        ))
+      }
+      exceptionOpen.value = false
+      exceptionReason.value = ''
+      exceptionTarget.value = null
+      exceptionStatus.value = 'Pending'
+      tab.value = 'exceptions'
+      toast.error(smErrorMessage(err, 'يوجد طلب استثناء نشط لهذا الطلب'))
+      await Promise.all([load({ force: true }), loadExceptions()])
+      return
+    }
     toast.error(smErrorMessage(err, 'تعذر إرسال طلب الاستثناء'))
   }
   finally {
@@ -478,6 +868,7 @@ function clearAllEvaluationCaches() {
   evaluations.value = {}
   hitsCache.value = {}
   evalPanels.value = {}
+  requestDupPanels.value = {}
   evaluationsError.value = ''
 }
 
@@ -499,7 +890,8 @@ function clearEvaluationCachesForRow(row) {
 }
 
 function evaluationKey(row) {
-  return evaluationKeyFromRow(row)
+  // Prefer gateway DatabaseCompany* so chips match evaluate/hits payloads.
+  return buildEvaluationKey(gatewayCityKey(row) || requestCityOf(row), requestIdOf(row))
 }
 
 function evaluationOf(row) {
@@ -508,12 +900,12 @@ function evaluationOf(row) {
 
 function ratingColor(label) {
   const t = String(label || '')
-  if (t.includes('قانونية'))
+  if (t.includes('سيء'))
     return 'error'
-  if (t.includes('مرفوض'))
+  if (t.includes('متلكئ') || t.includes('مرفوض'))
     return 'warning'
   if (t.includes('ضعيف'))
-    return 'secondary'
+    return 'grey'
   if (t.includes('جيد'))
     return 'info'
   if (t.includes('ممتاز'))
@@ -605,19 +997,31 @@ async function openEvaluationHits(row, category, title) {
   try {
     const res = await smPost('sales-requests/evaluation-hits', {
       requestId: requestIdOf(row),
-      sourceCityValue: requestCityOf(row),
+      sourceCityValue: gatewayCityKey(row) || requestCityOf(row),
       customerName: pick(row, 'customerName', 'CustomerName') || '',
       customerPhone: pick(row, 'customerPhone', 'CustomerPhone') || '',
       category,
       page: 1,
       pageSize: 40,
-    })
+    }, { timeoutMs: 120000 })
     const items = res?.items || res?.Items || []
     const total = res?.total ?? res?.Total ?? items.length
     hitsCache.value = { ...hitsCache.value, [cacheKey]: { items, total } }
     evalPanels.value = {
       ...evalPanels.value,
       [key]: { ...panel, hits: items, total, loading: false, error: '' },
+    }
+    // Keep metric chips in sync with the hits list (fixes stale "0 نتيجة").
+    const prev = evaluationOf(row) || {
+      requestId: requestIdOf(row),
+      RequestId: requestIdOf(row),
+      sourceCityValue: gatewayCityKey(row) || requestCityOf(row),
+      key,
+    }
+    const patched = patchCategoryFromHits(prev, category, total, items[0])
+    evaluations.value = {
+      ...evaluations.value,
+      ...indexEvaluationItems([patched], [row]),
     }
   }
   catch (err) {
@@ -700,6 +1104,8 @@ function onEvalPopState(event) {
 }
 
 async function loadEvaluations(list) {
+  const gen = ++evalGeneration
+  const cityAtStart = String(cityValue.value || '').trim()
   evaluationsBusy.value = true
   evaluationsError.value = ''
   try {
@@ -710,27 +1116,34 @@ async function loadEvaluations(list) {
         continue
       payloadItems.push({
         requestId: id,
-        sourceCityValue: requestCityOf(row),
+        sourceCityValue: gatewayCityKey(row) || requestCityOf(row),
         customerName: pick(row, 'customerName', 'CustomerName') || '',
         customerPhone: pick(row, 'customerPhone', 'CustomerPhone') || '',
-        key: buildEvaluationKey(requestCityOf(row), id),
+        key: buildEvaluationKey(gatewayCityKey(row) || requestCityOf(row), id),
       })
     }
     if (!payloadItems.length) {
-      evaluations.value = {}
+      if (gen === evalGeneration)
+        evaluations.value = {}
 
       return
     }
-    const res = await smPost('sales-requests/evaluate', { items: payloadItems })
+    const res = await smPost('sales-requests/evaluate', { items: payloadItems }, { timeoutMs: 120000 })
+    if (gen !== evalGeneration || String(cityValue.value || '').trim() !== cityAtStart)
+      return
     const evalItems = res?.items || res?.Items || []
+    // Replace for this province load — never merge leftovers from another city.
     evaluations.value = indexEvaluationItems(evalItems, list)
   }
   catch (err) {
+    if (gen !== evalGeneration)
+      return
     evaluations.value = {}
     evaluationsError.value = err?.response?.data?.message || 'تعذر تحميل تقييم البرنامج والبحث'
   }
   finally {
-    evaluationsBusy.value = false
+    if (gen === evalGeneration)
+      evaluationsBusy.value = false
   }
 }
 
@@ -826,6 +1239,21 @@ function moneyShort(value) {
     return '—'
 
   return `${n.toLocaleString('en-US')} د.ع`
+}
+
+function profilePayments(profile) {
+  const list = profile?.payments || profile?.Payments
+  if (!Array.isArray(list))
+    return []
+
+  return list
+}
+
+function paymentAmount(pay) {
+  const n = Number(
+    pick(pay, 'amount', 'Amount', 'amountDenar', 'AmountDenar') ?? 0,
+  )
+  return Number.isFinite(n) ? n : 0
 }
 
 function isProvinceTransferBlocked(row) {
@@ -931,7 +1359,7 @@ async function saveEdit() {
     }
     clearEvaluationCachesForRow(row)
     editOpen.value = false
-    await load()
+    await load({ force: true })
   }
   catch (err) {
     toast.error(err?.response?.data?.message || 'تعذر التعديل')
@@ -941,44 +1369,113 @@ async function saveEdit() {
   }
 }
 
-function confirmDelete(row) {
+async function confirmDelete(row) {
   deleteTarget.value = row
+  deleteReason.value = ''
+  deleteImpact.value = null
+  deleteConfirmPayments.value = false
   deleteOpen.value = true
+  deleteImpactBusy.value = true
+  try {
+    const city = gatewayCityKey(row)
+    const id = requestId(row)
+    const path = isDemo() || !city
+      ? `sales-requests/${id}/soft-delete-impact`
+      : `sales-requests/${encodeURIComponent(city)}/${id}/soft-delete-impact`
+    deleteImpact.value = await smGet(path)
+  }
+  catch (err) {
+    toast.error(smErrorMessage(err, 'تعذر تحميل تفاصيل الحذف'))
+  }
+  finally {
+    deleteImpactBusy.value = false
+  }
+}
+
+function deleteModalMessage() {
+  const impact = deleteImpact.value
+  if (!impact)
+    return 'سيتم نقل الطلب إلى تبويب المحذوفين مع الاحتفاظ بكل البيانات.'
+  return impact.warningAr
+    || impact.WarningAr
+    || 'سيتم نقل الطلب إلى تبويب المحذوفين مع الاحتفاظ بكل البيانات.'
+}
+
+function deleteRequiresPaymentConfirm() {
+  const impact = deleteImpact.value
+  return !!(impact?.requiresPaymentConfirm || impact?.RequiresPaymentConfirm)
+}
+
+function deleteCanSubmit() {
+  if (!(deleteReason.value || '').trim())
+    return false
+  if (deleteRequiresPaymentConfirm() && !deleteConfirmPayments.value)
+    return false
+
+  return true
 }
 
 async function doDelete() {
   const row = deleteTarget.value
   if (!row)
     return
+  const reason = (deleteReason.value || '').trim()
+  if (!reason) {
+    toast.error('سبب الحذف مطلوب')
+
+    return
+  }
+  if (deleteRequiresPaymentConfirm() && !deleteConfirmPayments.value) {
+    toast.error('يجب تأكيد حذف التسديدات والمبيع أولاً')
+
+    return
+  }
   deleteBusy.value = true
   try {
-    const city = requestCity(row)
+    const city = gatewayCityKey(row)
     const id = requestId(row)
     const path = isDemo() || !city
-      ? `sales-requests/${id}`
-      : `sales-requests/${encodeURIComponent(city)}/${id}`
-    await smDelete(path)
+      ? `sales-requests/${id}/soft-delete`
+      : `sales-requests/${encodeURIComponent(city)}/${id}/soft-delete`
+    await smPost(path, {
+      reason,
+      cityValue: city,
+      confirmCascadePayments: !!deleteConfirmPayments.value,
+    })
     clearEvaluationCachesForRow(row)
     deleteOpen.value = false
     deleteTarget.value = null
+    deleteReason.value = ''
+    deleteImpact.value = null
+    deleteConfirmPayments.value = false
     if (detail.value?.id === id)
       detail.value = null
     toast.success('تم حذف الطلب')
-    await load()
+    await load({ force: true })
   }
   catch (err) {
-    toast.error(err?.response?.data?.message || 'تعذر الحذف')
+    const code = err?.response?.data?.code || err?.response?.data?.Code
+    if (code === 'payments_confirm_required') {
+      deleteConfirmPayments.value = false
+      toast.error(smErrorMessage(err, 'هذا المبيع فيه تسديدات — أكّد الحذف'))
+    }
+    else {
+      toast.error(smErrorMessage(err, 'تعذر الحذف'))
+    }
   }
   finally {
     deleteBusy.value = false
   }
 }
 
-async function openDetails(row, resetAssign = true) {
+async function openDetails(row, resetAssign = true, options = {}) {
+  const keepExceptionAssign = !!options.keepExceptionAssign
   selected.value = row
-  const city = row.cityValue
+  const city = gatewayCityKey(row)
   try {
-    detail.value = await smGet(`sales-requests/${encodeURIComponent(city)}/${row.id}`)
+    detail.value = city
+      ? await smGet(`sales-requests/${encodeURIComponent(city)}/${row.id || row.Id}`)
+      : row
   }
   catch {
     detail.value = row
@@ -992,16 +1489,23 @@ async function openDetails(row, resetAssign = true) {
     ))
   }
   if (resetAssign) {
-    assignCityValue.value = detail.value?.cityValue || city || ''
+    if (!keepExceptionAssign)
+      exceptionAssignId.value = null
+    assignCityValue.value = gatewayCityKey(detail.value) || city || ''
     assignEmployeeId.value = null
+    legalFollowerUserId.value = null
+    legalNote.value = ''
     returnNote.value = ''
     returnOpen.value = false
     managerNote.value = ''
     resetIntake(detail.value)
   }
   await loadEmployees()
-  await refreshSalesRequestUnread(cityValue.value)
-  await loadProfile(row, updated)
+  if (canShowAssignPanel(detail.value) || requestStatus(detail.value) === 'Rejected')
+    await loadLegalFollowers(assignCityValue.value || city)
+  void refreshSalesRequestUnread(cityValue.value)
+  // Profile/sale/docs are heavy — load after paint so the dialog opens instantly.
+  void loadProfile(row, updated)
 }
 
 function resetIntake(d) {
@@ -1014,11 +1518,27 @@ function resetIntake(d) {
     province: displayCityName(d, branches.value),
     address: pick(d, 'customerAddress', 'CustomerAddress') || '',
     notes: pick(d, 'notes', 'Notes') || '',
+    maxSalePrice: pick(d, 'maxSalePrice', 'MaxSalePrice') != null
+      ? String(pick(d, 'maxSalePrice', 'MaxSalePrice'))
+      : '',
   }
 }
 
 function requestCity(row = detail.value || selected.value) {
   return pick(row, 'cityValue', 'CityValue') || ''
+}
+
+/** Gateway routing key (DatabaseCompany*) — Arabic/legacy cityValue on rows must be resolved. */
+function gatewayCityKey(row = detail.value || selected.value) {
+  const raw = requestCity(row)
+    || pick(row, 'cityName', 'CityName')
+    || pick(row, 'customerProvince', 'CustomerProvince')
+    || cityValue.value
+    || ''
+  const hit = findProvince(branches.value, raw)
+    || findProvince(branches.value, pick(row, 'cityName', 'CityName'))
+    || findProvince(branches.value, pick(row, 'customerProvince', 'CustomerProvince'))
+  return hit ? String(hit.value) : String(raw || '')
 }
 
 function requestId(row = detail.value || selected.value) {
@@ -1027,8 +1547,8 @@ function requestId(row = detail.value || selected.value) {
 
 function requestActionPath(row, suffix) {
   const id = requestId(row)
-  const city = requestCity(row)
-  if (isDemo())
+  const city = gatewayCityKey(row)
+  if (isDemo() || !city)
     return `sales-requests/${id}/${suffix}`
 
   return `sales-requests/${encodeURIComponent(city)}/${id}/${suffix}`
@@ -1071,6 +1591,7 @@ function selectIntakeCustomer(c) {
     province: displayCityName(c, branches.value) || intakeForm.value.province,
     address: c.address || c.Address || intakeForm.value.address,
     notes: intakeForm.value.notes,
+    maxSalePrice: intakeForm.value.maxSalePrice,
   }
 }
 
@@ -1202,6 +1723,75 @@ async function loadShopImage(city, saleId) {
   }
 }
 
+const suppressListReload = ref(false)
+
+function saveBrowseReturnState(extra = {}) {
+  try {
+    sessionStorage.setItem(RETURN_KEY, JSON.stringify({
+      tab: tab.value,
+      city: cityValue.value,
+      page: listPage.value,
+      q: listSearchQuery.value,
+      scrollY: window.scrollY || 0,
+      ...extra,
+    }))
+  }
+  catch { /* ignore */ }
+}
+
+async function restoreBrowseReturnState() {
+  let raw = null
+  try {
+    raw = sessionStorage.getItem(RETURN_KEY)
+    if (raw)
+      sessionStorage.removeItem(RETURN_KEY)
+  }
+  catch { /* ignore */ }
+  if (!raw)
+    return false
+  try {
+    const st = JSON.parse(raw)
+    suppressListReload.value = true
+    try {
+      if (st.city != null)
+        cityValue.value = String(st.city || '')
+      if (st.tab)
+        tab.value = st.tab
+      if (st.q != null) {
+        listSearchQuery.value = String(st.q || '')
+        listSearchApplied.value = String(st.q || '')
+      }
+    }
+    finally {
+      await nextTick()
+      suppressListReload.value = false
+    }
+    await load({ force: true })
+    const targetPage = Math.max(1, Number(st.page) || 1)
+    while (listPage.value < targetPage && hasMore.value)
+      await loadMore()
+    await nextTick()
+    if (st.requestId) {
+      scrollToDomId(requestDomId({
+        id: st.requestId,
+        Id: st.requestId,
+        cityValue: st.city,
+        CityValue: st.city,
+      }))
+    }
+    else if (st.scrollY != null) {
+      window.scrollTo(0, Number(st.scrollY) || 0)
+    }
+
+    return true
+  }
+  catch {
+    suppressListReload.value = false
+
+    return false
+  }
+}
+
 async function openCustomerProfile(row, d = null) {
   const source = d || detail.value || row
   const city = requestCity(source) || requestCity(row)
@@ -1210,6 +1800,10 @@ async function openCustomerProfile(row, d = null) {
 
     return
   }
+  saveBrowseReturnState({
+    requestId: requestIdOf(source) || requestIdOf(row) || null,
+    focusId: pick(source, 'existingCustomerId', 'ExistingCustomerId', 'customerId', 'CustomerId') || null,
+  })
   router.push({
     path: '/sales-manager-customer-profile',
     query: {
@@ -1228,6 +1822,9 @@ function openIntakeCustomerProfile(c) {
 
     return
   }
+  saveBrowseReturnState({
+    focusId: pick(c, 'customerId', 'CustomerId') || null,
+  })
   router.push({
     path: '/sales-manager-customer-profile',
     query: {
@@ -1358,7 +1955,9 @@ async function addManagerNote() {
 }
 
 async function loadEmployees() {
-  const city = requestCity() || assignCityValue.value || detail.value?.cityValue
+  const city = gatewayCityKey(detail.value || selected.value)
+    || assignCityValue.value
+    || requestCity()
   assignCityValue.value = city || ''
   if (!city) {
     employees.value = []
@@ -1416,9 +2015,14 @@ function historyNote(row) {
 
 async function assign() {
   const d = detail.value
-  if (!d || d.status !== 'New')
+  if (!d)
     return
-  const city = requestCity(d)
+  // Exception assign: request stays New with Approved hold — still assignable via exceptions API.
+  if (!exceptionAssignId.value && d.status !== 'New')
+    return
+  if (exceptionAssignId.value && d.status !== 'New' && employeeIdOf(d) > 0)
+    return
+  const city = gatewayCityKey(d) || requestCity(d)
   const id = requestId(d)
   const employeeId = Number(assignEmployeeId.value || 0)
   if (!city || !employeeId) {
@@ -1450,7 +2054,7 @@ async function assign() {
       toast.success('تم إسناد الطلب من الاستثناء')
       exceptionAssignId.value = null
       await loadExceptions()
-      await load()
+      await load({ force: true })
       detail.value = null
     }
     catch (err) {
@@ -1473,6 +2077,13 @@ async function assign() {
     ? 0
     : (sameBranch ? Number(selectedCustomer.customerId || selectedCustomer.CustomerId || 0) : 0)
   const path = requestActionPath(d, 'assign')
+  const maxRaw = String(intakeForm.value.maxSalePrice || '').replace(/[^\d]/g, '')
+  const maxSalePrice = maxRaw ? Number(maxRaw) : null
+  if (maxSalePrice != null && (!Number.isFinite(maxSalePrice) || maxSalePrice <= 0)) {
+    toast.error('الحد الأقصى لسعر البيع غير صالح')
+
+    return
+  }
   const payload = {
     employeeId,
     employeeName: employee?.employeeName,
@@ -1485,12 +2096,13 @@ async function assign() {
     customerProvince: intakeForm.value.province,
     customerAddress: intakeForm.value.address,
     notes: intakeForm.value.notes,
+    maxSalePrice,
   }
   busy.value = true
   try {
     detail.value = await smPost(path, payload)
     toast.success('تم إرسال الطلب للموظف')
-    await load()
+    await load({ force: true })
   }
   catch (err) {
     const status = err?.response?.status
@@ -1513,6 +2125,86 @@ async function assign() {
   }
 }
 
+async function loadLegalFollowers(city) {
+  if (!city) {
+    legalFollowers.value = []
+
+    return
+  }
+  try {
+    legalFollowers.value = (await smGet(withCityQuery('legal-followups/followers', city)) || []).map(f => ({
+      userId: f.userId ?? f.UserId ?? f.followerId ?? f.FollowerId,
+      followerName: f.followerName || f.FollowerName || '',
+    }))
+  }
+  catch {
+    legalFollowers.value = []
+  }
+}
+
+async function sendToLegal() {
+  const d = detail.value
+  if (!d || (!isUnassigned(d) && requestStatus(d) !== 'Rejected'))
+    return
+  const city = gatewayCityKey(d)
+  const id = requestId(d)
+  const followerId = Number(legalFollowerUserId.value || 0)
+  if (!city || !id) {
+    toast.error('حدد المحافظة أولاً')
+
+    return
+  }
+  if (!followerId) {
+    toast.error('اختر المتابع')
+
+    return
+  }
+  const name = (intakeForm.value.fullName || '').trim()
+  if (!name) {
+    toast.error('اسم الزبون مطلوب')
+
+    return
+  }
+  intakeForm.value.phone = normalizeIraqPhone(intakeForm.value.phone)
+  if (!isIraqMobile(intakeForm.value.phone)) {
+    toast.error(IRAQ_MOBILE_ERROR)
+
+    return
+  }
+  if (!(intakeForm.value.address || '').trim()) {
+    toast.error('العنوان مطلوب')
+
+    return
+  }
+
+  const selectedCustomer = intakeSelected.value
+  const existingId = Number(selectedCustomer?.customerId || selectedCustomer?.CustomerId || d.existingCustomerId || d.ExistingCustomerId || 0)
+
+  legalBusy.value = true
+  try {
+    await smPost('legal-followups', {
+      salesRequestId: id,
+      followerUserId: followerId,
+      note: legalNote.value || null,
+      cityValue: city,
+      customerName: name,
+      customerPhone: intakeForm.value.phone,
+      customerAddress: (intakeForm.value.address || '').trim(),
+      existingCustomerId: existingId > 0 ? existingId : null,
+    })
+    toast.success('تم الإرسال للمتابعة القانونية')
+    detail.value = null
+    tab.value = 'legal'
+    await load({ force: true })
+  }
+  catch (err) {
+    toast.error(smErrorMessage(err, 'تعذر الإرسال للقانونية'))
+  }
+  finally {
+    legalBusy.value = false
+  }
+}
+
 async function openExceptionAssign(item) {
   const salesRequestId = Number(item?.salesRequestId || item?.SalesRequestId || 0)
   const exceptionId = item?.id || item?.Id
@@ -1522,25 +2214,44 @@ async function openExceptionAssign(item) {
     return
   }
   exceptionAssignId.value = exceptionId
-  const city = item.cityValue || item.CityValue || cityValue.value || ''
-  let row = rows.value.find(r => Number(requestId(r)) === salesRequestId)
+  const city = gatewayCityKey({
+    cityValue: item.cityValue || item.CityValue,
+    cityName: item.cityName || item.CityName,
+    customerProvince: item.customerProvince || item.CustomerProvince,
+  }) || cityValue.value || ''
+  let row = rows.value.find(r => Number(requestId(r)) === salesRequestId
+    && String(gatewayCityKey(r) || requestCity(r)) === String(city))
+  if (!row) {
+    row = rows.value.find(r => Number(requestId(r)) === salesRequestId)
+  }
   if (!row) {
     try {
-      row = await smGet(withCityQuery(`sales-requests/${salesRequestId}`, city))
+      row = await smGet(`sales-requests/${encodeURIComponent(city)}/${salesRequestId}`)
     }
     catch {
-      row = {
-        id: salesRequestId,
-        cityValue: city,
-        cityName: item.cityName || item.CityName,
-        customerName: item.customerName || item.CustomerName,
-        customerPhone: item.customerPhone || item.CustomerPhone,
-        status: 'New',
-        targetEmployeeId: 0,
+      try {
+        row = await smGet(withCityQuery(`sales-requests/${salesRequestId}`, city))
+      }
+      catch {
+        row = {
+          id: salesRequestId,
+          Id: salesRequestId,
+          cityValue: city,
+          CityValue: city,
+          cityName: item.cityName || item.CityName,
+          customerName: item.customerName || item.CustomerName,
+          customerPhone: item.customerPhone || item.CustomerPhone,
+          status: 'New',
+          Status: 'New',
+          targetEmployeeId: 0,
+          // Keep hold marker so list filters stay correct; assign panel uses exceptionAssignId.
+          exceptionHoldStatus: 'Approved',
+          ExceptionHoldStatus: 'Approved',
+        }
       }
     }
   }
-  await openDetails(row, true)
+  await openDetails(row, true, { keepExceptionAssign: true })
 }
 
 async function sendReturn() {
@@ -1551,17 +2262,32 @@ async function sendReturn() {
     return
   }
   const d = detail.value
-  const requestId = d.id ?? d.Id
-  const returnPath = isDemo()
-    ? `sales-requests/${requestId}/return`
-    : `sales-requests/${encodeURIComponent(d.cityValue)}/${requestId}/return`
+  if (!d) {
+    toast.error('افتح تفاصيل الطلب أولاً')
+
+    return
+  }
+  if (requestStatus(d) !== 'Rejected') {
+    toast.error('يمكن إعادة الطلب المرفوض فقط')
+
+    return
+  }
+  if (returnEmployeeIdOf(d) <= 0) {
+    toast.error('لا يوجد موظف لإعادة الطلب إليه')
+
+    return
+  }
+  const returnPath = requestActionPath(d, 'return')
   busy.value = true
   try {
-    detail.value = await smPost(returnPath, { note })
+    const updated = await smPost(returnPath, { note, reason: note })
+    applyRequestRow(updated)
     returnOpen.value = false
     returnNote.value = ''
-    toast.success('تمت إعادة الطلب لنفس الموظف')
-    await load()
+    detail.value = null
+    tab.value = 'incoming'
+    toast.success('تمت إعادة الطلب لنفس الموظف — يظهر في الوارد')
+    await load({ force: true })
   }
   catch (err) {
     const status = err?.response?.status
@@ -1605,7 +2331,7 @@ async function rejectSubmitted() {
 
     return
   }
-  const d = detail.value
+  const d = rejectTarget.value || detail.value
   if (!d)
     return
   busy.value = true
@@ -1614,8 +2340,9 @@ async function rejectSubmitted() {
     applyRequestRow(updated)
     rejectOpen.value = false
     rejectReason.value = ''
-    toast.success('تم رفض الطلب')
-    await load()
+    rejectTarget.value = null
+    toast.success('تم نقل الطلب إلى المحذوفين مع سبب الرفض')
+    await load({ force: true })
   }
   catch (err) {
     toast.error(err?.response?.data?.message || err?.message || 'تعذر رفض الطلب')
@@ -1630,7 +2357,7 @@ async function markAllRead() {
   try {
     await markAllSalesRequestsRead(cityValue.value)
     toast.success('تم جعل الطلبات المرسلة مقروءة')
-    await load()
+    await load({ force: true })
   }
   catch (err) {
     toast.error(err?.response?.data?.message || 'تعذر تحديث حالة القراءة')
@@ -1641,13 +2368,33 @@ async function markAllRead() {
 }
 
 function canManagerReject(row) {
-  const s = requestStatus(row)
-  if (s === 'Completed' || s === 'Rejected')
+  if (readOnly.value)
     return false
-  if (s === 'Inspected')
-    return true
 
-  return isEmployeeSubmitted(row)
+  return canManagerRejectRequest(row, {
+    status: requestStatus(row),
+    isEmployeeSubmitted: isEmployeeSubmitted(row),
+    isFollowerSubmitted: isFollowerSubmitted(row),
+    isDelegateSubmitted: isDelegateSubmitted(row),
+  })
+}
+
+/** Card CTA: load row for reject API without opening the full detail dialog. */
+async function openReject(row) {
+  if (!row || !canManagerReject(row))
+    return
+  selected.value = row
+  const city = gatewayCityKey(row)
+  try {
+    rejectTarget.value = city
+      ? await smGet(`sales-requests/${encodeURIComponent(city)}/${row.id || row.Id}`)
+      : row
+  }
+  catch {
+    rejectTarget.value = row
+  }
+  rejectReason.value = ''
+  rejectOpen.value = true
 }
 
 function canManagerInspectedActions(row) {
@@ -1663,7 +2410,7 @@ async function prepareInspected() {
     const updated = await smPost(requestActionPath(d, 'prepare'), {})
     applyRequestRow(updated)
     toast.success('تم تجهيز الطلب للبيع')
-    await load()
+    await load({ force: true })
   }
   catch (err) {
     toast.error(err?.response?.data?.message || err?.message || 'تعذر تجهيز الطلب')
@@ -1690,7 +2437,7 @@ async function pendInspected() {
     pendOpen.value = false
     pendNote.value = ''
     toast.success('تم تعليق الطلب')
-    await load()
+    await load({ force: true })
   }
   catch (err) {
     toast.error(err?.response?.data?.message || err?.message || 'تعذر تعليق الطلب')
@@ -1733,6 +2480,115 @@ function downloadTemplate() {
   const book = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(book, sheet, 'طلبات البيع')
   XLSX.writeFile(book, 'نموذج_طلبات_البيع.xlsx')
+}
+
+const canExportRejectDeleteTab = computed(() =>
+  tab.value === 'rejected' || tab.value === 'deleted')
+
+const exportRejectDeleteBusy = ref(false)
+
+function rejectOrDeleteActor(row) {
+  if (showingDeleted.value)
+    return pick(row, 'deletedByName', 'DeletedByName') || '—'
+
+  return pick(row, 'targetEmployeeName', 'TargetEmployeeName')
+    || pick(row, 'createdByName', 'CreatedByName')
+    || 'موظف المبيعات'
+}
+
+function rejectOrDeleteReason(row) {
+  return pick(row, 'deleteReason', 'DeleteReason', 'rejectionReason', 'RejectionReason') || '—'
+}
+
+function rejectOrDeleteDate(row) {
+  return formatIraqDate(
+    pick(row, 'deletedAtUtc', 'DeletedAtUtc', 'rejectedAtUtc', 'RejectedAtUtc'),
+  ) || '—'
+}
+
+async function fetchAllRejectDeleteRows() {
+  const q = String(listSearchApplied.value || '').trim()
+  const city = String(cityValue.value || '').trim()
+  const pageSize = 200
+  const all = []
+  let page = 1
+  let more = true
+  while (more) {
+    const params = new URLSearchParams()
+    params.set('page', String(page))
+    params.set('pageSize', String(pageSize))
+    if (q)
+      params.set('q', q)
+    if (city)
+      params.set('cityValue', city)
+    if (tab.value === 'rejected')
+      params.set('tab', 'rejected')
+
+    const path = tab.value === 'deleted'
+      ? `sales-requests/deleted?${params}`
+      : `sales-requests?${params}`
+    const data = await smGet(path, { timeoutMs: 60000 })
+    const pageData = unwrapPage(data)
+    all.push(...(pageData.items || []))
+    more = !!(pageData.hasMore)
+      || (page * pageSize < pageData.total)
+    page += 1
+    if (page > 500)
+      break
+  }
+
+  return all
+}
+
+async function exportRejectDeleteExcel() {
+  if (!canExportRejectDeleteTab.value) {
+    toast.error('اختر تبويب مرفوض أو المحذوفين أولاً')
+
+    return
+  }
+  exportRejectDeleteBusy.value = true
+  try {
+    const list = await fetchAllRejectDeleteRows()
+    if (!list.length) {
+      toast.error('لا توجد صفوف للتصدير في هذا التبويب')
+
+      return
+    }
+
+    const header = ['الاسم', 'المصدر', 'الذي حذف أو رفض', 'رقم الهاتف', 'السبب', 'التاريخ']
+    const body = list.map(row => [
+      pick(row, 'customerName', 'CustomerName') || '—',
+      requestSourceLabel(row),
+      rejectOrDeleteActor(row),
+      pick(row, 'customerPhone', 'CustomerPhone') || '—',
+      rejectOrDeleteReason(row),
+      rejectOrDeleteDate(row),
+    ])
+    const sheet = XLSX.utils.aoa_to_sheet([header, ...body])
+    sheet['!cols'] = [
+      { wch: 24 },
+      { wch: 22 },
+      { wch: 20 },
+      { wch: 16 },
+      { wch: 40 },
+      { wch: 14 },
+    ]
+    const book = XLSX.utils.book_new()
+    const sheetName = showingDeleted.value ? 'المحذوفين' : 'المرفوض'
+    XLSX.utils.book_append_sheet(book, sheet, sheetName)
+    const stamp = formatIraqDate(new Date().toISOString()).replace(/\//g, '-')
+    const file = showingDeleted.value
+      ? `طلبات_محذوفة_${stamp}.xlsx`
+      : `طلبات_مرفوضة_${stamp}.xlsx`
+    XLSX.writeFile(book, file)
+    toast.success(`تم تصدير ${list.length} صفاً`)
+  }
+  catch (err) {
+    toast.error(smErrorMessage(err, 'تعذر تصدير Excel'))
+  }
+  finally {
+    exportRejectDeleteBusy.value = false
+  }
 }
 
 function openExcelPicker() {
@@ -1809,7 +2665,7 @@ async function confirmImport() {
     importOpen.value = false
     importPreview.value = null
     tab.value = 'unassigned'
-    await load()
+    await load({ force: true })
   }
   catch (err) {
     toast.error(err?.response?.data?.message || 'تعذر استيراد الطلبات')
@@ -1819,9 +2675,21 @@ async function confirmImport() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('popstate', onEvalPopState)
-  load()
+  // المدير: نفس «الكل» لمدير المبيعات — نفرّغ تفضيل محافظة قديم من جلسة أخرى
+  if (readOnly.value) {
+    try {
+      sessionStorage.removeItem(CITY_PREF_KEY)
+    }
+    catch { /* ignore */ }
+    cityValue.value = ''
+  }
+  const restored = await restoreBrowseReturnState()
+  if (!restored)
+    await load({ force: true })
+  else if (readOnly.value && !String(cityValue.value || '').trim())
+    await load({ force: true })
 })
 onUnmounted(() => {
   window.removeEventListener('popstate', onEvalPopState)
@@ -1830,21 +2698,195 @@ onUnmounted(() => {
 })
 
 watch(tab, value => {
-  if (value === 'exceptions')
-    loadExceptions()
+  if (suppressListReload.value)
+    return
+  if (value !== 'unassigned') {
+    bulkSelectedKeys.value = []
+    bulkReport.value = null
+  }
+  else if (!readOnly.value) {
+    void ensureBulkEmployees()
+  }
+  listPage.value = 1
+  void load({ force: true })
+})
+
+watch(listSearchApplied, () => {
+  if (suppressListReload.value)
+    return
+  listPage.value = 1
+  void load({ force: true })
 })
 
 watch(exceptionStatus, () => {
   if (showingExceptions.value)
     loadExceptions()
 })
+
+watch(cityValue, () => {
+  if (suppressListReload.value)
+    return
+  try {
+    sessionStorage.setItem(CITY_PREF_KEY, String(cityValue.value || ''))
+  }
+  catch {
+    /* ignore */
+  }
+  // Drop evaluation/hits from the previous province before the new list paints.
+  clearAllEvaluationCaches()
+  evalGeneration += 1
+  bulkSelectedKeys.value = []
+  bulkReport.value = null
+  listPage.value = 1
+  bulkEmployees.value = []
+  rows.value = []
+  deletedRows.value = []
+  selected.value = null
+  detail.value = null
+  if (tab.value === 'unassigned' && !readOnly.value)
+    void ensureBulkEmployees()
+  void load({ force: true })
+})
+
+function rowSelectKey(row) {
+  return branchRowKey(row, 'id')
+}
+
+function isBulkSelected(row) {
+  return bulkSelectedKeys.value.includes(rowSelectKey(row))
+}
+
+function pruneBulkSelection() {
+  const allowed = new Set(
+    rows.value.filter(r => isUnassigned(r)).map(rowSelectKey),
+  )
+  bulkSelectedKeys.value = bulkSelectedKeys.value.filter(k => allowed.has(k))
+}
+
+function toggleBulkSelect(row) {
+  if (tab.value !== 'unassigned' || !isUnassigned(row))
+    return
+  const key = rowSelectKey(row)
+  if (bulkSelectedKeys.value.includes(key))
+    bulkSelectedKeys.value = bulkSelectedKeys.value.filter(k => k !== key)
+  else
+    bulkSelectedKeys.value = [...bulkSelectedKeys.value, key]
+}
+
+function selectAllVisibleUnassigned() {
+  const keys = visibleRows.value.filter(r => isUnassigned(r)).map(rowSelectKey)
+  bulkSelectedKeys.value = [...new Set([...bulkSelectedKeys.value, ...keys])]
+}
+
+function clearBulkSelection() {
+  bulkSelectedKeys.value = []
+}
+
+const bulkSelectedRows = computed(() =>
+  rows.value.filter(r => isBulkSelected(r) && isUnassigned(r)))
+
+const showingBulkBar = computed(() =>
+  tab.value === 'unassigned' && bulkSelectedKeys.value.length > 0)
+
+async function ensureBulkEmployees() {
+  const city = cityValue.value
+    || requestCity(bulkSelectedRows.value[0])
+    || ''
+  if (!city) {
+    bulkEmployees.value = []
+
+    return
+  }
+  try {
+    bulkEmployees.value = (await smGetEmployees(city)).map(row => ({
+      ...row,
+      employeeId: Number(row.employeeId || row.EmployeeId || 0),
+      employeeName: row.employeeName || row.EmployeeName || '',
+    }))
+  }
+  catch {
+    bulkEmployees.value = []
+  }
+}
+
+async function assignBulk() {
+  if (bulkBusy.value)
+    return
+  const selectedRows = bulkSelectedRows.value
+  if (!selectedRows.length) {
+    toast.error('اختر طلباً واحداً على الأقل')
+
+    return
+  }
+  const employeeId = Number(bulkEmployeeId.value || 0)
+  if (!employeeId) {
+    toast.error('اختر موظف المبيعات')
+
+    return
+  }
+  const cities = [...new Set(selectedRows.map(r => requestCity(r)).filter(Boolean))]
+  if (cities.length !== 1) {
+    toast.error('الإسناد الجماعي لمحافظة واحدة فقط — صفِّ المحافظة أولاً')
+
+    return
+  }
+  const city = cities[0]
+  const employee = bulkEmployees.value.find(e => Number(e.employeeId) === employeeId)
+  bulkBusy.value = true
+  bulkReport.value = null
+  try {
+    const res = await assignSalesRequestsBatch({
+      cityValue: city,
+      cityName: employee?.cityName || employee?.branchName || '',
+      employeeId,
+      employeeName: employee?.employeeName,
+      requestIds: selectedRows.map(r => Number(requestId(r))),
+    })
+    const succeeded = res?.succeeded || res?.Succeeded || []
+    const failed = res?.failed || res?.Failed || []
+    bulkReport.value = {
+      succeeded: succeeded.map(Number),
+      failed: failed.map(f => ({
+        id: Number(f.id ?? f.Id),
+        message: f.message || f.Message || 'فشل',
+      })),
+    }
+    if (succeeded.length && !failed.length)
+      toast.success(`تم إسناد ${succeeded.length} طلباً`)
+    else if (succeeded.length)
+      toast.success(`نجح ${succeeded.length} — فشل ${failed.length}`)
+    else
+      toast.error('تعذر إسناد أي طلب')
+    clearBulkSelection()
+    await load({ force: true })
+  }
+  catch (err) {
+    toast.error(smErrorMessage(err, 'تعذر الإسناد الجماعي'))
+  }
+  finally {
+    bulkBusy.value = false
+  }
+}
 </script>
 
 <template>
   <div>
     <div class="d-flex justify-space-between mb-4 flex-wrap gap-2">
-      <h4>طلبات البيع</h4>
-      <div class="d-flex gap-2 flex-wrap">
+      <div>
+        <h4 class="mb-1">طلبات البيع</h4>
+        <VChip
+          v-if="readOnly"
+          size="small"
+          color="info"
+          variant="tonal"
+        >
+          عرض فقط — بدون تعديل أو إسناد
+        </VChip>
+      </div>
+      <div
+        v-if="!readOnly"
+        class="d-flex gap-2 flex-wrap"
+      >
         <VBtn
           variant="outlined"
           @click="downloadTemplate"
@@ -1879,38 +2921,179 @@ watch(exceptionStatus, () => {
       hidden
       @change="onExcelPicked"
     >
-    <VRow class="mb-3">
-      <VCol
-        cols="12"
-        md="4"
+    <div class="sales-requests-sticky-filters">
+      <VRow class="mb-3 align-center">
+        <VCol
+          cols="12"
+          md="3"
+        >
+          <SalesBranchFilter
+            v-model="cityValue"
+            @change="load"
+          />
+        </VCol>
+        <VCol
+          cols="12"
+          md="5"
+        >
+          <VTextField
+            v-model="listSearchQuery"
+            label="بحث في طلبات البيع (اسم أو رقم هاتف)"
+            placeholder="مثال: علي حسن أو 0780…"
+            clearable
+            hide-details
+            density="comfortable"
+            prepend-inner-icon="tabler-search"
+          />
+        </VCol>
+        <VCol
+          cols="12"
+          md="4"
+        >
+          <VBtn
+            block
+            size="x-large"
+            color="success"
+            height="48"
+            class="text-h6 font-weight-bold"
+            :loading="exportRejectDeleteBusy"
+            @click="exportRejectDeleteExcel"
+          >
+            تصدير إلى Excel
+          </VBtn>
+          <div
+            v-if="!canExportRejectDeleteTab"
+            class="text-caption text-medium-emphasis mt-1"
+          >
+            اختر تبويب مرفوض أو المحذوفين ثم صدّر
+          </div>
+        </VCol>
+      </VRow>
+      <VChipGroup
+        v-model="tab"
+        column
+        class="sales-requests-status-chips"
       >
-        <SalesBranchFilter
-          v-model="cityValue"
-          @change="load"
-        />
-      </VCol>
-    </VRow>
-    <VChipGroup
-      v-model="tab"
-      column
+        <VChip
+          v-for="item in tabs"
+          :key="item.value"
+          :value="item.value"
+          filter
+        >
+          {{ item.title }}
+          ({{ tabCount(item.value) }})
+          <VBadge
+            v-if="item.value === 'sent' && salesRequestUnreadCount > 0"
+            :content="salesRequestUnreadCount"
+            color="error"
+            inline
+            class="ms-1"
+          />
+        </VChip>
+      </VChipGroup>
+    </div>
+    <VAlert
+      v-if="listLoading && !visibleRows.length"
+      class="mb-3"
+      type="info"
+      variant="tonal"
+      density="compact"
     >
-      <VChip
-        v-for="item in tabs"
-        :key="item.value"
-        :value="item.value"
-        filter
+      جاري تحميل طلبات البيع{{ cityValue ? '' : ' (كل المحافظات)' }}…
+    </VAlert>
+    <VAlert
+      v-if="isListSearching"
+      class="mb-3"
+      type="info"
+      variant="tonal"
+      density="compact"
+    >
+      نتائج البحث: {{ listTotal }} طلب — تشمل كل الحالات.
+    </VAlert>
+    <p
+      v-if="!showingExceptions && listTotal > 0"
+      class="text-medium-emphasis text-caption mb-2"
+    >
+      عرض {{ visibleRows.length }} من {{ listTotal }} طلب
+      <span v-if="!cityValue"> — كل المحافظات</span>
+    </p>
+
+    <VAlert
+      v-if="tab === 'unassigned' && !readOnly"
+      class="mt-3"
+      type="info"
+      variant="tonal"
+      density="compact"
+    >
+      يمكنك تحديد عدة طلبات غير مسندة وإسنادها لنفس الموظف دفعة واحدة — كل طلب يبقى منفصلاً.
+      <VBtn
+        class="ms-2"
+        size="small"
+        variant="text"
+        @click="selectAllVisibleUnassigned"
       >
-        {{ item.title }}
-        ({{ tabCount(item.value) }})
-        <VBadge
-          v-if="item.value === 'sent' && salesRequestUnreadCount > 0"
-          :content="salesRequestUnreadCount"
-          color="error"
-          inline
-          class="ms-1"
+        تحديد الكل الظاهر
+      </VBtn>
+    </VAlert>
+
+    <VCard
+      v-if="showingBulkBar && !readOnly"
+      class="mt-3 sticky-bulk-bar"
+      variant="outlined"
+    >
+      <VCardText class="d-flex flex-wrap align-center gap-3 py-3">
+        <strong>محدد: {{ bulkSelectedRows.length }}</strong>
+        <VSelect
+          v-model="bulkEmployeeId"
+          :items="bulkEmployees"
+          item-title="employeeName"
+          item-value="employeeId"
+          label="موظف المبيعات"
+          density="compact"
+          hide-details
+          style="min-inline-size: 220px; max-inline-size: 320px;"
+          @focus="ensureBulkEmployees"
         />
-      </VChip>
-    </VChipGroup>
+        <VBtn
+          color="primary"
+          :loading="bulkBusy"
+          :disabled="!bulkEmployeeId"
+          @click="assignBulk"
+        >
+          إسناد جماعي
+        </VBtn>
+        <VBtn
+          variant="text"
+          :disabled="bulkBusy"
+          @click="clearBulkSelection"
+        >
+          إلغاء التحديد
+        </VBtn>
+      </VCardText>
+    </VCard>
+
+    <VAlert
+      v-if="bulkReport"
+      class="mt-3"
+      :type="bulkReport.failed.length ? 'warning' : 'success'"
+      variant="tonal"
+      closable
+      @click:close="bulkReport = null"
+    >
+      نجح {{ bulkReport.succeeded.length }} —
+      فشل {{ bulkReport.failed.length }}
+      <ul
+        v-if="bulkReport.failed.length"
+        class="mt-2 mb-0"
+      >
+        <li
+          v-for="f in bulkReport.failed"
+          :key="f.id"
+        >
+          طلب #{{ f.id }}: {{ f.message }}
+        </li>
+      </ul>
+    </VAlert>
 
     <template v-if="showingExceptions">
       <VAlert
@@ -2117,12 +3300,21 @@ watch(exceptionStatus, () => {
             'border-primary': selected?.id === row.id && selected?.cityValue === row.cityValue,
             'unread-request': isUnreadSent(row),
             'sales-request-card': true,
+            'bulk-selected': tab === 'unassigned' && isBulkSelected(row),
           }"
-          @click="openDetails(row)"
+          @click="showingDeleted ? undefined : openDetails(row)"
         >
           <VCardText>
             <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
               <div class="d-flex flex-wrap align-center gap-2">
+                <VCheckbox
+                  v-if="!readOnly && tab === 'unassigned' && isUnassigned(row)"
+                  :model-value="isBulkSelected(row)"
+                  hide-details
+                  density="compact"
+                  class="flex-grow-0"
+                  @click.stop.prevent="toggleBulkSelect(row)"
+                />
                 <span class="text-h6 mb-0">طلب #{{ row.id }}</span>
                 <VChip size="small" color="primary" variant="tonal">{{ displayCityName(row, branches) }}</VChip>
                 <VChip size="small" :color="statusColor(requestStatus(row))">{{ statusText(row) }}</VChip>
@@ -2144,7 +3336,11 @@ watch(exceptionStatus, () => {
                   غير مقروء
                 </VChip>
               </div>
-              <div class="d-flex flex-wrap gap-1" @click.stop>
+              <div
+                v-if="!showingDeleted && !readOnly"
+                class="d-flex flex-wrap gap-1"
+                @click.stop
+              >
                 <VBtn size="small" variant="tonal" @click="openEdit(row)">تعديل</VBtn>
                 <VBtn size="small" variant="tonal" color="primary" @click="openDetails(row)">تغيير الموظف</VBtn>
                 <VBtn
@@ -2156,19 +3352,43 @@ watch(exceptionStatus, () => {
                 >
                   طلب استثناء
                 </VBtn>
+                <VBtn
+                  v-if="canManagerReject(row)"
+                  size="small"
+                  variant="tonal"
+                  color="error"
+                  @click="openReject(row)"
+                >
+                  رفض
+                </VBtn>
                 <VBtn size="small" variant="tonal" color="error" @click="confirmDelete(row)">حذف</VBtn>
+              </div>
+              <div
+                v-else-if="!showingDeleted && readOnly"
+                class="d-flex flex-wrap gap-1"
+                @click.stop
+              >
+                <VBtn size="small" variant="tonal" color="primary" @click="openDetails(row)">عرض التفاصيل</VBtn>
               </div>
             </div>
 
             <VRow dense class="mb-2">
-              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">اسم الزبون</div><strong>{{ row.customerName }}</strong></VCol>
+              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">اسم الزبون</div><strong>{{ row.customerName || row.CustomerName || '—' }}</strong></VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">الهاتف</div>{{ row.customerPhone || row.CustomerPhone || '—' }}</VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">العنوان</div>{{ row.customerAddress || row.CustomerAddress || '—' }}</VCol>
+              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">المحافظة</div>{{ displayCityName(row, branches) || row.customerProvince || row.CustomerProvince || '—' }}</VCol>
+              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">نوع المبيع</div>{{ saleRequestTypeLabel(row) }}</VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">المصدر</div>{{ requestSourceLabel(row) }}</VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">تاريخ الطلب</div>{{ formatIraqDate(row.createdAtUtc || row.CreatedAtUtc) }} {{ formatIraqTime(row.createdAtUtc || row.CreatedAtUtc) }}</VCol>
-              <VCol v-if="lastNote(row)" cols="12"><div class="text-medium-emphasis text-caption">ملاحظة</div>{{ lastNote(row) }}</VCol>
+              <VCol v-if="lastNote(row)" cols="12"><div class="text-medium-emphasis text-caption">الملاحظة / ماذا يريد</div>{{ lastNote(row) }}</VCol>
+              <template v-if="showingDeleted">
+                <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">تاريخ الحذف</div>{{ formatIraqDate(row.deletedAtUtc || row.DeletedAtUtc) }} {{ formatIraqTime(row.deletedAtUtc || row.DeletedAtUtc) }}</VCol>
+                <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">حُذف بواسطة</div>{{ row.deletedByName || row.DeletedByName || '—' }}</VCol>
+                <VCol cols="12"><div class="text-medium-emphasis text-caption">{{ String(row.status || row.Status) === 'Rejected' ? 'سبب الرفض' : 'سبب الحذف' }}</div><strong class="text-error">{{ row.deleteReason || row.DeleteReason || row.rejectionReason || row.RejectionReason || '—' }}</strong></VCol>
+              </template>
             </VRow>
 
+            <template v-if="!showingDeleted">
             <VDivider class="my-3" />
 
             <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-2">
@@ -2371,14 +3591,158 @@ watch(exceptionStatus, () => {
                       <div v-if="hit.delegateName || hit.DelegateName || pick(panelOf(row).profile, 'delegateName', 'DelegateName')">
                         المندوب: {{ hit.delegateName || hit.DelegateName || pick(panelOf(row).profile, 'delegateName', 'DelegateName') }}
                       </div>
+                      <div class="mt-3 font-weight-bold">
+                        تفاصيل التسديدات
+                      </div>
+                      <div
+                        v-if="!profilePayments(panelOf(row).profile).length"
+                        class="text-medium-emphasis"
+                      >
+                        لا توجد تسديدات مسجلة لهذا الزبون.
+                      </div>
+                      <VTable
+                        v-else
+                        density="compact"
+                        class="mt-1"
+                      >
+                        <thead>
+                          <tr>
+                            <th>التاريخ</th>
+                            <th>مبلغ التسديد</th>
+                            <th>رقم الوصل</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr
+                            v-for="(pay, idx) in profilePayments(panelOf(row).profile)"
+                            :key="pick(pay, 'customerPaymentId', 'CustomerPaymentId') || idx"
+                          >
+                            <td>{{ formatSaleDate(pick(pay, 'paymentDate', 'PaymentDate')) }}</td>
+                            <td>{{ moneyShort(paymentAmount(pay)) }}</td>
+                            <td>{{ pick(pay, 'boundNumber', 'BoundNumber') || '—' }}</td>
+                          </tr>
+                        </tbody>
+                      </VTable>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
+            <VDivider class="my-3" />
+            <div class="text-subtitle-1 font-weight-bold mb-2">بحث داخل طلبات البيع</div>
+            <div class="text-caption text-medium-emphasis mb-2">
+              يبحث في الطلبات المضافة عندك (مرفوض، غير مسند، تم البيع…) لكشف التكرار.
+            </div>
+            <div class="eval-metrics">
+              <button
+                v-for="item in REQ_DUP_CRITERIA"
+                :key="`req-dup-${item.key}`"
+                type="button"
+                class="eval-metric"
+                :class="{ 'eval-metric--active': requestDupPanelOf(row)?.criterion === item.key }"
+                @click.stop="openRequestDuplicates(row, item.key, item.title)"
+              >
+                <div class="text-caption text-medium-emphasis">{{ item.title }}</div>
+                <div class="eval-metric__count text-primary">
+                  {{ requestDupCount(row, item.key) }}
+                  نتيجة
+                </div>
+                <VChip
+                  size="x-small"
+                  class="mt-1"
+                  :color="requestDupCount(row, item.key) > 0 ? 'warning' : 'secondary'"
+                >
+                  {{ requestDupCount(row, item.key) > 0 ? 'يوجد تطابق' : 'لا توجد نتائج' }}
+                </VChip>
+              </button>
+            </div>
+
+            <div
+              v-if="requestDupPanelOf(row)"
+              class="eval-results mt-3"
+              @click.stop
+            >
+              <div class="d-flex align-center justify-space-between gap-2 mb-2">
+                <div class="text-subtitle-2 mb-0">
+                  نتائج {{ requestDupPanelOf(row).title }}
+                  ({{ (requestDupPanelOf(row).hits || []).length }})
+                </div>
+                <VBtn
+                  size="small"
+                  variant="text"
+                  @click="closeRequestDuplicates(row)"
+                >
+                  إغلاق
+                </VBtn>
+              </div>
+              <div
+                v-if="!(requestDupPanelOf(row).hits || []).length"
+                class="text-medium-emphasis text-body-2"
+              >
+                لا توجد طلبات مطابقة
+              </div>
+              <div
+                v-else
+                class="eval-hit-list"
+              >
+                <div
+                  v-for="hit in requestDupPanelOf(row).hits"
+                  :key="requestDupKey(hit)"
+                  class="eval-hit-card"
+                >
+                  <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-2">
+                    <div class="font-weight-medium">
+                      طلب #{{ hit.id || hit.Id }} —
+                      {{ hit.customerName || hit.CustomerName || '—' }}
+                    </div>
+                    <div class="d-flex flex-wrap gap-1">
+                      <VChip
+                        size="small"
+                        :color="statusColor(requestStatus(hit))"
+                      >
+                        {{ statusText(hit) }}
+                      </VChip>
+                      <VChip
+                        size="small"
+                        color="primary"
+                        variant="tonal"
+                      >
+                        {{ displayCityName(hit, branches) }}
+                      </VChip>
+                    </div>
+                  </div>
+                  <div class="text-body-2">
+                    <div>الهاتف: {{ hit.customerPhone || hit.CustomerPhone || '—' }}</div>
+                    <div>العنوان: {{ hit.customerAddress || hit.CustomerAddress || '—' }}</div>
+                    <div>المصدر: {{ requestSourceLabel(hit) }}</div>
+                    <div>نوع المبيع: {{ saleRequestTypeLabel(hit) }}</div>
+                    <div>
+                      تاريخ الطلب:
+                      {{ formatIraqDate(hit.createdAtUtc || hit.CreatedAtUtc) }}
+                      {{ formatIraqTime(hit.createdAtUtc || hit.CreatedAtUtc) }}
+                    </div>
+                    <div v-if="lastNote(hit)">الملاحظة: {{ lastNote(hit) }}</div>
+                    <div v-if="hit.deleteReason || hit.DeleteReason">
+                      سبب الحذف: {{ hit.deleteReason || hit.DeleteReason }}
+                    </div>
+                  </div>
+                  <div class="d-flex gap-2 mt-2">
+                    <VBtn
+                      size="small"
+                      color="primary"
+                      variant="tonal"
+                      @click="jumpToDuplicateRequest(hit)"
+                    >
+                      الانتقال للكارت
+                    </VBtn>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <VBtn
-              v-if="requestStatus(row) === 'Completed' || requestStatus(row) === 'Inspected'"
+              v-if="!showingDeleted && (requestStatus(row) === 'Completed' || requestStatus(row) === 'Inspected')"
               class="mt-3"
               color="primary"
               size="small"
@@ -2386,8 +3750,24 @@ watch(exceptionStatus, () => {
             >
               فتح بروفايل الزبون
             </VBtn>
+            </template>
           </VCardText>
         </VCard>
+      </VCol>
+      <VCol
+        v-if="!showingExceptions && hasMore"
+        cols="12"
+        class="text-center py-4"
+      >
+        <VBtn
+          color="primary"
+          variant="tonal"
+          size="large"
+          :loading="loadingMore"
+          @click="loadMore"
+        >
+          تحميل المزيد ({{ visibleRows.length }} / {{ listTotal }})
+        </VBtn>
       </VCol>
     </VRow>
 
@@ -2418,7 +3798,6 @@ watch(exceptionStatus, () => {
           <div>الموظف: {{ isEmployeeSubmitted(detail) ? submittedBy(detail) : (detail.targetEmployeeName || 'غير مسند') }}</div>
           <div v-if="isFollowerSubmitted(detail) || isDelegateSubmitted(detail) || isEmployeeSubmitted(detail)">
             المصدر: {{ requestSourceLabel(detail) }}
-            <template v-if="isFollowerSubmitted(detail) || isDelegateSubmitted(detail)"> — أرسل بواسطة: {{ submittedBy(detail) }}</template>
           </div>
           <div>المحافظة: {{ displayCityName(detail, branches) }}</div>
           <div class="d-flex align-center gap-2 mt-1">
@@ -2531,7 +3910,7 @@ watch(exceptionStatus, () => {
             الاكتمال: {{ formatIraqTime(detail.completedAtUtc) }}
           </div>
 
-          <template v-if="isUnassigned(detail)">
+          <template v-if="canShowAssignPanel(detail)">
             <VDivider class="my-4" />
             <div class="font-weight-bold mb-4">
               بحث زبون
@@ -2638,6 +4017,18 @@ watch(exceptionStatus, () => {
               auto-grow
               hide-details="auto"
             />
+            <VTextField
+              v-model="intakeForm.maxSalePrice"
+              class="mb-4"
+              label="الحد الأقصى لسعر البيع (اختياري)"
+              variant="outlined"
+              hide-details="auto"
+              density="comfortable"
+              inputmode="numeric"
+              hint="موظف المبيعات لا يستطيع تجاوز هذا السعر"
+              persistent-hint
+              suffix="د.ع"
+            />
             <div class="mb-4">
               محافظة الإسناد: {{ displayCityName(detail, branches) }}
             </div>
@@ -2662,12 +4053,44 @@ watch(exceptionStatus, () => {
             >
               إرسال للموظف
             </VBtn>
+            <VDivider class="my-4" />
+            <div class="font-weight-bold mb-4">
+              أو إرسال للمتابعة القانونية
+            </div>
+            <VSelect
+              v-model="legalFollowerUserId"
+              class="mb-4"
+              :items="legalFollowers"
+              item-title="followerName"
+              item-value="userId"
+              label="المتابع"
+              variant="outlined"
+              hide-details="auto"
+              density="comfortable"
+            />
+            <VTextarea
+              v-model="legalNote"
+              class="mb-4"
+              label="ملاحظة للمتابع (اختياري)"
+              variant="outlined"
+              rows="2"
+              hide-details="auto"
+            />
+            <VBtn
+              class="mt-2"
+              color="secondary"
+              :loading="legalBusy"
+              :disabled="!legalFollowerUserId"
+              @click="sendToLegal"
+            >
+              إرسال للقانونية
+            </VBtn>
             <VBtn
               v-if="canManagerReject(detail)"
               class="mt-2 ms-2"
               color="error"
               variant="tonal"
-              @click="rejectOpen = true"
+              @click="rejectTarget = detail; rejectOpen = true"
             >
               رفض الطلب
             </VBtn>
@@ -2682,7 +4105,7 @@ watch(exceptionStatus, () => {
               class="mt-3"
               color="error"
               variant="tonal"
-              @click="rejectOpen = true"
+              @click="rejectTarget = detail; rejectOpen = true"
             >
               رفض الطلب
             </VBtn>
@@ -2690,16 +4113,51 @@ watch(exceptionStatus, () => {
 
           <template v-if="requestStatus(detail) === 'Rejected'">
             <VDivider class="my-4" />
+            <div class="font-weight-bold mb-2">
+              سبب الرفض: {{ detail.rejectionReason || detail.RejectionReason || '—' }}
+            </div>
             <VBtn
               color="warning"
-              :disabled="!(detail.targetEmployeeId || detail.employeeId)"
+              :disabled="returnEmployeeIdOf(detail) <= 0"
+              :title="returnEmployeeIdOf(detail) <= 0 ? 'لا يوجد موظف لإعادة الطلب إليه' : undefined"
               @click="returnOpen = true"
             >
               إرجاع للموظف
             </VBtn>
-            <div class="text-medium-emphasis mt-2">
-              تُعاد لنفس الموظف: {{ detail.targetEmployeeName }}
+            <div class="text-medium-emphasis mt-2 mb-4">
+              تُعاد لنفس الموظف: {{ returnEmployeeNameOf(detail) }}
             </div>
+            <VDivider class="my-4" />
+            <div class="font-weight-bold mb-4">
+              أو إرسال للمتابعة القانونية
+            </div>
+            <VSelect
+              v-model="legalFollowerUserId"
+              class="mb-4"
+              :items="legalFollowers"
+              item-title="followerName"
+              item-value="userId"
+              label="المتابع"
+              variant="outlined"
+              hide-details="auto"
+              density="comfortable"
+            />
+            <VTextarea
+              v-model="legalNote"
+              class="mb-4"
+              label="ملاحظة للمتابع (اختياري)"
+              variant="outlined"
+              rows="2"
+              hide-details="auto"
+            />
+            <VBtn
+              color="secondary"
+              :loading="legalBusy"
+              :disabled="!legalFollowerUserId"
+              @click="sendToLegal"
+            >
+              إرسال للقانونية
+            </VBtn>
           </template>
 
           <template v-if="canManagerInspectedActions(detail)">
@@ -2724,7 +4182,7 @@ watch(exceptionStatus, () => {
                 color="error"
                 variant="tonal"
                 :loading="busy"
-                @click="rejectOpen = true"
+                @click="rejectTarget = detail; rejectOpen = true"
               >
                 مرفوض
               </VBtn>
@@ -2775,7 +4233,7 @@ watch(exceptionStatus, () => {
         <VCardActions>
           <VBtn
             variant="text"
-            @click="detail = null; selected = null"
+            @click="detail = null; selected = null; exceptionAssignId = null"
           >
             إغلاق
           </VBtn>
@@ -3130,6 +4588,9 @@ watch(exceptionStatus, () => {
       <VCard>
         <VCardTitle>رفض الطلب</VCardTitle>
         <VCardText>
+          <p class="text-medium-emphasis text-body-2 mb-3">
+            سيُنقل الطلب إلى تبويب المحذوفين مع سبب الرفض. تبويب المرفوض يبقى لرفض موظف المبيعات فقط.
+          </p>
           <VTextarea
             v-model="rejectReason"
             label="سبب الرفض *"
@@ -3139,7 +4600,7 @@ watch(exceptionStatus, () => {
         <VCardActions>
           <VBtn
             variant="text"
-            @click="rejectOpen = false"
+            @click="rejectOpen = false; rejectTarget = null"
           >
             رجوع
           </VBtn>
@@ -3302,12 +4763,49 @@ watch(exceptionStatus, () => {
 
     <VDialog
       v-model="deleteOpen"
-      max-width="420"
+      max-width="520"
     >
       <VCard>
         <VCardTitle>تأكيد الحذف</VCardTitle>
         <VCardText>
-          سيتم إخفاء الطلب من القوائم مع الاحتفاظ بسجل التدقيق. لن يُحذف أي بيع أو تسديد مرتبط.
+          <div
+            v-if="deleteImpactBusy"
+            class="mb-3 text-medium-emphasis"
+          >
+            جاري تحميل تفاصيل الحذف…
+          </div>
+          <VAlert
+            v-else-if="deleteRequiresPaymentConfirm()"
+            type="warning"
+            variant="tonal"
+            class="mb-3"
+            density="compact"
+          >
+            {{ deleteModalMessage() }}
+          </VAlert>
+          <div
+            v-else
+            class="mb-3"
+          >
+            {{ deleteModalMessage() }}
+          </div>
+          <VCheckbox
+            v-if="deleteRequiresPaymentConfirm()"
+            v-model="deleteConfirmPayments"
+            class="mb-3"
+            color="error"
+            hide-details
+            label="أؤكد حذف التسديدات والمبيع وإرجاع الكميات للمخزن"
+          />
+          <VTextarea
+            v-model="deleteReason"
+            label="سبب الحذف"
+            variant="outlined"
+            rows="3"
+            auto-grow
+            hide-details="auto"
+            :rules="[v => !!(v && String(v).trim()) || 'سبب الحذف مطلوب']"
+          />
         </VCardText>
         <VCardActions>
           <VBtn
@@ -3319,6 +4817,7 @@ watch(exceptionStatus, () => {
           <VBtn
             color="error"
             :loading="deleteBusy"
+            :disabled="!deleteCanSubmit() || deleteImpactBusy"
             @click="doDelete"
           >
             حذف
@@ -3342,6 +4841,30 @@ watch(exceptionStatus, () => {
 }
 .sales-request-card {
   border-radius: 14px;
+}
+.sales-request-card.bulk-selected {
+  border: 2px solid rgb(var(--v-theme-primary));
+  box-shadow: 0 0 0 1px rgba(var(--v-theme-primary), 0.2);
+}
+.sticky-bulk-bar {
+  position: sticky;
+  /* Sit below the sticky search/province/status strip when both are visible. */
+  top: 7.5rem;
+  z-index: 5;
+  background: rgb(var(--v-theme-surface));
+}
+.sales-requests-sticky-filters {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin-block-end: 0.75rem;
+  padding-block: 0.5rem 0.65rem;
+  background: rgb(var(--v-theme-surface));
+  border-block-end: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  box-shadow: 0 6px 12px -10px rgba(0, 0, 0, 0.35);
+}
+.sales-requests-sticky-filters .sales-requests-status-chips {
+  margin-block-end: 0;
 }
 .eval-metrics {
   display: grid;

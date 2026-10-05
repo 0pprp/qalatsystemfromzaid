@@ -15,7 +15,10 @@ class AppUpdateGate {
     if (_running) return;
     _running = true;
     try {
-      final installed = AppVersion.code;
+      final installed = await () async {
+        await AppVersion.ensureLoaded();
+        return AppVersion.resolvedCode;
+      }();
       await MandatoryUpdateCache.clearIfSatisfied(installed);
 
       MobileUpdateInfo? info;

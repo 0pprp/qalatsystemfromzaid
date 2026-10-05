@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:delegate_application/all_receipt.dart';
 import 'package:delegate_application/AllSale.dart';
 import 'package:delegate_application/customer.dart';
@@ -10,6 +11,7 @@ import 'package:delegate_application/TrustReceiptFormPage.dart';
 import 'package:delegate_application/delegate_sales_request_page.dart';
 import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/config/app_env.dart';
+import 'package:delegate_application/core/update/app_version.dart';
 import 'package:delegate_application/services/delegate_business_date_service.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
 import 'package:delegate_application/services/payment_sync_service.dart';
@@ -19,9 +21,12 @@ import 'package:flutter/services.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   AppEnv.logIfDebug();
-  await PaymentSyncService.instance.start();
-  await DelegateDataRefreshService.instance.start();
+  await AppVersion.ensureLoaded();
+  // Local business-day stamp only — must not wait on network for first frame.
   await DelegateBusinessDateService.instance.start();
+  // Payment sync + master-data refresh run in background (production cold start).
+  unawaited(PaymentSyncService.instance.start());
+  unawaited(DelegateDataRefreshService.instance.start());
   runApp(const MyApp());
 }
 

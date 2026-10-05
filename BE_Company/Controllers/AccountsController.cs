@@ -1,4 +1,4 @@
-﻿using BE_Company.IRepository;
+using BE_Company.IRepository;
 using BE_Company.DTO;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -9,6 +9,7 @@ namespace BE_Company.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class AccountsController : ControllerBase
     {
         private readonly IAccountsRepository _accountsRepository;
@@ -283,7 +284,7 @@ namespace BE_Company.Controllers
 
 
         [HttpPut("Boxs_Update/{boxID}")]
-        public async Task<ActionResult<bool?>> Boxs_Update(int? boxID,[FromBody] BoxsPutDTO boxsPutDTO)
+        public async Task<ActionResult<bool?>> Boxs_Update(int? boxID, [FromBody] BoxsPutDTO boxsPutDTO)
         {
             try
             {
@@ -297,7 +298,7 @@ namespace BE_Company.Controllers
                     return Unauthorized("User is not authenticated.");
                 }
                 boxsPutDTO.UpdateUserID = userID;
-                var result = await _accountsRepository.Boxs_Update(boxID,boxsPutDTO);
+                var result = await _accountsRepository.Boxs_Update(boxID, boxsPutDTO);
                 return Ok(result);
             }
             catch (Exception ex)

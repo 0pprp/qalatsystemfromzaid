@@ -1,0 +1,72 @@
+DelegateHaiderNajafLast
+Oct 01 08:31:27 vmi3533397 dotnet[2627578]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 08:31:27 vmi3533397 dotnet[2627578]:       Could not create constraint or index. See previous errors.
+Oct 01 08:31:27 vmi3533397 dotnet[2627578]:       Error Number:2714,State:5,Class:16
+Oct 01 10:11:42 vmi3533397 dotnet[2627629]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 10:11:42 vmi3533397 dotnet[2627629]:       Could not create constraint or index. See previous errors.
+Oct 01 10:11:42 vmi3533397 dotnet[2627629]:       Error Number:2714,State:5,Class:16
+Oct 01 12:54:32 vmi3533397 dotnet[2627629]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 12:54:32 vmi3533397 dotnet[2627629]:       Microsoft.Data.SqlClient.SqlException (0x80131904): A severe error occurred on the current command.  The results, if any, should be discarded.
+Oct 01 13:33:44 vmi3533397 dotnet[2627554]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 13:33:44 vmi3533397 dotnet[2627554]:       Could not create constraint or index. See previous errors.
+Oct 01 13:33:44 vmi3533397 dotnet[2627554]:       Error Number:2714,State:5,Class:16
+Oct 01 16:26:46 vmi3533397 dotnet[2627455]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 16:26:46 vmi3533397 dotnet[2627455]:       Could not drop constraint. See previous errors.
+Oct 01 16:26:46 vmi3533397 dotnet[2627455]:       Error Number:3728,State:1,Class:16
+Oct 01 16:37:28 vmi3533397 dotnet[2627455]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 16:37:28 vmi3533397 dotnet[2627455]:        ---> System.ComponentModel.Win32Exception (258): Unknown error 258
+Oct 01 16:37:28 vmi3533397 dotnet[2627455]:          at BE_DelegateWebApplication.Controllers.CustomersPaymentsRequestsController.PostPaymentIdempotent(CustomersPaymentsRequestsPostDTO body, CancellationToken ct) in C:\GitHub\SalesHaider-main\SalesHaider-main\BE_DelegateWebApplication\BE_DelegateWebApplication\Controllers\CustomersPaymentsRequestsController.cs:line 76
+Oct 01 16:37:28 vmi3533397 dotnet[2627455]:       Error Number:-2,State:0,Class:11
+Oct 01 16:37:34 vmi3533397 dotnet[2627455]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 16:37:34 vmi3533397 dotnet[2627455]:       Could not create constraint or index. See previous errors.
+Oct 01 16:37:34 vmi3533397 dotnet[2627455]:       Error Number:2714,State:5,Class:16
+Oct 01 18:03:46 vmi3533397 dotnet[2627455]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 18:03:46 vmi3533397 dotnet[2627455]:        ---> System.ComponentModel.Win32Exception (258): Unknown error 258
+Oct 01 18:03:46 vmi3533397 dotnet[2627455]:          at BE_DelegateWebApplication.Controllers.CustomersPaymentsRequestsController.PostPaymentIdempotent(CustomersPaymentsRequestsPostDTO body, CancellationToken ct) in C:\GitHub\SalesHaider-main\SalesHaider-main\BE_DelegateWebApplication\BE_DelegateWebApplication\Controllers\CustomersPaymentsRequestsController.cs:line 76
+Oct 01 18:03:46 vmi3533397 dotnet[2627455]:       Error Number:-2,State:0,Class:11
+Oct 01 18:04:32 vmi3533397 dotnet[2627455]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 18:04:32 vmi3533397 dotnet[2627455]:        ---> System.ComponentModel.Win32Exception (258): Unknown error 258
+Oct 01 18:04:32 vmi3533397 dotnet[2627455]:          at BE_DelegateWebApplication.Controllers.CustomersPaymentsRequestsController.PostPaymentIdempotent(CustomersPaymentsRequestsPostDTO body, CancellationToken ct) in C:\GitHub\SalesHaider-main\SalesHaider-main\BE_DelegateWebApplication\BE_DelegateWebApplication\Controllers\CustomersPaymentsRequestsController.cs:line 76
+Oct 01 18:04:32 vmi3533397 dotnet[2627455]:       Error Number:-2,State:0,Class:11
+Oct 01 18:04:40 vmi3533397 dotnet[2627455]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 18:04:40 vmi3533397 dotnet[2627455]:        ---> System.ComponentModel.Win32Exception (258): Unknown error 258
+Oct 01 18:04:40 vmi3533397 dotnet[2627455]:          at BE_DelegateWebApplication.Controllers.CustomersPaymentsRequestsController.PostPaymentIdempotent(CustomersPaymentsRequestsPostDTO body, CancellationToken ct) in C:\GitHub\SalesHaider-main\SalesHaider-main\BE_DelegateWebApplication\BE_DelegateWebApplication\Controllers\CustomersPaymentsRequestsController.cs:line 76
+Oct 01 18:04:40 vmi3533397 dotnet[2627455]:       Error Number:-2,State:0,Class:11
+Oct 01 18:19:24 vmi3533397 dotnet[2627455]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 18:19:24 vmi3533397 dotnet[2627455]:       Could not create constraint or index. See previous errors.
+Oct 01 18:19:24 vmi3533397 dotnet[2627455]:       Error Number:2714,State:5,Class:16
+Oct 01 18:30:25 vmi3533397 dotnet[2627455]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 18:30:25 vmi3533397 dotnet[2627455]:        ---> System.ComponentModel.Win32Exception (258): Unknown error 258
+Oct 01 18:30:25 vmi3533397 dotnet[2627455]:          at BE_DelegateWebApplication.Controllers.CustomersPaymentsRequestsController.PostPaymentIdempotent(CustomersPaymentsRequestsPostDTO body, CancellationToken ct) in C:\GitHub\SalesHaider-main\SalesHaider-main\BE_DelegateWebApplication\BE_DelegateWebApplication\Controllers\CustomersPaymentsRequestsController.cs:line 76
+Oct 01 18:30:25 vmi3533397 dotnet[2627455]:       Error Number:-2,State:0,Class:11
+Oct 01 18:52:14 vmi3533397 dotnet[2627554]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 18:52:14 vmi3533397 dotnet[2627554]:       Could not create constraint or index. See previous errors.
+Oct 01 18:52:14 vmi3533397 dotnet[2627554]:       Error Number:2714,State:5,Class:16
+Oct 01 19:21:26 vmi3533397 dotnet[2627554]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 19:21:26 vmi3533397 dotnet[2627554]:       Could not drop constraint. See previous errors.
+Oct 01 19:21:26 vmi3533397 dotnet[2627554]:       Error Number:3728,State:1,Class:16
+Oct 01 19:21:26 vmi3533397 dotnet[2627554]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 19:21:26 vmi3533397 dotnet[2627554]:       Could not drop constraint. See previous errors.
+Oct 01 19:21:26 vmi3533397 dotnet[2627554]:       Error Number:3728,State:1,Class:16
+Oct 01 19:21:47 vmi3533397 dotnet[2627554]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 19:21:47 vmi3533397 dotnet[2627554]:       Could not create constraint or index. See previous errors.
+Oct 01 19:21:47 vmi3533397 dotnet[2627554]:       Error Number:2714,State:5,Class:16
+Oct 01 19:21:47 vmi3533397 dotnet[2627554]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 19:21:47 vmi3533397 dotnet[2627554]:       Could not create constraint or index. See previous errors.
+Oct 01 19:21:47 vmi3533397 dotnet[2627554]:       Error Number:2714,State:5,Class:16
+Oct 01 19:21:47 vmi3533397 dotnet[2627554]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 19:21:47 vmi3533397 dotnet[2627554]:       Could not create constraint or index. See previous errors.
+Oct 01 19:21:47 vmi3533397 dotnet[2627554]:       Error Number:2714,State:5,Class:16
+Oct 01 19:37:32 vmi3533397 dotnet[2627629]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 19:37:32 vmi3533397 dotnet[2627629]:        ---> System.ComponentModel.Win32Exception (258): Unknown error 258
+Oct 01 19:37:32 vmi3533397 dotnet[2627629]:          at BE_DelegateWebApplication.Controllers.CustomersPaymentsRequestsController.PostPaymentIdempotent(CustomersPaymentsRequestsPostDTO body, CancellationToken ct) in C:\GitHub\SalesHaider-main\SalesHaider-main\BE_DelegateWebApplication\BE_DelegateWebApplication\Controllers\CustomersPaymentsRequestsController.cs:line 76
+Oct 01 19:37:32 vmi3533397 dotnet[2627629]:       Error Number:-2,State:0,Class:11
+Oct 01 20:57:37 vmi3533397 dotnet[2627663]: fail: Microsoft.AspNetCore.Server.Kestrel[13]
+Oct 01 23:13:52 vmi3533397 dotnet[2869948]:       Failed to determine the https port for redirect.
+Oct 01 23:14:09 vmi3533397 dotnet[2869867]:       Failed to determine the https port for redirect.
+Oct 01 23:15:03 vmi3533397 dotnet[2870132]:       Failed to determine the https port for redirect.
+Oct 01 23:15:29 vmi3533397 dotnet[2870048]:       Failed to determine the https port for redirect.
+Oct 01 23:29:05 vmi3533397 dotnet[2870160]:       Failed to determine the https port for redirect.
+Oct 01 23:33:41 vmi3533397 dotnet[2869926]:       Failed to determine the https port for redirect.
+Oct 01 23:38:57 vmi3533397 dotnet[2869764]:       Failed to determine the https port for redirect.
+Oct 01 23:39:27 vmi3533397 dotnet[2870197]:       Failed to determine the https port for redirect.

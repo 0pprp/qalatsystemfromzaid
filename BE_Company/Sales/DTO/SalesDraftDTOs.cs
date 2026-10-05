@@ -86,6 +86,8 @@ namespace BE_Company.Sales.DTO
         public string? CityName { get; set; }
         public string Status { get; set; } = string.Empty;
         public int? CustomerId { get; set; }
+        /// <summary>Official المبيعات row after posting; null until Posted.</summary>
+        public int? CustomerSaleId { get; set; }
         public string? SourceCityValue { get; set; }
         public string FullName { get; set; } = string.Empty;
         public string? Phone { get; set; }

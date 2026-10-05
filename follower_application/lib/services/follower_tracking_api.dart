@@ -48,9 +48,12 @@ class FollowerTrackingApi {
     return Uri.parse('$base$path').replace(queryParameters: merged);
   }
 
-  static Future<dynamic> get(String path) async {
+  static Future<dynamic> get(
+    String path, {
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
     final response =
-        await http.get(await uri(path)).timeout(const Duration(seconds: 20));
+        await http.get(await uri(path)).timeout(timeout);
     return _decode(response);
   }
 

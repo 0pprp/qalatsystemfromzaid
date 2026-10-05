@@ -47,12 +47,24 @@ public interface ISalesExceptionStore
 
     Task MarkBranchNotePostedAsync(Guid id, CancellationToken ct = default);
 
+    Task EnsureSchemaAsync(CancellationToken ct = default);
+
+    Task<SalesExceptionRequest?> MarkReadAsync(Guid id, DateTime readAtUtc, CancellationToken ct = default);
+
     Task<IReadOnlyDictionary<string, int>> CountByStatusAsync(string? cityValue, CancellationToken ct = default);
+
+    /// <summary>Hold-only status counts (excludes WrongSale reason rows).</summary>
+    Task<IReadOnlyDictionary<string, int>> CountHoldByStatusAsync(string? cityValue, CancellationToken ct = default);
+
+    /// <summary>Unread WrongSale rows (ReadAtUtc IS NULL + reason heuristic).</summary>
+    Task<int> CountUnreadWrongSalesAsync(string? cityValue, CancellationToken ct = default);
 
     /// <summary>
     /// Active = Pending, or Approved and not yet assignment-consumed.
     /// </summary>
     Task<SalesExceptionRequest?> FindActiveBySalesRequestIdAsync(int salesRequestId, CancellationToken ct = default);
+    /// <summary>Pending WrongSale notice for same customer (idempotent intake).</summary>
+    Task<SalesExceptionRequest?> FindPendingWrongSaleByCustomerIdAsync(int customerId, CancellationToken ct = default);
 
     /// <summary>
     /// Optimistic consume: succeeds only while Status=Approved and AssignmentConsumed=false.

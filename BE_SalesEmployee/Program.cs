@@ -13,13 +13,18 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHttpClient<AdminCitiesService>();
+// Must exceed SalesManagerBranchAggregator excel/evaluate CancelAfter (90s).
+// A 20s client timeout made multi-province evaluate return 502
+// ("تعذر تقييم الطلبات في محافظة المصدر") under real catalog load.
 builder.Services.AddHttpClient<BranchProxyService>(client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(20);
+    client.Timeout = TimeSpan.FromSeconds(BranchProxyTimeouts.HttpClientSeconds);
 });
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<SalesManagerAccountService>();
 builder.Services.AddSingleton<DelegatedManagerAccountService>();
+builder.Services.AddSingleton<MainFollowerAccountService>();
+builder.Services.AddSingleton<DirectorAccountService>();
 builder.Services.AddScoped<SalesFilterLoginService>();
 builder.Services.AddSingleton<SalesDevelopmentGuard>();
 builder.Services.AddScoped<IGlobalCustomerSearchService, GatewayGlobalCustomerSearchService>();
@@ -32,20 +37,43 @@ if (SqlGatewayConnectionFactory.IsConfigured(builder.Configuration))
     builder.Services.AddSingleton<SqlGatewayConnectionFactory>();
     builder.Services.AddScoped<ICentralComplaintsStore, SqlCentralComplaintsStore>();
     builder.Services.AddScoped<ISalesExceptionStore, SqlSalesExceptionStore>();
+    builder.Services.AddScoped<ICustomerWaiverStore, SqlCustomerWaiverStore>();
     builder.Services.AddScoped<IMobileUpdateStore, SqlMobileUpdateStore>();
+    builder.Services.AddScoped<IMobileTutorialLinkStore, SqlMobileTutorialLinkStore>();
 }
 else
 {
     builder.Services.AddSingleton<ICentralComplaintsStore, InMemoryCentralComplaintsStore>();
     builder.Services.AddSingleton<ISalesExceptionStore, InMemorySalesExceptionStore>();
+    builder.Services.AddSingleton<ICustomerWaiverStore, InMemoryCustomerWaiverStore>();
     builder.Services.AddSingleton<IMobileUpdateStore, InMemoryMobileUpdateStore>();
+    builder.Services.AddSingleton<IMobileTutorialLinkStore, InMemoryMobileTutorialLinkStore>();
 }
+
+// Main-follower committees: in-memory until SQL store ships (same gate pattern as DM).
+builder.Services.AddSingleton<BE_SalesEmployee.MainFollower.Stores.ICommitteeStore,
+    BE_SalesEmployee.MainFollower.Stores.InMemoryCommitteeStore>();
+builder.Services.AddSingleton<BE_SalesEmployee.MainFollower.Stores.ISaleReviewStore,
+    BE_SalesEmployee.MainFollower.Stores.InMemorySaleReviewStore>();
+builder.Services.AddSingleton<BE_SalesEmployee.MainFollower.Stores.IStaffReviewStore,
+    BE_SalesEmployee.MainFollower.Stores.InMemoryStaffReviewStore>();
+builder.Services.AddSingleton<BE_SalesEmployee.MainFollower.Stores.IMainFollowerShiftStore,
+    BE_SalesEmployee.MainFollower.Stores.InMemoryMainFollowerShiftStore>();
+builder.Services.AddScoped<BE_SalesEmployee.MainFollower.Services.CommitteeService>();
+builder.Services.AddScoped<BE_SalesEmployee.MainFollower.Services.SaleReviewService>();
+builder.Services.AddScoped<BE_SalesEmployee.MainFollower.Services.StaffReviewService>();
+builder.Services.AddScoped<BE_SalesEmployee.MainFollower.Services.CommitteeHistoryService>();
+builder.Services.AddScoped<BE_SalesEmployee.MainFollower.Services.MainFollowerShiftService>();
+
 builder.Services.AddSingleton<IntentRecordingBranchNotePoster>();
 builder.Services.AddScoped<IBranchNotePoster, GatewayBranchNotePoster>();
 builder.Services.AddScoped<IBranchExceptionHoldPoster, GatewayExceptionHoldPoster>();
+builder.Services.AddScoped<IBranchWaiverApplyPoster, GatewayWaiverApplyPoster>();
 builder.Services.AddScoped<CentralComplaintsService>();
 builder.Services.AddScoped<SalesExceptionService>();
+builder.Services.AddScoped<CustomerWaiverService>();
 builder.Services.AddScoped<MobileUpdateService>();
+builder.Services.AddScoped<MobileTutorialLinkService>();
 
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAuthorizationHandler, SalesRoleHandler>();
@@ -61,8 +89,14 @@ builder.Services.AddAuthorization(options =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesFilterEmployee)));
     options.AddPolicy(SalesPolicies.DelegatedManager, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.DelegatedManager)));
+    options.AddPolicy(SalesPolicies.MainFollower, p =>
+        p.Requirements.Add(new SalesRoleRequirement(SalesRoles.MainFollower)));
+    options.AddPolicy(SalesPolicies.Director, p =>
+        p.Requirements.Add(new SalesRoleRequirement(SalesRoles.Director)));
     options.AddPolicy(SalesPolicies.SalesManagerOrDelegatedManager, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager, SalesRoles.DelegatedManager)));
+    options.AddPolicy(SalesPolicies.SalesManagerOrDirector, p =>
+        p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager, SalesRoles.Director)));
     options.AddPolicy(SalesPolicies.ReadGps, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
     options.AddPolicy(SalesPolicies.ReadOtherSalesEmployees, p =>

@@ -7,8 +7,12 @@ import { useTheme } from 'vuetify'
 import { VBtn, VCard, VCol, VIcon, VProgressCircular, VRow } from 'vuetify/components'
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+import { useUserRole } from '@/composables/useUserRole'
+import { useRouter } from 'vue-router'
 
 const theme = useTheme()
+const router = useRouter()
+const { isAdmin } = useUserRole()
 const apiUrl = localStorage.getItem('LinkCity')
 const statsData = ref([])
 
@@ -310,6 +314,31 @@ onMounted(() => {
           </VBtn>
         </div>
       </div>
+    </VCard>
+
+    <VCard
+      v-if="isAdmin"
+      class="mb-4"
+      color="primary"
+      variant="tonal"
+    >
+      <VCardText class="d-flex flex-wrap align-center justify-space-between gap-3">
+        <div>
+          <div class="text-h6 mb-1">
+            التقييمات
+          </div>
+          <div class="text-body-2">
+            تقييم الفرع والمتابعين لنفس محافظة الجلسة الحالية
+          </div>
+        </div>
+        <VBtn
+          color="primary"
+          prepend-icon="tabler-chart-histogram"
+          @click="router.push('/accountant-ratings')"
+        >
+          فتح التقييمات
+        </VBtn>
+      </VCardText>
     </VCard>
 
     <!-- Main Dashboard Content -->

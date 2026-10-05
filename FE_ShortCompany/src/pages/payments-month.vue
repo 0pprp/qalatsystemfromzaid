@@ -42,7 +42,7 @@ const headers = [
   { title: 'المباع', key: 'itemsNames' },
   { title: 'تاريخ البيع', key: 'dateSaleDevice' },
   { title: 'عدد الأيام', key: 'numberOfDayDevice' },
-  { title: 'سعر البيع', key: 'amountTotalSalesDenar' },
+  { title: 'سعر البيع', key: 'amountTotalSales' },
   { title: 'القسط', key: 'amountDaySales' },
   { title: 'الواصل', key: 'receiptsTotal' },
   { title: 'الباقي', key: 'amountRemaining' },
@@ -66,7 +66,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-wallet', // سعر البيع
     value: formattedNumber(
-      monthPaymentsData.value.reduce((sum, row) => sum + (row.amountTotalSalesDenar || 0), 0),
+      monthPaymentsData.value.reduce((sum, row) => sum + (row.amountTotalSales || 0), 0),
     ),
     title: 'سعر البيع',
     color: "success",
@@ -150,7 +150,7 @@ function exportToExcel() {
       'المباع': row.itemsNames || 'لا يوجد',
       'تاريخ البيع': row.dateSale ? formattedDate(row.dateSale) : 'لا يوجد',
       'عدد الأيام': row.numberOfDayDevice || 'لا يوجد',
-      'سعر البيع': row.amountTotalSalesDenar || 'لا يوجد',
+      'سعر البيع': row.amountTotalSales || 'لا يوجد',
       'القسط': row.amountDaySales || 'لا يوجد',
       'الواصل': row.receiptsTotal || 'لا يوجد',
       'الباقي': row.amountRemaining || 'لا يوجد',
@@ -186,7 +186,7 @@ const colSlots = {
   itemsNames: 'item.itemsNames',
   dateSaleDevice: 'item.dateSaleDevice',
   numberOfDayDevice: 'item.numberOfDayDevice',
-  amountTotalSalesDenar: 'item.amountTotalSalesDenar',
+  amountTotalSales: 'item.amountTotalSales',
   amountDaySales: 'item.amountDaySales',
   receiptsTotal: 'item.receiptsTotal',
   amountRemaining: 'item.amountRemaining',
@@ -314,9 +314,9 @@ for (let i = 1; i <= 30; i++) {
               {{ item.numberOfDayDevice || 'لا يوجد' }}
             </div>
           </template>
-          <template v-slot:[colSlots.amountTotalSalesDenar]="{ item }">
+          <template v-slot:[colSlots.amountTotalSales]="{ item }">
             <div class="premium-amount amt-total-sales">
-              {{ formattedNumber(item.amountTotalSalesDenar) }}
+              {{ formattedNumber(item.amountTotalSales) }}
             </div>
           </template>
           <template v-slot:[colSlots.amountDaySales]="{ item }">

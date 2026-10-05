@@ -39,5 +39,15 @@ namespace BE_DelegateWebApplication.Tests
             Assert.Equal(new DateTime(2026, 9, 14, 13, 0, 0, DateTimeKind.Utc), eligible); // 16:00 Baghdad
             Assert.False(CollectionPaymentRules.IsEligibleForPosting(eligible, created));
         }
+
+        [Fact]
+        public void CreatedOvernightBeforeBusinessRollover_EligibleImmediately()
+        {
+            // 01:00 Baghdad Sep 15 = still previous business day after its 16:00 window.
+            var created = new DateTime(2026, 9, 14, 22, 0, 0, DateTimeKind.Utc);
+            var eligible = CollectionPaymentRules.ComputeEligibleForPostingAtUtc(created);
+            Assert.Equal(created, eligible);
+            Assert.True(CollectionPaymentRules.IsEligibleForPosting(eligible, created));
+        }
     }
 }

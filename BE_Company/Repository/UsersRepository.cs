@@ -45,7 +45,7 @@ namespace BE_Company.Repository
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result =  await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_GetUserLogin",
+                var result = await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_GetUserLogin",
                 new
                 {
                     UserName = userName,
@@ -237,7 +237,7 @@ WHERE LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName)
                 new
                 {
                     TextSearch = textSearch,
-                }, 
+                },
                 commandType: CommandType.StoredProcedure);
             }
         }

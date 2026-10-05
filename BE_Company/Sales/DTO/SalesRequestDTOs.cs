@@ -16,6 +16,8 @@ namespace BE_Company.Sales.DTO
         public string? CustomerSourceCityValue { get; set; }
         public SalesRequestCustomerDTO? Customer { get; set; }
         public string? Notes { get; set; }
+        /// <summary>Optional ceiling: employee FinalSalePrice must not exceed this.</summary>
+        public decimal? MaxSalePrice { get; set; }
     }
 
     public sealed class SalesRequestAssignDTO
@@ -32,6 +34,30 @@ namespace BE_Company.Sales.DTO
         public string? CustomerAddress { get; set; }
         public string? Notes { get; set; }
         public bool KeepNewCustomer { get; set; }
+        /// <summary>Optional ceiling set/updated on assign.</summary>
+        public decimal? MaxSalePrice { get; set; }
+    }
+
+    public sealed class SalesRequestAssignBatchDTO
+    {
+        public int EmployeeId { get; set; }
+        public string? EmployeeName { get; set; }
+        public string? CityValue { get; set; }
+        public string? CityName { get; set; }
+        public List<int> RequestIds { get; set; } = [];
+    }
+
+    public sealed class SalesRequestAssignBatchFailureDTO
+    {
+        public int Id { get; set; }
+        public string Message { get; set; } = string.Empty;
+    }
+
+    public sealed class SalesRequestAssignBatchResultDTO
+    {
+        public List<int> Succeeded { get; set; } = [];
+        public List<SalesRequestAssignBatchFailureDTO> Failed { get; set; } = [];
+        public int Total => Succeeded.Count + Failed.Count;
     }
 
     public sealed class SalesRequestImportRowDTO
@@ -121,6 +147,8 @@ namespace BE_Company.Sales.DTO
         public string? CustomerProvince { get; set; }
         public string? CustomerAddress { get; set; }
         public string? Notes { get; set; }
+        /// <summary>Optional max FinalSalePrice the assigned employee may use. Null = no ceiling.</summary>
+        public decimal? MaxSalePrice { get; set; }
         public string Status { get; set; } = "New";
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? ViewedAtUtc { get; set; }
@@ -148,6 +176,7 @@ namespace BE_Company.Sales.DTO
         public DateTime? DeletedAtUtc { get; set; }
         public int? DeletedByUserId { get; set; }
         public string? DeletedByName { get; set; }
+        public string? DeleteReason { get; set; }
         /// <summary>Pending | Approved | Rejected — null when not under exception hold.</summary>
         public string? ExceptionHoldStatus { get; set; }
         public Guid? ActiveExceptionId { get; set; }
@@ -169,6 +198,33 @@ namespace BE_Company.Sales.DTO
         public DateTime TransferredAtUtc { get; set; }
         public int TransferredByUserId { get; set; }
         public string? TransferredByName { get; set; }
+    }
+
+    public sealed class SalesRequestSoftDeleteDTO
+    {
+        public string? Reason { get; set; }
+        /// <summary>
+        /// Required when the linked sale has payments: confirms deleting those payments + sale + stock restore.
+        /// </summary>
+        public bool ConfirmCascadePayments { get; set; }
+    }
+
+    public sealed class SalesRequestSoftDeleteImpactDTO
+    {
+        public int RequestId { get; set; }
+        public bool HasLinkedDraft { get; set; }
+        public int? LinkedDraftSaleId { get; set; }
+        public string? DraftStatus { get; set; }
+        public string? PostingStatus { get; set; }
+        public bool IsPosted { get; set; }
+        public int? CustomerId { get; set; }
+        public int? CustomerSaleId { get; set; }
+        public int PaymentCount { get; set; }
+        public decimal PaymentTotal { get; set; }
+        public bool RequiresPaymentConfirm { get; set; }
+        public bool WillDeleteOfficialSale { get; set; }
+        public bool WillRestoreInventory { get; set; }
+        public string WarningAr { get; set; } = string.Empty;
     }
 
     public sealed class SalesRequestTransferDTO
@@ -199,5 +255,16 @@ namespace BE_Company.Sales.DTO
         public string Event { get; set; } = string.Empty;
         public DateTime? AtUtc { get; set; }
         public string? Detail { get; set; }
+    }
+
+    /// <summary>Paged manager board response — keeps 20k+ request branches under ~2s first paint.</summary>
+    public sealed class SalesRequestManagerListPageDTO
+    {
+        public IReadOnlyList<SalesRequestDTO> Items { get; set; } = [];
+        public int Total { get; set; }
+        public int Page { get; set; }
+        public int PageSize { get; set; }
+        public bool HasMore { get; set; }
+        public Dictionary<string, int> TabCounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }

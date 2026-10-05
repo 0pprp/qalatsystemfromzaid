@@ -75,6 +75,17 @@ void main() {
               'totalPaid': 1000000,
               'remaining': 250000,
             },
+            'payments': [
+              {
+                'paymentDate': '2026-07-10T00:00:00Z',
+                'amount': 50000,
+                'boundNumber': 101,
+              },
+              {
+                'paymentDate': '2026-06-01T00:00:00Z',
+                'amount': 75000,
+              },
+            ],
             'previousSales': [
               {
                 'saleDate': '2026-02-15T00:00:00Z',
@@ -112,5 +123,39 @@ void main() {
     expect(sales[1].paymentCount, 3);
     expect(sales[1].repaymentDays, 90);
     expect(sales[0].paymentCount, isNot(sales[1].paymentCount));
+    final pays = detail.review!.matchingCustomers.single.payments;
+    expect(pays.length, 2);
+    expect(pays[0].amount, 50000);
+    expect(pays[1].amount, 75000);
+  });
+
+  test('payments parse PascalCase AmountDenar payloads', () {
+    final detail = ExceptionDetail.fromJson({
+      'request': {
+        'id': '11111111-1111-1111-1111-111111111111',
+        'status': 'Pending',
+        'cityValue': 'basra',
+        'cityName': 'البصرة',
+        'customerName': 'اختبار',
+        'reason': 'سبب',
+        'createdAtUtc': '2026-09-15T10:00:00Z',
+      },
+      'review': {
+        'customerClassification': {'type': 'Existing', 'labelArabic': 'زبون قديم', 'matchCount': 1},
+        'source': {'type': 'Delegate', 'displayLabel': 'مندوب', 'personName': 'أ'},
+        'matchingCustomers': [
+          {
+            'fullName': 'محمد',
+            'matchReasons': ['هاتف'],
+            'Payments': [
+              {'PaymentDate': '2026-07-10T00:00:00Z', 'AmountDenar': 12000},
+            ],
+          },
+        ],
+      },
+    });
+    final pays = detail.review!.matchingCustomers.single.payments;
+    expect(pays.length, 1);
+    expect(pays.single.amount, 12000);
   });
 }

@@ -8,7 +8,12 @@ export function isExcludedSalesBranch(name) {
 }
 
 export function isCentralSalesManager() {
-  return localStorage.getItem('UserType') === 'مدير مبيعات'
+  const userType = localStorage.getItem('UserType')
+  // المدير يستخدم نفس بوابة مدير المبيعات المركزي لطلبات البيع
+  if (userType === 'المدير')
+    return true
+
+  return userType === 'مدير مبيعات'
     && localStorage.getItem('SalesManagerScope') === 'central'
 }
 

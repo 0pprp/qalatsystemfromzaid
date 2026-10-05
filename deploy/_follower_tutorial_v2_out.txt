@@ -1,0 +1,15 @@
+UNITS qalaa-demo-sales-gateway.service
+qalaa-sales-gateway.service
+CANDIDATES 3
+C /etc/qalaa-production/delegated-manager.env ConnectionStrings__SalesGateway=Server=localhost;Database=DatabaseSalesGateway;User Id=qalaa_sales_gateway;Password=Qala...
+C /etc/qalaa-production/delegated-manager.env:val Server=localhost;Database=DatabaseSalesGateway;User Id=qalaa_sales_gateway;Password=Qalaa!1382881c66acd9feac0da8eafc0475...
+C /etc/qalaa-production/delegate-najaf-sales-gateway.env SalesGateway__BaseUrl=http://127.0.0.1:5280
+CHOSEN_SRC /etc/qalaa-production/delegated-manager.env:val LEN 197
+TARGET localhost DatabaseSalesGateway user qalaa_sales_gateway
+follower|تطبيق المتابع|https://youtu.be/KtrCPWMogG4|1
+
+SQL_EXIT 0
+
+  qalaa-demo-sales-gateway.service               loaded    active   running Qalaa Demo Sales Gateway
+  qalaa-sales-gateway.service                    loaded    active   running Qalaa Sales Gateway
+API_OK http://127.0.0.1:5280/api/mobile-tutorial-links/follower {"appKey":"follower","titleAr":"تطبيق المتابع","videoUrl":"https://youtu.be/KtrCPWMogG4","updatedAtUtc":"2026-10-03T20:52:55.298"}

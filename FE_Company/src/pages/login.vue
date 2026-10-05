@@ -47,6 +47,39 @@ async function login() {
   if (validForm.valid === true) {
     loginLoadingBtn.value = true
 
+    // Central roles: city optional. Try director first, then sales manager.
+    if (selectCity.value == null || selectCity.value === '') {
+      try {
+        const directorRes = await fetch(`${salesGatewayBase()}Auth/LoginDirector`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(form.value),
+        }).then(res => res.json()).catch(() => null)
+
+        if (directorRes?.token && (directorRes.userType === 'المدير' || directorRes.central)) {
+          localStorage.setItem('Token', directorRes.token)
+          localStorage.setItem('Expiration', directorRes.expiration)
+          localStorage.setItem('UserID', String(directorRes.userId ?? 0))
+          localStorage.setItem('UserName', directorRes.userName || form.value.userName)
+          localStorage.setItem('UserType', 'المدير')
+          localStorage.setItem('DirectorScope', 'central')
+          localStorage.setItem('LinkCity', salesGatewayBase())
+          localStorage.setItem('CityName', 'كل المحافظات')
+          localStorage.removeItem('Database')
+          localStorage.removeItem('SalesManagerScope')
+          loginLoadingBtn.value = false
+          // Warm hub cache in background while navigating.
+          import('@/composables/warmDirectorCache').then(m => m.warmDirectorCacheInBackground()).catch(() => {})
+          router.push('/director-ratings')
+
+          return
+        }
+      }
+      catch {
+        // fall through to sales manager / province
+      }
+    }
+
     // Central sales manager: city is optional. Do not hit gateway SM login when a province
     // is selected — accountants must authenticate against that branch API only.
     if (!isDemo() && (selectCity.value == null || selectCity.value === '')) {

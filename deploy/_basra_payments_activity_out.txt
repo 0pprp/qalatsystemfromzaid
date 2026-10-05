@@ -1,0 +1,414 @@
+=== amount_cols RC 0 ===
+AddToBox|Amount
+AddToBox|CustomerPaymentBalanceID
+AddToBox|CustomerPaymentID
+Balance|AmountDay
+CustomerAmountRemainingZero|AmountRemaining
+CustomerBalanceRequest|AmountReceverDay
+CustomerPaymentBalance|CustomerPaymentBalanceID
+CustomerPaymentBalanceRequest|Amount
+CustomerPaymentBalanceRequest|CustomerPaymentBalanceRequestID
+Customers|AmountReceverDay
+CustomerSaleBalance|DiscountAmountDayTotalTwoWay
+CustomerSaleBalance|DiscountAmountTotal
+CustomerSaleBalance|DiscountAmountTotalDay
+CustomerSaleBalance|DiscountAmountTotalTwoWay
+CustomerSaleBalanceRequest|DiscountAmountTotal
+CustomerSaleBalanceRequest|DiscountAmountTotalDay
+CustomerSaleBalanceRequestOld|DiscountAmountTotal
+CustomerSaleBalanceRequestOld|DiscountAmountTotalDay
+CustomersPayments|ClientPaymentId
+CustomersPayments|CustomerPaymentID
+CustomersPayments|PaymentDate
+CustomersPaymentsRequest|Amount
+CustomersPaymentsRequest|ClientPaymentId
+CustomersPaymentsRequest|CustomersPaymentsRequestID
+CustomersPaymentsRequest|PaymentDate
+CustomersRequest|AmountReceverDay
+CustomersSales|DiscountAmountDayTotalTwoWay
+CustomersSales|DiscountAmountTotal
+CustomersSales|DiscountAmountTotalDay
+CustomersSales|DiscountAmountTotalTwoWay
+CustomersSalesRequest|DiscountAmountTotal
+CustomersSalesRequest|DiscountAmountTotalDay
+CustomersSalesRequestOld|DiscountAmountTotal
+CustomersSalesRequestOld|DiscountAmountTotalDay
+CustomerWeekDecisions|AmountTotalSales
+CustomerZeroRemainingByDate|AmountDaySales
+CustomerZeroRemainingByDate|AmountRemaining
+CustomerZeroRemainingByDate|AmountTotalSales
+CustomerZeroRemainingByDate|LastPaymentDate
+CustomerZeroRemainingByDate_Final|AmountDaySales
+CustomerZeroRemainingByDate_Final|AmountRemaining
+CustomerZeroRemainingByDate_Final|AmountTotalSales
+CustomerZeroRemainingByDate_Final|LastPaymentDate
+Delegates|BalancePaymentState
+Delegates|DevicePaymentState
+DelegatesDebts|AmountDebt
+DelegatesSalaries|SalaryAmount
+DeleteData|CustomerPaymentBalanceAsyncID
+DeleteData|CustomerPaymentBalanceRequestAsyncID
+DeleteData|CustomersPaymentsAsyncID
+DeleteData|CustomersPaymentsRequestAsyncID
+DeleteData|DollarAmountAsyncID
+Documents|Amount
+DollarAmount|Amount
+DollarAmount|DollarAmountID
+EmployeeDebts|AmountDebt
+EmployeesSalaries|SalaryAmount
+ExchangeItems|LimitAmount
+ExchangeItemsDebts|AmountDebt
+GetCustomersAmountTotalSalesAndReceiptsTotal|AmountTotalSales
+Items|AmountDay
+SalesDrafts|DefaultDownPayment
+SalesDrafts|DownPayment
+SalesDrafts|DownPaymentCustomerPaymentId
+SalesDrafts|OverrideDownPayment
+SelectDebtDelegateTemporaries|Amount
+SelectPaymentCustomerTemporary|Amount
+SelectPaymentCustomerTemporary|SelectPaymentCustomerTemporaryID
+SuppliersAccounts|Amount
+TransferBoxs|Amount
+TrustReceipts|FirstInstallmentAmount
+TrustReceipts|InstallmentAmount
+TrustReceipts|PaymentMethod
+TrustReceipts|ReceiptAmountNumber
+TrustReceipts|ReceiptAmountText
+TrustReceipts|RemainingAmount
+TrustReceipts|TotalAmountNumber
+TrustReceipts|TotalAmountText
+View_AddToBox|Amount
+View_AddToBox|AmountDenar
+View_AddToBox|CustomerIDPayment
+View_AddToBox|CustomerNamePayment
+View_AddToBox|CustomerPaymentBalanceID
+View_AddToBox|CustomerPaymentID
+View_Balance|AmountDay
+View_Balance|AmountDayDenar
+View_Box|AmountDenar
+View_BuyBalance|AmountSpentDenar
+View_BuyBalance|TotalAmountDenar
+View_Buys|AmountSpentDenar
+View_Buys|TotalAmountDenar
+View_BuysItems|AmountDayDenar
+View_BuysItems|AmountTotalDayDenar
+View_CustomerMonthPaymentDevice|Amount1
+View_CustomerMonthPaymentDevice|Amount10
+View_CustomerMonthPaymentDevice|Amount11
+View_CustomerMonthPaymentDevice|Amount12
+View_CustomerMonthPaymentDevice|Amount13
+View_CustomerMonthPaymentDevice|Amount14
+View_CustomerMonthPaymentDevice|Amount15
+View_CustomerMonthPaymentDevice|Amount16
+View_CustomerMonthPaymentDevice|Amount17
+View_CustomerMonthPaymentDevice|Amount18
+View_CustomerMonthPaymentDevice|Amount19
+View_CustomerMonthPaymentDevice|Amount2
+View_CustomerMonthPaymentDevice|Amount20
+View_CustomerMonthPaymentDevice|Amount21
+View_CustomerMonthPaymentDevice|Amount22
+View_CustomerMonthPaymentDevice|Amount23
+View_CustomerMonthPaymentDevice|Amount24
+View_CustomerMonthPaymentDevice|Amount25
+View_CustomerMonthPaymentDevice|Amount26
+View_CustomerMonthPaymentDevice|Amount27
+View_CustomerMonthPaymentDevice|Amount28
+View_CustomerMonthPaymentDevice|Amount29
+View_CustomerMonthPaymentDevice|Amount3
+View_CustomerMonthPaymentDevice|Amount30
+View_CustomerMonthPaymentDevice|Amount4
+View_CustomerMonthPaymentDevice|Amount5
+View_CustomerMonthPaymentDevice|Amount6
+View_CustomerMonthPaymentDevice|Amount7
+View_CustomerMonthPaymentDevice|Amount8
+View_CustomerMonthPaymentDevice|Amount9
+View_CustomerMonthPaymentDevice|AmountDaySales
+View_CustomerMonthPaymentDevice|AmountReceverDay
+View_CustomerMonthPaymentDevice|AmountRemaining
+View_CustomerMonthPaymentDevice|AmountTotalSales
+View_CustomerMonthPaymentDevice|LastPaymentDate
+View_CustomerMonthPaymentDevice|NumberOfDayPayment
+View_CustomerPaymentBalance|AmountDenar
+View_CustomerPaymentBalance|CustomerPaymentBalanceID
+View_Customers|Amount1
+View_Customers|Amount2
+View_Customers|Amount3
+View_Customers|Amount4
+View_Customers|Amount5
+View_Customers|Amount6
+View_Customers|Amount7
+View_Customers|AmountDaySales
+View_Customers|AmountReceverDay
+View_Customers|AmountRemaining
+View_Customers|AmountTotalSales
+View_Customers|LastPaymentDate
+View_Customers|NumberOfDayPayment
+View_Customers|TotalAmount
+View_CustomerSaleMerchant|AmountTotalCostDenar
+View_CustomersDelegate|AmountDaySales
+View_CustomersDelegate|AmountReceverDay
+View_CustomersDelegate|AmountRemaining
+View_CustomersDelegate|AmountTotalSales
+View_CustomersDelegate|LastPaymentDate
+View_CustomersFinal|Amount1
+View_CustomersFinal|Amount2
+View_CustomersFinal|Amount3
+View_CustomersFinal|Amount4
+View_CustomersFinal|Amount5
+View_CustomersFinal|Amount6
+View_CustomersFinal|Amount7
+View_CustomersFinal|AmountDaySales
+View_CustomersFinal|AmountReceverDay
+View_CustomersFinal|AmountRemaining
+View_CustomersFinal|AmountTotalSales
+View_CustomersInfoSimple|AmountDaySales
+View_CustomersInfoSimple|AmountRemaining
+View_CustomersInfoSimple|AmountTotalSales
+View_CustomersPayments|AmountDaySales
+View_CustomersPayments|AmountDenar
+View_CustomersPayments|CustomerPaymentID
+View_CustomersPayments|PaymentDate
+View_CustomersPaymentsAndRemaining|AmountDenar
+View_CustomersPaymentsAndRemaining|AmountRemaining
+View_CustomersPaymentsAndRemaining|CustomerPaymentID
+View_CustomersPaymentsAndRemaining|PaymentDate
+View_CustomersPaymentsDelegate|AmountDenar
+View_CustomersPaymentsDelegate|CustomerPaymentID
+View_CustomersPaymentsDelegate|PaymentDate
+View_CustomersPaymentsDelegate_Final|AmountDenar
+View_CustomersPaymentsDelegate_Final|CustomerPaymentID
+View_CustomersPaymentsDelegate_Final|PaymentDate
+View_CustomersPaymentsRequest|Amount
+View_CustomersPaymentsRequest|CustomersPaymentsRequestID
+View_CustomersPaymentsRequest|PaymentDate
+View_CustomersPaymentsRequestFinal|Amount
+View_CustomersPaymentsRequestFinal|AmountDaySales
+View_CustomersPaymentsRequestFinal|AmountRemaining
+View_CustomersPaymentsRequestFinal|AmountTotalSales
+View_CustomersPaymentsRequestFinal|CustomersPaymentsRequestID
+View_CustomersPaymentsRequestFinal|PaymentDate
+View_CustomersRemaining|AmountRemaining
+View_CustomersSales|AmountDaySalesDenar
+View_CustomersSales|AmountRemaining
+View_CustomersSales|AmountTotalCostDenar
+View_CustomersSales|AmountTotalDayDenar
+View_CustomersSales|AmountTotalDenar
+View_CustomersSales|AmountTotalSalesDenar
+View_CustomersSales|DiscountAmountDayTotalTwoWay
+View_CustomersSales|DiscountAmountTotal
+View_CustomersSales|DiscountAmountTotalDay
+View_CustomersSales|DiscountAmountTotalDayDenar
+View_CustomersSales|DiscountAmountTotalDenar
+View_CustomersSales|DiscountAmountTotalTwoWay
+View_CustomersSales|LastPaymentDate
+View_CustomersSalesAndPaymentMonthDevice|Amount1
+View_CustomersSalesAndPaymentMonthDevice|Amount10
+View_CustomersSalesAndPaymentMonthDevice|Amount11
+View_CustomersSalesAndPaymentMonthDevice|Amount12
+View_CustomersSalesAndPaymentMonthDevice|Amount13
+View_CustomersSalesAndPaymentMonthDevice|Amount14
+View_CustomersSalesAndPaymentMonthDevice|Amount15
+View_CustomersSalesAndPaymentMonthDevice|Amount16
+View_CustomersSalesAndPaymentMonthDevice|Amount17
+View_CustomersSalesAndPaymentMonthDevice|Amount18
+View_CustomersSalesAndPaymentMonthDevice|Amount19
+View_CustomersSalesAndPaymentMonthDevice|Amount2
+View_CustomersSalesAndPaymentMonthDevice|Amount20
+View_CustomersSalesAndPaymentMonthDevice|Amount21
+View_CustomersSalesAndPaymentMonthDevice|Amount22
+View_CustomersSalesAndPaymentMonthDevice|Amount23
+View_CustomersSalesAndPaymentMonthDevice|Amount24
+View_CustomersSalesAndPaymentMonthDevice|Amount25
+View_CustomersSalesAndPaymentMonthDevice|Amount26
+View_CustomersSalesAndPaymentMonthDevice|Amount27
+View_CustomersSalesAndPaymentMonthDevice|Amount28
+View_CustomersSalesAndPaymentMonthDevice|Amount29
+View_CustomersSalesAndPaymentMonthDevice|Amount3
+View_CustomersSalesAndPaymentMonthDevice|Amount30
+View_CustomersSalesAndPaymentMonthDevice|Amount4
+View_CustomersSalesAndPaymentMonthDevice|Amount5
+View_CustomersSalesAndPaymentMonthDevice|Amount6
+View_CustomersSalesAndPaymentMonthDevice|Amount7
+View_CustomersSalesAndPaymentMonthDevice|Amount8
+View_CustomersSalesAndPaymentMonthDevice|Amount9
+View_CustomersSalesAndPaymentMonthDevice|AmountDaySalesDenar
+View_CustomersSalesAndPaymentMonthDevice|AmountRemaining
+View_CustomersSalesAndPaymentMonthDevice|AmountTotalCostDenar
+View_CustomersSalesAndPaymentMonthDevice|AmountTotalDayDenar
+View_CustomersSalesAndPaymentMonthDevice|AmountTotalDenar
+View_CustomersSalesAndPaymentMonthDevice|AmountTotalSalesDenar
+View_CustomersSalesAndPaymentMonthDevice|DiscountAmountDayTotalTwoWay
+View_CustomersSalesAndPaymentMonthDevice|DiscountAmountTotal
+View_CustomersSalesAndPaymentMonthDevice|DiscountAmountTotalDay
+View_CustomersSalesAndPaymentMonthDevice|DiscountAmountTotalDayDenar
+View_CustomersSalesAndPaymentMonthDevice|DiscountAmountTotalDenar
+View_CustomersSalesAndPaymentMonthDevice|DiscountAmountTotalTwoWay
+View_CustomersSalesAndPaymentMonthDevice|LastPaymentDate
+View_CustomersSalesAndPaymentWeekDevice|Amount1
+View_CustomersSalesAndPaymentWeekDevice|Amount2
+View_CustomersSalesAndPaymentWeekDevice|Amount3
+View_CustomersSalesAndPaymentWeekDevice|Amount4
+View_CustomersSalesAndPaymentWeekDevice|Amount5
+View_CustomersSalesAndPaymentWeekDevice|Amount6
+View_CustomersSalesAndPaymentWeekDevice|Amount7
+View_CustomersSalesAndPaymentWeekDevice|AmountDaySalesDenar
+View_CustomersSalesAndPaymentWeekDevice|AmountRemaining
+View_CustomersSalesAndPaymentWeekDevice|AmountTotalCostDenar
+View_CustomersSalesAndPaymentWeekDevice|AmountTotalDayDenar
+View_CustomersSalesAndPaymentWeekDevice|AmountTotalDenar
+View_CustomersSalesAndPaymentWeekDevice|AmountTotalSalesDenar
+View_CustomersSalesAndPaymentWeekDevice|DiscountAmountDayTotalTwoWay
+View_CustomersSalesAndPaymentWeekDevice|DiscountAmountTotal
+View_CustomersSalesAndPaymentWeekDevice|DiscountAmountTotalDay
+View_CustomersSalesAndPaymentWeekDevice|DiscountAmountTotalTwoWay
+View_CustomersSalesAndPaymentWeekDevice|LastPaymentDate
+View_CustomersSalesDelegate|AmountDaySalesDenar
+View_CustomersSalesDelegate|AmountTotalCostDenar
+View_CustomersSalesDelegate|AmountTotalSalesDenar
+View_CustomersSalesDelegate_Final|AmountDaySalesDenar
+View_CustomersSalesDelegate_Final|AmountTotalCostDenar
+View_CustomersSalesDelegate_Final|AmountTotalSalesDenar
+View_CustomersSalesMerchant|AmountDaySalesDenar
+View_CustomersSalesMerchant|AmountTotalCostDenar
+View_CustomersSalesMerchant|AmountTotalSalesDenar
+View_CustomersSalesZero|AmountDaySalesDenar
+View_CustomersSalesZero|AmountRemaining
+View_CustomersSalesZero|AmountTotalSalesDenar
+View_CustomersSalesZero|LastPaymentDate
+View_CustomersWithReceiptsHundredDay|Amount1
+View_CustomersWithReceiptsHundredDay|Amount10
+View_CustomersWithReceiptsHundredDay|Amount100
+View_CustomersWithReceiptsHundredDay|Amount11
+View_CustomersWithReceiptsHundredDay|Amount12
+View_CustomersWithReceiptsHundredDay|Amount13
+View_CustomersWithReceiptsHundredDay|Amount14
+View_CustomersWithReceiptsHundredDay|Amount15
+View_CustomersWithReceiptsHundredDay|Amount16
+View_CustomersWithReceiptsHundredDay|Amount17
+View_CustomersWithReceiptsHundredDay|Amount18
+View_CustomersWithReceiptsHundredDay|Amount19
+View_CustomersWithReceiptsHundredDay|Amount2
+View_CustomersWithReceiptsHundredDay|Amount20
+View_CustomersWithReceiptsHundredDay|Amount21
+View_CustomersWithReceiptsHundredDay|Amount22
+View_CustomersWithReceiptsHundredDay|Amount23
+View_CustomersWithReceiptsHundredDay|Amount24
+View_CustomersWithReceiptsHundredDay|Amount25
+View_CustomersWithReceiptsHundredDay|Amount26
+View_CustomersWithReceiptsHundredDay|Amount27
+View_CustomersWithReceiptsHundredDay|Amount28
+View_CustomersWithReceiptsHundredDay|Amount29
+View_CustomersWithReceiptsHundredDay|Amount3
+View_CustomersWithReceiptsHundredDay|Amount30
+View_CustomersWithReceiptsHundredDay|Amount31
+View_CustomersWithReceiptsHundredDay|Amount32
+View_CustomersWithReceiptsHundredDay|Amount33
+View_CustomersWithReceiptsHundredDay|Amount34
+View_CustomersWithReceiptsHundredDay|Amount35
+View_CustomersWithReceiptsHundredDay|Amount36
+View_CustomersWithReceiptsHundredDay|Amount37
+View_CustomersWithReceiptsHundredDay|Amount38
+View_CustomersWithReceiptsHundredDay|Amount39
+View_CustomersWithReceiptsHundredDay|Amount4
+View_CustomersWithReceiptsHundredDay|Amount40
+View_CustomersWithReceiptsHundredDay|Amount41
+View_CustomersWithReceiptsHundredDay|Amount42
+View_CustomersWithReceiptsHundredDay|Amount43
+View_CustomersWithReceiptsHundredDay|Amount44
+View_CustomersWithReceiptsHundredDay|Amount45
+View_CustomersWithReceiptsHundredDay|Amount46
+View_CustomersWithReceiptsHundredDay|Amount47
+View_CustomersWithReceiptsHundredDay|Amount48
+View_CustomersWithReceiptsHundredDay|Amount49
+View_CustomersWithReceiptsHundredDay|Amount5
+View_CustomersWithReceiptsHundredDay|Amount50
+View_CustomersWithReceiptsHundredDay|Amount51
+View_CustomersWithReceiptsHundredDay|Amount52
+View_CustomersWithReceiptsHundredDay|Amount53
+View_CustomersWithReceiptsHundredDay|Amount54
+View_Cust
+=== payments_today_yesterday RC 0 ===
+BaghdadToday=2026-09-23
+14|الزبير الأولى|32
+18|العشار الأولى|25
+21|العشار الرابعة|22
+17|الحيانية|22
+3|خمسة ميل الأولى|19
+7|القبلة الأولى|18
+6|خمسة ميل الرابعة|18
+16|الزبير الثالثة|11
+1|الجزائر الاولى|10
+12|ابي الخصيب الثالثة|6
+10|ابي الخصيب الأولى|5
+9|الجزيرة|1
+11|ابي الخصيب الثانية|1
+--- yesterday ---
+11|ابي الخصيب الثانية|48
+10|ابي الخصيب الأولى|40
+16|الزبير الثالثة|39
+15|الزبير الثانية|37
+14|الزبير الأولى|33
+13|كرمة علي|27
+21|العشار الرابعة|25
+18|العشار الأولى|24
+5|خمسة ميل الثالثة|22
+7|القبلة الأولى|22
+1|الجزائر الاولى|19
+17|الحيانية|19
+9|الجزيرة|19
+6|خمسة ميل الرابعة|15
+3|خمسة ميل الأولى|10
+
+=== last7_days RC 0 ===
+2026-09-23|190|13|190
+2026-09-22|399|15|361
+2026-09-21|195|8|190
+2026-09-20|696|15|478
+2026-09-19|297|15|261
+2026-09-18|310|13|310
+2026-09-17|318|14|318
+2026-09-16|140|11|139
+2026-09-15|247|10|247
+
+=== classic_lists_3d RC 0 ===
+1|الجزائر الاولى|1|84|2026-09-23 09:53:36.547
+2|الجزائر الثانية|1|0|NULL
+3|خمسة ميل الأولى|1|46|2026-09-23 09:51:21.410
+4|خمسة ميل الثانية|1|0|NULL
+5|خمسة ميل الثالثة|1|60|2026-09-22 19:04:45.207
+6|خمسة ميل الرابعة|1|47|2026-09-22 22:24:43.690
+7|القبلة الأولى|1|60|2026-09-22 22:24:42.763
+8|القبلة الثانية|1|0|NULL
+9|الجزيرة|1|58|2026-09-23 08:51:53.470
+10|ابي الخصيب الأولى|1|136|2026-09-23 09:50:38.730
+11|ابي الخصيب الثانية|1|142|2026-09-23 09:54:55.043
+12|ابي الخصيب الثالثة|1|6|2026-09-23 11:12:03.680
+13|كرمة علي|1|43|2026-09-22 17:32:39.637
+14|الزبير الأولى|1|96|2026-09-23 08:53:07.967
+15|الزبير الثانية|1|58|2026-09-22 16:30:49.303
+16|الزبير الثالثة|1|71|2026-09-23 09:49:57.883
+17|الحيانية|1|61|2026-09-23 08:38:25.293
+18|العشار الأولى|1|69|2026-09-22 22:24:43.830
+19|العشار الثانية|1|0|NULL
+20|العشار الثالثة|1|0|NULL
+21|العشار الرابعة|1|69|2026-09-22 22:24:43.763
+22|الجمهورية|1|0|NULL
+
+=== newest15 RC 0 ===
+751152|12|ابي الخصيب الثالثة|17795|هشام حمادي كاظم 2|708621|2026-09-22 00:00:00.000|2026-09-23 11:12:03.680|
+751151|12|ابي الخصيب الثالثة|17822|ميثم محمد حمود 3|708620|2026-09-22 00:00:00.000|2026-09-23 11:11:35.400|
+751150|12|ابي الخصيب الثالثة|17753|نافع نعيم سلمان 6|708619|2026-09-22 00:00:00.000|2026-09-23 11:11:01.957|
+751149|12|ابي الخصيب الثالثة|17752|حسين رعد عبدالامير 4|708618|2026-09-22 00:00:00.000|2026-09-23 11:10:26.287|
+751148|12|ابي الخصيب الثالثة|17687|علي جواد كاظم 7|708617|2026-09-22 00:00:00.000|2026-09-23 11:09:59.640|
+751147|12|ابي الخصيب الثالثة|17939|سجاد قاسم عباس 8|708616|2026-09-22 00:00:00.000|2026-09-23 10:33:44.327|
+751145|11|ابي الخصيب الثانية|1669|علي باسل عبيد|708615|2026-09-22 00:00:00.000|2026-09-23 09:54:55.043|
+751144|1|الجزائر الاولى|19593|حسنين احمد جبر 7|708616|2026-09-22 00:00:00.000|2026-09-23 09:53:36.547|
+751143|1|الجزائر الاولى|19592|محمد عبدالجليل صالح 7|708615|2026-09-22 00:00:00.000|2026-09-23 09:53:00.247|
+751142|1|الجزائر الاولى|19556|اسماعيل لؤي اسماعيل 1|708614|2026-09-22 00:00:00.000|2026-09-23 09:52:45.170|
+751141|1|الجزائر الاولى|19144|عمار مزهر ظاهر 1|708613|2026-09-22 00:00:00.000|2026-09-23 09:52:28.967|
+751140|1|الجزائر الاولى|19906|محمد عدنان عبد الرحيم 4|708612|2026-09-22 00:00:00.000|2026-09-23 09:52:11.627|
+751139|1|الجزائر الاولى|18599|احمد محمد حمود 2|708611|2026-09-22 00:00:00.000|2026-09-23 09:51:57.510|
+751138|1|الجزائر الاولى|19946|حازم احمد باقر|708610|2026-09-22 00:00:00.000|2026-09-23 09:51:42.990|
+751137|3|خمسة ميل الأولى|18240|وسام توفيق صيهود 1|708609|2026-09-22 00:00:00.000|2026-09-23 09:51:21.410|
+
+DONE

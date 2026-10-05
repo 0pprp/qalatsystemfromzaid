@@ -83,7 +83,7 @@ namespace BE_Company.Sales.Services
                     throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن إتمام عملية بيع مرفوضة.");
                 }
 
-                await ApplyCheckoutAsync(current, shop, ct);
+                await ApplyCheckoutAsync(current, shop, identity.EmployeeId, ct);
 
                 var validation = SalesCompleteRules.ValidateForComplete(current);
                 if (validation != null)
@@ -180,7 +180,7 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يمكن إنشاء معاينة لعملية مرفوضة.");
             }
 
-            await ApplyCheckoutAsync(current, shop, ct);
+            await ApplyCheckoutAsync(current, shop, identity.EmployeeId, ct);
             if (_shops != null && shop != null && HasShopPayload(shop))
             {
                 _shops.RequireCompletePayload(shop);
@@ -221,7 +221,7 @@ namespace BE_Company.Sales.Services
             Documents = SalesDocumentService.PreferDisplayDocuments(docs).ToList()
         };
 
-        private async Task ApplyCheckoutAsync(SalesDraftDTO sale, SalesShopCompleteDTO? shop, CancellationToken ct)
+        private async Task ApplyCheckoutAsync(SalesDraftDTO sale, SalesShopCompleteDTO? shop, int employeeId, CancellationToken ct)
         {
             decimal defaultTotal = sale.Items?.Sum(i => i.LineSalePrice) ?? sale.BaseSalePrice;
             decimal defaultDaily = sale.DefaultDailyInstallment > 0 ? sale.DefaultDailyInstallment : sale.DailyInstallment;
@@ -255,6 +255,17 @@ namespace BE_Company.Sales.Services
             sale.FinalSalePrice = snapshot.FinalTotalSalePrice;
             sale.DailyInstallment = snapshot.FinalDailyInstallment;
             sale.DownPayment = snapshot.FinalDownPayment;
+
+            if (sale.SalesRequestId is > 0 && _requests != null)
+            {
+                var linked = await _requests.GetForEmployeeAsync(sale.SalesRequestId.Value, employeeId, ct);
+                var ceilingError = SalesRequestPriceCeiling.Validate(sale.FinalSalePrice, linked.MaxSalePrice);
+                if (ceilingError != null)
+                {
+                    throw new SalesCompleteException(StatusCodes.Status400BadRequest, ceilingError);
+                }
+            }
+
             await _drafts.UpdateCheckoutAsync(sale, ct);
         }
 

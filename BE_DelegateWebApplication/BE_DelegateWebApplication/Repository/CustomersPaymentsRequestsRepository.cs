@@ -1,6 +1,7 @@
 using Dapper;
 using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
+using BE_DelegateWebApplication.Services;
 using BE_DelegateWebApplication.Services.CollectionPayments;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
@@ -86,13 +87,12 @@ namespace BE_DelegateWebApplication.Repository
                 return new PaymentIdempotentResultDTO { Success = false, Message = "معرف العميل غير صالح" };
             }
 
+            // Body DelegateId is advisory only — identity comes from AsyncId.
+            // Never reject a durable local payment because the selected list id
+            // differs from the login row (common with multi-list collectors).
             if (dto.DelegateId is not null && dto.DelegateId != authenticatedDelegateId)
             {
-                return new PaymentIdempotentResultDTO
-                {
-                    Success = false,
-                    Message = "غير مسموح بإرسال تسديد باسم مندوب آخر"
-                };
+                // Keep going; insert uses authenticatedDelegateId below.
             }
 
             var serverUtc = DateTime.UtcNow;
@@ -124,6 +124,21 @@ namespace BE_DelegateWebApplication.Repository
             {
                 // Collection delegates may collect for customers under other list delegates —
                 // keep historical flexibility but block spoofing via body DelegateId (already checked).
+            }
+
+            // Prefer customer's list: if that list moved to followers, block.
+            // Also block when the authenticated collector list itself is follower-collection.
+            var customerListId = customerDelegateId ?? 0;
+            var authLocked = await IsFollowerCollectionEnabledAsync(connection, authenticatedDelegateId, ct);
+            var customerLocked = customerListId > 0
+                && await IsFollowerCollectionEnabledAsync(connection, customerListId, ct);
+            if (authLocked || customerLocked)
+            {
+                return new PaymentIdempotentResultDTO
+                {
+                    Success = false,
+                    Message = FollowerCollectionPaymentGate.LockedMessage
+                };
             }
 
             var existing = await connection.QuerySingleOrDefaultAsync<dynamic>(
@@ -236,6 +251,36 @@ FROM CustomersPaymentsRequest WHERE ClientPaymentId = @ClientPaymentId",
                     Message = "التسديد مسجل مسبقًا"
                 };
             }
+        }
+
+        private static async Task EnsureFollowerCollectionColumnAsync(SqlConnection connection, CancellationToken ct)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(@"
+IF COL_LENGTH(N'dbo.Delegates', N'FollowerCollectionEnabled') IS NULL
+BEGIN
+    ALTER TABLE dbo.Delegates
+        ADD FollowerCollectionEnabled BIT NOT NULL
+            CONSTRAINT DF_Delegates_FollowerCollectionEnabled DEFAULT (0);
+END", cancellationToken: ct));
+        }
+
+        private static async Task<bool> IsFollowerCollectionEnabledAsync(
+            SqlConnection connection,
+            int delegateId,
+            CancellationToken ct)
+        {
+            if (delegateId <= 0)
+            {
+                return false;
+            }
+
+            await EnsureFollowerCollectionColumnAsync(connection, ct);
+            return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(@"
+SELECT CAST(ISNULL((
+    SELECT TOP 1 FollowerCollectionEnabled FROM dbo.Delegates WHERE DelegateID = @DelegateId
+), 0) AS BIT);",
+                new { DelegateId = delegateId },
+                cancellationToken: ct));
         }
 
         private static async Task TryPostEligibleCatchUpAsync(SqlConnection connection, CancellationToken ct)

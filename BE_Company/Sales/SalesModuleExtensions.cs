@@ -2,6 +2,7 @@ using BE_Company.Sales.Authorization;
 using BE_Company.Sales.Rating;
 using BE_Company.Sales.Services;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization.Policy;
 
 namespace BE_Company.Sales
 {
@@ -34,11 +35,13 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesShiftService, SalesShiftService>();
             services.AddScoped<ISalesLocationIngestService, SalesLocationIngestService>();
             services.AddScoped<ISalesRequestRepository, SalesRequestRepository>();
+            services.AddScoped<ISalesCascadeVoidService, SalesCascadeVoidService>();
             services.AddScoped<ISalesRequestService, SalesRequestService>();
             services.AddScoped<Filtering.ISalesFilterRepository, Filtering.SalesFilterRepository>();
             services.AddScoped<Filtering.ISalesFilterService, Filtering.SalesFilterService>();
             services.AddScoped<IRatingDataSource, RatingDataSource>();
             services.AddScoped<IRatingService, RatingService>();
+            services.AddScoped<IRatingEquationService, RatingEquationService>();
             services.AddScoped<ISalesManagerReadRepository, SalesManagerReadRepository>();
             services.AddSingleton(sp =>
             {
@@ -52,8 +55,17 @@ namespace BE_Company.Sales
             services.AddHostedService<SalesShiftCutoffHostedService>();
             services.AddHostedService<SalesPostingHostedService>();
             services.AddScoped<IFollowerDirectoryService, FollowerDirectoryService>();
+            services.AddScoped<ISalesManagerFollowerQueryService, SalesManagerFollowerQueryService>();
+            services.AddScoped<ILegalFollowupService, LegalFollowupService>();
             services.AddHttpClient<ISalesExceptionGatewayForwarder, SalesExceptionGatewayForwarder>();
+            services.AddHttpClient<IBranchManagerComplaintForwarder, BranchManagerComplaintForwarder>();
+            services.AddHttpClient<ICustomerWaiverGatewayForwarder, CustomerWaiverGatewayForwarder>();
+            services.AddScoped<IWaiverApplyService, WaiverApplyService>();
+            services.AddScoped<IBranchManagerNewSalesService, BranchManagerNewSalesService>();
+            services.AddScoped<IBranchManagerStatsService, BranchManagerStatsService>();
+            services.AddScoped<IBranchMonthStatsService, BranchMonthStatsService>();
             services.AddSingleton<IAuthorizationHandler, SalesRoleHandler>();
+            services.AddSingleton<IAuthorizationMiddlewareResultHandler, SalesAuthorizationMiddlewareResultHandler>();
             services.AddAuthorization(options =>
             {
                 options.AddPolicy(SalesPolicies.AnySales, p =>

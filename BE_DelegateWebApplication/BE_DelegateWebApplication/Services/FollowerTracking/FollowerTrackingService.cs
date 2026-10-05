@@ -13,7 +13,10 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
     public interface IFollowerTrackingService
     {
         Task<FollowerShiftDto> StartAsync(FollowerUserIdentity follower, CancellationToken ct);
-        Task<FollowerShiftDto> EndAsync(FollowerUserIdentity follower, CancellationToken ct);
+        Task<FollowerShiftDto> EndAsync(
+            FollowerUserIdentity follower,
+            FollowerLocationPointDto? endPoint = null,
+            CancellationToken ct = default);
         Task<FollowerShiftDto?> CurrentAsync(int followerUserId, CancellationToken ct);
         Task<FollowerLocationBatchResultDto> IngestBatchAsync(FollowerUserIdentity follower, FollowerLocationBatchRequestDto request, CancellationToken ct);
         Task<FollowerLiveLocationDto> IngestLiveAsync(FollowerUserIdentity follower, FollowerLiveLocationRequestDto request, CancellationToken ct);
@@ -90,7 +93,10 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
             }
         }
 
-        public async Task<FollowerShiftDto> EndAsync(FollowerUserIdentity follower, CancellationToken ct)
+        public async Task<FollowerShiftDto> EndAsync(
+            FollowerUserIdentity follower,
+            FollowerLocationPointDto? endPoint = null,
+            CancellationToken ct = default)
         {
             await _repo.EnsureSchemaAsync(ct);
             var utc = FollowerIraqTime.UtcNow;
@@ -110,6 +116,29 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
             await _repo.CloseAsync(active.ShiftId, utc, "ManualEnd", ct);
             await _repo.EndLiveAsync(follower.UserId, ct);
             await _repo.InsertEventAsync(follower.UserId, active.ShiftId, "FOLLOWER_SHIFT_ENDED", utc, null, ct);
+
+            if (endPoint != null
+                && endPoint.Latitude is >= -90 and <= 90
+                && endPoint.Longitude is >= -180 and <= 180)
+            {
+                endPoint.IsOfficial = true;
+                endPoint.OfficialSlotUtc = utc;
+                endPoint.CapturedAtUtc = endPoint.CapturedAtUtc == default ? utc : endPoint.CapturedAtUtc;
+                if (endPoint.DeviceSequence <= 0)
+                {
+                    endPoint.DeviceSequence = 2;
+                }
+
+                try
+                {
+                    await _repo.TryInsertPointAsync(follower.UserId, active.ShiftId, endPoint, utc, ct);
+                }
+                catch
+                {
+                    // End must succeed even if GPS pin fails.
+                }
+            }
+
             active.Status = "Closed";
             active.ClosedAtUtc = utc;
             active.CloseReason = "ManualEnd";

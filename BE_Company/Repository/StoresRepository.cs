@@ -73,7 +73,7 @@ namespace BE_Company.Repository
                 new
                 {
                     TextSearch = textSearch,
-                }, 
+                },
                 commandType: CommandType.StoredProcedure);
                 return result;
             }

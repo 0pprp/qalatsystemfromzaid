@@ -38,21 +38,21 @@ namespace BE_DelegateWebApplication.Services.CollectionPayments
         }
 
         /// <summary>
-        /// Uses CreatedAtUtc (business event time), never ReceivedAtUtc, for the 16:00 rule.
-        /// Before 16:00 Baghdad → eligible at that day's 16:00.
-        /// At/after 16:00 → eligible immediately at CreatedAtUtc.
+        /// Aligns with client send window [16:00 → 02:59] Baghdad business day.
+        /// After 16:00 or before 03:00 → eligible immediately at CreatedAtUtc.
+        /// Between 03:00–15:59 → eligible at that calendar day's 16:00.
         /// </summary>
         public static DateTime ComputeEligibleForPostingAtUtc(DateTime createdAtUtc)
         {
             var utc = DateTime.SpecifyKind(createdAtUtc.ToUniversalTime(), DateTimeKind.Utc);
             var baghdad = ToBaghdad(utc);
-            if (baghdad.TimeOfDay < PostingTimeBaghdad)
+            if (baghdad.TimeOfDay >= PostingTimeBaghdad || baghdad.Hour < 3)
             {
-                var gate = baghdad.Date.Add(PostingTimeBaghdad);
-                return ToUtcFromBaghdad(gate);
+                return utc;
             }
 
-            return utc;
+            var gate = baghdad.Date.Add(PostingTimeBaghdad);
+            return ToUtcFromBaghdad(gate);
         }
 
         public static bool IsEligibleForPosting(DateTime eligibleForPostingAtUtc, DateTime utcNow) =>

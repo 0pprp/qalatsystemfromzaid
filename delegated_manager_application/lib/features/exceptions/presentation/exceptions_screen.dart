@@ -5,13 +5,32 @@ import 'package:delegated_manager_application/core/widgets/state_views.dart';
 import 'package:delegated_manager_application/features/exceptions/data/exceptions_repository.dart';
 import 'package:delegated_manager_application/features/exceptions/domain/sales_exception.dart';
 import 'package:delegated_manager_application/features/exceptions/presentation/exception_detail_screen.dart';
+import 'package:delegated_manager_application/features/exceptions/presentation/wrong_sale_detail_screen.dart';
 import 'package:flutter/material.dart';
 
-/// Decision queue over `delegated-manager/exceptions`, focused on Pending.
+enum ExceptionInboxMode {
+  /// Hold / classic exceptions — excludes WrongSale.
+  hold,
+  /// WrongSale only (مبيعات خاطئة).
+  wrongSale,
+}
+
+/// WrongSale mailbox chip: unread vs read (everything stays stored).
+enum WrongSaleMailboxFilter {
+  unread,
+  read,
+}
+
+/// Decision queue over `delegated-manager/exceptions`.
 class ExceptionsScreen extends StatefulWidget {
-  const ExceptionsScreen({super.key, this.onChanged});
+  const ExceptionsScreen({
+    super.key,
+    this.onChanged,
+    this.mode = ExceptionInboxMode.hold,
+  });
 
   final VoidCallback? onChanged;
+  final ExceptionInboxMode mode;
 
   @override
   State<ExceptionsScreen> createState() => ExceptionsScreenState();
@@ -19,6 +38,7 @@ class ExceptionsScreen extends StatefulWidget {
 
 class ExceptionsScreenState extends State<ExceptionsScreen> {
   static const int _pageSize = 20;
+  static const int _wrongSalePageSize = 100;
 
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
@@ -29,7 +49,25 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
   int _totalPages = 1;
   bool _loading = true;
   bool _loadingMore = false;
+  WrongSaleMailboxFilter _wrongSaleFilter = WrongSaleMailboxFilter.unread;
   String? _error;
+
+  /// True when WrongSale «غير المقروءة» chip is selected.
+  bool get unreadOnly => _wrongSaleFilter == WrongSaleMailboxFilter.unread;
+  bool get _isWrongSaleTab => widget.mode == ExceptionInboxMode.wrongSale;
+  int get _effectivePageSize =>
+      _isWrongSaleTab ? _wrongSalePageSize : _pageSize;
+
+  /// Used by dashboard card «مبيعات خاطئة غير المقروءة».
+  void openUnreadOnly() {
+    setState(() => _wrongSaleFilter = WrongSaleMailboxFilter.unread);
+    reload();
+  }
+
+  void openReadMailbox() {
+    setState(() => _wrongSaleFilter = WrongSaleMailboxFilter.read);
+    reload();
+  }
 
   @override
   void initState() {
@@ -56,9 +94,16 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
   /// The gateway list endpoint filters by status/city only, so the free-text
   /// query is applied on the loaded rows.
   List<ExceptionSummary> get _visibleItems {
+    Iterable<ExceptionSummary> rows = _items.where((item) =>
+        _isWrongSaleTab ? item.isWrongSale : !item.isWrongSale);
+    if (_isWrongSaleTab) {
+      rows = _wrongSaleFilter == WrongSaleMailboxFilter.unread
+          ? rows.where((item) => item.isUnread)
+          : rows.where((item) => !item.isUnread);
+    }
     final query = _searchController.text.trim();
-    if (query.isEmpty) return _items;
-    return _items.where((item) {
+    if (query.isEmpty) return rows.toList();
+    return rows.where((item) {
       final haystack = [
         item.customerName,
         item.requestingManagerDisplayName ?? '',
@@ -74,10 +119,11 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
       _error = null;
     });
     try {
+      // WrongSale inbox: load all statuses (notice mailbox), filter client-side.
       final result = await ExceptionsRepository.list(
-        status: _status,
+        status: _isWrongSaleTab ? null : _status,
         page: 1,
-        pageSize: _pageSize,
+        pageSize: _effectivePageSize,
       );
       if (!mounted) return;
       setState(() {
@@ -102,9 +148,9 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
     setState(() => _loadingMore = true);
     try {
       final result = await ExceptionsRepository.list(
-        status: _status,
+        status: _isWrongSaleTab ? null : _status,
         page: _page + 1,
-        pageSize: _pageSize,
+        pageSize: _effectivePageSize,
       );
       if (!mounted) return;
       setState(() {
@@ -122,7 +168,9 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
   Future<void> _open(ExceptionSummary item) async {
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => ExceptionDetailScreen(requestId: item.id),
+        builder: (_) => _isWrongSaleTab
+            ? WrongSaleDetailScreen(requestId: item.id)
+            : ExceptionDetailScreen(requestId: item.id),
       ),
     );
     widget.onChanged?.call();
@@ -132,43 +180,34 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('طلبات الاستثناء'),
-        actions: [
-          IconButton(
-            tooltip: 'تحديث',
-            onPressed: reload,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
       body: SafeArea(
         child: Column(
           children: [
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
-              child: Row(
-                children: ExceptionStatuses.all.map((status) {
-                  final selected = status == _status;
-                  return Padding(
-                    padding: const EdgeInsets.only(left: AppSpacing.xs),
-                    child: ChoiceChip(
-                      label: Text(ExceptionStatuses.arabic(status)),
-                      selected: selected,
-                      selectedColor: ExceptionStatuses.color(status)
-                          .withValues(alpha: 0.16),
-                      onSelected: (_) {
-                        if (selected) return;
-                        setState(() => _status = status);
-                        reload();
-                      },
-                    ),
-                  );
-                }).toList(),
+            if (!_isWrongSaleTab)
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+                child: Row(
+                  children: ExceptionStatuses.all.map((status) {
+                    final selected = status == _status;
+                    return Padding(
+                      padding: const EdgeInsets.only(left: AppSpacing.xs),
+                      child: ChoiceChip(
+                        label: Text(ExceptionStatuses.arabic(status)),
+                        selected: selected,
+                        selectedColor: ExceptionStatuses.color(status)
+                            .withValues(alpha: 0.16),
+                        onSelected: (_) {
+                          if (selected) return;
+                          setState(() => _status = status);
+                          reload();
+                        },
+                      ),
+                    );
+                  }).toList(),
+                ),
               ),
-            ),
             Padding(
               padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
@@ -190,6 +229,47 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
                 ),
               ),
             ),
+            if (_isWrongSaleTab)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.sm, 0, AppSpacing.sm, AppSpacing.xs),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _WrongSaleFilterChip(
+                        label: 'المبيعات الخاطئة غير المقروءة',
+                        selected: _wrongSaleFilter ==
+                            WrongSaleMailboxFilter.unread,
+                        color: AppColors.primary,
+                        onTap: () {
+                          if (_wrongSaleFilter ==
+                              WrongSaleMailboxFilter.unread) {
+                            return;
+                          }
+                          setState(() => _wrongSaleFilter =
+                              WrongSaleMailboxFilter.unread);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    Expanded(
+                      child: _WrongSaleFilterChip(
+                        label: 'المبيعات الخاطئة المقروءة',
+                        selected:
+                            _wrongSaleFilter == WrongSaleMailboxFilter.read,
+                        color: Colors.orange.shade800,
+                        onTap: () {
+                          if (_wrongSaleFilter == WrongSaleMailboxFilter.read) {
+                            return;
+                          }
+                          setState(() =>
+                              _wrongSaleFilter = WrongSaleMailboxFilter.read);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Expanded(child: _buildBody()),
           ],
         ),
@@ -205,8 +285,14 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
     final items = _visibleItems;
     if (items.isEmpty) {
       return EmptyView(
-        message: 'لا توجد طلبات ${ExceptionStatuses.arabic(_status)}',
-        icon: Icons.rule_folder_outlined,
+        message: _isWrongSaleTab
+            ? (_wrongSaleFilter == WrongSaleMailboxFilter.unread
+                ? 'لا توجد مبيعات خاطئة غير مقروءة'
+                : 'لا توجد مبيعات خاطئة مقروءة')
+            : 'لا توجد طلبات استثناء ${ExceptionStatuses.arabic(_status)}',
+        icon: _isWrongSaleTab
+            ? Icons.report_gmailerrorred_outlined
+            : Icons.rule_folder_outlined,
       );
     }
     return RefreshIndicator(
@@ -233,6 +319,53 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
   }
 }
 
+class _WrongSaleFilterChip extends StatelessWidget {
+  const _WrongSaleFilterChip({
+    required this.label,
+    required this.selected,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? color.withValues(alpha: 0.14) : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        side: BorderSide(
+          color: selected ? color : AppColors.line,
+          width: selected ? 1.5 : 1,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            style: TextStyle(
+              fontFamily: 'Cairo',
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected ? color : AppColors.text,
+              height: 1.25,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ExceptionCard extends StatelessWidget {
   const _ExceptionCard({required this.item, required this.onTap});
 
@@ -241,7 +374,9 @@ class _ExceptionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final unread = item.isUnread;
     return Card(
+      color: unread ? AppColors.unread : Colors.white,
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md),
         onTap: onTap,
@@ -252,27 +387,55 @@ class _ExceptionCard extends StatelessWidget {
             children: [
               Row(
                 children: [
+                  CircleAvatar(
+                    radius: 16,
+                    backgroundColor:
+                        unread ? AppColors.primary : AppColors.line,
+                    child: Icon(
+                      unread ? Icons.mail_outline : Icons.drafts_outlined,
+                      size: 16,
+                      color: unread ? Colors.white : AppColors.muted,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       item.customerName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                        fontWeight:
+                            unread ? FontWeight.bold : FontWeight.w600,
                         color: AppColors.text,
                       ),
                     ),
                   ),
+                  if (item.isWrongSale) ...[
+                    StatusChip(
+                      label: 'مبيع خاطئ',
+                      color: Colors.orange.shade800,
+                    ),
+                    const SizedBox(width: 6),
+                  ],
                   StatusChip(
-                    label: ExceptionStatuses.arabic(item.status),
-                    color: ExceptionStatuses.color(item.status),
+                    label: unread ? 'غير مقروء' : 'مقروء',
+                    color: unread ? AppColors.primary : AppColors.muted,
                   ),
+                  if (!item.isWrongSale) ...[
+                    const SizedBox(width: 6),
+                    StatusChip(
+                      label: ExceptionStatuses.arabic(item.status),
+                      color: ExceptionStatuses.color(item.status),
+                    ),
+                  ],
                 ],
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'طالب الاستثناء: ${item.requestingManagerDisplayName ?? '-'}',
+                item.isWrongSale
+                    ? 'إشعار اطلاع — مبيع خاطئ (بدون موافقة/رفض)'
+                    : 'طالب الاستثناء: ${item.requestingManagerDisplayName ?? '-'}',
                 style: const TextStyle(color: AppColors.muted, fontSize: 13),
               ),
               const SizedBox(height: 2),

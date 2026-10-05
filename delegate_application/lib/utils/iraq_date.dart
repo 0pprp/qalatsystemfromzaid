@@ -1,10 +1,12 @@
 /// Iraq civil calendar + collection business-day helpers.
 /// Asia/Baghdad = UTC+3 (no DST).
 ///
-/// Two independent clocks:
-/// - [calendarDate] midnight — business-facing «تسديدات اليوم»
-/// - [businessDayStartHour] 03:00 — legacy UI rollover helpers
-/// - [paymentSyncGateHour] 16:00 — PAYMENT HTTP upload gate (not UI day)
+/// Collection day (single source of truth for «تسديدات اليوم» + local lock):
+/// - [businessDate] window [03:00 → next 02:59] Baghdad — daily reset boundary
+/// - [paymentSyncGateHour] 16:00 — PAYMENT HTTP upload gate (auto + manual)
+///
+/// [calendarDate] midnight helpers remain for legacy callers; prefer business day
+/// for collection UI and duplicate-payment checks.
 class IraqDate {
   static const Duration iraqOffset = Duration(hours: 3);
 
@@ -43,26 +45,55 @@ class IraqDate {
   /// Stable key for SharedPreferences / comparisons (yyyy-MM-dd).
   static String businessDateKey([DateTime? utcNow]) => formatBusinessDate(utcNow);
 
-  /// True when pending payments may be HTTP-uploaded (Baghdad local time ≥ 16:00).
-  /// Window each calendar day: [16:00, 23:59:59]. Closed [00:00, 15:59:59].
+  /// True when pending payments may be HTTP-uploaded (Baghdad).
+  ///
+  /// Open window for the business day: **[16:00 → next 02:59]** Baghdad.
+  /// - ≥16:00 same calendar day → open
+  /// - 00:00–02:59 → still previous business day after its 16:00 → open
+  /// - 03:00–15:59 → closed (new day, before afternoon send)
+  ///
+  /// Closing the gate at midnight (old bug) left pending stuck until the *next*
+  /// afternoon and inflated prior-day server totals when they finally uploaded.
   static bool isPaymentSyncGateOpen([DateTime? utcNow]) {
     final iraq = nowIraq(utcNow);
-    return iraq.hour >= paymentSyncGateHour;
+    if (iraq.hour >= paymentSyncGateHour) return true;
+    if (iraq.hour < businessDayStartHour) return true;
+    return false;
   }
 
   /// Duration until the next Baghdad 16:00 (zero if gate already open).
   /// Uses wall-clock arithmetic only — never mixes DateTime kinds / device TZ.
   static Duration delayUntilPaymentSyncGate([DateTime? utcNow]) {
-    final iraq = nowIraq(utcNow);
-    if (iraq.hour >= paymentSyncGateHour) {
+    if (isPaymentSyncGateOpen(utcNow)) {
       return Duration.zero;
     }
+    final iraq = nowIraq(utcNow);
+    // Closed only in [03:00, 15:59] → wait until 16:00 same calendar day.
     return Duration(
       hours: paymentSyncGateHour - iraq.hour,
       minutes: -iraq.minute,
       seconds: -iraq.second,
       milliseconds: -iraq.millisecond,
     );
+  }
+
+  /// Duration until the next Baghdad [businessDayStartHour] (03:00).
+  /// Always positive: at exactly 03:00 returns 24h until the following rollover.
+  /// Arithmetic is pure UTC (Baghdad 03:00 == UTC 00:00 same civil date).
+  static Duration delayUntilNextBusinessDayStart([DateTime? utcNow]) {
+    final nowUtc = (utcNow ?? DateTime.now()).toUtc();
+    final iraq = nowIraq(nowUtc);
+    final DateTime nextStartUtc;
+    if (iraq.hour < businessDayStartHour) {
+      // Same civil date 03:00 Baghdad = that date 00:00 UTC.
+      nextStartUtc = DateTime.utc(iraq.year, iraq.month, iraq.day);
+    } else {
+      final nextCal =
+          DateTime.utc(iraq.year, iraq.month, iraq.day).add(const Duration(days: 1));
+      nextStartUtc = DateTime.utc(nextCal.year, nextCal.month, nextCal.day);
+    }
+    final d = nextStartUtc.difference(nowUtc);
+    return d.isNegative ? Duration.zero : d;
   }
 
   /// Iraq calendar Y-M-D (midnight boundary, Asia/Baghdad).
@@ -119,8 +150,7 @@ class IraqDate {
   }
 
   /// [createdAtUtcIso] is typically CustomerPayment.CreatedAtUtc (ISO-8601 UTC).
-  /// Matches the **business day** (03:00 boundary), not midnight calendar day.
-  /// Prefer [isCreatedOnIraqCalendarDay] for «تسديدات اليوم».
+  /// Matches the **business day** (03:00 boundary) used by «تسديدات اليوم».
   static bool isCreatedOnIraqDay(String? createdAtUtcIso, [DateTime? utcNow]) {
     if (createdAtUtcIso == null || createdAtUtcIso.trim().isEmpty) return false;
     DateTime parsed;

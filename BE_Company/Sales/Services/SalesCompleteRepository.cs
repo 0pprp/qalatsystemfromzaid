@@ -338,10 +338,18 @@ END;",
                     header.CustomerId = posting.CustomerId;
                 }
 
+                if (posting.CustomerSaleId is > 0)
+                {
+                    header.CustomerSaleId = posting.CustomerSaleId;
+                }
+
                 await SyncCanonicalCustomerIdentityAsync(
                     connection, tx, header, posting.CustomerId, updateOfficialCustomer: true, ct);
                 await RecordDownPaymentIfNeededAsync(
                     connection, tx, header, header.EmployeeId, posting, DateTime.Now, ct);
+
+                await connection.ExecuteAsync(new CommandDefinition(
+                    SalesDraftSchema.AddCustomerSaleIdSql, transaction: tx, cancellationToken: ct));
 
                 await connection.ExecuteAsync(new CommandDefinition(
                     @"UPDATE dbo.SalesDrafts
@@ -349,14 +357,16 @@ END;",
                           PostedAtUtc = @PostedAtUtc,
                           PostingAttempts = ISNULL(PostingAttempts, 0) + 1,
                           LastPostingError = NULL,
-                          CustomerId = COALESCE(@CustomerId, CustomerId)
+                          CustomerId = COALESCE(@CustomerId, CustomerId),
+                          CustomerSaleId = COALESCE(@CustomerSaleId, CustomerSaleId)
                       WHERE SaleId = @SaleId",
                     new
                     {
                         SaleId = saleId,
                         Posted = SalesPostingStatuses.Posted,
                         PostedAtUtc = postedAt,
-                        CustomerId = header.CustomerId
+                        CustomerId = header.CustomerId,
+                        CustomerSaleId = header.CustomerSaleId
                     }, tx, cancellationToken: ct));
 
                 await tx.CommitAsync(ct);
@@ -437,67 +447,100 @@ END;",
                         cancellationToken: ct));
                 }
 
-                int? postedCustomerId = sale.CustomerId;
-                if (sale.CustomerId is > 0 && await ProcedureExistsAsync(connection, tx, "InsertCustomerSale", ct))
+                if (await TableExistsAsync(connection, tx, "SelectItemSalesTemporary", ct))
                 {
-                    await connection.ExecuteAsync(new CommandDefinition(
-                        "InsertCustomerSale",
-                        new
-                        {
-                            UserID = employeeId,
-                            CustomerID = sale.CustomerId,
-                            DateCreate = now,
-                            StoreID = storeId == 0 ? (int?)null : storeId,
-                            DelegateID = sale.CustomerListId,
-                            DiscountAmountTotal = 0d,
-                            DiscountAmountTotalDay = 0d
-                        },
+                    var tempCount = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                        @"SELECT COUNT(1)
+                          FROM dbo.SelectItemSalesTemporary
+                          WHERE UserID = @UserID",
+                        new { UserID = employeeId },
                         tx,
-                        commandType: CommandType.StoredProcedure,
                         cancellationToken: ct));
+                    if (tempCount <= 0)
+                    {
+                        throw new SalesCompleteException(
+                            StatusCodes.Status409Conflict,
+                            "تعذر تجهيز أصناف البيع للترحيل المحاسبي. أعد المحاولة.");
+                    }
+                }
+
+                var catalogTotal = sale.DefaultTotalSalePrice > 0
+                    ? sale.DefaultTotalSalePrice
+                    : (sale.Items?.Sum(i => i.LineSalePrice) ?? sale.BaseSalePrice);
+                var catalogDaily = sale.DefaultDailyInstallment > 0
+                    ? sale.DefaultDailyInstallment
+                    : sale.DailyInstallment;
+                var finalTotal = sale.FinalSalePrice > 0 ? sale.FinalSalePrice : catalogTotal;
+                var finalDaily = sale.DailyInstallment > 0 ? sale.DailyInstallment : catalogDaily;
+                var (discountTotal, discountDay) = SalesOfficialPostingAmounts.ToStoredDiscounts(
+                    catalogTotal, catalogDaily, finalTotal, finalDaily);
+
+                var shopName = await LoadShopNameAsync(connection, tx, sale.SaleId, ct);
+                shopName = SalesOfficialPostingAmounts.ResolveShopName(shopName);
+
+                int? postedCustomerId = null;
+                int? postedCustomerSaleId = null;
+                // Production rule: every completed sale is an independent official account.
+                // Never InsertCustomerSale onto an existing CustomerID — same name/phone still
+                // gets a new CustomerID + CustomerSaleID (no merged AmountTotalSales).
+                var created = await connection.QueryFirstOrDefaultAsync<PostedCustomerSaleRow>(new CommandDefinition(
+                    "CustomersSales_Create",
+                    new
+                    {
+                        CustomerName = Trunc(sale.FullName, 100),
+                        PhoneNumber = Trunc(sale.Phone, 100),
+                        Address = Trunc(sale.Address, 100),
+                        ShopName = Trunc(shopName, 100),
+                        NearestFunctionPoint = Trunc(sale.NearestLandmark, 100),
+                        SaleName = Trunc(sale.UserName, 100),
+                        ReceiptName = Trunc(sale.UserName, 100),
+                        Notes = sale.EvaluationNote,
+                        UserID = employeeId,
+                        DateCreate = now,
+                        StoreID = storeId == 0 ? (int?)null : storeId,
+                        DelegateID = sale.CustomerListId,
+                        DiscountAmountTotal = discountTotal,
+                        DiscountAmountTotalDay = discountDay
+                    },
+                    tx,
+                    commandType: CommandType.StoredProcedure,
+                    cancellationToken: ct));
+                if (created?.CustomerID > 0)
+                {
+                    postedCustomerId = created.CustomerID;
                 }
                 else
                 {
-                    var created = await connection.QueryFirstOrDefaultAsync<PostedCustomerSaleRow>(new CommandDefinition(
-                        "CustomersSales_Create",
-                        new
-                        {
-                            CustomerName = Trunc(sale.FullName, 100),
-                            PhoneNumber = Trunc(sale.Phone, 100),
-                            Address = Trunc(sale.Address, 100),
-                            ShopName = Trunc(sale.MukhtarName, 100),
-                            NearestFunctionPoint = Trunc(sale.NearestLandmark, 100),
-                            SaleName = Trunc(sale.UserName, 100),
-                            ReceiptName = Trunc(sale.UserName, 100),
-                            Notes = sale.EvaluationNote,
-                            UserID = employeeId,
-                            DateCreate = now,
-                            StoreID = storeId == 0 ? (int?)null : storeId,
-                            DelegateID = sale.CustomerListId,
-                            DiscountAmountTotal = 0d,
-                            DiscountAmountTotalDay = 0d
-                        },
-                        tx,
-                        commandType: CommandType.StoredProcedure,
-                        cancellationToken: ct));
-                    if (created?.CustomerID > 0)
-                    {
-                        postedCustomerId = created.CustomerID;
-                    }
-                    else
-                    {
-                        postedCustomerId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
-                            "SELECT CAST(IDENT_CURRENT(N'dbo.Customers') AS INT)",
-                            transaction: tx,
-                            cancellationToken: ct)) ?? sale.CustomerId;
-                    }
+                    postedCustomerId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
+                        "SELECT CAST(IDENT_CURRENT(N'dbo.Customers') AS INT)",
+                        transaction: tx,
+                        cancellationToken: ct)) ?? sale.CustomerId;
                 }
+
+                if (created?.CustomerSaleID > 0)
+                {
+                    postedCustomerSaleId = created.CustomerSaleID;
+                }
+                else if (postedCustomerId is > 0)
+                {
+                    postedCustomerSaleId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
+                        @"SELECT TOP 1 CustomerSaleID
+                          FROM dbo.CustomersSales
+                          WHERE CustomerID = @CustomerID
+                          ORDER BY CustomerSaleID DESC",
+                        new { CustomerID = postedCustomerId },
+                        tx,
+                        cancellationToken: ct));
+                }
+
+                await EnsureOfficialSaleHasItemsAsync(connection, tx, postedCustomerSaleId, ct);
 
                 return new FinalSalePosting
                 {
                     Deducted = true,
                     OfficialSalePosted = true,
-                    CustomerId = postedCustomerId
+                    CustomerId = postedCustomerId,
+                    CustomerSaleId = postedCustomerSaleId
                 };
             }
 
@@ -610,15 +653,41 @@ END;",
                 @"UPDATE dbo.Customers
                   SET CustomerName = @CustomerName,
                       PhoneNumber = COALESCE(@PhoneNumber, PhoneNumber),
-                      Address = COALESCE(@Address, Address)
+                      Address = COALESCE(@Address, Address),
+                      ShopName = CASE
+                          WHEN @ShopName IS NULL OR LTRIM(RTRIM(@ShopName)) = N'' THEN ShopName
+                          ELSE @ShopName
+                      END
                   WHERE CustomerID = @CustomerID",
                 new
                 {
                     CustomerID = customerId,
                     CustomerName = Trunc(name, 255),
                     PhoneNumber = Trunc(phone, 255),
-                    Address = Trunc(address, 255)
+                    Address = Trunc(address, 255),
+                    ShopName = Trunc(await LoadShopNameAsync(connection, tx, sale.SaleId, ct), 100)
                 }, tx, cancellationToken: ct));
+        }
+
+        private static async Task<string?> LoadShopNameAsync(
+            SqlConnection connection,
+            SqlTransaction tx,
+            int saleId,
+            CancellationToken ct)
+        {
+            if (!await TableExistsAsync(connection, tx, "SalesShopProfiles", ct))
+            {
+                return null;
+            }
+
+            return await connection.ExecuteScalarAsync<string?>(new CommandDefinition(
+                @"SELECT TOP 1 NULLIF(LTRIM(RTRIM(ShopName)), N'')
+                  FROM dbo.SalesShopProfiles
+                  WHERE SaleId = @SaleId
+                  ORDER BY Id DESC",
+                new { SaleId = saleId },
+                tx,
+                cancellationToken: ct));
         }
 
         private async Task RecordDownPaymentIfNeededAsync(
@@ -747,6 +816,39 @@ END;",
             _guard.GetSalesConnectionString()
             ?? throw new InvalidOperationException("Sales module has no usable branch connection.");
 
+        private static async Task EnsureOfficialSaleHasItemsAsync(
+            SqlConnection connection,
+            SqlTransaction tx,
+            int? customerSaleId,
+            CancellationToken ct)
+        {
+            if (customerSaleId is not > 0)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status409Conflict,
+                    "تعذر ربط عملية البيع بالحساب المحاسبي.");
+            }
+
+            if (!await TableExistsAsync(connection, tx, "SelectItemsSales", ct))
+            {
+                return;
+            }
+
+            var itemCount = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                @"SELECT COUNT(1)
+                  FROM dbo.SelectItemsSales
+                  WHERE CustomerSaleID = @CustomerSaleID",
+                new { CustomerSaleID = customerSaleId.Value },
+                tx,
+                cancellationToken: ct));
+            if (itemCount <= 0)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status409Conflict,
+                    "تم إنشاء البيع المحاسبي بدون أصناف؛ إجمالي المبلغ سيكون صفر. أعد إكمال البيع.");
+            }
+        }
+
         private static string? Trunc(string? value, int max) =>
             string.IsNullOrWhiteSpace(value) ? value : (value.Length <= max ? value : value[..max]);
 
@@ -781,6 +883,7 @@ WHERE SaleId = @SaleId";
             public bool Deducted { get; init; }
             public bool OfficialSalePosted { get; init; }
             public int? CustomerId { get; init; }
+            public int? CustomerSaleId { get; init; }
         }
 
         private sealed class PostedCustomerSaleRow

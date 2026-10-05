@@ -45,10 +45,11 @@ void main() {
       expect(IraqDate.isPaymentSyncGateOpen(utc), isFalse);
     });
 
-    test('02:30 Baghdad — gate CLOSED (even though previous business day)', () {
-      // 02:30 Baghdad next calendar = previous biz day, but sync gate still closed
+    test('02:30 Baghdad — gate OPEN (still previous business day after 16:00)', () {
+      // 02:30 Baghdad next calendar = previous biz day; send window still open
+      // until 03:00 so leftovers do not wait until next afternoon.
       final utc = DateTime.utc(2026, 9, 14, 23, 30); // Sep 15 02:30 Baghdad
-      expect(IraqDate.isPaymentSyncGateOpen(utc), isFalse);
+      expect(IraqDate.isPaymentSyncGateOpen(utc), isTrue);
       expect(IraqDate.businessDateKey(utc), '2026-09-14');
     });
 

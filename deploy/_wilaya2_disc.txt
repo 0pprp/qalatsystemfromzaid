@@ -1,0 +1,5 @@
+Msg 4104, Level 16, State 1, Server vmi3533397, Line 4
+The multi-part identifier "t.is_nullable" could not be bound.
+
+
+exit 0

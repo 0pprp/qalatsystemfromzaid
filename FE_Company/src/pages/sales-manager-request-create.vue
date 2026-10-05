@@ -19,6 +19,7 @@ const cityValue = ref('')
 const employees = ref([])
 const employeeId = ref(null)
 const notes = ref('')
+const maxSalePrice = ref('')
 const confirm = ref(false)
 const busy = ref(false)
 
@@ -135,6 +136,14 @@ async function send() {
     && String(sourceCity) === String(cityValue.value)
   const employee = selectedEmployee.value
 
+  const maxRaw = String(maxSalePrice.value || '').replace(/[^\d]/g, '')
+  const ceiling = maxRaw ? Number(maxRaw) : null
+  if (ceiling != null && (!Number.isFinite(ceiling) || ceiling <= 0)) {
+    toast.error('الحد الأقصى لسعر البيع غير صالح')
+
+    return
+  }
+
   busy.value = true
   try {
     const created = await smPost('sales-requests', {
@@ -143,6 +152,7 @@ async function send() {
       customerSourceCityValue: sourceCity || null,
       customer,
       notes: notes.value,
+      maxSalePrice: ceiling,
       targetEmployeeId: employeeId.value,
       targetEmployeeName: employee?.employeeName,
     })
@@ -155,6 +165,7 @@ async function send() {
       employeeName: employee?.employeeName,
       cityValue: cityValue.value,
       cityName: employee?.cityName || employee?.branchName,
+      maxSalePrice: ceiling,
     })
     toast.success('تم إنشاء الطلب وإسناده للموظف')
     confirm.value = false
@@ -275,6 +286,15 @@ async function send() {
             label="ملاحظة الطلب"
             class="mt-4"
           />
+          <VTextField
+            v-model="maxSalePrice"
+            class="mt-4"
+            label="الحد الأقصى لسعر البيع (اختياري)"
+            inputmode="numeric"
+            hint="موظف المبيعات لا يستطيع تجاوز هذا السعر"
+            persistent-hint
+            suffix="د.ع"
+          />
         </VStepperWindowItem>
         <VStepperWindowItem :value="4">
           <VCard class="mt-4">
@@ -283,6 +303,7 @@ async function send() {
               <div>المحافظة المستهدفة: {{ cityValue || 'غير محددة' }}</div>
               <div>الموظف: {{ selectedEmployee?.employeeName || 'غير محدد' }}</div>
               <div>الملاحظة: {{ notes }}</div>
+              <div v-if="maxSalePrice">الحد الأقصى لسعر البيع: {{ maxSalePrice }} د.ع</div>
             </VCardText>
           </VCard>
           <VBtn

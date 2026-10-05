@@ -1,8 +1,11 @@
+using System.Text.Json;
+using BE_SalesEmployee.DelegatedManager;
 using BE_SalesEmployee.DelegatedManager.Domain;
 using BE_SalesEmployee.DelegatedManager.Models;
 using BE_SalesEmployee.DelegatedManager.Services;
 using BE_SalesEmployee.DelegatedManager.Stores;
 using BE_SalesEmployee.Sales.Authorization;
+using BE_SalesEmployee.Sales.Services;
 using BE_SalesEmployee.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,17 +19,26 @@ public class DelegatedManagerController : ControllerBase
 {
     private readonly CentralComplaintsService _complaints;
     private readonly SalesExceptionService _exceptions;
+    private readonly CustomerWaiverService _waivers;
+    private readonly ISalesManagerBranchAggregator _aggregator;
 
-    public DelegatedManagerController(CentralComplaintsService complaints, SalesExceptionService exceptions)
+    public DelegatedManagerController(
+        CentralComplaintsService complaints,
+        SalesExceptionService exceptions,
+        CustomerWaiverService waivers,
+        ISalesManagerBranchAggregator aggregator)
     {
         _complaints = complaints;
         _exceptions = exceptions;
+        _waivers = waivers;
+        _aggregator = aggregator;
     }
 
     public sealed class DecisionRequest
     {
         public string? Decision { get; set; }
         public string? Note { get; set; }
+        public double? ApprovedAmount { get; set; }
     }
 
     [HttpGet("complaints")]
@@ -135,6 +147,8 @@ public class DelegatedManagerController : ControllerBase
                     a.CreatedAtUtc
                 }),
                 review = detail.Review,
+                customerProfile = detail.CustomerProfile,
+                reviewError = detail.ReviewError,
                 decisionHistory = detail.Audit.Select(a => new
                 {
                     a.ActorDisplayName,
@@ -147,6 +161,18 @@ public class DelegatedManagerController : ControllerBase
             }),
             _ => BadRequest(new { message = error ?? "تعذر تحميل التفاصيل" })
         };
+    }
+
+    [HttpPost("exceptions/{id:guid}/read")]
+    public async Task<IActionResult> MarkExceptionRead(Guid id, CancellationToken ct)
+    {
+        var row = await _exceptions.MarkReadAsync(id, ct);
+        if (row is null)
+        {
+            return NotFound(new { message = "الطلب غير موجود" });
+        }
+
+        return Ok(ToExceptionDetail(row));
     }
 
     [HttpPut("exceptions/{id:guid}/decision")]
@@ -164,13 +190,78 @@ public class DelegatedManagerController : ControllerBase
         };
     }
 
+    [HttpGet("waivers")]
+    public async Task<IActionResult> Waivers(
+        [FromQuery] string? status,
+        [FromQuery] string? cityValue,
+        [FromQuery] int? page,
+        [FromQuery] int? pageSize,
+        CancellationToken ct)
+    {
+        var (normalizedPage, normalizedSize) = PagingDefaults.Normalize(page, pageSize);
+        var result = await _waivers.ListAsync(new CustomerWaiverQuery
+        {
+            Page = normalizedPage,
+            PageSize = normalizedSize,
+            Status = status,
+            CityValue = cityValue
+        }, ct);
+
+        return Ok(new
+        {
+            page = result.Page,
+            pageSize = result.PageSize,
+            totalCount = result.TotalCount,
+            totalPages = result.TotalPages,
+            items = result.Items.Select(ToWaiverSummary)
+        });
+    }
+
+    [HttpGet("waivers/{id:guid}")]
+    public async Task<IActionResult> Waiver(Guid id, CancellationToken ct)
+    {
+        var (outcome, detail, error) = await _waivers.GetDetailAsync(id, ct);
+        return outcome switch
+        {
+            CustomerWaiverOutcome.NotFound => NotFound(new { message = error ?? "الطلب غير موجود" }),
+            CustomerWaiverOutcome.Success when detail is not null => Ok(new
+            {
+                request = ToWaiverDetail(detail.Request),
+                audit = detail.Audit,
+                review = detail.Review,
+                reviewError = detail.ReviewError
+            }),
+            _ => BadRequest(new { message = error ?? "تعذر تحميل التفاصيل" })
+        };
+    }
+
+    [HttpPut("waivers/{id:guid}/decision")]
+    public async Task<IActionResult> DecideWaiver(Guid id, [FromBody] DecisionRequest request, CancellationToken ct)
+    {
+        var actor = TokenService.FromPrincipal(User);
+        var result = await _waivers.DecideAsync(
+            actor, id, request.Decision, request.Note, request.ApprovedAmount, ct);
+        return result.Outcome switch
+        {
+            CustomerWaiverOutcome.Success => Ok(ToWaiverDetail(result.Request!)),
+            CustomerWaiverOutcome.NotFound => NotFound(new { message = result.Error }),
+            CustomerWaiverOutcome.Conflict => Conflict(new { message = result.Error }),
+            CustomerWaiverOutcome.Forbidden => StatusCode(StatusCodes.Status403Forbidden, new { message = result.Error }),
+            _ => BadRequest(new { message = result.Error })
+        };
+    }
+
     [HttpGet("dashboard")]
     public async Task<IActionResult> Dashboard([FromQuery] string? cityValue, CancellationToken ct)
     {
-        var counts = await _exceptions.DashboardCountsAsync(cityValue, ct);
+        // Hold exceptions only (WrongSale isolated in unreadWrongSales + own app tab).
+        var counts = await _exceptions.HoldDashboardCountsAsync(cityValue, ct);
+        var waiverCounts = await _waivers.DashboardCountsAsync(cityValue, null, ct);
+        var unreadWrongSales = await _exceptions.UnreadWrongSalesCountAsync(cityValue, ct);
         return Ok(new
         {
             unreadComplaints = await _complaints.UnreadCountAsync(ct),
+            unreadWrongSales,
             exceptions = new
             {
                 pending = Count(counts, ExceptionStatuses.Pending),
@@ -178,8 +269,155 @@ public class DelegatedManagerController : ControllerBase
                 rejected = Count(counts, ExceptionStatuses.Rejected),
                 cancelled = Count(counts, ExceptionStatuses.Cancelled),
                 total = counts.Values.Sum()
+            },
+            waivers = new
+            {
+                pending = Count(waiverCounts, ExceptionStatuses.Pending),
+                approved = Count(waiverCounts, ExceptionStatuses.Approved),
+                rejected = Count(waiverCounts, ExceptionStatuses.Rejected),
+                total = waiverCounts.Values.Sum()
             }
         });
+    }
+
+    /// <summary>
+    /// Ratings catalog for one province. Proxies BE_Company sales-manager/stats/catalog
+    /// (same BranchManagerStatsService as مدير الفرع). No DB schema change.
+    /// Impact: DM Flutter only; FE_Company / BM / other Flutter apps unchanged.
+    /// </summary>
+    [HttpGet("stats/catalog")]
+    public async Task<IActionResult> StatsCatalog([FromQuery] string? cityValue, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+        {
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+        }
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            DelegatedManagerStatsPaths.CompanyCatalog,
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("stats/trend")]
+    public async Task<IActionResult> StatsTrend(
+        [FromQuery] string? cityValue,
+        [FromQuery] string? scope,
+        [FromQuery] int id,
+        [FromQuery] DateTime? fromDate,
+        [FromQuery] DateTime? toDate,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+        {
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+        }
+
+        var today = DateTime.UtcNow.AddHours(3).Date;
+        var from = (fromDate ?? new DateTime(today.Year, today.Month, 1)).Date;
+        var to = (toDate ?? today).Date;
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            DelegatedManagerStatsPaths.CompanyTrend(scope, id, from, to),
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    /// <summary>
+    /// زبائن مستوى تقييم واحد — نفس منطق لوحة المدير / مدير الفرع (BranchManagerStatsService).
+    /// Impact: DM Flutter ratings board only; FE_Company / other Flutter apps unchanged.
+    /// </summary>
+    [HttpGet("stats/rating-customers")]
+    public async Task<IActionResult> StatsRatingCustomers(
+        [FromQuery] string? cityValue,
+        [FromQuery] string? scope,
+        [FromQuery] int id,
+        [FromQuery] string? level,
+        [FromQuery] DateTime? fromDate,
+        [FromQuery] DateTime? toDate,
+        [FromQuery] int take = 500,
+        [FromQuery] int skip = 0,
+        [FromQuery] string? q = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+        {
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+        }
+
+        // level optional: omit = every rated customer (same as branch-manager board).
+        var today = DateTime.UtcNow.AddHours(3).Date;
+        var from = (fromDate ?? new DateTime(today.Year, today.Month, 1)).Date;
+        var to = (toDate ?? today).Date;
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            DelegatedManagerStatsPaths.CompanyRatingCustomers(scope, id, level, from, to, take, skip, q),
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("customers/{cityValue}/{customerId:int}/profile")]
+    public async Task<IActionResult> CustomerProfileById(string cityValue, int customerId, CancellationToken ct)
+    {
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            $"sales-manager/customers/{customerId}/profile",
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("customers/{cityValue}/{customerId:int}/notes")]
+    public async Task<IActionResult> CustomerNotes(string cityValue, int customerId, CancellationToken ct)
+    {
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            $"sales-manager/customers/{customerId}/notes",
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpPost("customers/{cityValue}/notes")]
+    public async Task<IActionResult> AddCustomerNote(
+        string cityValue,
+        [FromBody] JsonElement body,
+        CancellationToken ct)
+    {
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.PostAsync(
+            actor,
+            cityValue,
+            "sales-manager/customers/notes",
+            body.GetRawText(),
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("sales/{cityValue}/{saleId:int}/shop-image")]
+    public async Task<IActionResult> SaleShopImage(string cityValue, int saleId, CancellationToken ct)
+    {
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetFileAsync(
+            actor,
+            cityValue,
+            $"sales-manager/sales/{saleId}/shop-image",
+            ct);
+        if (payload is ValueTuple<byte[], string> file)
+        {
+            return File(file.Item1, string.IsNullOrWhiteSpace(file.Item2) ? "image/jpeg" : file.Item2);
+        }
+
+        return StatusCode(status, payload ?? new { message = "الصورة غير موجودة." });
     }
 
     private static int Count(IReadOnlyDictionary<string, int> counts, string status) =>
@@ -238,6 +476,11 @@ public class DelegatedManagerController : ControllerBase
         return "غير متوفر";
     }
 
+    private static bool IsWrongSaleReason(string? reason) =>
+        !string.IsNullOrWhiteSpace(reason)
+        && (reason.Contains("مبيعات خاطئة", StringComparison.Ordinal)
+            || reason.Contains("تقييم المتجر", StringComparison.Ordinal));
+
     internal static object ToExceptionSummary(SalesExceptionRequest r) => new
     {
         r.Id,
@@ -257,7 +500,11 @@ public class DelegatedManagerController : ControllerBase
         r.AssignedEmployeeId,
         r.AssignedEmployeeName,
         r.AssignedAtUtc,
-        r.AssignedByManagerUserName
+        r.AssignedByManagerUserName,
+        isWrongSale = IsWrongSaleReason(r.Reason),
+        requestKind = IsWrongSaleReason(r.Reason) ? "WrongSale" : "Hold",
+        r.ReadAtUtc,
+        isUnread = r.ReadAtUtc is null
     };
 
     internal static object ToExceptionDetail(SalesExceptionRequest r) => new
@@ -275,6 +522,8 @@ public class DelegatedManagerController : ControllerBase
         r.TargetApproverType,
         r.Status,
         r.RequestedAtUtc,
+        r.ReadAtUtc,
+        isUnread = r.ReadAtUtc is null,
         r.DecidedAtUtc,
         r.DecisionMakerUserName,
         r.DecisionMakerDisplayName,
@@ -284,6 +533,48 @@ public class DelegatedManagerController : ControllerBase
         r.AssignedEmployeeId,
         r.AssignedEmployeeName,
         r.AssignedAtUtc,
+        isWrongSale = IsWrongSaleReason(r.Reason),
+        requestKind = IsWrongSaleReason(r.Reason) ? "WrongSale" : "Hold",
         r.AssignedByManagerUserName
+    };
+
+    internal static object ToWaiverSummary(CustomerWaiverRequest r) => new
+    {
+        r.Id,
+        r.CityValue,
+        r.CityName,
+        r.CustomerId,
+        r.CustomerName,
+        r.CustomerPhone,
+        r.BranchManagerDisplayName,
+        r.Note,
+        r.Status,
+        r.RequestedAtUtc,
+        r.DecidedAtUtc,
+        r.ApprovedAmount,
+        r.PaymentPosted
+    };
+
+    internal static object ToWaiverDetail(CustomerWaiverRequest r) => new
+    {
+        r.Id,
+        r.CityValue,
+        r.CityName,
+        r.CustomerId,
+        r.CustomerName,
+        r.CustomerPhone,
+        r.BranchManagerUserName,
+        r.BranchManagerDisplayName,
+        r.BranchManagerUserId,
+        r.Note,
+        r.Status,
+        r.RequestedAtUtc,
+        r.DecidedAtUtc,
+        r.DecisionMakerUserName,
+        r.DecisionMakerDisplayName,
+        r.DecisionNote,
+        r.ApprovedAmount,
+        r.PaymentPosted,
+        r.AccountantNotified
     };
 }

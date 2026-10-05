@@ -32,29 +32,45 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
         public static bool IsExpired(DateTime cutoffAtUtc, DateTime utcNow) => utcNow >= cutoffAtUtc;
     }
 
-    /// <summary>Same algorithm as sales OfficialSlot: start + n*10min, n &gt;= 1.</summary>
+    /// <summary>
+    /// Follower official route pins: only shift start and shift end (no 10-minute mid-shift slots).
+    /// </summary>
     public static class FollowerOfficialSlot
     {
-        public static readonly TimeSpan Length = TimeSpan.FromMinutes(10);
+        public static readonly TimeSpan MatchTolerance = TimeSpan.FromSeconds(5);
 
-        public static bool IsExactOfficialSlot(DateTime shiftStartUtc, DateTime officialSlotUtc)
+        public static bool IsStartSlot(DateTime shiftStartUtc, DateTime officialSlotUtc)
         {
-            var start = Utc(shiftStartUtc);
-            var slot = Utc(officialSlotUtc);
-            var delta = slot - start;
-            if (delta < Length) return false;
-            return delta.Ticks % Length.Ticks == 0;
+            var delta = Utc(officialSlotUtc) - Utc(shiftStartUtc);
+            return delta.Duration() <= MatchTolerance;
         }
 
-        public static long SlotIndex(DateTime shiftStartUtc, DateTime slotUtc)
+        public static bool IsEndSlot(DateTime closedAtUtc, DateTime officialSlotUtc)
         {
-            var index = (Utc(slotUtc) - Utc(shiftStartUtc)).Ticks / Length.Ticks;
-            return index <= 0 ? 1 : index;
+            var delta = Utc(officialSlotUtc) - Utc(closedAtUtc);
+            return delta.Duration() <= MatchTolerance;
         }
+
+        /// <summary>Official pin at start only while shift is open. End pins are inserted by EndAsync.</summary>
+        public static bool IsExactOfficialSlot(DateTime shiftStartUtc, DateTime officialSlotUtc) =>
+            IsStartSlot(shiftStartUtc, officialSlotUtc);
+
+        public static bool IsExactOfficialSlot(
+            DateTime shiftStartUtc,
+            DateTime officialSlotUtc,
+            DateTime? closedAtUtc)
+        {
+            if (IsStartSlot(shiftStartUtc, officialSlotUtc)) return true;
+            return closedAtUtc is DateTime closed && IsEndSlot(closed, officialSlotUtc);
+        }
+
+        public static long SlotIndex(DateTime shiftStartUtc, DateTime slotUtc) =>
+            IsStartSlot(shiftStartUtc, slotUtc) ? 1 : 2;
 
         public static DateTime SlotUtc(DateTime shiftStartUtc, long index) =>
-            Utc(shiftStartUtc).AddMinutes(10 * index);
+            Utc(shiftStartUtc);
 
+        /// <summary>While active: only the start pin once. End pin is recorded on shift close.</summary>
         public static IReadOnlyList<DateTime> DueSlots(
             DateTime shiftStartUtc,
             DateTime? lastOfficialSlotUtc,
@@ -64,16 +80,14 @@ namespace BE_DelegateWebApplication.Services.FollowerTracking
             shiftStartUtc = Utc(shiftStartUtc);
             nowUtc = Utc(nowUtc);
             cutoffUtc = Utc(cutoffUtc);
-            DateTime? last = lastOfficialSlotUtc is DateTime prior && prior != default ? Utc(prior) : null;
-            var slots = new List<DateTime>();
-            for (var index = 1; index <= 2000; index++)
+            if (shiftStartUtc >= cutoffUtc || nowUtc < shiftStartUtc) return [];
+            if (lastOfficialSlotUtc is DateTime prior && prior != default)
             {
-                var due = shiftStartUtc.AddMinutes(10 * index);
-                if (due >= cutoffUtc || due > nowUtc) break;
-                if (last is null || due > last.Value) slots.Add(due);
+                if (IsStartSlot(shiftStartUtc, prior) || Utc(prior) >= shiftStartUtc)
+                    return [];
             }
 
-            return slots;
+            return [shiftStartUtc];
         }
 
         private static DateTime Utc(DateTime value) =>

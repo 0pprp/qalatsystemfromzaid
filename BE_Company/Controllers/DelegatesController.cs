@@ -121,7 +121,7 @@ namespace BE_Company.Controllers
                 return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
             }
         }
- 
+
 
         [HttpGet("Delegates_Statistics/{fromDate}&&{toDate}")]
         public async Task<ActionResult<IEnumerable<StatisticsGetDTO>>> Delegates_Statistics(DateTime? fromDate, DateTime? toDate)
@@ -205,6 +205,59 @@ namespace BE_Company.Controllers
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
             }
+        }
+
+        /// <summary>Active lists with follower-collection toggle (محاسب رئيسي).</summary>
+        [HttpGet("FollowerCollectionLists")]
+        public async Task<IActionResult> FollowerCollectionLists(CancellationToken ct)
+        {
+            if (!IsMainAccountant())
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "صلاحية المحاسب الرئيسي فقط" });
+            }
+
+            var rows = await _delegatesRepository.GetFollowerCollectionListsAsync(ct);
+            return Ok(rows);
+        }
+
+        [HttpPut("FollowerCollectionEnabled/{delegateId:int}")]
+        public async Task<IActionResult> SetFollowerCollectionEnabled(
+            int delegateId,
+            [FromBody] FollowerCollectionEnabledBody? body,
+            CancellationToken ct)
+        {
+            if (!IsMainAccountant())
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "صلاحية المحاسب الرئيسي فقط" });
+            }
+
+            if (delegateId <= 0 || body is null)
+            {
+                return BadRequest(new { message = "معرّف القائمة والحالة مطلوبان" });
+            }
+
+            int? userId = null;
+            if (HttpContext.Items["UserID"] is string userIdStr && int.TryParse(userIdStr, out var parsed))
+            {
+                userId = parsed;
+            }
+
+            var ok = await _delegatesRepository.SetFollowerCollectionEnabledAsync(
+                delegateId, body.Enabled, userId, ct);
+            if (!ok)
+            {
+                return BadRequest(new { message = "تعذر تحديث حالة الجباية" });
+            }
+
+            return Ok(new { delegateId, enabled = body.Enabled });
+        }
+
+        private bool IsMainAccountant() =>
+            string.Equals(HttpContext.Items["UserType"] as string, "محاسب رئيسي", StringComparison.Ordinal);
+
+        public sealed class FollowerCollectionEnabledBody
+        {
+            public bool Enabled { get; set; }
         }
     }
 }

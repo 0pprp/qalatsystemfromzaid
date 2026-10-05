@@ -4,13 +4,21 @@ import 'package:delegated_manager_application/core/theme/app_theme.dart';
 import 'package:delegated_manager_application/core/widgets/state_views.dart';
 import 'package:delegated_manager_application/features/dashboard/data/dashboard_repository.dart';
 import 'package:delegated_manager_application/features/dashboard/domain/dashboard_summary.dart';
+import 'package:delegated_manager_application/features/shell/presentation/home_tabs.dart';
 import 'package:flutter/material.dart';
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key, required this.onOpenTab});
+  const DashboardScreen({
+    super.key,
+    required this.onOpenTab,
+    this.onOpenWrongSalesUnread,
+  });
 
-  /// Tab index requested from a dashboard card (1 = inbox, 2 = exceptions).
+  /// Tab index requested from a dashboard card.
   final void Function(int index) onOpenTab;
+
+  /// Opens المبيعات الخاطئة filtered to unread.
+  final VoidCallback? onOpenWrongSalesUnread;
 
   @override
   State<DashboardScreen> createState() => DashboardScreenState();
@@ -51,16 +59,6 @@ class DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('الرئيسية'),
-        actions: [
-          IconButton(
-            tooltip: 'تحديث',
-            onPressed: reload,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
       body: SafeArea(
         child: Builder(
           builder: (context) {
@@ -92,7 +90,7 @@ class DashboardScreenState extends State<DashboardScreen> {
                     value: summary.unreadComplaints,
                     icon: Icons.mark_email_unread_outlined,
                     color: AppColors.accent,
-                    onTap: () => widget.onOpenTab(1),
+                    onTap: () => widget.onOpenTab(HomeShellTabs.complaints),
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   _MetricCard(
@@ -100,7 +98,22 @@ class DashboardScreenState extends State<DashboardScreen> {
                     value: summary.pendingExceptions,
                     icon: Icons.pending_actions_outlined,
                     color: AppColors.pending,
-                    onTap: () => widget.onOpenTab(2),
+                    onTap: () => widget.onOpenTab(HomeShellTabs.exceptions),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  _MetricCard(
+                    title: 'مبيعات خاطئة غير مقروءة',
+                    value: summary.unreadWrongSales,
+                    icon: Icons.report_gmailerrorred_outlined,
+                    color: Colors.orange.shade800,
+                    onTap: () {
+                      final openUnread = widget.onOpenWrongSalesUnread;
+                      if (openUnread != null) {
+                        openUnread();
+                      } else {
+                        widget.onOpenTab(HomeShellTabs.wrongSales);
+                      }
+                    },
                   ),
                   const SizedBox(height: AppSpacing.md),
                   SectionCard(

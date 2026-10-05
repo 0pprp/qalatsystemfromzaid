@@ -13,5 +13,6 @@
         public bool? UpdateReceipt { get; set; }
         public bool? DeleteReceipt { get; set; }
         public bool? DevicePaymentState { get; set; }
+        public bool? FollowerCollectionEnabled { get; set; }
     }
 }

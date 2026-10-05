@@ -99,7 +99,7 @@ namespace BE_Company.Repository
                     StoreID = storeID,
                 },
                 commandType: CommandType.StoredProcedure);
-                var resultFinal = result.Select(c => 
+                var resultFinal = result.Select(c =>
                 {
                     decimal itemCostDenar = Math.Round(decimal.Parse(c.ItemCostDenar.ToString()));
                     decimal itemPriceDenar = Math.Round(decimal.Parse(c.ItemPriceDenar.ToString()));

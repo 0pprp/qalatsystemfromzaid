@@ -18,6 +18,12 @@ namespace BE_DelegateWebApplication.Controllers
         private readonly IWebHostEnvironment _env;
         private readonly IConfiguration _configuration;
         private readonly ILogger<FollowersController> _logger;
+        private readonly ILegalFollowupFollowerService _legalFollowups;
+        private readonly IFollowerFieldFollowupService _fieldFollowups;
+        private readonly IFollowerSaleAuthService _saleAuth;
+        private readonly IDelegateFirstCollectionEvalService _delegateShopEval;
+        private readonly IFollowerListStatsService _listStats;
+        private readonly IWrongSaleExceptionForwarder _wrongSaleForwarder;
 
         public FollowersController(
             IDelegateRepository delegateRepository,
@@ -27,7 +33,13 @@ namespace BE_DelegateWebApplication.Controllers
             ISharedCustomerNotesService sharedNotes,
             IWebHostEnvironment env,
             IConfiguration configuration,
-            ILogger<FollowersController> logger)
+            ILogger<FollowersController> logger,
+            ILegalFollowupFollowerService legalFollowups,
+            IFollowerFieldFollowupService fieldFollowups,
+            IFollowerSaleAuthService saleAuth,
+            IDelegateFirstCollectionEvalService delegateShopEval,
+            IFollowerListStatsService listStats,
+            IWrongSaleExceptionForwarder wrongSaleForwarder)
         {
             _delegateRepository = delegateRepository;
             _customersRepository = customersRepository;
@@ -37,6 +49,12 @@ namespace BE_DelegateWebApplication.Controllers
             _env = env;
             _configuration = configuration;
             _logger = logger;
+            _legalFollowups = legalFollowups;
+            _fieldFollowups = fieldFollowups;
+            _saleAuth = saleAuth;
+            _delegateShopEval = delegateShopEval;
+            _listStats = listStats;
+            _wrongSaleForwarder = wrongSaleForwarder;
         }
 
         [HttpGet("Lists")]
@@ -181,6 +199,17 @@ namespace BE_DelegateWebApplication.Controllers
                 });
             }
 
+            IReadOnlyList<FollowerCustomerPaymentDTO> payments;
+            try
+            {
+                payments = await _followerActions.ListCustomerPaymentsAsync(customerId, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Follower profile payments failed for customer {CustomerId}", customerId);
+                payments = [];
+            }
+
             var profile = new FollowerCustomerProfileDTO
             {
                 CustomerId = info.CustomerId,
@@ -198,6 +227,7 @@ namespace BE_DelegateWebApplication.Controllers
                 CustomerImage = info.CustomerImage,
                 CustomerImageUrl = portraitUrl,
                 DelegateName = info.DelegateName,
+                SaleName = info.SaleName,
                 ListDelegateId = listId,
                 CostTotalSales = info.CostTotalSales,
                 AmountTotalSales = info.AmountTotalSales,
@@ -209,8 +239,41 @@ namespace BE_DelegateWebApplication.Controllers
                 DateSaleDevice = info.DateSaleDevice,
                 CustomerSystemNotes = info.Notes,
                 Notes = notes,
-                Images = images
+                Images = images,
+                Payments = payments.ToList()
             };
+
+            var auth = await _saleAuth.GetForCustomerAsync(customerId, listId, ct);
+            if (auth != null)
+            {
+                profile.FollowerAuth = new FollowerAuthBlockDTO
+                {
+                    Rating = auth.Rating,
+                    Note = auth.Note,
+                    FollowerName = auth.FollowerName,
+                    FollowerUserId = auth.FollowerUserId,
+                    ShopStockEstimatedValue = auth.ShopStockEstimatedValue,
+                    EstimatedDailyRevenue = auth.EstimatedDailyRevenue,
+                    AuthenticatedAtUtc = auth.AuthenticatedAtUtc
+                };
+            }
+
+            var shopEval = await _delegateShopEval.GetForCustomerAsync(customerId, ct);
+            if (shopEval != null)
+            {
+                profile.DelegateShopEval = new DelegateShopEvalBlockDTO
+                {
+                    Rating = shopEval.Rating,
+                    Note = shopEval.Note,
+                    DelegateName = shopEval.DelegateName,
+                    DelegateId = shopEval.DelegateId,
+                    ShopStockEstimatedValue = shopEval.ShopStockEstimatedValue,
+                    EstimatedDailyRevenue = shopEval.EstimatedDailyRevenue,
+                    SaleAmount = shopEval.SaleAmount,
+                    CreatedAtUtc = shopEval.CreatedAtUtc
+                };
+            }
+
             return Ok(profile);
         }
 
@@ -570,6 +633,532 @@ namespace BE_DelegateWebApplication.Controllers
             }
 
             return null;
+        }
+
+        [HttpGet("FieldFollowups")]
+        public async Task<IActionResult> FieldFollowups([FromQuery] string? asyncId, CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(asyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                var items = await _fieldFollowups.ListPendingAsync(father.UserId ?? father.DelegateId, ct);
+                return Ok(new { items });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        public sealed class FieldFollowupAddBody
+        {
+            public string? AsyncId { get; set; }
+            public int ListId { get; set; }
+            public string? ListName { get; set; }
+            public int CustomerId { get; set; }
+            public string? CustomerName { get; set; }
+            public string? PhoneNumber { get; set; }
+        }
+
+        [HttpPost("FieldFollowups")]
+        public async Task<IActionResult> AddFieldFollowup([FromBody] FieldFollowupAddBody? body, CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(body?.AsyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                body ??= new FieldFollowupAddBody();
+                var denied = await EnsureCustomerInScope(father.DelegateId, body.ListId, body.CustomerId, ct);
+                if (denied != null) return denied;
+
+                var listName = body.ListName;
+                if (string.IsNullOrWhiteSpace(listName))
+                {
+                    listName = await _followerActions.GetDelegateNameAsync(body.ListId, ct);
+                }
+
+                var row = await _fieldFollowups.AddAsync(
+                    father.UserId ?? father.DelegateId,
+                    body.ListId,
+                    listName,
+                    body.CustomerId,
+                    body.CustomerName,
+                    body.PhoneNumber,
+                    ct);
+                return Ok(row);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        public sealed class FieldFollowupCompleteBody
+        {
+            public string? AsyncId { get; set; }
+            public string? Note { get; set; }
+        }
+
+        [HttpPost("FieldFollowups/{id:int}/complete")]
+        public async Task<IActionResult> CompleteFieldFollowup(
+            int id,
+            [FromBody] FieldFollowupCompleteBody? body,
+            CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(body?.AsyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                var followerUserId = father.UserId ?? father.DelegateId;
+                var row = await _fieldFollowups.CompleteAsync(
+                    id,
+                    followerUserId,
+                    body?.Note,
+                    ct);
+                await TryWriteFieldFollowupNoteAsync(row, father, ct);
+                return Ok(row);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        public sealed class FieldFollowupRecordCompleteBody
+        {
+            public string? AsyncId { get; set; }
+            public int ListId { get; set; }
+            public string? ListName { get; set; }
+            public int CustomerId { get; set; }
+            public string? CustomerName { get; set; }
+            public string? PhoneNumber { get; set; }
+            public string? Note { get; set; }
+        }
+
+        [HttpPost("FieldFollowups/record-complete")]
+        public async Task<IActionResult> RecordCompleteFieldFollowup(
+            [FromBody] FieldFollowupRecordCompleteBody? body,
+            CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(body?.AsyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                body ??= new FieldFollowupRecordCompleteBody();
+                var denied = await EnsureCustomerInScope(father.DelegateId, body.ListId, body.CustomerId, ct);
+                if (denied != null) return denied;
+
+                var listName = body.ListName;
+                if (string.IsNullOrWhiteSpace(listName))
+                {
+                    listName = await _followerActions.GetDelegateNameAsync(body.ListId, ct);
+                }
+
+                var row = await _fieldFollowups.RecordCompleteAsync(
+                    father.UserId ?? father.DelegateId,
+                    body.ListId,
+                    listName,
+                    body.CustomerId,
+                    body.CustomerName,
+                    body.PhoneNumber,
+                    body.Note,
+                    ct);
+                await TryWriteFieldFollowupNoteAsync(row, father, ct);
+                return Ok(row);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("FieldFollowups/latest-notes")]
+        public async Task<IActionResult> LatestFieldFollowupNotes(
+            [FromQuery] string? asyncId,
+            [FromQuery] int listId,
+            CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(asyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                if (listId <= 0) return BadRequest(new { message = "listId مطلوب" });
+                var items = await _fieldFollowups.ListLatestCompletedNotesAsync(
+                    father.UserId ?? father.DelegateId,
+                    listId,
+                    ct);
+                return Ok(new { items });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        private async Task TryWriteFieldFollowupNoteAsync(
+            FollowerFieldFollowupRow row,
+            DelegateGetDTO father,
+            CancellationToken ct)
+        {
+            try
+            {
+                var note = (row.CompletionNote ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(note) || row.CustomerId <= 0) return;
+                var text = note.StartsWith("متابعة ميدانية:", StringComparison.Ordinal)
+                    ? note
+                    : $"متابعة ميدانية: {note}";
+                var author = string.IsNullOrWhiteSpace(father.DelegateName) ? "متابع" : father.DelegateName!.Trim();
+                await _sharedNotes.AddAsync(row.CustomerId, text, father.UserId, author, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to persist field-followup note to CustomerNotes customerId={CustomerId}", row.CustomerId);
+            }
+        }
+
+        [HttpGet("PendingSales")]
+        public async Task<IActionResult> PendingSales([FromQuery] string? asyncId, CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(asyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                var items = await _saleAuth.ListPendingAsync(father.UserId ?? father.DelegateId, ct);
+                return Ok(new { items });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        public sealed class AuthenticateSaleBody
+        {
+            public string? AsyncId { get; set; }
+            public int CustomerId { get; set; }
+            public int ListId { get; set; }
+            public int Rating { get; set; }
+            public string? Note { get; set; }
+            public decimal ShopStockEstimatedValue { get; set; }
+            public decimal EstimatedDailyRevenue { get; set; }
+        }
+
+        [HttpPost("PendingSales/Authenticate")]
+        public async Task<IActionResult> AuthenticateSale([FromBody] AuthenticateSaleBody? body, CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(body?.AsyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                body ??= new AuthenticateSaleBody();
+                var denied = await EnsureCustomerInScope(father.DelegateId, body.ListId, body.CustomerId, ct);
+                if (denied != null) return denied;
+
+                var row = await _saleAuth.AuthenticateAsync(
+                    father.UserId ?? father.DelegateId,
+                    father.DelegateName,
+                    body.CustomerId,
+                    body.ListId,
+                    body.Rating,
+                    body.Note,
+                    body.ShopStockEstimatedValue,
+                    body.EstimatedDailyRevenue,
+                    ct);
+
+                // تقييم ≤6 → مبيع خاطئ لإشعار المدير المفوض (best-effort).
+                if (FollowerSaleAuthRules.IsWrongSaleRating(row.Rating))
+                {
+                    var scope = await _followerActions.GetCustomerScopeAsync(body.CustomerId, ct);
+                    string? province = scope?.CityName;
+                    if (string.IsNullOrWhiteSpace(province) && father.CityId is > 0)
+                    {
+                        province = await _followerActions.GetCityNameByIdAsync(father.CityId.Value, ct);
+                    }
+
+                    var reason = FollowerSaleAuthRules.FormatShopEvaluationBlock(
+                        row.Rating,
+                        row.Note,
+                        row.ShopStockEstimatedValue,
+                        row.EstimatedDailyRevenue,
+                        scope?.CustomerName,
+                        scope?.Phone,
+                        evaluatorRole: "متابع");
+
+                    _ = await _wrongSaleForwarder.ForwardAsync(new WrongSaleExceptionForwardRequest
+                    {
+                        CityValue = province,
+                        CityName = province,
+                        CustomerId = body.CustomerId,
+                        CustomerName = scope?.CustomerName,
+                        CustomerPhone = scope?.Phone,
+                        Reason = reason,
+                        RequesterUserId = (father.UserId ?? father.DelegateId).ToString(),
+                        RequesterUserName = father.DelegateName,
+                        RequesterDisplayName = string.IsNullOrWhiteSpace(father.DelegateName)
+                            ? "متابع"
+                            : father.DelegateName.Trim()
+                    }, ct);
+                }
+
+                return Ok(new
+                {
+                    row.Id,
+                    row.CustomerId,
+                    row.ListId,
+                    row.Rating,
+                    row.Note,
+                    row.ShopStockEstimatedValue,
+                    row.EstimatedDailyRevenue,
+                    row.AuthenticatedAtUtc,
+                    IsWrongSale = FollowerSaleAuthRules.IsWrongSaleRating(row.Rating)
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("ListStats")]
+        public async Task<IActionResult> ListStats([FromQuery] string? asyncId, CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(asyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                // Iraq local calendar month for freeze boundaries.
+                var nowIraq = DateTime.UtcNow.AddHours(3);
+                var items = await _listStats.GetStatsForFollowerAsync(
+                    father.UserId ?? father.DelegateId,
+                    nowIraq,
+                    ct);
+                return Ok(new { items, yearMonth = FollowerListStatsRules.ToYearMonth(nowIraq) });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("ListStats/{listId:int}/rating-customers")]
+        public async Task<IActionResult> ListStatsRatingCustomers(
+            int listId,
+            [FromQuery] string? asyncId,
+            [FromQuery] string? level,
+            CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(asyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                var nowIraq = DateTime.UtcNow.AddHours(3);
+                var items = await _listStats.GetRatingCustomersAsync(
+                    father.UserId ?? father.DelegateId,
+                    listId,
+                    level ?? "",
+                    nowIraq,
+                    ct);
+                return Ok(new { items, level });
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("ListStats/{listId:int}/active-customers")]
+        public async Task<IActionResult> ListStatsActiveCustomers(
+            int listId,
+            [FromQuery] string? asyncId,
+            CancellationToken ct)
+        {
+            try
+            {
+                var father = await AuthenticateFollower(asyncId);
+                if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+                var nowIraq = DateTime.UtcNow.AddHours(3);
+                var items = await _listStats.GetActiveCustomersAsync(
+                    father.UserId ?? father.DelegateId,
+                    listId,
+                    nowIraq,
+                    ct);
+                return Ok(new { items });
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("LegalFollowups")]
+        public async Task<IActionResult> LegalFollowups([FromQuery] string? asyncId, [FromQuery] string? status, CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(asyncId);
+            if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            try
+            {
+                return Ok(await _legalFollowups.ListAsync(father.UserId ?? father.DelegateId, status, ct));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("LegalFollowups/{id:int}")]
+        public async Task<IActionResult> LegalFollowup(int id, [FromQuery] string? asyncId, CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(asyncId);
+            if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            var item = await _legalFollowups.GetAsync(id, father.UserId ?? father.DelegateId, ct);
+            return item == null ? NotFound(new { message = "المتابعة غير موجودة" }) : Ok(item);
+        }
+
+        public sealed class LegalFollowupCompleteBody
+        {
+            public string? AsyncId { get; set; }
+            public string? Note { get; set; }
+        }
+
+        public sealed class LegalFollowupLocationBody
+        {
+            public string? AsyncId { get; set; }
+            public double Latitude { get; set; }
+            public double Longitude { get; set; }
+            public string? Address { get; set; }
+        }
+
+        [HttpPut("LegalFollowups/{id:int}/location")]
+        public async Task<IActionResult> SetLegalFollowupLocation(int id, [FromBody] LegalFollowupLocationBody? body, CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(body?.AsyncId);
+            if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            try
+            {
+                return Ok(await _legalFollowups.SetLocationAsync(
+                    id,
+                    father.UserId ?? father.DelegateId,
+                    body?.Latitude ?? 0,
+                    body?.Longitude ?? 0,
+                    body?.Address,
+                    ct));
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("LegalFollowups/{id:int}/documents")]
+        [RequestSizeLimit(25_000_000)]
+        public async Task<IActionResult> UploadLegalFollowupDocument(
+            int id,
+            [FromQuery] string? asyncId,
+            [FromForm] string? documentType,
+            [FromForm] IFormFile? file,
+            CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(asyncId ?? Request.Form["asyncId"].FirstOrDefault());
+            if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            try
+            {
+                var type = documentType ?? Request.Form["documentType"].FirstOrDefault() ?? "";
+                var upload = file ?? Request.Form.Files.FirstOrDefault();
+                return Ok(await _legalFollowups.UploadDocumentAsync(
+                    id,
+                    father.UserId ?? father.DelegateId,
+                    type,
+                    upload!,
+                    ct));
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpPut("LegalFollowups/{id:int}/complete")]
+        public async Task<IActionResult> CompleteLegalFollowup(int id, [FromBody] LegalFollowupCompleteBody? body, CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(body?.AsyncId);
+            if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            try
+            {
+                return Ok(await _legalFollowups.CompleteAsync(id, father.UserId ?? father.DelegateId, body?.Note, ct));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("LegalFollowups/{id:int}/documents/{documentId:int}/file")]
+        public async Task<IActionResult> LegalFollowupDocumentFile(
+            int id, int documentId, [FromQuery] string? asyncId, CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(asyncId);
+            if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            var file = await _legalFollowups.ReadDocumentAsync(id, documentId, father.UserId ?? father.DelegateId, ct);
+            if (file == null) return NotFound(new { message = "المستند غير موجود" });
+            return File(file.Value.Bytes, file.Value.ContentType);
+        }
+
+        [HttpGet("LegalFollowups/{id:int}/case-documents/{documentId:int}/file")]
+        public async Task<IActionResult> LegalFollowupCaseDocumentFile(
+            int id, int documentId, [FromQuery] string? asyncId, CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(asyncId);
+            if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            var file = await _legalFollowups.ReadCaseDocumentAsync(id, documentId, father.UserId ?? father.DelegateId, ct);
+            if (file == null) return NotFound(new { message = "المستند غير موجود" });
+            return File(file.Value.Bytes, file.Value.ContentType, file.Value.FileName);
+        }
+
+        [HttpGet("LegalFollowups/{id:int}/shop-image")]
+        public async Task<IActionResult> LegalFollowupShopImage(int id, [FromQuery] string? asyncId, CancellationToken ct)
+        {
+            var father = await AuthenticateFollower(asyncId);
+            if (father == null) return Unauthorized(new { message = "رمز المتابع غير صحيح" });
+            var file = await _legalFollowups.ReadShopImageAsync(id, father.UserId ?? father.DelegateId, ct);
+            if (file == null) return NotFound(new { message = "صورة المحل غير موجودة" });
+            return File(file.Value.Bytes, file.Value.ContentType);
         }
 
         private async Task<DelegateGetDTO?> AuthenticateFollower(string? asyncId)

@@ -11,12 +11,15 @@ namespace BE_DelegateWebApplication.Repository
         private readonly string _connectionString;
         private readonly IWebHostEnvironment _env;
         private readonly string? _documentsRoot;
+        private readonly string[] _extraDocumentRoots;
 
         public FollowerActionsRepository(IConfiguration configuration, IWebHostEnvironment env)
         {
             _connectionString = configuration.GetConnectionString("DataBaseConnection")!;
             _env = env;
             _documentsRoot = configuration["SalesDocumentsRoot"];
+            _extraDocumentRoots = (configuration["SalesDocumentsExtraRoots"] ?? string.Empty)
+                .Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
 
         public async Task EnsureSchemaAsync(CancellationToken ct = default)
@@ -95,6 +98,57 @@ WHERE D.DelegateID = @Id;",
             return await connection.ExecuteScalarAsync<string?>(new CommandDefinition(
                 "SELECT TOP 1 CityName FROM dbo.Cities WHERE CityID = @Id",
                 new { Id = cityId }, cancellationToken: ct));
+        }
+
+        public async Task<IReadOnlyList<FollowerCustomerPaymentDTO>> ListCustomerPaymentsAsync(
+            int customerId, CancellationToken ct = default)
+        {
+            if (customerId <= 0)
+            {
+                return [];
+            }
+
+            await using var connection = new SqlConnection(_connectionString);
+            var viewExists = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                "SELECT CASE WHEN OBJECT_ID(N'dbo.View_CustomersPaymentsDelegate', N'V') IS NULL THEN 0 ELSE 1 END",
+                cancellationToken: ct));
+            if (viewExists == 0)
+            {
+                return [];
+            }
+
+            // Prefer BoundNumber/Location from CustomersPayments when available.
+            try
+            {
+                var rows = await connection.QueryAsync<FollowerCustomerPaymentDTO>(new CommandDefinition(@"
+SELECT
+    V.CustomerPaymentID AS CustomerPaymentId,
+    V.PaymentDate AS PaymentDate,
+    CAST(ISNULL(V.AmountDenar, 0) AS float) AS Amount,
+    CP.BoundNumber AS BoundNumber,
+    CP.Location AS Note
+FROM dbo.View_CustomersPaymentsDelegate V
+LEFT JOIN dbo.CustomersPayments CP ON CP.CustomerPaymentID = V.CustomerPaymentID
+WHERE V.CustomerID = @CustomerId
+ORDER BY V.PaymentDate DESC, V.CustomerPaymentID DESC;",
+                    new { CustomerId = customerId },
+                    cancellationToken: ct));
+                return rows.AsList();
+            }
+            catch
+            {
+                var rows = await connection.QueryAsync<FollowerCustomerPaymentDTO>(new CommandDefinition(@"
+SELECT
+    V.CustomerPaymentID AS CustomerPaymentId,
+    V.PaymentDate AS PaymentDate,
+    CAST(ISNULL(V.AmountDenar, 0) AS float) AS Amount
+FROM dbo.View_CustomersPaymentsDelegate V
+WHERE V.CustomerID = @CustomerId
+ORDER BY V.PaymentDate DESC, V.CustomerPaymentID DESC;",
+                    new { CustomerId = customerId },
+                    cancellationToken: ct));
+                return rows.AsList();
+            }
         }
 
         public async Task<IReadOnlyList<FollowerSalesDocumentRow>> ListCustomerSalesDocumentsAsync(
@@ -238,19 +292,7 @@ ORDER BY d.SaleId DESC;", cancellationToken: ct));
             }
 
             var relative = key.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
-            var roots = new List<string>();
-            if (!string.IsNullOrWhiteSpace(_documentsRoot))
-            {
-                roots.Add(_documentsRoot.TrimEnd('/', '\\'));
-            }
-
-            roots.Add(Path.Combine(_env.ContentRootPath, "App_Data"));
-            if (!string.IsNullOrWhiteSpace(_env.WebRootPath))
-            {
-                roots.Add(Path.GetFullPath(Path.Combine(_env.WebRootPath, "..", "App_Data")));
-            }
-
-            foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (var root in DocumentSearchRoots())
             {
                 var candidate = relative.StartsWith("App_Data", StringComparison.OrdinalIgnoreCase)
                     ? Path.Combine(root.EndsWith("App_Data", StringComparison.OrdinalIgnoreCase)
@@ -264,6 +306,97 @@ ORDER BY d.SaleId DESC;", cancellationToken: ct));
             }
 
             return Path.Combine(_env.ContentRootPath, "App_Data", relative);
+        }
+
+        /// <summary>
+        /// Sales images live under the paired BE_Company App_Data (Admin*), not Delegate's own folder.
+        /// </summary>
+        private IEnumerable<string> DocumentSearchRoots()
+        {
+            var roots = new List<string>();
+            void Add(string? path)
+            {
+                if (string.IsNullOrWhiteSpace(path)) return;
+                var trimmed = path.TrimEnd('/', '\\');
+                if (!roots.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+                {
+                    roots.Add(trimmed);
+                }
+            }
+
+            Add(_documentsRoot);
+            foreach (var extra in _extraDocumentRoots)
+            {
+                Add(extra);
+            }
+
+            Add(Path.Combine(_env.ContentRootPath, "App_Data"));
+            if (!string.IsNullOrWhiteSpace(_env.WebRootPath))
+            {
+                Add(Path.GetFullPath(Path.Combine(_env.WebRootPath, "..", "App_Data")));
+            }
+
+            Add(TryPairedCompanyAppData(_env.ContentRootPath));
+            return roots;
+        }
+
+        /// <summary>
+        /// Maps DelegateHaiderNajafLast → /opt/.../AdminNajaf/App_Data (same parent folder).
+        /// </summary>
+        internal static string? TryPairedCompanyAppData(string contentRoot)
+        {
+            if (string.IsNullOrWhiteSpace(contentRoot)) return null;
+            var dir = new DirectoryInfo(contentRoot);
+            var parent = dir.Parent?.FullName;
+            if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent)) return null;
+
+            var name = dir.Name;
+            foreach (var adminName in PairedAdminFolderNames(name))
+            {
+                var candidate = Path.Combine(parent, adminName, "App_Data");
+                if (Directory.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        internal static IEnumerable<string> PairedAdminFolderNames(string delegateFolderName)
+        {
+            var n = delegateFolderName.Trim();
+            // Explicit known pairs first.
+            if (n.Contains("Najaf", StringComparison.OrdinalIgnoreCase)) yield return "AdminNajaf";
+            if (n.Contains("Alanwar", StringComparison.OrdinalIgnoreCase)) yield return "AdminBasraAlanwar";
+            if (n.Contains("Basra", StringComparison.OrdinalIgnoreCase) && !n.Contains("Alanwar", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminBasra";
+            if (n.Contains("Diyala", StringComparison.OrdinalIgnoreCase) || n.Contains("Deiala", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminDiyala";
+            if (n.Contains("Muthanna", StringComparison.OrdinalIgnoreCase) || n.Contains("Mothana", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminMuthanna";
+            if (n.Contains("Qadisiyyah", StringComparison.OrdinalIgnoreCase) || n.Contains("Diwaniyah", StringComparison.OrdinalIgnoreCase) || n.Contains("Dewania", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminDiwaniyah";
+            if (n.Contains("Babil", StringComparison.OrdinalIgnoreCase) || n.Contains("Hilla", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminHilla";
+            if (n.Contains("Karbala", StringComparison.OrdinalIgnoreCase)) yield return "AdminKarbala";
+            if (n.Contains("Kirkuk", StringComparison.OrdinalIgnoreCase) || n.Contains("Karkok", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminKirkuk";
+            if (n.Contains("DhiQar", StringComparison.OrdinalIgnoreCase) || n.Contains("Nasiriyah", StringComparison.OrdinalIgnoreCase) || n.Contains("Nasria", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminNasiriyah";
+            if (n.Contains("Nineveh", StringComparison.OrdinalIgnoreCase) || n.Contains("Mosul", StringComparison.OrdinalIgnoreCase) || n.Contains("Musol", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminMosul";
+            if (n.Contains("Maysan", StringComparison.OrdinalIgnoreCase)) yield return "AdminMaysan";
+            if (n.Contains("Wasit", StringComparison.OrdinalIgnoreCase) || n.Contains("Kot", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminKot";
+            if (n.Contains("KarakAqeel", StringComparison.OrdinalIgnoreCase) || (n.Contains("Aqeel", StringComparison.OrdinalIgnoreCase) && n.Contains("Karak", StringComparison.OrdinalIgnoreCase)))
+                yield return "AdminKarakAqeel";
+            else if (n.Contains("Karak", StringComparison.OrdinalIgnoreCase) || n.Contains("Karkh", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminBaghdadKarkh";
+            if (n.Contains("RusafaAqeel", StringComparison.OrdinalIgnoreCase) || (n.Contains("Aqeel", StringComparison.OrdinalIgnoreCase) && n.Contains("Rusafa", StringComparison.OrdinalIgnoreCase)))
+                yield return "AdminRusafaAqeel";
+            else if (n.Contains("Rusafa", StringComparison.OrdinalIgnoreCase) || n.Contains("Rosafa", StringComparison.OrdinalIgnoreCase))
+                yield return "AdminBaghdadRusafa";
         }
 
         private static bool DocumentMatches(
@@ -389,6 +522,10 @@ ORDER BY CreatedAtUtc DESC;",
             string customerSourceType,
             string saleRequestType,
             int? sourceListId = null,
+            int? shopRating = null,
+            string? shopRatingNote = null,
+            decimal? shopStockEstimatedValue = null,
+            decimal? estimatedDailyRevenue = null,
             CancellationToken ct = default)
         {
             await EnsureSchemaAsync(ct);
@@ -401,19 +538,20 @@ ORDER BY CreatedAtUtc DESC;",
             var sourceType = string.IsNullOrWhiteSpace(customerSourceType) ? "Follower" : customerSourceType.Trim();
             var kind = SaleRequestTypes.Normalize(saleRequestType, existingCustomerId is > 0);
             var actorType = meta.CreatedByUserType ?? sourceType;
+            var isWrongSale = shopRating is int r && FollowerSaleAuthRules.IsWrongSaleRating(r);
 
             var id = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
 INSERT INTO dbo.SalesRequests
 (CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, TargetEmployeeName, CityValue, CityName,
  CustomerSourceType, ExistingCustomerId, CustomerSourceCityValue, CustomerName, CustomerPhone, CustomerProvince,
  CustomerAddress, Notes, Status, CreatedAtUtc, AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, ReturnNote,
- SaleRequestType, SourceListId)
+ SaleRequestType, SourceListId, ShopRating, ShopRatingNote, ShopStockEstimatedValue, EstimatedDailyRevenue, IsWrongSale)
 OUTPUT INSERTED.Id
 VALUES
 (@CreatedByUserId, @CreatedByName, @CreatedByUserType, 0, NULL, @CityValue, @CityName,
  @CustomerSourceType, @ExistingCustomerId, NULL, @CustomerName, @Phone, @Province,
  @Address, @Notes, N'New', @CreatedAtUtc, NULL, NULL, NULL, NULL, NULL,
- @SaleRequestType, @SourceListId);",
+ @SaleRequestType, @SourceListId, @ShopRating, @ShopRatingNote, @ShopStockEstimatedValue, @EstimatedDailyRevenue, @IsWrongSale);",
                 new
                 {
                     meta.CreatedByUserId,
@@ -430,7 +568,12 @@ VALUES
                     Notes = notes,
                     meta.CreatedAtUtc,
                     SaleRequestType = kind,
-                    SourceListId = sourceListId is > 0 ? sourceListId : null
+                    SourceListId = sourceListId is > 0 ? sourceListId : null,
+                    ShopRating = shopRating,
+                    ShopRatingNote = FollowerSaleAuthRules.NormalizeNote(shopRatingNote),
+                    ShopStockEstimatedValue = shopStockEstimatedValue,
+                    EstimatedDailyRevenue = estimatedDailyRevenue,
+                    IsWrongSale = isWrongSale
                 },
                 transaction: tx,
                 cancellationToken: ct));
@@ -452,12 +595,68 @@ VALUES
                 transaction: tx,
                 cancellationToken: ct));
 
+            if (isWrongSale && shopRating is int wrongRating)
+            {
+                await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.WrongSaleReports', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.WrongSaleReports (
+        Id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        SalesRequestId INT NOT NULL,
+        CustomerName NVARCHAR(200) NOT NULL,
+        CustomerPhone NVARCHAR(50) NULL,
+        ShopRating INT NOT NULL,
+        ShopRatingNote NVARCHAR(1000) NULL,
+        ShopStockEstimatedValue DECIMAL(18,0) NOT NULL,
+        EstimatedDailyRevenue DECIMAL(18,0) NOT NULL,
+        CityValue NVARCHAR(100) NULL,
+        CreatedByUserId INT NOT NULL,
+        CreatedByName NVARCHAR(200) NULL,
+        ReasonBlock NVARCHAR(MAX) NOT NULL,
+        Status NVARCHAR(30) NOT NULL CONSTRAINT DF_WrongSale_Status DEFAULT (N'Pending'),
+        CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_WrongSale_At DEFAULT (SYSUTCDATETIME())
+    );
+    CREATE INDEX IX_WrongSaleReports_Status ON dbo.WrongSaleReports (Status, CreatedAtUtc DESC);
+END
+INSERT INTO dbo.WrongSaleReports
+(SalesRequestId, CustomerName, CustomerPhone, ShopRating, ShopRatingNote, ShopStockEstimatedValue, EstimatedDailyRevenue,
+ CityValue, CreatedByUserId, CreatedByName, ReasonBlock, Status, CreatedAtUtc)
+VALUES
+(@SalesRequestId, @CustomerName, @Phone, @ShopRating, @ShopRatingNote, @ShopStockEstimatedValue, @EstimatedDailyRevenue,
+ @CityValue, @CreatedByUserId, @CreatedByName, @ReasonBlock, N'Pending', @CreatedAtUtc);",
+                    new
+                    {
+                        SalesRequestId = id,
+                        CustomerName = customerName,
+                        Phone = phone,
+                        ShopRating = wrongRating,
+                        ShopRatingNote = FollowerSaleAuthRules.NormalizeNote(shopRatingNote),
+                        ShopStockEstimatedValue = shopStockEstimatedValue ?? 0,
+                        EstimatedDailyRevenue = estimatedDailyRevenue ?? 0,
+                        CityValue = cityValue,
+                        CreatedByUserId = meta.CreatedByUserId,
+                        CreatedByName = meta.CreatedByName,
+                        ReasonBlock = FollowerSaleAuthRules.FormatShopEvaluationBlock(
+                            wrongRating,
+                            shopRatingNote,
+                            shopStockEstimatedValue ?? 0,
+                            estimatedDailyRevenue ?? 0,
+                            customerName,
+                            phone),
+                        meta.CreatedAtUtc
+                    },
+                    transaction: tx,
+                    cancellationToken: ct));
+            }
+
             tx.Commit();
             meta.Id = id;
             meta.CustomerSourceType = sourceType;
             meta.SaleRequestType = kind;
             meta.Status = "New";
             meta.ExistingCustomerId = existingCustomerId is > 0 ? existingCustomerId : null;
+            meta.IsWrongSale = isWrongSale;
+            meta.ShopRating = shopRating;
             return meta;
         }
 
@@ -562,6 +761,16 @@ END
 IF COL_LENGTH(N'dbo.SalesRequests', N'SaleRequestType') IS NULL
     ALTER TABLE dbo.SalesRequests ADD SaleRequestType NVARCHAR(20) NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'SourceListId') IS NULL
-    ALTER TABLE dbo.SalesRequests ADD SourceListId INT NULL;";
+    ALTER TABLE dbo.SalesRequests ADD SourceListId INT NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'ShopRating') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD ShopRating INT NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'ShopRatingNote') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD ShopRatingNote NVARCHAR(1000) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'ShopStockEstimatedValue') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD ShopStockEstimatedValue DECIMAL(18,0) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'EstimatedDailyRevenue') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD EstimatedDailyRevenue DECIMAL(18,0) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'IsWrongSale') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD IsWrongSale BIT NOT NULL CONSTRAINT DF_SR_IsWrongSale DEFAULT (0);";
     }
 }

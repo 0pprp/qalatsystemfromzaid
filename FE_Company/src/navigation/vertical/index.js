@@ -5,6 +5,16 @@ export default [
     icon: { icon: 'tabler-home', size: '25' },
   },
   {
+    title: 'التقييمات',
+    to: { name: 'director-ratings' },
+    icon: { icon: 'tabler-chart-histogram', size: '25' },
+  },
+  {
+    title: 'طلبات البيع',
+    to: { name: 'sales-manager-requests' },
+    icon: { icon: 'tabler-send', size: '25' },
+  },
+  {
     title: 'المستخدمين',
     icon: { icon: 'tabler-users', size: '25' },
     children: [
@@ -59,6 +69,11 @@ export default [
         to: { name: 'customers-stopped-date' },
         icon: { icon: 'tabler-calendar-time', size: '25' },
       },
+      {
+        title: 'بحث القانونية',
+        to: { name: 'accountant-legal-search' },
+        icon: { icon: 'tabler-file-search', size: '25' },
+      },
     ],
   },
   {
@@ -68,8 +83,24 @@ export default [
   },
   {
     title: 'القرارات',
-    to: { name: 'decision-board' },
     icon: { icon: 'tabler-gavel', size: '25' },
+    children: [
+      {
+        title: 'لوحة ضعفاء التسديد',
+        to: { name: 'decision-board' },
+        icon: { icon: 'tabler-gavel', size: '22' },
+      },
+      {
+        title: 'طلبات التحويل القانونية',
+        to: { name: 'legal-conversion-requests' },
+        icon: { icon: 'tabler-scale', size: '22' },
+      },
+      {
+        title: 'سجل القرارات',
+        to: { name: 'decisions-list' },
+        icon: { icon: 'tabler-list-check', size: '22' },
+      },
+    ],
   },
   {
     title: 'المبيعات',
@@ -89,12 +120,12 @@ export default [
     icon: { icon: 'tabler-map-pin', size: '25' },
     children: [
       { title: 'نظرة عامة', to: { name: 'sales-manager-dashboard' }, icon: { icon: 'tabler-layout-dashboard', size: '22' } },
-      { title: 'الموظفون', to: { name: 'sales-manager-employees' }, icon: { icon: 'tabler-users', size: '22' } },
+      { title: 'موظفين المبيعات', to: { name: 'sales-manager-employees' }, icon: { icon: 'tabler-users', size: '22' } },
       { title: 'الموقع المباشر', to: { name: 'sales-manager-map' }, icon: { icon: 'tabler-map', size: '22' } },
       { title: 'المسارات', to: { name: 'sales-manager-routes' }, icon: { icon: 'tabler-route', size: '22' } },
       { title: 'المبيعات', to: { name: 'sales-manager-sales' }, icon: { icon: 'tabler-receipt', size: '22' } },
+      { title: 'القانونية', to: { name: 'sales-manager-legal-followups' }, icon: { icon: 'tabler-gavel', size: '22' } },
       { title: 'طلبات البيع', to: { name: 'sales-manager-requests' }, icon: { icon: 'tabler-send', size: '22' } },
-      { title: 'إدخال شراء المخزن', to: { name: 'sales-manager-purchases' }, icon: { icon: 'tabler-shopping-cart', size: '22' } },
     ],
   },
   {
@@ -136,6 +167,11 @@ export default [
         title: 'جميع المندوبين',
         to: { name: 'agents-list' },
         icon: { icon: 'tabler-users-group', size: '25' },
+      },
+      {
+        title: 'جباية من قبل المتابعين',
+        to: { name: 'follower-collection-lists' },
+        icon: { icon: 'tabler-cash', size: '25' },
       },
       {
         title: 'إحصائيات  مع المصفرين',

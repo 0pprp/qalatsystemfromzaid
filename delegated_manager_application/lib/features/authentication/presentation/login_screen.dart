@@ -16,7 +16,9 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _userName = TextEditingController();
+  final _userName = TextEditingController(
+    text: AppEnv.isProduction ? 'ايمن' : '',
+  );
   final _password = TextEditingController();
   bool _busy = false;
   bool _obscure = true;
@@ -82,10 +84,13 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: AppSpacing.xs),
-                    const Text(
-                      'الرسائل والشكاوى وطلبات الاستثناء',
+                    Text(
+                      AppEnv.isDemo
+                          ? 'تجريبي • النجف DEMO'
+                          : 'الرسائل والشكاوى وطلبات الاستثناء',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.muted, fontSize: 14),
+                      style: const TextStyle(
+                          color: AppColors.muted, fontSize: 14),
                     ),
                     const SizedBox(height: AppSpacing.lg),
                     TextFormField(

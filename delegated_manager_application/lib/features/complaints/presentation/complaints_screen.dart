@@ -33,6 +33,15 @@ class ComplaintsScreenState extends State<ComplaintsScreen> {
   bool _unreadOnly = false;
   String? _error;
 
+  bool get unreadOnly => _unreadOnly;
+
+  void toggleUnreadOnly() {
+    setState(() => _unreadOnly = !_unreadOnly);
+    reload();
+  }
+
+  Future<void> markAllRead() => _markAllRead();
+
   @override
   void initState() {
     super.initState();
@@ -149,26 +158,6 @@ class ComplaintsScreenState extends State<ComplaintsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('الرسائل والشكاوى'),
-        actions: [
-          IconButton(
-            tooltip: _unreadOnly ? 'عرض الكل' : 'غير المقروءة فقط',
-            onPressed: () {
-              setState(() => _unreadOnly = !_unreadOnly);
-              reload();
-            },
-            icon: Icon(_unreadOnly
-                ? Icons.filter_alt
-                : Icons.filter_alt_outlined),
-          ),
-          IconButton(
-            tooltip: 'تحديد الكل كمقروء',
-            onPressed: _markAllRead,
-            icon: const Icon(Icons.done_all),
-          ),
-        ],
-      ),
       body: SafeArea(
         child: Column(
           children: [

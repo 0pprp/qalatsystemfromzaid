@@ -26,7 +26,8 @@ class UpdateService {
   static const String appKey = AppVersion.appKey;
 
   static Future<MobileUpdateInfo?> check({int? currentVersionCode}) async {
-    final installed = currentVersionCode ?? AppVersion.code;
+    await AppVersion.ensureLoaded();
+    final installed = currentVersionCode ?? AppVersion.resolvedCode;
     final base = AppEnv.gatewayApiBase();
     final uri = Uri.parse('${base}mobile-updates/$appKey').replace(
       queryParameters: {'currentVersionCode': '$installed'},

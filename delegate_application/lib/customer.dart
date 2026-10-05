@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:delegate_application/utils/AppTheme.dart';
 
@@ -13,14 +14,26 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
+import 'package:delegate_application/services/business_day_collection_store.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'package:delegate_application/services/delegate_business_date_service.dart';
+import 'package:delegate_application/services/manual_payment_sync_result.dart';
 import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:delegate_application/services/payment_sync_status.dart';
+import 'package:delegate_application/services/phantom_customer_rating.dart';
+import 'package:delegate_application/services/receipt_week_amounts.dart';
 import 'package:delegate_application/services/payment_validation.dart';
+import 'package:delegate_application/services/today_payments_logic.dart';
+import 'package:delegate_application/services/new_sale_list_logic.dart';
+import 'package:delegate_application/services/first_collection_eval_service.dart';
 import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/ui/payment_success_feedback.dart';
+import 'package:delegate_application/ui/shop_evaluation_dialog.dart';
 import 'package:delegate_application/utils/Formatters.dart';
 import 'package:delegate_application/utils/iraq_date.dart';
+import 'package:delegate_application/utils/safe_num.dart';
+import 'package:delegate_application/utils/thousands_separator_input_formatter.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
@@ -47,10 +60,64 @@ class CustomerPageState extends State<Customer> {
   int paymentCount = 0; // عدد التسديدات
   List<Map<String, dynamic>> payments = [];
 
+  /// CustomerIds this delegate has collected for locally (queue or day ledger).
+  /// Used so «المبيعات الجديدة» moves to the list immediately after تسديد.
+  Set<int> _locallyCollectedCustomerIds = {};
+
   bool isButtonDisabled = false;
   String customerType = 'العملاء المستمرين';
   _ListsLoadState _listsState = _ListsLoadState.loading;
   bool _listsRetrying = false;
+  bool _sendingPayments = false;
+
+  /// Rebuild day counters when business day rolls @ 03:00 Baghdad
+  /// (keeps IndexedStack-alive Customer tab from showing yesterday's totals).
+  void _onBusinessDayRefresh() {
+    final id = int.tryParse(selectedRepresentative ?? '');
+    if (id == null || id <= 0) {
+      if (!mounted) return;
+      setState(() {
+        totalPayments = 0;
+        paymentCount = 0;
+        payments = [];
+      });
+      return;
+    }
+    unawaited(_refreshDayPaymentTotals(id));
+  }
+
+  Future<void> _refreshDayPaymentTotals(int delegateId) async {
+    await _calculatePayments(delegateId);
+    await _loadPayments(delegateId);
+    await _refreshLocallyCollectedIds(delegateId);
+  }
+
+  /// Any local collection by this delegate (not only today's business day).
+  Future<void> _refreshLocallyCollectedIds(int delegateId) async {
+    final db = await DatabaseHelper().database;
+    final rows = await db.query(
+      'CustomerPayment',
+      columns: ['CustomerId'],
+      where: 'DelegateId = ?',
+      whereArgs: [delegateId],
+    );
+    final ids = <int>{};
+    for (final r in rows) {
+      final cid = int.tryParse(r['CustomerId']?.toString() ?? '') ?? 0;
+      if (cid > 0) ids.add(cid);
+    }
+    final ledger = await BusinessDayCollectionStore.forBusinessDay(
+      delegateId: delegateId,
+    );
+    for (final r in ledger) {
+      final cid = int.tryParse(r['CustomerId']?.toString() ?? '') ?? 0;
+      if (cid > 0) ids.add(cid);
+    }
+    if (!mounted) return;
+    setState(() {
+      _locallyCollectedCustomerIds = ids;
+    });
+  }
 
   bool isContinuous(String? lastPaymentDate, String? dateSaleDevice) {
     bool isLastPaymentRecent = false;
@@ -82,6 +149,7 @@ class CustomerPageState extends State<Customer> {
     super.initState();
     DelegateDataRefreshService.instance.dataRevision
         .addListener(_onMasterDataRevised);
+    TodayPaymentsRefresh.tick.addListener(_onBusinessDayRefresh);
     _loadInitialData();
     _checkAndNavigate();
     _loadSettings();
@@ -89,6 +157,7 @@ class CustomerPageState extends State<Customer> {
 
   @override
   void dispose() {
+    TodayPaymentsRefresh.tick.removeListener(_onBusinessDayRefresh);
     DelegateDataRefreshService.instance.dataRevision
         .removeListener(_onMasterDataRevised);
     super.dispose();
@@ -167,6 +236,9 @@ class CustomerPageState extends State<Customer> {
         debugPrint('SelectDelegate local count=${reps.length}');
         return true;
       }());
+      // Always recompute day totals when lists reload (03:00 Baghdad reset).
+      await DelegateBusinessDateService.instance.ensureCurrentBusinessDay();
+      _onBusinessDayRefresh();
     } catch (e, st) {
       debugPrint('reloadLists failed: $e\n$st');
       if (!mounted) return;
@@ -197,63 +269,85 @@ class CustomerPageState extends State<Customer> {
     final List<Map<String, dynamic>> result = await db.query('DateWeek');
 
     if (result.isNotEmpty) {
-      // Populate the lastSevenDays list with dates from the first row of DateWeek
-      Map<String, dynamic> row = result.first;
-      lastSevenDays = [
-        row['Date1'],
-        row['Date2'],
-        row['Date3'],
-        row['Date4'],
-        row['Date5'],
-        row['Date6'],
-        row['Date7'],
-      ];
+      final row = result.first;
+      lastSevenDays = ReceiptWeekAmounts.ensureDayLabels([
+        row['Date1']?.toString(),
+        row['Date2']?.toString(),
+        row['Date3']?.toString(),
+        row['Date4']?.toString(),
+        row['Date5']?.toString(),
+        row['Date6']?.toString(),
+        row['Date7']?.toString(),
+      ]);
     } else {
-      debugPrint('No data found in DateWeek');
+      lastSevenDays = ReceiptWeekAmounts.ensureDayLabels(null);
+      debugPrint('No data found in DateWeek — using Arabic day labels');
     }
   }
 
-  Future<List<Client>> getCustomersWithoutPayments() async {
+  Future<List<Client>> getCustomersWithoutPayments({int? delegateId}) async {
     final db = await DatabaseHelper().database;
 
-    // Query to get customers who are not in the CustomerPayment table
-    final List<Map<String, dynamic>> result = await db.rawQuery('''
-    SELECT * FROM Customer 
-    WHERE CustomerId NOT IN (SELECT CustomerId FROM CustomerPayment)
-  ''');
+    // Customers with no local payment / ledger mark on the current business day,
+    // and no leftover unsynced payment from a prior day.
+    final List<Map<String, dynamic>> allCustomers = delegateId != null &&
+            delegateId > 0
+        ? await db.query(
+            'Customer',
+            where: 'DelegateId = ?',
+            whereArgs: [delegateId],
+          )
+        : await db.query('Customer');
+    final List<Map<String, dynamic>> localPayments =
+        await db.query('CustomerPayment');
+    final ledger = await BusinessDayCollectionStore.forBusinessDay(
+      delegateId: (delegateId != null && delegateId > 0) ? delegateId : null,
+    );
+    final nameById = <int, String>{};
+    for (final c in allCustomers) {
+      final cid = int.tryParse(c['CustomerId']?.toString() ?? '') ?? 0;
+      if (cid > 0) nameById[cid] = c['CustomerName']?.toString() ?? '';
+    }
+    // Paid set = local day memory (queue + ledger), not server arrival.
+    final merged = TodayPaymentsLogic.mergeLocalDayPayments(
+      localPayments: localPayments
+          .where((p) {
+            if (delegateId == null || delegateId <= 0) return true;
+            final did = int.tryParse(p['DelegateId']?.toString() ?? '') ?? 0;
+            return did == delegateId;
+          })
+          .toList(),
+      ledgerRows: ledger,
+      customerNames: nameById,
+    );
+    final paidTodayIds = <int>{};
+    for (final p in merged) {
+      final cid = int.tryParse(p['CustomerId']?.toString() ?? '') ?? 0;
+      if (cid > 0) paidTodayIds.add(cid);
+    }
+    // Unsynced leftovers (any day) still count as "has payment" / block unpaid.
+    for (final p in localPayments) {
+      final cid = int.tryParse(p['CustomerId']?.toString() ?? '') ?? 0;
+      if (cid <= 0) continue;
+      if (delegateId != null && delegateId > 0) {
+        final did = int.tryParse(p['DelegateId']?.toString() ?? '') ?? 0;
+        if (did != delegateId) continue;
+      }
+      if (PaymentSyncStatus.needsSync(p['SyncStatus']?.toString())) {
+        paidTodayIds.add(cid);
+      }
+    }
+
+    final List<Map<String, dynamic>> result = allCustomers
+        .where((c) {
+          final cid = int.tryParse(c['CustomerId']?.toString() ?? '') ?? 0;
+          return cid > 0 && !paidTodayIds.contains(cid);
+        })
+        .toList();
 
     // Map the query results to a list of Client objects
-    List<Client> customersWithoutPayments = result.map((client) {
-      return Client(
-        name: client['CustomerName'] ?? '', // تأكد من أن القيم النصية موجودة
-        phone: client['PhoneNumber']?.toString() ??
-            '', // تحويل القيم العددية إلى نصوص إذا كانت أرقامًا
-        address: client['Address'] ?? '',
-        shopName: client['ShopName'] ?? '',
-        salePrice: (client['AmountTotalSales'] as num)
-            .toDouble(), // تحويل القيمة إلى double
-        receipt: (client['ReceiptsTotal'] as num)
-            .toDouble(), // تحويل القيمة إلى double
-        dailyInstallment: (client['AmountDaySales'] as num).toDouble(),
-        remaining: (client['AmountRemaining'] as num).toDouble(),
-        itemsNames: client['ItemsNames'] ?? '',
-        amount1: (client['Amount1'] as num).toDouble(),
-        amount2: (client['Amount2'] as num).toDouble(),
-        amount3: (client['Amount3'] as num).toDouble(),
-        amount4: (client['Amount4'] as num).toDouble(),
-        amount5: (client['Amount5'] as num).toDouble(),
-        amount6: (client['Amount6'] as num).toDouble(),
-        amount7: (client['Amount7'] as num).toDouble(),
-        phoneNumberCompany: client['PhoneNumberCompany']?.toString() ??
-            '', // تحويل القيم العددية إلى نصوص
-        countReceiptDevice: client['CountReceiptDevice']?.toString() ?? '',
-        numberOfDayPayment: client['NumberOfDayPayment']?.toString() ?? '',
-        isLegal: client['IsLegal'] ?? '',
-        lastPaymentDate: client['LastPaymentDate'] ?? '',
-        dateSaleDevice: client['DateSaleDevice'] ?? '',
-        customerId: client['CustomerId'] as int,
-      );
-    }).toList();
+    List<Client> customersWithoutPayments =
+        result.map(Client.fromDbRow).toList();
 
     return customersWithoutPayments;
   }
@@ -269,64 +363,76 @@ class CustomerPageState extends State<Customer> {
       whereArgs: [delegateId],
     );
     setState(() {
-      clients = clientData
-          .map((client) => Client(
-                name: client['CustomerName'] ??
-                    '', // تأكد من أن القيم النصية موجودة
-                phone: client['PhoneNumber']?.toString() ??
-                    '', // تحويل القيم العددية إلى نصوص إذا كانت أرقامًا
-                address: client['Address'] ?? '',
-                shopName: client['ShopName'] ?? '',
-                salePrice: (client['AmountTotalSales'] as num)
-                    .toDouble(), // تحويل القيمة إلى double
-                receipt: (client['ReceiptsTotal'] as num)
-                    .toDouble(), // تحويل القيمة إلى double
-                dailyInstallment: (client['AmountDaySales'] as num).toDouble(),
-                remaining: (client['AmountRemaining'] as num).toDouble(),
-                itemsNames: client['ItemsNames'] ?? '',
-                amount1: (client['Amount1'] as num).toDouble(),
-                amount2: (client['Amount2'] as num).toDouble(),
-                amount3: (client['Amount3'] as num).toDouble(),
-                amount4: (client['Amount4'] as num).toDouble(),
-                amount5: (client['Amount5'] as num).toDouble(),
-                amount6: (client['Amount6'] as num).toDouble(),
-                amount7: (client['Amount7'] as num).toDouble(),
-                phoneNumberCompany: client['PhoneNumberCompany']?.toString() ??
-                    '', // تحويل القيم العددية إلى نصوص
-                countReceiptDevice:
-                    client['CountReceiptDevice']?.toString() ?? '',
-                numberOfDayPayment:
-                    client['NumberOfDayPayment']?.toString() ?? '',
-                isLegal: client['IsLegal'] ?? '',
-                lastPaymentDate: client['LastPaymentDate'] ?? '',
-                dateSaleDevice: client['DateSaleDevice'] ?? '',
-                customerId: client['CustomerId'] as int,
-              ))
-          .toList();
+      clients = clientData.map(Client.fromDbRow).toList();
     });
 
     // حساب مبلغ وعدد التسديدات
     await _calculatePayments(delegateId);
+    await _refreshLocallyCollectedIds(delegateId);
   }
 
-  // حساب مبلغ وعدد التسديدات
+  // حساب مبلغ وعدد التسديدات ليوم العمل الحالي فقط (ترسيت 03:00 بغداد)
   Future<void> _calculatePayments(int delegateId) async {
     final db = await DatabaseHelper().database;
-    final List<Map<String, dynamic>> payments = await db.query(
+    final List<Map<String, dynamic>> paymentRows = await db.query(
       'CustomerPayment',
       where: 'DelegateId = ?',
       whereArgs: [delegateId],
     );
-
-    double totalAmount = 0.0;
-    for (var payment in payments) {
-      totalAmount += payment['Amount'];
+    final ledger = await BusinessDayCollectionStore.forBusinessDay(
+      delegateId: delegateId,
+    );
+    final customers = await db.query(
+      'Customer',
+      columns: ['CustomerId', 'CustomerName'],
+      where: 'DelegateId = ?',
+      whereArgs: [delegateId],
+    );
+    final nameById = <int, String>{};
+    for (final c in customers) {
+      final id = int.tryParse(c['CustomerId']?.toString() ?? '') ?? 0;
+      if (id > 0) nameById[id] = c['CustomerName']?.toString() ?? '';
     }
+    final merged = TodayPaymentsLogic.mergeLocalDayPayments(
+      localPayments: paymentRows,
+      ledgerRows: ledger,
+      customerNames: nameById,
+    );
 
     setState(() {
-      totalPayments = totalAmount;
-      paymentCount = payments.length;
+      totalPayments = TodayPaymentsLogic.sumAmounts(merged);
+      paymentCount = merged.length;
     });
+  }
+
+  /// Local-day paid strip for dialog + print (queue + ledger, not server).
+  Future<List<Map<String, dynamic>>> _loadLocalDayPaidPayments(
+      int delegateId) async {
+    final db = await DatabaseHelper().database;
+    final paymentData = await db.query(
+      'CustomerPayment',
+      where: 'DelegateId = ?',
+      whereArgs: [delegateId],
+    );
+    final ledger = await BusinessDayCollectionStore.forBusinessDay(
+      delegateId: delegateId,
+    );
+    final customers = await db.query(
+      'Customer',
+      columns: ['CustomerId', 'CustomerName'],
+      where: 'DelegateId = ?',
+      whereArgs: [delegateId],
+    );
+    final nameById = <int, String>{};
+    for (final c in customers) {
+      final id = int.tryParse(c['CustomerId']?.toString() ?? '') ?? 0;
+      if (id > 0) nameById[id] = c['CustomerName']?.toString() ?? '';
+    }
+    return TodayPaymentsLogic.mergeLocalDayPayments(
+      localPayments: paymentData,
+      ledgerRows: ledger,
+      customerNames: nameById,
+    );
   }
 
   Future<String> _getCurrentLocation() async {
@@ -378,21 +484,44 @@ class CustomerPageState extends State<Customer> {
     }
   }
 
-  Future<void> _deleteDuplicatePaymentsExceptLocation() async {
-    final db = await DatabaseHelper().database;
-    await db.rawQuery('''
-    DELETE FROM CustomerPayment
-    WHERE rowid NOT IN (
-      SELECT MIN(rowid)
-      FROM CustomerPayment
-      GROUP BY
-        CustomerId,
-        CustomerName,
-        DelegateId,
-        DelegateName,
-        Amount
-    )
-  ''');
+  /// Exact ClientPaymentId duplicates only — never group-delete by Amount
+  /// (that wiped same-day installments matching a prior-day amount).
+  Future<void> _deleteDuplicateClientPaymentIds() async {
+    await DatabaseHelper().deleteDuplicateClientPaymentIds();
+  }
+
+  Future<void> _sendPendingPaymentsFromCustomers() async {
+    if (_sendingPayments) return;
+    setState(() => _sendingPayments = true);
+    try {
+      final result =
+          await PaymentSyncService.instance.sendPendingPaymentsNow();
+      if (!mounted) return;
+      final message = result.summaryMessage();
+      final successColor = result.isCompleteSuccess ||
+          (result.outcome == ManualPaymentSyncOutcome.nothingPending &&
+              result.permanentFailures == 0);
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message, style: const TextStyle(fontFamily: 'Cairo')),
+          backgroundColor:
+              successColor ? Colors.teal.shade700 : Colors.orange.shade800,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      if (result.outcome == ManualPaymentSyncOutcome.uploaded ||
+          result.outcome == ManualPaymentSyncOutcome.partial) {
+        TodayPaymentsRefresh.notify();
+        final id = int.tryParse(selectedRepresentative ?? '');
+        if (id != null && id > 0) {
+          await _refreshDayPaymentTotals(id);
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _sendingPayments = false);
+    }
   }
 
 // دالة لإضافة التسديد
@@ -410,6 +539,8 @@ class CustomerPageState extends State<Customer> {
     }
 
     final db = await DatabaseHelper().database;
+    final delegateId =
+        int.tryParse(selectedRepresentative?.toString() ?? '') ?? 0;
     final List<Map<String, dynamic>> existingPayment = await db.query(
       'CustomerPayment',
       where: 'CustomerId = ? AND DelegateId = ?',
@@ -418,16 +549,37 @@ class CustomerPageState extends State<Customer> {
 
     if (!mounted) return;
 
-    if (existingPayment.isNotEmpty) {
-      _showMessage('لا يمكن التسديد مرة أخرى لهذا العميل', context);
+    final ledgerHas = await BusinessDayCollectionStore.hasCustomerOnBusinessDay(
+      customerId: client.customerId,
+      delegateId: delegateId,
+    );
+    if (TodayPaymentsLogic.blocksNewCollection(
+      customerId: client.customerId,
+      delegateId: delegateId,
+      localPayments: existingPayment,
+      ledgerHasBusinessDay: ledgerHas,
+    )) {
+      _showMessage(
+        ledgerHas ||
+                TodayPaymentsLogic.hasPaymentOnBusinessDay(
+                  customerId: client.customerId,
+                  delegateId: delegateId,
+                  localPayments: existingPayment,
+                )
+            ? 'لا يمكن التسديد مرة أخرى لهذا العميل'
+            : 'يوجد تسديد سابق بانتظار الإرسال لهذا العميل — اضغط إرسال التسديدات أولاً',
+        context,
+      );
       return;
     }
     String? currentLocation = await _getCurrentLocation();
     final clientPaymentId = const Uuid().v4();
     final createdAtUtc = DateTime.now().toUtc().toIso8601String();
-    final receiptNumber = client.countReceiptDevice.isNotEmpty
-        ? client.countReceiptDevice
-        : clientPaymentId;
+    // Persist the SAME printed receipt identity used by PDF (never +1 later).
+    final receiptNumber =
+        ReceiptWeekAmounts.printedReceiptNumber(client.countReceiptDevice);
+    final prefs = await SharedPreferences.getInstance();
+    final ownerAsyncId = prefs.getString('AsyncId') ?? '';
 
     await db.insert('CustomerPayment', {
       'CustomerId': client.customerId,
@@ -443,14 +595,25 @@ class CustomerPageState extends State<Customer> {
       'SyncStatus': PaymentSyncStatus.pendingSync,
       'ReceiptNumber': receiptNumber,
       'PermanentFailure': 0,
+      'OwnerAsyncId': ownerAsyncId,
     });
-
+    await BusinessDayCollectionStore.record(
+      customerId: client.customerId,
+      delegateId: delegateId,
+      amount: amount,
+      clientPaymentId: clientPaymentId,
+      createdAtUtc: createdAtUtc,
+    );
     // Confirmation sound = durable local save only (never wait for server / batch).
     if (context.mounted) {
       await PaymentSuccessFeedback.playLocalSaveSuccess(context);
     }
 
-    await _calculatePayments(int.parse(selectedRepresentative!));
+    final reloadDelegateId =
+        int.tryParse(selectedRepresentative?.toString() ?? '') ?? delegateId;
+    await _loadPayments(reloadDelegateId);
+    await _calculatePayments(reloadDelegateId);
+    await _refreshLocallyCollectedIds(reloadDelegateId);
     TodayPaymentsRefresh.notify();
 
     String customerName = client.name;
@@ -465,19 +628,30 @@ class CustomerPageState extends State<Customer> {
     )['DelegateName'];
     String itemsNames = client.itemsNames;
     double amountTotalSales = client.salePrice;
-    double receiptsTotal = client.receipt;
-    double amountRemaining = client.remaining;
+    // Include today's local collection immediately in remaining/receipt totals.
+    double receiptsTotal = client.receipt + amount;
+    double amountRemaining =
+        (client.remaining - amount) < 0 ? 0 : (client.remaining - amount);
     double amountPush = amount;
     String phoneNumberCompany = client.phoneNumberCompany;
-    List<double> lastSevenAmounts = [
-      client.amount1,
-      client.amount2,
-      client.amount3,
-      client.amount4,
-      client.amount5,
-      client.amount6,
-      client.amount7
-    ];
+    final weekLabels = ReceiptWeekAmounts.ensureDayLabels(lastSevenDays);
+    List<double> lastSevenAmounts = ReceiptWeekAmounts.mergeLocalPayment(
+      serverAmounts: [
+        client.amount1,
+        client.amount2,
+        client.amount3,
+        client.amount4,
+        client.amount5,
+        client.amount6,
+        client.amount7,
+      ],
+      dayLabels: weekLabels,
+      paymentAmount: amount,
+    );
+    lastSevenAmounts = ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+      weekAmounts: lastSevenAmounts,
+      amountPush: amountPush,
+    );
 
     final report = ReportReceipt(
       customerName: customerName,
@@ -489,23 +663,29 @@ class CustomerPageState extends State<Customer> {
       amountRemaining: amountRemaining,
       amountPush: amountPush,
       phoneNumberCompany: phoneNumberCompany,
-      lastSevenDays: lastSevenDays,
+      lastSevenDays: weekLabels,
       lastSevenAmounts: lastSevenAmounts,
       countReceiptDevice: countReceiptDevice,
+      receiptNumberAlreadyPrinted: true,
     );
 
-    if (context.mounted) {
-      await report.printReceipt(context);
+    // Close payment dialog before PDF so nested routes cannot leave a black screen.
+    if (context.mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
     }
 
-    // May SKIP before 16:00 Baghdad; after gate + online uploads immediately.
-    // No sound on sync / retry / WorkManager batch.
-    await PaymentSyncService.instance.syncPendingPayments();
-    TodayPaymentsRefresh.notify();
-
-    if (mounted) {
-      await _calculatePayments(int.parse(selectedRepresentative!));
+    final receiptContext = mounted ? this.context : null;
+    if (receiptContext != null && receiptContext.mounted) {
+      await report.printReceipt(receiptContext);
     }
+
+    // Offline-first: never block the UI on sync / send-window upload.
+    unawaited(PaymentSyncService.instance.syncPendingPayments().then((_) async {
+      TodayPaymentsRefresh.notify();
+      if (!mounted) return;
+      await _loadPayments(reloadDelegateId);
+      await _calculatePayments(reloadDelegateId);
+    }));
     } finally {
       _paymentSubmitting = false;
     }
@@ -521,17 +701,83 @@ class CustomerPageState extends State<Customer> {
     );
   }
 
-  // جلب بيانات التسديدات بناءً على المندوب المختار
-  Future<void> _loadPayments(int delegateId) async {
-    final db = await DatabaseHelper().database;
-    final List<Map<String, dynamic>> paymentData = await db.query(
-      'CustomerPayment',
-      where: 'DelegateId = ?',
-      whereArgs: [delegateId],
+  Widget _buildCustomerSectionHeader({
+    required String title,
+    required String subtitle,
+    required int count,
+    required Color accent,
+  }) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10, top: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 40,
+            decoration: BoxDecoration(
+              color: accent,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: accent,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 11,
+                    color: Colors.grey[700],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: accent,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              '$count',
+              style: const TextStyle(
+                fontFamily: 'Cairo',
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
+  }
 
+  // جلب بيانات التسديدات ليوم العمل الحالي من الذاكرة المحلية (طابور + دفتر يوم العمل)
+  Future<void> _loadPayments(int delegateId) async {
+    final merged = await _loadLocalDayPaidPayments(delegateId);
     setState(() {
-      payments = paymentData;
+      payments = merged;
     });
   }
 
@@ -657,8 +903,19 @@ class CustomerPageState extends State<Customer> {
                                 Expanded(
                                   child: ElevatedButton.icon(
                                     onPressed: () async {
-                                      List<Map<String, dynamic>>
-                                          filteredPayments = payments;
+                                      final delegateId = int.tryParse(
+                                              selectedRepresentative ?? '') ??
+                                          0;
+                                      if (delegateId <= 0) return;
+                                      // Always rebuild from local memory (queue +
+                                      // ledger) so print matches after sync wipe.
+                                      final filteredPayments =
+                                          await _loadLocalDayPaidPayments(
+                                              delegateId);
+                                      if (!mounted) return;
+                                      setState(() {
+                                        payments = filteredPayments;
+                                      });
 
                                       final report = CustomerReceiptReport(
                                           delegateName:
@@ -684,8 +941,7 @@ class CustomerPageState extends State<Customer> {
                                                   0.0,
                                                   (sum, item) =>
                                                       sum +
-                                                      (item['Amount']
-                                                              as num) // Log error
+                                                      (item['Amount'] as num)
                                                           .toDouble()),
                                           receiptData: filteredPayments);
                                       if (context.mounted) {
@@ -712,9 +968,15 @@ class CustomerPageState extends State<Customer> {
                                 Expanded(
                                   child: ElevatedButton.icon(
                                     onPressed: () async {
+                                      final delegateId = int.tryParse(
+                                              selectedRepresentative ?? '') ??
+                                          0;
+                                      if (delegateId <= 0) return;
                                       final List<Client>
                                           customersWithoutPayments =
-                                          await getCustomersWithoutPayments();
+                                          await getCustomersWithoutPayments(
+                                        delegateId: delegateId,
+                                      );
 
                                       final List<Client> filteredUnpaid =
                                           customersWithoutPayments
@@ -856,7 +1118,7 @@ class CustomerPageState extends State<Customer> {
                         color: Theme.of(context).hintColor),
                   ),
                   Text(
-                    '${Formatters.formatNumber(roundToNearestThousand(double.parse(payment['Amount'].toString())))} :دع ',
+                    '${ReceiptWeekAmounts.formatExactIqd(double.tryParse(payment['Amount'].toString()) ?? 0)} :دع ',
                     style: const TextStyle(
                         color: AppTheme.primaryColor,
                         fontFamily: 'Cairo',
@@ -922,24 +1184,22 @@ class CustomerPageState extends State<Customer> {
                     amountPush = 0.0;
                   }
 
-                  List<String> lastSevenDays = [
-                    "اليوم",
-                    "أمس",
-                    "قبل يومين",
-                    "قبل 3 أيام",
-                    "قبل 4 أيام",
-                    "قبل 5 أيام",
-                    "قبل 6 أيام"
-                  ];
-                  List<double> lastSevenAmounts = [
-                    client.amount1,
-                    client.amount2,
-                    client.amount3,
-                    client.amount4,
-                    client.amount5,
-                    client.amount6,
-                    client.amount7
-                  ];
+                  final weekLabels = ReceiptWeekAmounts.ensureDayLabels(null);
+                  // Reprint: do not blindly add amountPush (may already be in Amount1).
+                  // Only lift today's slot when snapshot still shows 0.
+                  final lastSevenAmounts =
+                      ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+                    weekAmounts: [
+                      client.amount1,
+                      client.amount2,
+                      client.amount3,
+                      client.amount4,
+                      client.amount5,
+                      client.amount6,
+                      client.amount7,
+                    ],
+                    amountPush: amountPush,
+                  );
 
                   final report = ReportReceipt(
                     customerName: client.name,
@@ -951,7 +1211,7 @@ class CustomerPageState extends State<Customer> {
                     amountRemaining: amountRemaining,
                     amountPush: amountPush,
                     phoneNumberCompany: phoneNumberCompany,
-                    lastSevenDays: lastSevenDays,
+                    lastSevenDays: weekLabels,
                     lastSevenAmounts: lastSevenAmounts,
                     countReceiptDevice: client.countReceiptDevice,
                   );
@@ -972,12 +1232,7 @@ class CustomerPageState extends State<Customer> {
   }
 
   Future<void> fetchPayments(int delegateId) async {
-    final db = await DatabaseHelper().database;
-    payments = await db.query(
-      'CustomerPayment',
-      where: 'DelegateId = ?',
-      whereArgs: [delegateId],
-    );
+    payments = await _loadLocalDayPaidPayments(delegateId);
     setState(() {});
   }
 
@@ -985,22 +1240,36 @@ class CustomerPageState extends State<Customer> {
     return (value / 1000).round() * 1000;
   }
 
-  // إظهار الـDialog
-  void _showPaymentDialog(Client client, BuildContext context) {
-    TextEditingController amountController =
-        TextEditingController(text: client.dailyInstallment.toInt().toString());
-    // isDarkMode removed as it was unused
+  // إظهار الـDialog — للمبيعات الجديدة: تقييم المحل أولاً ثم مبلغ التسديد
+  Future<void> _showPaymentDialog(Client client, BuildContext context) async {
+    ShopEvaluationResult? pendingShopEval;
+    final needsShopEval = NewSaleListLogic.isNewSaleAwaitingFirstCollection(
+      client,
+      locallyCollectedCustomerIds: _locallyCollectedCustomerIds,
+    );
+    if (needsShopEval) {
+      pendingShopEval = await showShopEvaluationDialog(context);
+      if (pendingShopEval == null || !mounted) return;
+    }
 
-    showDialog(
+    final amountController =
+        TextEditingController(text: client.dailyInstallment.toInt().toString());
+
+    if (!mounted) return;
+    await showDialog(
       context: context,
-      builder: (context) {
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        var dialogSubmitting = false;
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
         return Directionality(
           textDirection: TextDirection.rtl,
           child: Dialog(
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            backgroundColor: Theme.of(context).dialogTheme.backgroundColor ??
-                Theme.of(context).cardColor,
+            backgroundColor: Theme.of(dialogContext).dialogTheme.backgroundColor ??
+                Theme.of(dialogContext).cardColor,
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
@@ -1014,7 +1283,7 @@ class CustomerPageState extends State<Customer> {
                       fontFamily: 'Cairo',
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
-                      color: Theme.of(context).textTheme.bodyLarge?.color,
+                      color: Theme.of(dialogContext).textTheme.bodyLarge?.color,
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -1023,17 +1292,19 @@ class CustomerPageState extends State<Customer> {
                     style: TextStyle(
                       fontFamily: 'Cairo',
                       fontSize: 14,
-                      color: Theme.of(context).hintColor,
+                      color: Theme.of(dialogContext).hintColor,
                     ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: amountController,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [ThousandsSeparatorInputFormatter()],
+                    enabled: !dialogSubmitting,
                     style: const TextStyle(fontFamily: 'Cairo'),
                     decoration: InputDecoration(
                       filled: true,
-                      fillColor: Theme.of(context).cardColor,
+                      fillColor: Theme.of(dialogContext).cardColor,
                       hintText: 'المبلغ',
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -1043,28 +1314,77 @@ class CustomerPageState extends State<Customer> {
                           color: AppTheme.primaryColor),
                     ),
                   ),
+                  if (dialogSubmitting) ...[
+                    const SizedBox(height: 16),
+                    const LinearProgressIndicator(),
+                    const SizedBox(height: 8),
+                    Text(
+                      pendingShopEval != null
+                          ? 'جاري حفظ التقييم والتسديد...'
+                          : 'جاري حفظ التسديد...',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 13,
+                        color: Theme.of(dialogContext).hintColor,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 25),
                   Row(
                     children: [
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: _paymentSubmitting
+                          onPressed: (_paymentSubmitting || dialogSubmitting)
                               ? null
                               : () async {
-                            double amount =
-                                double.tryParse(amountController.text) ?? 0.0;
+                            final amount =
+                                ThousandsSeparatorInputFormatter.parseMoney(
+                                      amountController.text,
+                                    ) ??
+                                    0.0;
                             final err = PaymentValidation.validateAmount(amount);
                             if (err != null) {
-                              _showMessage(err, context);
+                              _showMessage(err, dialogContext);
                               return;
                             }
-                            await _addPayment(client, amount, context);
-                            if (mounted) Navigator.pop(context);
+                            setDialogState(() => dialogSubmitting = true);
+                            try {
+                            if (pendingShopEval != null) {
+                              final listId = int.tryParse(
+                                      selectedRepresentative?.toString() ??
+                                          '') ??
+                                  0;
+                              final evalErr =
+                                  await FirstCollectionEvalService.submit(
+                                customerId: client.customerId,
+                                listId: listId,
+                                eval: pendingShopEval!,
+                                saleAmount: client.salePrice,
+                              );
+                              if (evalErr != null) {
+                                if (dialogContext.mounted) {
+                                  _showMessage(evalErr, dialogContext);
+                                  setDialogState(
+                                      () => dialogSubmitting = false);
+                                }
+                                return;
+                              }
+                            }
+                            // _addPayment pops this dialog after local save.
+                            await _addPayment(client, amount, dialogContext);
+                            } catch (_) {
+                              if (dialogContext.mounted) {
+                                setDialogState(() => dialogSubmitting = false);
+                              }
+                              rethrow;
+                            }
                           },
                           icon: const Icon(Icons.check_circle_outline,
                               color: Colors.white),
-                          label: const Text('تسديد',
-                              style: TextStyle(
+                          label: Text(
+                              dialogSubmitting ? 'جاري...' : 'تسديد',
+                              style: const TextStyle(
                                   fontFamily: 'Cairo', color: Colors.white)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppTheme.primaryColor,
@@ -1077,19 +1397,24 @@ class CustomerPageState extends State<Customer> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(context);
+                          onPressed: dialogSubmitting
+                              ? null
+                              : () {
+                            Navigator.pop(dialogContext);
                           },
                           icon: Icon(Icons.cancel_outlined,
-                              color: Theme.of(context).colorScheme.error),
+                              color: Theme.of(dialogContext).colorScheme.error),
                           label: Text('إلغاء',
                               style: TextStyle(
                                   fontFamily: 'Cairo',
-                                  color: Theme.of(context).colorScheme.error)),
+                                  color: Theme.of(dialogContext)
+                                      .colorScheme
+                                      .error)),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 12),
                             side: BorderSide(
-                                color: Theme.of(context).colorScheme.error),
+                                color:
+                                    Theme.of(dialogContext).colorScheme.error),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10)),
                           ),
@@ -1102,8 +1427,11 @@ class CustomerPageState extends State<Customer> {
             ),
           ),
         );
+          },
+        );
       },
     );
+    amountController.dispose();
   }
 
   Widget _buildListsMessage({
@@ -1221,9 +1549,10 @@ class CustomerPageState extends State<Customer> {
                         child: Align(
                           alignment: Alignment.centerRight,
                           child: Text(
-                            rep['DelegateName'],
+                            rep['DelegateName']?.toString() ?? '',
                             textAlign: TextAlign.right,
                             style: const TextStyle(fontFamily: 'Cairo'),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       );
@@ -1305,39 +1634,101 @@ class CustomerPageState extends State<Customer> {
               ),
             ),
             Expanded(
-              child: ListView(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-                children: clients
-                    .where((client) {
-                      bool matchesSearch = client.name.contains(searchQuery) ||
-                          searchQuery.isEmpty;
+              child: Builder(builder: (context) {
+                if (selectedRepresentative == null) {
+                  return const Center(
+                    child: Text(
+                      'اختر قائمة أولاً',
+                      style: TextStyle(fontFamily: 'Cairo'),
+                    ),
+                  );
+                }
+                final filtered = clients.where((client) {
+                  bool matchesSearch = client.name.contains(searchQuery) ||
+                      searchQuery.isEmpty;
 
-                      bool isLegal =
-                          client.isLegal == "1" || client.isLegal == "true";
+                  bool isLegal =
+                      client.isLegal == "1" || client.isLegal == "true";
 
-                      bool matchesType = false;
-                      if (customerType == 'عملاء القانونية') {
-                        matchesType = isLegal;
-                      } else if (customerType == 'العملاء المستمرين') {
-                        matchesType = isContinuous(client.lastPaymentDate,
-                                client.dateSaleDevice) &&
-                            !isLegal;
-                      } else {
-                        // العملاء المتوقفين
-                        matchesType = !isContinuous(client.lastPaymentDate,
-                                client.dateSaleDevice) &&
-                            !isLegal;
-                      }
-                      return matchesSearch && matchesType;
-                    })
-                    .map((client) => ClientCard(
+                  bool matchesType = false;
+                  if (customerType == 'عملاء القانونية') {
+                    matchesType = isLegal;
+                  } else if (customerType == 'العملاء المستمرين') {
+                    matchesType = isContinuous(client.lastPaymentDate,
+                            client.dateSaleDevice) &&
+                        !isLegal;
+                  } else {
+                    matchesType = !isContinuous(client.lastPaymentDate,
+                            client.dateSaleDevice) &&
+                        !isLegal;
+                  }
+                  return matchesSearch && matchesType;
+                }).toList();
+
+                final newSales = NewSaleListLogic.newSales(
+                  filtered,
+                  locallyCollectedCustomerIds: _locallyCollectedCustomerIds,
+                );
+                final listNames = NewSaleListLogic.listNames(
+                  filtered,
+                  locallyCollectedCustomerIds: _locallyCollectedCustomerIds,
+                );
+                final delegateId = int.parse(selectedRepresentative!);
+
+                return ListView(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+                  children: [
+                    if (newSales.isNotEmpty) ...[
+                      _buildCustomerSectionHeader(
+                        title: 'المبيعات الجديدة',
+                        subtitle: 'أسماء أُضيفت لقائمتك وما زالت بانتظار أول تسديد',
+                        count: newSales.length,
+                        accent: const Color(0xFFC45C26),
+                      ),
+                      ...newSales.map(
+                        (client) => ClientCard(
                           client: client,
-                          delegateId: int.parse(selectedRepresentative!),
-                          onPayment: () => _showPaymentDialog(client, context),
-                        ))
-                    .toList(),
-              ),
+                          delegateId: delegateId,
+                          onPayment: () =>
+                              _showPaymentDialog(client, context),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    _buildCustomerSectionHeader(
+                      title: 'الأسماء التي في القائمة',
+                      subtitle: 'روتين الأقساط اليومي',
+                      count: listNames.length,
+                      accent: AppTheme.primaryColor,
+                    ),
+                    if (listNames.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 24),
+                        child: Center(
+                          child: Text(
+                            newSales.isEmpty
+                                ? 'لا يوجد عملاء في هذه القائمة'
+                                : 'لا أسماء أخرى في القائمة حالياً',
+                            style: TextStyle(
+                              fontFamily: 'Cairo',
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      ...listNames.map(
+                        (client) => ClientCard(
+                          client: client,
+                          delegateId: delegateId,
+                          onPayment: () =>
+                              _showPaymentDialog(client, context),
+                        ),
+                      ),
+                  ],
+                );
+              }),
             ),
             Container(
               padding: const EdgeInsets.all(20),
@@ -1362,7 +1753,7 @@ class CustomerPageState extends State<Customer> {
                         child: ElevatedButton.icon(
                           onPressed: () async {
                             if (selectedRepresentative != null) {
-                              await _deleteDuplicatePaymentsExceptLocation();
+                              await _deleteDuplicateClientPaymentIds();
                               if (!mounted) return;
                               searchQueryReceipt = '';
                               _loadPayments(int.parse(selectedRepresentative!));
@@ -1381,6 +1772,41 @@ class CustomerPageState extends State<Customer> {
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed:
+                          _sendingPayments ? null : _sendPendingPaymentsFromCustomers,
+                      icon: _sendingPayments
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.cloud_upload_rounded,
+                              color: Colors.white),
+                      label: Text(
+                        _sendingPayments
+                            ? 'جاري إرسال التسديدات...'
+                            : 'إرسال التسديدات',
+                        style: const TextStyle(
+                          fontFamily: 'Cairo',
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.teal.shade700,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 15),
                   Container(
@@ -1456,9 +1882,6 @@ class ClientCard extends StatelessWidget {
       required this.onPayment,
       required this.delegateId});
 
-  // ... (keeping other methods like _fetchCustomerData same if possible, but I can't skip lines easily with replace_file_content unless I target specific blocks)
-  // I will target the class start and constructor first.
-
   // جلب بيانات العميل من API
   Future<Map<String, dynamic>> _fetchCustomerData(int customerId) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -1500,6 +1923,14 @@ class ClientCard extends StatelessWidget {
       } catch (_) {}
 
       if (!context.mounted) return;
+
+      final amountTotalSales =
+          SafeNum.toDouble(customerData['amountTotalSales']);
+      final costTotalSales = SafeNum.toDouble(customerData['costTotalSales']);
+      final amountDaySales = SafeNum.toDouble(customerData['amountDaySales']);
+      final receiptsTotal = SafeNum.toDouble(customerData['receiptsTotal']);
+      final amountRemaining =
+          SafeNum.toDouble(customerData['amountRemaining']);
 
       showDialog(
         context: context,
@@ -1598,6 +2029,9 @@ class ClientCard extends StatelessWidget {
                   Theme.of(context).cardColor,
               child: Container(
                 width: double.maxFinite,
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+                ),
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1611,7 +2045,7 @@ class ClientCard extends StatelessWidget {
                                 Theme.of(context).textTheme.bodyLarge?.color)),
                     const SizedBox(height: 15),
                     const Divider(),
-                    Expanded(
+                    Flexible(
                       child: SingleChildScrollView(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.center,
@@ -1652,38 +2086,31 @@ class ClientCard extends StatelessWidget {
                             _buildInfoRow(
                                 Icons.attach_money,
                                 'سعر البيع:',
-                                Formatters.formatNumber(double.parse(
-                                    customerData['amountTotalSales']
-                                        .toString())),
+                                Formatters.formatNumber(amountTotalSales),
                                 context,
                                 isPrice: true),
                             _buildInfoRow(
                                 Icons.monetization_on,
                                 'سعر الشراء:',
-                                Formatters.formatNumber(double.parse(
-                                    customerData['costTotalSales'].toString())),
+                                Formatters.formatNumber(costTotalSales),
                                 context,
                                 isPrice: true),
                             _buildInfoRow(
                                 Icons.credit_card,
                                 'القسط اليومي:',
-                                Formatters.formatNumber(double.parse(
-                                    customerData['amountDaySales'].toString())),
+                                Formatters.formatNumber(amountDaySales),
                                 context,
                                 isPrice: true),
                             _buildInfoRow(
                                 Icons.receipt,
                                 'المبلغ الواصل:',
-                                Formatters.formatNumber(double.parse(
-                                    customerData['receiptsTotal'].toString())),
+                                Formatters.formatNumber(receiptsTotal),
                                 context,
                                 isPrice: true),
                             _buildInfoRow(
                                 Icons.attach_money,
                                 'المبلغ المتبقي:',
-                                Formatters.formatNumber(double.parse(
-                                    customerData['amountRemaining']
-                                        .toString())),
+                                Formatters.formatNumber(amountRemaining),
                                 context,
                                 isPrice: true),
                             _buildInfoRow(
@@ -2105,6 +2532,25 @@ class ClientCard extends StatelessWidget {
                                 fontWeight: FontWeight.bold,
                                 fontSize: 13,
                                 fontFamily: 'Cairo')),
+                      Builder(builder: (_) {
+                        final score =
+                            PhantomCustomerRating.scoreForClient(client);
+                        if (score == null) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            PhantomCustomerRating.formatScore(score),
+                            style: const TextStyle(
+                              color: Color(0xFFE6A800),
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                              fontFamily: 'Cairo',
+                            ),
+                          ),
+                        );
+                      }),
                     ],
                   ),
                 ),
@@ -2342,24 +2788,19 @@ class _PaymentsListState extends State<PaymentsList> {
           amountPush = 0.0;
         }
 
-        List<String> lastSevenDays = [
-          "اليوم",
-          "أمس",
-          "قبل يومين",
-          "قبل 3 أيام",
-          "قبل 4 أيام",
-          "قبل 5 أيام",
-          "قبل 6 أيام"
-        ];
-        List<double> lastSevenAmounts = [
-          client.amount1,
-          client.amount2,
-          client.amount3,
-          client.amount4,
-          client.amount5,
-          client.amount6,
-          client.amount7
-        ];
+        final weekLabels = ReceiptWeekAmounts.ensureDayLabels(null);
+        final lastSevenAmounts = ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+          weekAmounts: [
+            client.amount1,
+            client.amount2,
+            client.amount3,
+            client.amount4,
+            client.amount5,
+            client.amount6,
+            client.amount7,
+          ],
+          amountPush: amountPush,
+        );
 
         final report = ReportReceipt(
           customerName: client.name,
@@ -2371,7 +2812,7 @@ class _PaymentsListState extends State<PaymentsList> {
           amountRemaining: amountRemaining,
           amountPush: amountPush,
           phoneNumberCompany: phoneNumberCompany,
-          lastSevenDays: lastSevenDays,
+          lastSevenDays: weekLabels,
           lastSevenAmounts: lastSevenAmounts,
           countReceiptDevice: client.countReceiptDevice,
         );

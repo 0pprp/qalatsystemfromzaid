@@ -33,7 +33,7 @@ namespace BE_Company.Sales.Authorization
             AuthorizationHandlerContext context,
             SalesRoleRequirement requirement)
         {
-            var userType = context.User.FindFirst("UserType")?.Value;
+            var userType = context.User.FindFirst("UserType")?.Value?.Trim();
             var mapped = SalesRoles.ToModuleRole(userType);
             if (mapped != null && requirement.ModuleRoles.Contains(mapped, StringComparer.Ordinal))
             {

@@ -9,7 +9,9 @@ import 'package:delegated_manager_application/core/update/update_service.dart';
 import 'package:delegated_manager_application/core/widgets/state_views.dart';
 import 'package:delegated_manager_application/features/authentication/data/auth_repository.dart';
 import 'package:delegated_manager_application/features/authentication/presentation/login_screen.dart';
+import 'package:delegated_manager_application/services/tutorial_video_service.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -76,6 +78,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  Future<void> _openTutorialVideo() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    Uri? uri;
+    try {
+      uri = await TutorialVideoService.resolveLaunchUri();
+    } finally {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    }
+    if (!mounted) return;
+    if (uri == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'لم يُحدَّد رابط الفيديو بعد. عدّله من لوحة مدير المبيعات.',
+          ),
+        ),
+      );
+      return;
+    }
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر فتح الفيديو التعليمي')),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر فتح الفيديو التعليمي')),
+      );
+    }
+  }
+
   Future<void> _logout() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -108,7 +148,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final update = _update;
     return Scaffold(
-      appBar: AppBar(title: const Text('الإعدادات')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.md),
@@ -202,6 +241,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
             const SizedBox(height: AppSpacing.md),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFFFC107),
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(48),
+              ),
+              onPressed: _openTutorialVideo,
+              icon: const Icon(Icons.play_circle_filled_rounded),
+              label: const Text('مشاهدة الفيديو التعليمي'),
+            ),
+            const SizedBox(height: AppSpacing.sm),
             OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.rejected,

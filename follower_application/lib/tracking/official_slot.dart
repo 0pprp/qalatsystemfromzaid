@@ -1,8 +1,7 @@
-/// Official follower route pins: deterministic slots from shift start.
-/// First due = shiftStart + 10 minutes; then +20, +30, … (no point at start).
+/// Official follower route pins: shift start + shift end only (no 10-minute mid-shift slots).
 class OfficialSlot {
   static const iraqOffset = Duration(hours: 3);
-  static const length = Duration(minutes: 10);
+  static const matchTolerance = Duration(seconds: 5);
 
   static DateTime floorUtc(DateTime utc) {
     final iraq = utc.toUtc().add(iraqOffset);
@@ -11,31 +10,41 @@ class OfficialSlot {
       iraq.month,
       iraq.day,
       iraq.hour,
-      (iraq.minute ~/ 10) * 10,
+      iraq.minute,
+      iraq.second,
     );
     return slottedIraq.subtract(iraqOffset);
   }
 
-  static int slotIndex(DateTime shiftStartUtc, DateTime slotUtc) {
-    final start = shiftStartUtc.toUtc();
-    final slot = slotUtc.toUtc();
-    final index = slot.difference(start).inMilliseconds ~/ length.inMilliseconds;
-    return index <= 0 ? 1 : index;
+  static bool isStartSlot(DateTime shiftStartUtc, DateTime officialSlotUtc) {
+    final delta = officialSlotUtc.toUtc().difference(shiftStartUtc.toUtc()).abs();
+    return delta <= matchTolerance;
   }
 
-  static bool isExactOfficialSlot(DateTime shiftStartUtc, DateTime officialSlotUtc) {
-    final start = shiftStartUtc.toUtc();
-    final slot = officialSlotUtc.toUtc();
-    final delta = slot.difference(start);
-    if (delta < length) return false;
-    return delta.inMilliseconds % length.inMilliseconds == 0;
+  static bool isEndSlot(DateTime closedAtUtc, DateTime officialSlotUtc) {
+    final delta = officialSlotUtc.toUtc().difference(closedAtUtc.toUtc()).abs();
+    return delta <= matchTolerance;
+  }
+
+  static int slotIndex(DateTime shiftStartUtc, DateTime slotUtc) =>
+      isStartSlot(shiftStartUtc, slotUtc) ? 1 : 2;
+
+  static bool isExactOfficialSlot(
+    DateTime shiftStartUtc,
+    DateTime officialSlotUtc, {
+    DateTime? closedAtUtc,
+  }) {
+    if (isStartSlot(shiftStartUtc, officialSlotUtc)) return true;
+    if (closedAtUtc != null && isEndSlot(closedAtUtc, officialSlotUtc)) return true;
+    return false;
   }
 
   static int sequence(DateTime capturedUtc) {
-    final seq = capturedUtc.toUtc().millisecondsSinceEpoch ~/ length.inMilliseconds;
+    final seq = capturedUtc.toUtc().millisecondsSinceEpoch ~/ 60000;
     return seq <= 0 ? 1 : seq;
   }
 
+  /// While active: only the start pin once. End pin is posted on shift close.
   static List<DateTime> dueSlots({
     required DateTime shiftStartUtc,
     DateTime? lastOfficialSlotUtc,
@@ -45,21 +54,12 @@ class OfficialSlot {
     final start = shiftStartUtc.toUtc();
     final now = nowUtc.toUtc();
     final cutoff = cutoffUtc.toUtc();
+    if (!start.isBefore(cutoff) || now.isBefore(start)) return const [];
     final last = lastOfficialSlotUtc?.toUtc();
-
-    final slots = <DateTime>[];
-    var index = 1;
-    while (true) {
-      final due = start.add(Duration(minutes: 10 * index));
-      if (!due.isBefore(cutoff)) break;
-      if (due.isAfter(now)) break;
-      if (last == null || due.isAfter(last)) {
-        slots.add(due);
-      }
-      index += 1;
-      if (index > 2000) break;
+    if (last != null && (isStartSlot(start, last) || !last.isBefore(start))) {
+      return const [];
     }
-    return slots;
+    return [start];
   }
 
   static DateTime? nextDueUtc({
@@ -67,16 +67,12 @@ class OfficialSlot {
     DateTime? lastOfficialSlotUtc,
     required DateTime cutoffUtc,
   }) {
-    final start = shiftStartUtc.toUtc();
-    final cutoff = cutoffUtc.toUtc();
-    final last = lastOfficialSlotUtc?.toUtc();
-    var index = 1;
-    while (true) {
-      final due = start.add(Duration(minutes: 10 * index));
-      if (!due.isBefore(cutoff)) return null;
-      if (last == null || due.isAfter(last)) return due;
-      index += 1;
-      if (index > 2000) return null;
-    }
+    final due = dueSlots(
+      shiftStartUtc: shiftStartUtc,
+      lastOfficialSlotUtc: lastOfficialSlotUtc,
+      nowUtc: DateTime.now().toUtc().add(const Duration(days: 3650)),
+      cutoffUtc: cutoffUtc,
+    );
+    return due.isEmpty ? null : due.first;
   }
 }

@@ -2,7 +2,7 @@ name: delegated_manager_application
 description: تطبيق المدير المفوض — الرسائل والشكاوى وطلبات الاستثناء.
 
 publish_to: "none"
-version: 1.0.2+3
+version: 1.0.15+19
 
 environment:
   sdk: ^3.5.0
@@ -16,6 +16,9 @@ dependencies:
   open_filex: ^4.7.0
   crypto: ^3.0.6
   package_info_plus: ^10.2.1
+  url_launcher: ^6.3.1
+  flutter_map: ^8.2.1
+  latlong2: ^0.9.1
 
 dev_dependencies:
   flutter_test:

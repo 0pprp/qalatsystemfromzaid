@@ -63,6 +63,8 @@ namespace BE_DelegateWebApplication.DTO
         public string Status { get; set; } = "New";
         public DateTime CreatedAtUtc { get; set; }
         public int? ExistingCustomerId { get; set; }
+        public bool IsWrongSale { get; set; }
+        public int? ShopRating { get; set; }
     }
 
     /// <summary>Same payload shape as follower; SaleRequestType required for delegates (New|Old).</summary>
@@ -80,6 +82,12 @@ namespace BE_DelegateWebApplication.DTO
         public string? Notes { get; set; }
         /// <summary>Required: New (Home) or Old (customer card).</summary>
         public string? SaleRequestType { get; set; }
+
+        /// <summary>Store evaluation — required for New sales.</summary>
+        public int? ShopRating { get; set; }
+        public string? ShopRatingNote { get; set; }
+        public decimal? ShopStockEstimatedValue { get; set; }
+        public decimal? EstimatedDailyRevenue { get; set; }
     }
 
     public static class SaleRequestTypes
@@ -114,6 +122,8 @@ namespace BE_DelegateWebApplication.DTO
         public string? CustomerImage { get; set; }
         public string? CustomerImageUrl { get; set; }
         public string? DelegateName { get; set; }
+        /// <summary>اسم البائع المرتبط بالزبون (Customers.SaleName).</summary>
+        public string? SaleName { get; set; }
         public int? ListDelegateId { get; set; }
         public double? CostTotalSales { get; set; }
         public double? AmountTotalSales { get; set; }
@@ -127,6 +137,71 @@ namespace BE_DelegateWebApplication.DTO
         public string? CustomerSystemNotes { get; set; }
         public List<FollowerCustomerNoteDTO> Notes { get; set; } = [];
         public List<FollowerProfileImageDTO> Images { get; set; } = [];
+        /// <summary>كل تسديدات الزبون (الأحدث أولاً).</summary>
+        public List<FollowerCustomerPaymentDTO> Payments { get; set; } = [];
+        /// <summary>بيانات مصادقة المتابع على المبيع (إن وُجدت).</summary>
+        public FollowerAuthBlockDTO? FollowerAuth { get; set; }
+        /// <summary>تقييم المندوب عند أول تسديد (المبيعات الجديدة).</summary>
+        public DelegateShopEvalBlockDTO? DelegateShopEval { get; set; }
+    }
+
+    public sealed class FollowerCustomerPaymentDTO
+    {
+        public int? CustomerPaymentId { get; set; }
+        public DateTime? PaymentDate { get; set; }
+        public double? Amount { get; set; }
+        public int? BoundNumber { get; set; }
+        public string? Note { get; set; }
+    }
+
+    public sealed class FollowerAuthBlockDTO
+    {
+        public int Rating { get; set; }
+        public string? Note { get; set; }
+        public string? FollowerName { get; set; }
+        public int FollowerUserId { get; set; }
+        public decimal ShopStockEstimatedValue { get; set; }
+        public decimal EstimatedDailyRevenue { get; set; }
+        public DateTime AuthenticatedAtUtc { get; set; }
+    }
+
+    /// <summary>تقييم المندوب عند أول تسديد للمبيعات الجديدة.</summary>
+    public sealed class DelegateShopEvalBlockDTO
+    {
+        public int Rating { get; set; }
+        public string? Note { get; set; }
+        public string? DelegateName { get; set; }
+        public int DelegateId { get; set; }
+        public decimal ShopStockEstimatedValue { get; set; }
+        public decimal EstimatedDailyRevenue { get; set; }
+        public decimal? SaleAmount { get; set; }
+        public DateTime CreatedAtUtc { get; set; }
+    }
+
+    public sealed class DelegateFirstCollectionEvalCreateDTO
+    {
+        public string? AsyncId { get; set; }
+        public int CustomerId { get; set; }
+        public int ListId { get; set; }
+        public int Rating { get; set; }
+        public string? Note { get; set; }
+        public decimal ShopStockEstimatedValue { get; set; }
+        public decimal EstimatedDailyRevenue { get; set; }
+        public decimal? SaleAmount { get; set; }
+    }
+
+    public sealed class DelegateFirstCollectionEvalResultDTO
+    {
+        public int Id { get; set; }
+        public int CustomerId { get; set; }
+        public int Rating { get; set; }
+        public string? Note { get; set; }
+        public decimal ShopStockEstimatedValue { get; set; }
+        public decimal EstimatedDailyRevenue { get; set; }
+        public decimal? SaleAmount { get; set; }
+        public bool IsWrongSale { get; set; }
+        public bool Created { get; set; }
+        public DateTime CreatedAtUtc { get; set; }
     }
 
     public sealed class FollowerProfileImageDTO

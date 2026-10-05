@@ -23,16 +23,13 @@ public sealed class RatingService : IRatingService
 
         var facts = await _dataSource.GetFactsByCustomerIdsAsync(ids, ct);
         var asOf = AsOfDate;
-        return facts.Select(f =>
+        var rated = CustomerRatingCalculator.EvaluateMany(facts, asOf);
+        return rated.Select(r => new CustomerRatingSummaryDto
         {
-            var r = CustomerRatingCalculator.Evaluate(f, asOf);
-            return new CustomerRatingSummaryDto
-            {
-                CustomerId = r.CustomerId,
-                Rating = r.RatingLabel,
-                Score = r.Score,
-                ReasonShort = Truncate(r.Reason, 80)
-            };
+            CustomerId = r.CustomerId,
+            Rating = r.RatingLabel,
+            Score = r.Score,
+            ReasonShort = Truncate(r.Reason, 80)
         }).ToList();
     }
 
@@ -52,7 +49,8 @@ public sealed class RatingService : IRatingService
             IsSettled = r.IsSettled,
             DaysToSettle = r.DaysToSettle,
             DaysSinceSale = r.DaysSinceSale,
-            PaymentRate = r.PaymentRate
+            PaymentRate = r.PaymentRate,
+            RatingEquationFactor = CustomerRatingCalculator.NormalizeEquationFactor(fact.RatingEquationFactor),
         };
     }
 
@@ -62,9 +60,10 @@ public sealed class RatingService : IRatingService
         var ids = listIds.Where(id => id > 0).Distinct().ToList();
         if (ids.Count == 0) return [];
 
-        var facts = await _dataSource.GetFactsByListIdsAsync(ids, ct);
+        var facts = ListFollowerRatingCohort.OpenBalanceOnly(
+            await _dataSource.GetFactsByListIdsAsync(ids, ct));
         var asOf = AsOfDate;
-        var rated = facts.Select(f => CustomerRatingCalculator.Evaluate(f, asOf)).ToList();
+        var rated = CustomerRatingCalculator.EvaluateMany(facts, asOf);
 
         return ids.Select(listId =>
         {
@@ -89,9 +88,10 @@ public sealed class RatingService : IRatingService
     public async Task<ListRatingDetailDto?> GetListDetailAsync(int listId, CancellationToken ct = default)
     {
         if (listId <= 0) return null;
-        var facts = await _dataSource.GetFactsByListIdsAsync([listId], ct);
+        var facts = ListFollowerRatingCohort.OpenBalanceOnly(
+            await _dataSource.GetFactsByListIdsAsync([listId], ct));
         var asOf = AsOfDate;
-        var rated = facts.Select(f => CustomerRatingCalculator.Evaluate(f, asOf)).ToList();
+        var rated = CustomerRatingCalculator.EvaluateMany(facts, asOf);
         var historical = ListRatingAggregator.Aggregate(rated);
         var recent = ListRatingAggregator.AggregateRecent(rated);
         return new ListRatingDetailDto
@@ -110,6 +110,7 @@ public sealed class RatingService : IRatingService
         WeakCount = r.WeakCount,
         RejectedCount = r.RejectedCount,
         LegalCount = r.LegalCount,
+        BadCount = r.BadCount,
         TotalPoints = r.TotalPoints,
         AverageScore = Round2(r.AverageScore),
         LegalPercentage = Round2(r.LegalPercentage),

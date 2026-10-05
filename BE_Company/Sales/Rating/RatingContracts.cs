@@ -43,6 +43,8 @@ public sealed class CustomerRatingDetailDto
     public int? DaysToSettle { get; init; }
     public int? DaysSinceSale { get; init; }
     public double? PaymentRate { get; init; }
+    /// <summary>Accountant rating equation (default 1). Affects score only.</summary>
+    public double RatingEquationFactor { get; init; } = 1;
 }
 
 public sealed class ListRatingSummaryDto
@@ -64,8 +66,11 @@ public sealed class ListRatingBucketDto
     public int ExcellentCount { get; init; }
     public int GoodCount { get; init; }
     public int WeakCount { get; init; }
+    /// <summary>متلكئ count (legacy JSON key rejectedCount).</summary>
     public int RejectedCount { get; init; }
     public int LegalCount { get; init; }
+    /// <summary>سيء — 200+ day payoff band.</summary>
+    public int BadCount { get; init; }
     public int TotalPoints { get; init; }
     public double AverageScore { get; init; }
     public double LegalPercentage { get; init; }

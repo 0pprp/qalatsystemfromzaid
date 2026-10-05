@@ -18,6 +18,7 @@
     [DeviceSaleState] BIT NULL,
     [BalancePaymentState] BIT NULL,
     [DevicePaymentState] BIT NULL,
+    [FollowerCollectionEnabled] BIT NOT NULL CONSTRAINT [DF_Delegates_FollowerCollectionEnabled] DEFAULT (0),
     [ReceiptName] NVARCHAR(255) NULL,
     [UpdateReceipt] BIT NULL,
     [DeleteReceipt] BIT NULL,

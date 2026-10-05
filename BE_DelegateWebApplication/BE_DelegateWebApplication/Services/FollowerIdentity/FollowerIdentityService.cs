@@ -108,7 +108,12 @@ OUTER APPLY (
             await using var c = new SqlConnection(_cs);
             var row = await c.QueryFirstOrDefaultAsync<FollowerUserIdentity>(new CommandDefinition(
                 UserSelectSql + @"
-WHERE LTRIM(RTRIM(u.AsyncID)) = LTRIM(RTRIM(@AsyncId));",
+WHERE LTRIM(RTRIM(u.AsyncID)) = LTRIM(RTRIM(@AsyncId))
+  AND (
+        u.UserType = N'متابع'
+        OR u.UserType LIKE N'متابع%'
+      )
+ORDER BY u.UserID;",
                 new { AsyncId = asyncId.Trim().TrimEnd('/') },
                 cancellationToken: ct));
 

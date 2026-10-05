@@ -24,6 +24,7 @@
     [ReceiptName] NVARCHAR(255) NULL,
     [IsLegal] BIT NULL DEFAULT ('false'),
     [IsFakeSale] BIT NOT NULL DEFAULT (0),
+    [RatingEquationFactor] FLOAT NOT NULL DEFAULT (1),
     [CreatedDate] DATETIME NOT NULL DEFAULT (getdate()),
     [UpdatedDate] DATETIME NULL,
     CONSTRAINT [FK_dbo.Customers_dbo.Cities_CityID] FOREIGN KEY ([CityID]) REFERENCES [dbo].[Cities] ([CityID]),

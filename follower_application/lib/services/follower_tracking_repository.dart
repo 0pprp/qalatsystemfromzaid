@@ -3,7 +3,11 @@ import 'package:follower_application/tracking/work_shift.dart';
 
 abstract class FollowerTrackingRepository {
   Future<WorkShift> startShift();
-  Future<void> endShift();
+  Future<void> endShift({
+    double? latitude,
+    double? longitude,
+    double? accuracy,
+  });
   Future<WorkShift?> currentShift();
   Future<LocationBatchResult> uploadLocationBatch(
       int shiftId, List<LocalLocationPoint> points);
@@ -18,14 +22,31 @@ class ApiFollowerTrackingRepository implements FollowerTrackingRepository {
   }
 
   @override
-  Future<void> endShift() async {
-    await FollowerTrackingApi.post('Followers/shifts/end');
+  Future<void> endShift({
+    double? latitude,
+    double? longitude,
+    double? accuracy,
+  }) async {
+    Map<String, dynamic>? body;
+    if (latitude != null && longitude != null) {
+      body = {
+        'latitude': latitude,
+        'longitude': longitude,
+        if (accuracy != null) 'accuracy': accuracy,
+        'capturedAtUtc': DateTime.now().toUtc().toIso8601String(),
+        'isOfficial': true,
+        'deviceSequence': 2,
+      };
+    }
+    await FollowerTrackingApi.post('Followers/shifts/end', body: body);
   }
 
   @override
   Future<WorkShift?> currentShift() async {
-    final raw = await FollowerTrackingApi.get('Followers/shifts/current');
-    if (raw is Map &&
+    final raw = await FollowerTrackingApi.get(
+      'Followers/shifts/current',
+      timeout: const Duration(seconds: 8),
+    );    if (raw is Map &&
         (raw['hasActiveShift'] == false || raw['HasActiveShift'] == false)) {
       return null;
     }

@@ -11,15 +11,21 @@ namespace BE_Company.Controllers
     [ApiController]
     public class CustomerDecisionsController : ControllerBase
     {
+        /// <summary>Deploy marker: WeakWeek list excludes settled (remaining ≤ 0).</summary>
+        private const string WeakWeekOpenBalanceOnly = nameof(WeakWeekOpenBalanceOnly);
+
         private readonly ICustomerDecisionsRepository _repository;
         private readonly ISharedCustomerNotesService _notes;
+        private readonly ILegalConversionRequestService _legalConversion;
 
         public CustomerDecisionsController(
             ICustomerDecisionsRepository repository,
-            ISharedCustomerNotesService notes)
+            ISharedCustomerNotesService notes,
+            ILegalConversionRequestService legalConversion)
         {
             _repository = repository;
             _notes = notes;
+            _legalConversion = legalConversion;
         }
 
         private int? GetAuthenticatedUserId()
@@ -34,6 +40,11 @@ namespace BE_Company.Controllers
         private bool CanDecide()
         {
             return GetUserType() == "مدير فرع";
+        }
+
+        private bool CanReviewLegalConversion()
+        {
+            return GetUserType() == "محاسب رئيسي";
         }
 
         private bool CanWriteNotes()
@@ -59,7 +70,11 @@ namespace BE_Company.Controllers
             try
             {
                 var result = await _repository.Customers_GetWeakWeekPayers();
-                return Ok(result);
+                // مصفرون (الباقي ≤ 0): لا قرار مطلوب — أخفِهم من لوحة مدير الفرع والويب.
+                _ = WeakWeekOpenBalanceOnly;
+                var open = (result ?? Enumerable.Empty<CustomerWeekPaymentsGetDTO>())
+                    .Where(r => (r.AmountRemaining ?? 0) > 0);
+                return Ok(open);
             }
             catch (Exception ex)
             {
@@ -68,7 +83,7 @@ namespace BE_Company.Controllers
         }
 
         [HttpPost("Decide")]
-        public async Task<ActionResult<CustomerWeekDecisionGetDTO?>> Decide([FromBody] CustomerWeekDecisionPostDTO dto)
+        public async Task<ActionResult<CustomerWeekDecisionGetDTO?>> Decide([FromBody] CustomerWeekDecisionPostDTO dto, CancellationToken ct)
         {
             try
             {
@@ -86,12 +101,93 @@ namespace BE_Company.Controllers
                     return BadRequest(new { message = "يجب تحديد الزبون ونوع القرار" });
                 }
 
+                // قانونية: طلب موافقة المحاسب — الزبون يبقى بالقائمة حتى الموافقة (بدون تحديث تطبيق المدير).
+                if (string.Equals(dto.DecisionType.Trim(), "قانونية", StringComparison.Ordinal))
+                {
+                    var pending = await _legalConversion.SubmitFromBranchManagerAsync(
+                        dto.CustomerID.Value, userID.Value, dto.Note, ct);
+                    return Ok(pending);
+                }
+
                 var result = await _repository.Customers_PostWeekDecision(dto.CustomerID, userID, dto.DecisionType, dto.Note);
                 return Ok(result);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(new { message = ex.Message });
             }
             catch (Exception ex)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+            }
+        }
+
+        [HttpGet("LegalConversionRequests")]
+        public async Task<IActionResult> LegalConversionRequests(
+            [FromQuery] string? status,
+            [FromQuery] int take = 100,
+            [FromQuery] int skip = 0,
+            CancellationToken ct = default)
+        {
+            if (!CanReviewLegalConversion() && GetUserType() != "مدير فرع")
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مسموح" });
+            }
+
+            var rows = await _legalConversion.ListAsync(status, take, skip, ct);
+            var total = await _legalConversion.CountAsync(status, ct);
+            return Ok(new { total, items = rows });
+        }
+
+        [HttpPut("LegalConversionRequests/{requestId:int}/Approve")]
+        public async Task<IActionResult> ApproveLegalConversion(int requestId, [FromBody] LegalConversionReviewBody? body, CancellationToken ct)
+        {
+            if (!CanReviewLegalConversion())
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "الموافقة من صلاحية المحاسب الرئيسي فقط" });
+            }
+            var userID = GetAuthenticatedUserId();
+            if (!userID.HasValue)
+                return Unauthorized();
+
+            try
+            {
+                var row = await _legalConversion.ApproveAsync(requestId, userID.Value, body?.Note, ct);
+                if (row == null)
+                    return NotFound(new { message = "الطلب غير موجود" });
+                return Ok(row);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(new { message = ex.Message });
+            }
+        }
+
+        [HttpPut("LegalConversionRequests/{requestId:int}/Reject")]
+        public async Task<IActionResult> RejectLegalConversion(int requestId, [FromBody] LegalConversionReviewBody? body, CancellationToken ct)
+        {
+            if (!CanReviewLegalConversion())
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "الرفض من صلاحية المحاسب الرئيسي فقط" });
+            }
+            var userID = GetAuthenticatedUserId();
+            if (!userID.HasValue)
+                return Unauthorized();
+
+            try
+            {
+                var row = await _legalConversion.RejectAsync(requestId, userID.Value, body?.Note, ct);
+                if (row == null)
+                    return NotFound(new { message = "الطلب غير موجود" });
+                return Ok(row);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(new { message = ex.Message });
             }
         }
 
@@ -224,5 +320,10 @@ namespace BE_Company.Controllers
                 return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
             }
         }
+    }
+
+    public sealed class LegalConversionReviewBody
+    {
+        public string? Note { get; set; }
     }
 }

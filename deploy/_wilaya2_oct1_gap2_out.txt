@@ -1,0 +1,7 @@
+DB DatabaseCompanyNajaf
+Msg 207, Level 16, State 1, Server vmi3533397, Line 108
+Invalid column name 'Source'.
+Msg 207, Level 16, State 1, Server vmi3533397, Line 108
+Invalid column name 'Source'.
+
+exit 0

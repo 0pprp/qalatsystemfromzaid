@@ -52,7 +52,8 @@ class TodayPaymentsLogic {
     );
   }
 
-  /// Latest local payment for customer today (Iraq **calendar** day via CreatedAtUtc).
+  /// Latest local payment for customer on the current Iraq **business** day
+  /// (03:00 Baghdad boundary — matches [DelegateBusinessDateService] rollover).
   static Map<String, dynamic>? todayPaymentForCustomer({
     required int customerId,
     required List<Map<String, dynamic>> localPayments,
@@ -61,7 +62,7 @@ class TodayPaymentsLogic {
     final matches = localPayments.where((p) {
       final id = int.tryParse(p['CustomerId']?.toString() ?? '') ?? 0;
       if (id != customerId) return false;
-      return IraqDate.isCreatedOnIraqCalendarDay(
+      return IraqDate.isCreatedOnIraqDay(
           p['CreatedAtUtc']?.toString(), utcNow);
     }).toList();
     if (matches.isEmpty) return null;
@@ -71,6 +72,141 @@ class TodayPaymentsLogic {
       return bT.compareTo(aT);
     });
     return matches.first;
+  }
+
+  /// True when this customer already has a local payment on the current
+  /// business day for [delegateId] (lifetime history must not block).
+  static bool hasPaymentOnBusinessDay({
+    required int customerId,
+    required int delegateId,
+    required List<Map<String, dynamic>> localPayments,
+    DateTime? utcNow,
+  }) {
+    return localPayments.any((p) {
+      final cid = int.tryParse(p['CustomerId']?.toString() ?? '') ?? 0;
+      final did = int.tryParse(p['DelegateId']?.toString() ?? '') ?? 0;
+      if (cid != customerId || did != delegateId) return false;
+      return IraqDate.isCreatedOnIraqDay(p['CreatedAtUtc']?.toString(), utcNow);
+    });
+  }
+
+  /// Unsynced rows (any calendar day) block a second collection until upload
+  /// finishes — stops day-23 pending + day-25 re-collect duplicates.
+  static bool hasUnsyncedPayment({
+    required int customerId,
+    required int delegateId,
+    required List<Map<String, dynamic>> localPayments,
+  }) {
+    return localPayments.any((p) {
+      final cid = int.tryParse(p['CustomerId']?.toString() ?? '') ?? 0;
+      final did = int.tryParse(p['DelegateId']?.toString() ?? '') ?? 0;
+      if (cid != customerId || did != delegateId) return false;
+      final status = p['SyncStatus']?.toString();
+      return status == null ||
+          status.isEmpty ||
+          status == 'PendingSync' ||
+          status == 'SyncFailed' ||
+          status == 'Syncing';
+    });
+  }
+
+  /// Block re-collection when local day payment, durable ledger, or unsynced
+  /// leftover exists.
+  static bool blocksNewCollection({
+    required int customerId,
+    required int delegateId,
+    required List<Map<String, dynamic>> localPayments,
+    bool ledgerHasBusinessDay = false,
+    DateTime? utcNow,
+  }) {
+    if (ledgerHasBusinessDay) return true;
+    if (hasPaymentOnBusinessDay(
+      customerId: customerId,
+      delegateId: delegateId,
+      localPayments: localPayments,
+      utcNow: utcNow,
+    )) {
+      return true;
+    }
+    return hasUnsyncedPayment(
+      customerId: customerId,
+      delegateId: delegateId,
+      localPayments: localPayments,
+    );
+  }
+
+  static List<Map<String, dynamic>> filterPaymentsOnBusinessDay(
+    List<Map<String, dynamic>> localPayments, {
+    DateTime? utcNow,
+  }) {
+    return localPayments
+        .where(
+          (p) =>
+              IraqDate.isCreatedOnIraqDay(p['CreatedAtUtc']?.toString(), utcNow),
+        )
+        .toList();
+  }
+
+  /// Local-day memory for print + UI: live [CustomerPayment] rows on the
+  /// current business day, plus [BusinessDayCollection] markers that survive
+  /// after a successful sync deletes the queue row.
+  ///
+  /// Does **not** depend on what has arrived on the server — only device memory.
+  static List<Map<String, dynamic>> mergeLocalDayPayments({
+    required List<Map<String, dynamic>> localPayments,
+    required List<Map<String, dynamic>> ledgerRows,
+    Map<int, String>? customerNames,
+    DateTime? utcNow,
+  }) {
+    final today = filterPaymentsOnBusinessDay(localPayments, utcNow: utcNow);
+    final merged = <Map<String, dynamic>>[];
+    final seen = <String>{};
+
+    for (final p in today) {
+      final cid = p['CustomerId']?.toString() ?? '';
+      final did = p['DelegateId']?.toString() ?? '';
+      seen.add('$cid|$did');
+      final row = Map<String, dynamic>.from(p);
+      final id = int.tryParse(cid) ?? 0;
+      if (id > 0) {
+        row['CustomerId'] = id;
+      }
+      final name = row['CustomerName']?.toString() ?? '';
+      if (name.isEmpty && customerNames != null && id > 0) {
+        row['CustomerName'] = customerNames[id] ?? '';
+      }
+      merged.add(row);
+    }
+
+    for (final p in ledgerRows) {
+      final cid = p['CustomerId']?.toString() ?? '';
+      final did = p['DelegateId']?.toString() ?? '';
+      final key = '$cid|$did';
+      if (seen.contains(key)) continue;
+      seen.add(key);
+      final id = int.tryParse(cid) ?? 0;
+      final didInt = int.tryParse(did) ?? 0;
+      merged.add({
+        'CustomerId': id,
+        'DelegateId': didInt > 0 ? didInt : p['DelegateId'],
+        'Amount': p['Amount'],
+        'CreatedAtUtc': p['CreatedAtUtc'],
+        'SyncStatus': 'Synced',
+        'CustomerName':
+            (customerNames != null && id > 0) ? (customerNames[id] ?? '') : '',
+        'ClientPaymentId': p['ClientPaymentId'],
+      });
+    }
+
+    return merged;
+  }
+
+  static double sumAmounts(List<Map<String, dynamic>> payments) {
+    var total = 0.0;
+    for (final p in payments) {
+      total += _toDouble(p['Amount']);
+    }
+    return total;
   }
 
   static List<TodayPaymentRow> buildRows({

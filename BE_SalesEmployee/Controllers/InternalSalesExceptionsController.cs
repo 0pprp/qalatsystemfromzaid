@@ -96,7 +96,13 @@ public sealed class InternalSalesExceptionsController : ControllerBase
             SalesExceptionOutcome.Forbidden =>
                 StatusCode(StatusCodes.Status403Forbidden, new { message = result.Error }),
             SalesExceptionOutcome.Conflict =>
-                Conflict(new { message = result.Error }),
+                Conflict(new
+                {
+                    message = result.Error,
+                    existingExceptionId = result.Request?.Id,
+                    status = result.Request?.Status,
+                    salesRequestId = result.Request?.SalesRequestId
+                }),
             _ => BadRequest(new { message = result.Error })
         };
     }

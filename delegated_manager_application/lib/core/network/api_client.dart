@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:delegated_manager_application/core/auth/session.dart';
@@ -21,9 +22,26 @@ class ApiException implements Exception {
 class ApiClient {
   static const Duration timeout = Duration(seconds: 25);
 
+  /// Invoked once when any authenticated call returns HTTP 401 so the UI can
+  /// clear the stale session and return to login.
+  static Future<void> Function()? onUnauthorized;
+
+  static bool _unauthorizedHandling = false;
+
   /// `AppEnv` already decides whether the stored session base may be used, so
   /// demo builds can never fall back to a production host (or the reverse).
   static String resolveBase() => AppEnv.apiBase();
+
+  static Future<void> _notifyUnauthorized() async {
+    if (_unauthorizedHandling) return;
+    _unauthorizedHandling = true;
+    try {
+      final hook = onUnauthorized;
+      if (hook != null) await hook();
+    } finally {
+      _unauthorizedHandling = false;
+    }
+  }
 
   static Map<String, String> headers() {
     final result = <String, String>{
@@ -79,6 +97,9 @@ class ApiClient {
 
   static dynamic _decode(http.Response response) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode == 401) {
+        unawaited(_notifyUnauthorized());
+      }
       throw ApiException(errorMessage(response),
           statusCode: response.statusCode);
     }

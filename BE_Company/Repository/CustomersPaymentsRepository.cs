@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using BE_Company.DTO;
 using BE_Company.IRepository;
 using Microsoft.Data.SqlClient;
@@ -51,15 +51,28 @@ namespace BE_Company.Repository
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.ExecuteAsync("CustomersPayments_Delete",
+                return await CustomersPayments_Delete(customerPaymentID, userDeleteID, connection, null);
+            }
+        }
+
+        public async Task<bool?> CustomersPayments_Delete(
+            int? customerPaymentID,
+            int? userDeleteID,
+            IDbConnection connection,
+            IDbTransaction? transaction,
+            CancellationToken cancellationToken = default)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                "CustomersPayments_Delete",
                 new
                 {
                     CustomerPaymentID = customerPaymentID,
                     UserDeleteID = userDeleteID
                 },
-                commandType: CommandType.StoredProcedure);
-                return true;
-            }
+                transaction,
+                commandType: CommandType.StoredProcedure,
+                cancellationToken: cancellationToken));
+            return true;
         }
 
         public async Task<CustomersPaymentsGetDTO?> CustomersPayments_Create(CustomersPaymentsPostDTO customersPaymentsPostDTO)

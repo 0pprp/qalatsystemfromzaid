@@ -30,15 +30,33 @@ watch([
 // !SECTION
 
 const cityName = ref(localStorage.getItem('CityName'))
-const { canManageUsers, canBackup, canViewDecisions, isSalesManager, canViewFollowerGps, isAdmin } = useUserRole()
+const { canManageUsers, canBackup, canViewDecisions, isSalesManager, isDirector, canViewFollowerGps, isAdmin } = useUserRole()
 useSalesRequestUnread()
+
+const ratingsNavItem = {
+  title: 'التقييمات',
+  to: { name: 'accountant-ratings' },
+  icon: { icon: 'tabler-chart-histogram', size: '25' },
+}
+
+const tutorialVideoNavItem = {
+  title: 'مشاهدة الفيديو التعليمي',
+  to: { name: 'accountant-tutorial-video' },
+  icon: { icon: 'tabler-video', size: '25' },
+}
 
 const navItems = computed(() => {
   const items = allNavItems.filter(item => {
+    if (isDirector.value)
+      return item.title === 'التقييمات' || item.title === 'طلبات البيع'
+
     if (isSalesManager.value)
       return item.title === 'إدارة المبيعات'
 
     if (item.title === 'الدعم الفني') return false
+    if (item.title === 'طلبات البيع') return false
+    if (item.title === 'التقييمات') return false
+    if (item.title === 'مشاهدة الفيديو التعليمي') return false
 
     if (item.title === 'المستخدمين' && !canManageUsers.value) return false
     if (item.title === 'النسخ الاحتياطي' && !canBackup.value) return false
@@ -47,7 +65,28 @@ const navItems = computed(() => {
     if (item.title === 'متابعة المتابعين' && !canViewFollowerGps.value) return false
 
     return true
+  }).map(item => {
+    if (item.title === 'القرارات' && item.children && isAdmin.value) {
+      return {
+        ...item,
+        children: item.children.filter(c => c.title !== 'لوحة ضعفاء التسديد'),
+      }
+    }
+
+    if (item.title !== 'العملاء' || !item.children || isAdmin.value)
+      return item
+
+    return {
+      ...item,
+      children: item.children.filter(c => c.title !== 'بحث القانونية'),
+    }
   })
+
+  if (isAdmin.value) {
+    const homeIdx = items.findIndex(i => i.title === 'الرئيسية')
+    const insertAt = homeIdx >= 0 ? homeIdx + 1 : 0
+    items.splice(insertAt, 0, { ...ratingsNavItem }, { ...tutorialVideoNavItem })
+  }
 
   try {
     return withRequestsUnreadBadge(items)

@@ -1,0 +1,32 @@
+raw active
+           
+-----------
+        135
+with buggy NOT exception filter
+           
+-----------
+        124
+with fixed filter
+           
+-----------
+        127
+id 202 buggy
+Id         
+-----------
+id 202 fixed
+Id         
+-----------
+        202
+sent buggy vs fixed
+SentBuggy  |SentFixed  
+-----------|-----------
+          0|          1
+unassigned target0 null hold
+Id         |Status                        |CustomerSourceType            |CreatedByName                                                                                                                                                                                           |CustomerName                                                                                                                                                                                            |CustomerPhone                                     
+-----------|------------------------------|------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------
+        202|New                           |EmployeeSubmitted             |test12                                                                                                                                                                                                  |مهدي حسن حاتم                                                                                                                                                                                           |07806008063                                       
+
+RC 0
+=== najaf SalesManagement config ===
+ASPNETCORE_ENVIRONMENT=Production SalesManagement__RequireDemoDatabase=false ASPNETCORE_URLS=http://127.0.0.1:5301 SalesManagement__FilterAppEnabled=false FollowerTracking__DelegateApiBase=http://127.0.0.1:5207 FollowerTracking__AccountantKey=eb0f84c7f1dadfc462a8b3e8f1375f113ba944abd1c9e4834a2821d9fd25ecc7 SalesEmployee__GatewayKey=ed2abcd374b013b4fd0ea8edb9417aafcdcfd18636d0c9febdf95842cc979bb0
+appsettings SalesManagement {}

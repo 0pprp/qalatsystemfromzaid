@@ -28,6 +28,7 @@ public class SalesRequestEvaluationSqlParameterBatchTests
         public List<int> BatchSizes { get; } = [];
         public int MaxBatchSeen { get; private set; }
         public HashSet<int> LegalIds { get; } = [];
+        public HashSet<int> BadIds { get; } = [];
 
         public async Task<IReadOnlyList<CustomerRatingFacts>> GetFactsByCustomerIdsAsync(
             IReadOnlyList<int> customerIds,
@@ -54,12 +55,14 @@ public class SalesRequestEvaluationSqlParameterBatchTests
                         continue;
                     }
 
+                    var settleDays = BadIds.Contains(id) ? 200 : 30;
+                    var sale = DateTime.UtcNow.Date.AddDays(-(settleDays - 1));
                     merged.Add(new CustomerRatingFacts(
                         id,
                         1,
                         IsLegal: LegalIds.Contains(id),
                         IsFakeSale: false,
-                        DateSaleDevice: DateTime.UtcNow.Date.AddDays(-30),
+                        DateSaleDevice: sale,
                         LastPaymentDate: DateTime.UtcNow.Date,
                         AmountTotalSales: 1000,
                         ReceiptsTotal: 1000,
@@ -106,9 +109,9 @@ public class SalesRequestEvaluationSqlParameterBatchTests
     {
         var catalog = new HugeCatalog();
         var rating = new RecordingRatingSource();
-        // Last id is Legal so overall must surface قانونية even if it sits in a later batch.
-        var legalId = matchCount;
-        rating.LegalIds.Add(legalId);
+        // Last id is سيء so overall must surface سيء even if it sits in a later batch.
+        var badId = matchCount;
+        rating.BadIds.Add(badId);
 
         for (var i = 1; i <= matchCount; i++)
         {
@@ -141,7 +144,7 @@ public class SalesRequestEvaluationSqlParameterBatchTests
         }, default);
 
         Assert.Equal(matchCount, result.Items[0].Phone.ResultCount);
-        Assert.Equal(CustomerRatingLabels.Legal, result.Items[0].OverallRatingLabel);
+        Assert.Equal(CustomerRatingLabels.Bad, result.Items[0].OverallRatingLabel);
         Assert.Equal(-10, result.Items[0].OverallScore);
         Assert.True(rating.MaxBatchSeen <= SqlInClauseBatch.DefaultSafeSize);
         Assert.True(rating.MaxBatchSeen < SqlInClauseBatch.SqlServerMaxParameters);

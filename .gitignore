@@ -63,3 +63,9 @@ deploy/sales-demo/flutter/
 .cursor/
 
 .cursor/
+
+# deploy scratch / secrets
+_tmp_*.tar
+*.apk
+deploy/_xlsx_extract/
+

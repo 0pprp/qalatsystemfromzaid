@@ -7,6 +7,7 @@ public sealed record ListRatingResult(
     int WeakCount,
     int RejectedCount,
     int LegalCount,
+    int BadCount,
     int TotalPoints,
     double AverageScore,
     double LegalPercentage,
@@ -25,22 +26,42 @@ public static class ListRatingAggregator
         if (count == 0)
         {
             var emptyClass = ClassifyAverage(0);
-            return new ListRatingResult(0, 0, 0, 0, 0, 0, 0, 0, 0, ListRiskIndicator.None,
+            return new ListRatingResult(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ListRiskIndicator.None,
                 emptyClass.Level, emptyClass.Label);
         }
 
-        var excellent = list.Count(r => r.Level == CustomerRatingLevel.Excellent);
-        var good = list.Count(r => r.Level == CustomerRatingLevel.Good);
-        var weak = list.Count(r => r.Level == CustomerRatingLevel.Weak);
-        var rejected = list.Count(r => r.Level == CustomerRatingLevel.Rejected);
-        var legal = list.Count(r => r.Level == CustomerRatingLevel.Legal);
-        var totalPoints = list.Sum(r => r.Score);
+        var excellent = 0;
+        var good = 0;
+        var weak = 0;
+        var rejected = 0;
+        var bad = 0;
+        var totalPoints = 0;
+        // Single pass — production path for large cohorts (100k+).
+        for (var i = 0; i < list.Count; i++)
+        {
+            var r = list[i];
+            totalPoints += r.Score;
+            switch (r.Level)
+            {
+                case CustomerRatingLevel.Excellent: excellent++; break;
+                case CustomerRatingLevel.Good: good++; break;
+                case CustomerRatingLevel.Weak: weak++; break;
+                case CustomerRatingLevel.Rejected: rejected++; break;
+                case CustomerRatingLevel.Bad: bad++; break;
+                // Legal is never assigned by the calculator; ignore if present in legacy data.
+            }
+        }
+
         var average = (double)totalPoints / count;
-        var legalPct = legal * 100.0 / count;
+        var badPct = bad * 100.0 / count;
         var final = ClassifyAverage(average);
         return new ListRatingResult(
-            count, excellent, good, weak, rejected, legal,
-            totalPoints, average, legalPct, ClassifyRisk(legalPct),
+            count, excellent, good, weak, rejected,
+            LegalCount: 0,
+            bad,
+            totalPoints, average,
+            LegalPercentage: 0,
+            ClassifyRisk(badPct),
             final.Level, final.Label);
     }
 
@@ -52,14 +73,16 @@ public static class ListRatingAggregator
         if (averageScore >= 7) return (CustomerRatingLevel.Excellent, CustomerRatingLabels.Excellent);
         if (averageScore >= 3) return (CustomerRatingLevel.Good, CustomerRatingLabels.Good);
         if (averageScore >= 0) return (CustomerRatingLevel.Weak, CustomerRatingLabels.Weak);
-        return (CustomerRatingLevel.Rejected, CustomerRatingLabels.Rejected);
+        if (averageScore > -7.5) return (CustomerRatingLevel.Rejected, CustomerRatingLabels.Rejected);
+        return (CustomerRatingLevel.Bad, CustomerRatingLabels.Bad);
     }
 
-    public static ListRiskIndicator ClassifyRisk(double legalPercentage)
+    /// <summary>Risk from سيء share (Legal no longer participates in rating).</summary>
+    public static ListRiskIndicator ClassifyRisk(double badPercentage)
     {
-        if (legalPercentage <= 0) return ListRiskIndicator.None;
-        if (legalPercentage < 5) return ListRiskIndicator.Low;
-        if (legalPercentage < 15) return ListRiskIndicator.Medium;
+        if (badPercentage <= 0) return ListRiskIndicator.None;
+        if (badPercentage < 5) return ListRiskIndicator.Low;
+        if (badPercentage < 15) return ListRiskIndicator.Medium;
         return ListRiskIndicator.High;
     }
 }

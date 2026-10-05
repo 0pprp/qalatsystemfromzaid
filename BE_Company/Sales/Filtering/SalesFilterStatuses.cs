@@ -42,9 +42,11 @@ namespace BE_Company.Sales.Filtering
             };
         }
 
-        /// <summary>Employee may see the request only in this filter state (after legacy backfill).</summary>
-        public static bool IsVisibleToSalesEmployee(string? filterStatus) =>
-            string.Equals(filterStatus, ReadyForSale, StringComparison.OrdinalIgnoreCase);
+        /// <summary>
+        /// Filter gate retired: assigned sales employees see requests regardless of FilterStatus.
+        /// Kept for call-site compatibility until Filter* columns are dropped.
+        /// </summary>
+        public static bool IsVisibleToSalesEmployee(string? filterStatus) => true;
     }
 
     public static class SalesFilterValidation

@@ -109,7 +109,7 @@ namespace BE_Company.Repository
                         UserCreateID = userCreateID
                     },
                     commandType: CommandType.StoredProcedure,
-                    commandTimeout: 600  
+                    commandTimeout: 600
                 );
                 return result;
             }

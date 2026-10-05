@@ -8,12 +8,17 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpContextAccessor();
 builder.Services.RegisterRepositories();
 builder.Services.AddSalesManagementModule();
+builder.Services.AddScoped<BE_Company.Services.LegalSearch.ILegalCustomerSearchService, BE_Company.Services.LegalSearch.LegalCustomerSearchService>();
 builder.Services.AddScoped<ISharedCustomerNotesService, SharedCustomerNotesService>();
 builder.Services.AddScoped<ICollectionPaymentPostingService, CollectionPaymentPostingService>();
 builder.Services.AddHostedService<CollectionPaymentPostingHostedService>();
 builder.Services.ConfigureJwt(builder.Configuration);
 builder.Services.AddCustomCors(builder.Configuration);
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+    {
+        o.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    });
 builder.Services.AddSignalR();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerWithJwt();

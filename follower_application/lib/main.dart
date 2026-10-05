@@ -2,8 +2,13 @@ import 'package:follower_application/HomePage.dart';
 import 'package:follower_application/Login.dart';
 import 'package:follower_application/WelcomePage.dart';
 import 'package:follower_application/config/app_env.dart';
+import 'package:follower_application/core/update/app_version.dart';
 import 'package:follower_application/customer_profile_page.dart';
+import 'package:follower_application/field_followups_page.dart';
 import 'package:follower_application/follower_sales_request_page.dart';
+import 'package:follower_application/legal_followups_page.dart';
+import 'package:follower_application/list_stats_page.dart';
+import 'package:follower_application/pending_sales_page.dart';
 import 'package:follower_application/services/follower_tracking_repository.dart';
 import 'package:follower_application/start_shift_page.dart';
 import 'package:follower_application/tracking/shift_gate_observer.dart';
@@ -21,6 +26,7 @@ Future<void> main() async {
     await initializeDateFormatting('en');
   } catch (_) {}
   AppEnv.logIfDebug();
+  await AppVersion.ensureLoaded();
   TrackingRuntime.instance ??=
       ShiftTrackingController(repository: ApiFollowerTrackingRepository());
   runApp(const MyApp());
@@ -55,10 +61,17 @@ class MyApp extends StatelessWidget {
               return CustomerProfilePage(
                 customer: Map<String, dynamic>.from(args['customer'] as Map),
                 listId: int.tryParse('${args['listId'] ?? 0}') ?? 0,
+                showAuthenticate: args['pendingAuth'] == true,
+                hideSaleRequest: args['hideSaleRequest'] == true ||
+                    args['pendingAuth'] == true,
               );
             },
             '/FollowerSalesRequest': (context) =>
                 const FollowerSalesRequestPage(),
+            '/LegalFollowups': (context) => const LegalFollowupsPage(),
+            '/FieldFollowups': (context) => const FieldFollowupsPage(),
+            '/PendingSales': (context) => const PendingSalesPage(),
+            '/ListStats': (context) => const ListStatsPage(),
           },
           theme: ThemeData(fontFamily: 'Cairo', brightness: Brightness.light),
           darkTheme:

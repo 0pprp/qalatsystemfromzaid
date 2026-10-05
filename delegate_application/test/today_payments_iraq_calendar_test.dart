@@ -198,7 +198,7 @@ void main() {
     });
   });
 
-  test('TEST7: synced payment still counted (calendar day)', () {
+  test('TEST7: synced payment still counted (business day)', () {
     final utcNow = DateTime.utc(2026, 9, 14, 14, 0); // 17:00 Baghdad
     final payments = [
       {
@@ -215,7 +215,7 @@ void main() {
     );
     expect(row, isNotNull);
     expect(
-      IraqDate.isCreatedOnIraqCalendarDay(row!['CreatedAtUtc']?.toString(), utcNow),
+      IraqDate.isCreatedOnIraqDay(row!['CreatedAtUtc']?.toString(), utcNow),
       isTrue,
     );
   });

@@ -420,6 +420,11 @@ class _SaleScreenState extends State<SaleScreen> {
         _toast('القسط اليومي غير متوفر لهذه المواد. أدخل القسط اليومي.');
         return;
       }
+      final ceiling = _fromRequest?.maxSalePrice;
+      if (ceiling != null && ceiling > 0 && total > ceiling) {
+        _toast('سعر البيع يتجاوز الحد الأقصى المسموح (${MoneyFormat.iqd(ceiling)})');
+        return;
+      }
       final ok = await _createDraftAndPreview();
       if (!ok) return;
     }
@@ -1273,6 +1278,7 @@ class _SaleScreenState extends State<SaleScreen> {
   }
 
   Widget _priceStep() {
+    final ceiling = _fromRequest?.maxSalePrice;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1282,6 +1288,13 @@ class _SaleScreenState extends State<SaleScreen> {
         Text('القسط اليومي الافتراضي: ${MoneyFormat.iqd(_defaultDaily)}'),
         const SizedBox(height: AppSpacing.sm),
         Text('المقدمة الافتراضية (5%): ${MoneyFormat.iqd(_defaultDown)}'),
+        if (ceiling != null && ceiling > 0) ...[
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            'الحد الأقصى لسعر البيع: ${MoneyFormat.iqd(ceiling)}',
+            style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.muted),
+          ),
+        ],
         const SizedBox(height: AppSpacing.lg),
         const Text(
           'حقول التعديل اختيارية. إذا بقي الحقل فارغاً يُعتمد الافتراضي.',

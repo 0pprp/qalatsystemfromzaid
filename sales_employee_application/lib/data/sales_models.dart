@@ -665,6 +665,7 @@ class SalesWorkRequest {
     this.customerAddress,
     this.existingCustomerId,
     this.notes,
+    this.maxSalePrice,
     required this.status,
     required this.createdAtUtc,
     this.convertedToSaleId,
@@ -685,6 +686,8 @@ class SalesWorkRequest {
   final String? customerAddress;
   final int? existingCustomerId;
   final String? notes;
+  /// Optional manager ceiling for FinalSalePrice. Null / <= 0 = no limit.
+  final num? maxSalePrice;
   final String status;
   final DateTime createdAtUtc;
   final int? convertedToSaleId;
@@ -748,6 +751,7 @@ class SalesWorkRequest {
     String? preparedForSaleNote,
     String? returnNote,
     int? convertedToSaleId,
+    num? maxSalePrice,
     SalesNameTransferInfo? latestNameTransfer,
     List<SalesNameTransferInfo>? nameTransfers,
   }) =>
@@ -759,6 +763,7 @@ class SalesWorkRequest {
         customerAddress: customerAddress,
         existingCustomerId: existingCustomerId,
         notes: notes,
+        maxSalePrice: maxSalePrice ?? this.maxSalePrice,
         status: status ?? this.status,
         createdAtUtc: createdAtUtc,
         convertedToSaleId: convertedToSaleId ?? this.convertedToSaleId,
@@ -783,6 +788,8 @@ class SalesWorkRequest {
         }
       }
     }
+    final maxRaw = json['maxSalePrice'] ?? json['MaxSalePrice'];
+    final maxParsed = maxRaw == null ? null : num.tryParse('$maxRaw');
     return SalesWorkRequest(
       id: int.tryParse('${json['id'] ?? json['Id'] ?? 0}') ?? 0,
       customerName: '${json['customerName'] ?? json['CustomerName'] ?? ''}',
@@ -791,6 +798,7 @@ class SalesWorkRequest {
       customerAddress: json['customerAddress']?.toString(),
       existingCustomerId: int.tryParse('${json['existingCustomerId'] ?? json['ExistingCustomerId'] ?? ''}'),
       notes: json['notes']?.toString() ?? json['Notes']?.toString(),
+      maxSalePrice: (maxParsed != null && maxParsed > 0) ? maxParsed : null,
       status: '${json['status'] ?? json['Status'] ?? 'New'}'.trim(),
       createdAtUtc: DateTime.tryParse('${json['createdAtUtc'] ?? json['CreatedAtUtc'] ?? ''}')?.toUtc() ??
           DateTime.now().toUtc(),

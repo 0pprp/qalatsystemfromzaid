@@ -29,7 +29,7 @@
 
 Priority order:
 
-1. **`IsLegal = 1`** → `قانونية` / `-10` (absolute override)
+1. **`IsLegal`** — **لا يؤثر على التقييم** (وجوده وعدمه سواء؛ يُعرض كحقل معلوماتي فقط إن لزم)
 2. **`AmountRemaining < 0`** → `ضعيف` / `0` — reason: `الباقي سالب ويحتاج مراجعة`
 3. **No sale or `AmountTotalSales <= 0`** → `ضعيف` / `0` — reason: `لا توجد بيانات بيع كافية للتقييم`
 4. **Settled (`AmountRemaining = 0`)** — days = `DATEDIFF(DAY, DateSaleDevice, LastPaymentDate) + 1`  
@@ -37,23 +37,26 @@ Priority order:
    - `Days <= 140` → ممتاز / +10  
    - `Days <= 160` → جيد / +5  
    - `Days < 180` → ضعيف / 0  
-   - `Days >= 180` → مرفوض / -5  
+   - `Days < 200` (180–199) → متلكئ / -5  
+   - `Days >= 200` → سيء / -10  
 5. **Active (`AmountRemaining > 0`)** — days = `DATEDIFF(DAY, DateSaleDevice, Today) + 1`  
    - `Rate = ReceiptsTotal × 1000 / (AmountTotalSales × DaysSinceSale)`  
    - Incomplete calc → `ضعيف` / `0` — `بيانات التسديد غير مكتملة`  
    - `Rate >= 7.1` → ممتاز / +10  
    - `Rate >= 6.25` → جيد / +5  
-   - `Rate >= 5.5` → ضعيف / 0  
-   - `Rate < 5.5` → مرفوض / -5  
+   - `Rate >= 1000/180` (~5.556) → ضعيف / 0  
+   - `Rate >= 1000/200` (5.0) → متلكئ / -5  
+   - `Rate < 5.0` → سيء / -10  
 
-Every row in `dbo.Customers` must resolve to one of: ممتاز / جيد / ضعيف / مرفوض / قانونية.
+Every row in `dbo.Customers` must resolve to one of: ممتاز / جيد / ضعيف / متلكئ / سيء.
 
 ## List rating rules
 
 - Membership: **all** customers with `DelegateID = listId` (ignore `CustomerState`)
 - Historical: all members
 - Recent: members with `DateSaleDevice >= 2025-09-01`
-- Metrics: counts per rating, `TotalPoints`, `AverageScore = TotalPoints / CustomerCount`, `LegalCount`, `LegalPercentage`, `RiskIndicator`, `FinalRating`
+- Metrics: counts per rating (incl. `RejectedCount`=متلكئ, `BadCount`=سيء), `TotalPoints`, `AverageScore = TotalPoints / CustomerCount`, `RiskIndicator` (from سيء share), `FinalRating`
+- `LegalCount` / `LegalPercentage`: always 0 (API compat; قانونية ليست مستوى تقييم)
 - Empty set: no division by zero; `CustomerCount = 0`, `AverageScore = 0`, `FinalRating = ضعيف`, `RiskIndicator = None`
 
 ### FinalRating from AverageScore
@@ -61,16 +64,15 @@ Every row in `dbo.Customers` must resolve to one of: ممتاز / جيد / ضع�
 - `>= 7` ممتاز  
 - `>= 3` جيد  
 - `>= 0` ضعيف  
-- `< 0` مرفوض  
+- `> -7.5` متلكئ  
+- `<= -7.5` سيء  
 
-### RiskIndicator from LegalPercentage
+### RiskIndicator from BadPercentage (سيء share)
 
 - `None`: 0%  
 - `Low`: `> 0 && < 5`  
 - `Medium`: `>= 5 && < 15`  
 - `High`: `>= 15`  
-
-Legal does **not** make the list FinalRating = قانونية.
 
 ## Architecture
 

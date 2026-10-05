@@ -34,7 +34,7 @@ namespace BE_Company.Sales.Tests
         public Task<SalesRequestDTO?> GetByIdIncludingDeletedAsync(int id, CancellationToken ct) =>
             Task.FromResult(Rows.FirstOrDefault(r => r.Id == id));
 
-        public Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null)
+        public Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null, int? take = null)
         {
             IEnumerable<SalesRequestDTO> q = Rows.Where(r => !r.IsDeleted);
             if (targetEmployeeId != null) q = q.Where(r => r.TargetEmployeeId == targetEmployeeId);
@@ -42,13 +42,110 @@ namespace BE_Company.Sales.Tests
             if (!string.IsNullOrWhiteSpace(filterStatus)) q = q.Where(r => r.FilterStatus == filterStatus);
             if (fromUtc != null) q = q.Where(r => r.CreatedAtUtc >= fromUtc);
             if (toUtc != null) q = q.Where(r => r.CreatedAtUtc <= toUtc);
+            q = q.OrderByDescending(r => r.CreatedAtUtc);
+            if (take is > 0)
+                q = q.Take(take.Value);
             return Task.FromResult<IReadOnlyList<SalesRequestDTO>>(q.ToList());
+        }
+
+        public Task<IReadOnlyList<SalesRequestDTO>> ListDeletedAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SalesRequestDTO>>(Rows.Where(r => r.IsDeleted).OrderByDescending(r => r.DeletedAtUtc).ToList());
+
+        public Task<(IReadOnlyList<SalesRequestDTO> Items, int Total)> ListManagerPageAsync(
+            string? tab,
+            int? targetEmployeeId,
+            string? q,
+            int skip,
+            int take,
+            CancellationToken ct)
+        {
+            IEnumerable<SalesRequestDTO> query = Rows.Where(r => !r.IsDeleted
+                && !(SalesExceptionHoldStatuses.IsHeld(r.ExceptionHoldStatus) && r.TargetEmployeeId <= 0));
+            if (targetEmployeeId is > 0)
+                query = query.Where(r => r.TargetEmployeeId == targetEmployeeId);
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var needle = q.Trim('%');
+                query = query.Where(r =>
+                    (r.CustomerName ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase)
+                    || (r.CustomerPhone ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase)
+                    || r.Id.ToString().Contains(needle, StringComparison.Ordinal));
+            }
+
+            var tabKey = (tab ?? "all").Trim().ToLowerInvariant();
+            query = tabKey switch
+            {
+                "unassigned" => query.Where(r =>
+                    r.Status is not ("Rejected" or "Completed" or "LegalFollowup")
+                    && (r.Status == "New" || r.TargetEmployeeId <= 0)
+                    && !SalesExceptionHoldStatuses.IsHeld(r.ExceptionHoldStatus)),
+                "legal" => query.Where(r => r.Status == "LegalFollowup"),
+                "sent" => query.Where(r => r.Status == "New"),
+                "incoming" => query.Where(r => r.Status is "Assigned" or "Viewed" or "Returned"),
+                "prepared" => query.Where(r => r.Status is "PreparedForSale" or "InProgress" or "ConvertedToSale"),
+                "inspected" => query.Where(r => r.Status == "Inspected"),
+                "pending" => query.Where(r => r.Status == "Pending"),
+                "rejected" => query.Where(r => r.Status == "Rejected"),
+                "sold" => query.Where(r => r.Status == "Completed"),
+                _ => query
+            };
+            var list = query.OrderByDescending(r => r.CreatedAtUtc).ToList();
+            var page = list.Skip(Math.Max(0, skip)).Take(Math.Clamp(take <= 0 ? 40 : take, 1, 100)).ToList();
+            return Task.FromResult<(IReadOnlyList<SalesRequestDTO>, int)>((page, list.Count));
+        }
+
+        public Task<Dictionary<string, int>> CountManagerTabsAsync(CancellationToken ct)
+        {
+            var active = Rows.Where(r => !r.IsDeleted
+                && !(SalesExceptionHoldStatuses.IsHeld(r.ExceptionHoldStatus) && r.TargetEmployeeId <= 0)).ToList();
+            return Task.FromResult(new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["all"] = active.Count,
+                ["unassigned"] = active.Count(r =>
+                    r.Status is not ("Rejected" or "Completed" or "LegalFollowup")
+                    && (r.Status == "New" || r.TargetEmployeeId <= 0)),
+                ["legal"] = active.Count(r => r.Status == "LegalFollowup"),
+                ["sent"] = active.Count(r => r.Status == "New"),
+                ["incoming"] = active.Count(r => r.Status is "Assigned" or "Viewed" or "Returned"),
+                ["prepared"] = active.Count(r => r.Status is "PreparedForSale" or "InProgress" or "ConvertedToSale"),
+                ["inspected"] = active.Count(r => r.Status == "Inspected"),
+                ["pending"] = active.Count(r => r.Status == "Pending"),
+                ["rejected"] = active.Count(r => r.Status == "Rejected"),
+                ["sold"] = active.Count(r => r.Status == "Completed"),
+                ["deleted"] = Rows.Count(r => r.IsDeleted),
+            });
+        }
+
+        public Task<(IReadOnlyList<SalesRequestDTO> Items, int Total)> ListDeletedPageAsync(
+            string? q,
+            int skip,
+            int take,
+            CancellationToken ct)
+        {
+            IEnumerable<SalesRequestDTO> query = Rows.Where(r => r.IsDeleted);
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var needle = q.Trim('%');
+                query = query.Where(r =>
+                    (r.CustomerName ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase)
+                    || (r.CustomerPhone ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase));
+            }
+
+            var list = query.OrderByDescending(r => r.DeletedAtUtc).ToList();
+            var page = list.Skip(Math.Max(0, skip)).Take(Math.Clamp(take <= 0 ? 40 : take, 1, 100)).ToList();
+            return Task.FromResult<(IReadOnlyList<SalesRequestDTO>, int)>((page, list.Count));
         }
 
         public Task UpdateAsync(SalesRequestDTO row, CancellationToken ct) => Task.CompletedTask;
 
         public Task<int> CountByStatusAsync(string status, CancellationToken ct) =>
             Task.FromResult(Rows.Count(r => !r.IsDeleted && r.Status == status));
+
+        public Task<int> CountUnreadEmployeeSubmittedAsync(CancellationToken ct) =>
+            Task.FromResult(Rows.Count(r =>
+                !r.IsDeleted
+                && r.ManagerReadAtUtc == null
+                && SalesRequestSources.IsEmployeeSubmitted(r.CustomerSourceType)));
 
         public Task InsertHistoryAsync(SalesRequestHistoryDTO row, CancellationToken ct)
         {
@@ -57,8 +154,14 @@ namespace BE_Company.Sales.Tests
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyList<SalesRequestHistoryDTO>> ListHistoryAsync(int requestId, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<SalesRequestHistoryDTO>>(History.Where(h => h.RequestId == requestId).ToList());
+        public int ListHistoryCallCount { get; private set; }
+        public int ListNameTransfersCallCount { get; private set; }
+
+        public Task<IReadOnlyList<SalesRequestHistoryDTO>> ListHistoryAsync(int requestId, CancellationToken ct)
+        {
+            ListHistoryCallCount++;
+            return Task.FromResult<IReadOnlyList<SalesRequestHistoryDTO>>(History.Where(h => h.RequestId == requestId).ToList());
+        }
 
         public readonly List<SalesRequestNameTransferDTO> NameTransfers = [];
         public int NextTransferId = 1;
@@ -70,10 +173,12 @@ namespace BE_Company.Sales.Tests
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyList<SalesRequestNameTransferDTO>> ListNameTransfersAsync(int saleRequestId, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<SalesRequestNameTransferDTO>>(
+        public Task<IReadOnlyList<SalesRequestNameTransferDTO>> ListNameTransfersAsync(int saleRequestId, CancellationToken ct)
+        {
+            ListNameTransfersCallCount++;
+            return Task.FromResult<IReadOnlyList<SalesRequestNameTransferDTO>>(
                 NameTransfers.Where(t => t.SaleRequestId == saleRequestId).ToList());
-
+        }
         public Task<bool> TryTransferTargetAsync(
             int requestId,
             int expectedFromEmployeeId,
@@ -144,6 +249,20 @@ namespace BE_Company.Sales.Tests
         public Task<IReadOnlyList<SalesDraftDTO>> ListSalesAsync(int? employeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SalesDraftDTO>>(Sales);
 
+        public Task<IReadOnlyList<SalesDraftDTO>> ListSalesForCustomerAsync(
+            int? customerId,
+            string? phone,
+            string? customerName,
+            CancellationToken ct,
+            int take = 30) =>
+            Task.FromResult<IReadOnlyList<SalesDraftDTO>>(
+                Sales.Where(s =>
+                        (customerId is > 0 && s.CustomerId == customerId)
+                        || (!string.IsNullOrWhiteSpace(phone) && s.Phone == phone)
+                        || (!string.IsNullOrWhiteSpace(customerName) && s.FullName == customerName))
+                    .Take(take)
+                    .ToList());
+
         public Task<SalesDraftDTO?> GetSaleAsync(int saleId, CancellationToken ct) =>
             Task.FromResult(Sales.FirstOrDefault(s => s.SaleId == saleId));
 
@@ -210,6 +329,42 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(SalesRequestStatuses.New, created.Status);
             Assert.Equal(0, created.TargetEmployeeId);
             Assert.Contains(created.History, h => h.Event == SalesRequestEvents.Created);
+        }
+
+        [Fact]
+        public async Task Assign_SetsMaxSalePrice_Ceiling()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await svc.CreateAsync(Manager(), new SalesRequestCreateDTO
+            {
+                Customer = new SalesRequestCustomerDTO { FullName = "زبون", Phone = "07701234567" },
+                MaxSalePrice = 1_200_000
+            }, CancellationToken.None);
+            Assert.Equal(1_200_000m, created.MaxSalePrice);
+
+            var assigned = await svc.AssignAsync(Manager(), created.Id, new SalesRequestAssignDTO
+            {
+                EmployeeId = 1,
+                CustomerName = "زبون",
+                CustomerPhone = "07701234567",
+                MaxSalePrice = 900_000
+            }, CancellationToken.None);
+            Assert.Equal(900_000m, assigned.MaxSalePrice);
+
+            var created2 = await svc.CreateAsync(Manager(), new SalesRequestCreateDTO
+            {
+                Customer = new SalesRequestCustomerDTO { FullName = "زبون2", Phone = "07701234568" },
+                MaxSalePrice = 500_000
+            }, CancellationToken.None);
+            var cleared = await svc.AssignAsync(Manager(), created2.Id, new SalesRequestAssignDTO
+            {
+                EmployeeId = 1,
+                CustomerName = "زبون2",
+                CustomerPhone = "07701234568",
+                MaxSalePrice = null
+            }, CancellationToken.None);
+            Assert.Null(cleared.MaxSalePrice);
         }
 
         [Fact]
@@ -349,7 +504,29 @@ namespace BE_Company.Sales.Tests
             var rejected = await svc.ManagerRejectAsync(Manager(), created.Id, "غير مكتمل", CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.Rejected, rejected.Status);
             Assert.Equal("غير مكتمل", rejected.RejectionReason);
+            Assert.True(rejected.IsDeleted);
+            Assert.Equal("غير مكتمل", rejected.DeleteReason);
+            Assert.Equal(90, rejected.DeletedByUserId);
             Assert.Contains(rejected.History, h => h.Event == SalesRequestEvents.Rejected);
+            Assert.Contains(rejected.History, h => h.Event == SalesRequestEvents.ManagerRequestDeleted);
+            Assert.Empty(await svc.ListForManagerAsync(SalesRequestStatuses.Rejected, null, null, null, CancellationToken.None));
+            Assert.Contains(await svc.ListDeletedForManagerAsync(CancellationToken.None), r => r.Id == created.Id);
+        }
+
+        [Fact]
+        public async Task Employee_Reject_StaysRejected_NotDeleted()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await AssignedAsync(svc, 1);
+            var rejected = await svc.RejectAsync(created.Id, 1, "زبون غير موجود", CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Rejected, rejected.Status);
+            Assert.False(rejected.IsDeleted);
+            Assert.Null(rejected.DeleteReason);
+            Assert.Contains(
+                await svc.ListForManagerAsync(SalesRequestStatuses.Rejected, null, null, null, CancellationToken.None),
+                r => r.Id == created.Id);
+            Assert.DoesNotContain(await svc.ListDeletedForManagerAsync(CancellationToken.None), r => r.Id == created.Id);
         }
 
         [Fact]
@@ -372,15 +549,17 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task Employee_DoesNotSeePendingFilter()
+        public async Task Employee_SeesAssignedImmediately_AfterFilterRetired()
         {
             var repo = new FakeRequestRepository();
             var svc = Svc(repo);
             var created = await svc.CreateAsync(Manager(), new() { Customer = new() { FullName = "أ" } }, CancellationToken.None);
             await svc.AssignAsync(Manager(), created.Id, new SalesRequestAssignDTO { EmployeeId = 1 }, CancellationToken.None);
-            Assert.Empty(await svc.ListForEmployeeAsync(1, CancellationToken.None));
-            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() => svc.GetForEmployeeAsync(created.Id, 1, CancellationToken.None));
-            Assert.Equal(404, ex.StatusCode);
+            var list = await svc.ListForEmployeeAsync(1, CancellationToken.None);
+            Assert.Single(list);
+            Assert.Equal(SalesFilterStatuses.ReadyForSale, list[0].FilterStatus);
+            var got = await svc.GetForEmployeeAsync(created.Id, 1, CancellationToken.None);
+            Assert.Equal(created.Id, got.Id);
         }
 
         [Fact]
@@ -520,14 +699,40 @@ namespace BE_Company.Sales.Tests
             var repo = new FakeRequestRepository();
             var svc = Svc(repo);
             var created = await AssignedAsync(svc, 1);
+            await svc.ViewAsync(created.Id, 1, CancellationToken.None);
             await svc.RejectAsync(created.Id, 1, "زبون غير موجود", CancellationToken.None);
             var returned = await svc.ReturnAsync(Manager(), created.Id, "أعد المتابعة", CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.Returned, returned.Status);
             Assert.Equal(1, returned.TargetEmployeeId);
             Assert.Equal("زبون غير موجود", returned.RejectionReason);
             Assert.Equal("أعد المتابعة", returned.ReturnNote);
+            Assert.Null(returned.ViewedAtUtc);
+            Assert.Equal(SalesFilterStatuses.ReadyForSale, returned.FilterStatus);
+            Assert.Contains(await svc.ListForEmployeeAsync(1, CancellationToken.None), r => r.Id == created.Id && r.Status == SalesRequestStatuses.Returned);
             var prepared = await svc.PrepareForSaleAsync(created.Id, 1, "ملاحظة تجهيز", CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.PreparedForSale, prepared.Status);
+        }
+
+        [Fact]
+        public async Task Return_EmployeeSubmitted_UsesCreatorWhenUnassignedTarget()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await svc.SubmitByEmployeeAsync(Employee(3), new SalesRequestCreateDTO
+            {
+                Customer = new() { FullName = "أ", Phone = "07701234567", Address = "حي" }
+            }, CancellationToken.None);
+            // Simulate employee reject after self-owned submitted row without assignment stamp.
+            created.Status = SalesRequestStatuses.Rejected;
+            created.RejectionReason = "رفض";
+            created.TargetEmployeeId = 0;
+            created.TargetEmployeeName = null;
+            await repo.UpdateAsync(created, CancellationToken.None);
+
+            var returned = await svc.ReturnAsync(Manager(), created.Id, "أعدها للموظف", CancellationToken.None);
+            Assert.Equal(SalesRequestStatuses.Returned, returned.Status);
+            Assert.Equal(3, returned.TargetEmployeeId);
+            Assert.Equal("موظف", returned.TargetEmployeeName);
         }
 
         [Fact]
@@ -640,7 +845,10 @@ namespace BE_Company.Sales.Tests
             await svc.InspectAsync(second.Id, 1, 89, CancellationToken.None);
             var rejected = await svc.ManagerRejectAsync(Manager(), second.Id, "سبب", CancellationToken.None);
             Assert.Equal(SalesRequestStatuses.Rejected, rejected.Status);
+            Assert.True(rejected.IsDeleted);
+            Assert.Equal("سبب", rejected.DeleteReason);
             Assert.Contains(rejected.History, h => h.Event == SalesRequestEvents.Rejected);
+            Assert.Contains(rejected.History, h => h.Event == SalesRequestEvents.ManagerRequestDeleted);
         }
 
         [Fact]

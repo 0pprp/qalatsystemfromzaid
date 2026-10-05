@@ -1,0 +1,235 @@
+=== units ===
+  qalaa-company-beadminstop.service              loaded    active   running Qalaa Company API - beadminstop.alsaaeidy.com
+  qalaa-company-monthmenu.service                loaded    active   running Qalaa Company API - monthmenu.alsaaeidy.com
+  qalaa-company-sharenewdewania.service          loaded    active   running Qalaa Company API - sharenewdewania.alsaaeidy.com
+  qalaa-company-sharenewkarbala.service          loaded    active   running Qalaa Company API - sharenewkarbala.alsaaeidy.com
+  qalaa-company-sharenewkot.service              loaded    active   running Qalaa Company API - sharenewkot.alsaaeidy.com
+  qalaa-company-sharenewmaysanl.service          loaded    active   running Qalaa Company API - sharenewmaysanl.alsaaeidy.com
+  qalaa-company-sharenewmothana.service          loaded    active   running Qalaa Company API - sharenewmothana.alsaaeidy.com
+  qalaa-company-sharenewmusol.service            loaded    active   running Qalaa Company API - sharenewmusol.alsaaeidy.com
+  qalaa-company-sharenewnajaf.service            loaded    active   running Qalaa Company API - sharenewnajaf.alsaaeidy.com
+  qalaa-company-sharenewnasria.service           loaded    active   running Qalaa Company API - sharenewnasria.alsaaeidy.com
+  qalaa-company-sharenewrbabil.service           loaded    active   running Qalaa Company API - sharenewrbabil.alsaaeidy.com
+  qalaa-company-sharenewrbasra.service           loaded    active   running Qalaa Company API - sharenewrbasra.alsaaeidy.com
+  qalaa-company-sharenewrbasranwar.service       loaded    active   running Qalaa Company API - sharenewrbasranwar.alsaaeidy.com
+  qalaa-company-sharenewrdeiala.service          loaded    active   running Qalaa Company API - sharenewrdeiala.alsaaeidy.com
+  qalaa-company-sharenewrkarak.service           loaded    active   running Qalaa Company API - sharenewrkarak.alsaaeidy.com
+  qalaa-company-sharenewrkarkok.service          loaded    active   running Qalaa Company API - sharenewrkarkok.alsaaeidy.com
+  qalaa-company-sharenewrosafa.service           loaded    active   running Qalaa Company API - sharenewrosafa.alsaaeidy.com
+  qalaa-company-shortnewkarakaqeel.service       loaded    active   running Qalaa Company API - shortnewkarakaqeel.alsaaeidy.com
+  qalaa-company-shortnewrosafaaqeel.service      loaded    active   running Qalaa Company API - shortnewrosafaaqeel.alsaaeidy.com
+  qalaa-company-testapp.service                  loaded    active   running Qalaa Company API - testapp.alsaaeidy.com
+  qalaa-defaultdata.service                      loaded    active   running Qalaa DefaultData API
+  qalaa-delegate-haider-rusafa.service           loaded    active   running Qalaa Delegate Haider Rusafa API
+  qalaa-delegateaqeelkaraklast.service           loaded    active   running Qalaa Delegate API - delegateaqeelkaraklast.alsaaeidy.com
+  qalaa-delegateaqeelmaysanlast.service          loaded    active   running Qalaa Delegate API - delegateaqeelmaysanlast.alsaaeidy.com
+  qalaa-delegateaqeelrusafalast.service          loaded    active   running Qalaa Delegate API - delegateaqeelrusafalast.alsaaeidy.com
+  qalaa-delegateaqeelwasitlast.service           loaded    active   running Qalaa Delegate API - delegateaqeelwasitlast.alsaaeidy.com
+  qalaa-delegatehaideralanwarlast.service        loaded    active   running Qalaa Delegate API - delegatehaideralanwarlast.alsaaeidy.com
+  qalaa-delegatehaideralmuthannalast.service     loaded    active   running Qalaa Delegate API - delegatehaideralmuthannalast.alsaaeidy.com
+  qalaa-delegatehaideralqadisiyyahlast.service   loaded    active   running Qalaa Delegate API - delegatehaideralqadisiyyahlast.alsaaeidy.com
+  qalaa-delegatehaiderbabillast.service          loaded    active   running Qalaa Delegate API - delegatehaiderbabillast.alsaaeidy.com
+  qalaa-delegatehaiderbasralast.service          loaded    active   running Qalaa Delegate API - delegatehaiderbasralast.alsaaeidy.com
+  qalaa-delegatehaiderdhiqarlast.service         loaded    active   running Qalaa Delegate API - delegatehaiderdhiqarlast.alsaaeidy.com
+  qalaa-delegatehaiderdiyalalast.service         loaded    active   running Qalaa Delegate API - delegatehaiderdiyalalast.alsaaeidy.com
+  qalaa-delegatehaiderkaraklast.service          loaded    active   running Qalaa Delegate API - delegatehaiderkaraklast.alsaaeidy.com
+  qalaa-delegatehaiderkarbalalast.service        loaded    active   running Qalaa Delegate API - delegatehaiderkarbalalast.alsaaeidy.com
+  qalaa-delegatehaiderkirkuklast.service         loaded    active   running Qalaa Delegate API - delegatehaiderkirkuklast.alsaaeidy.com
+  qalaa-delegatehaidernajaflast.service          loaded    active   running Qalaa Delegate API - delegatehaidernajaflast.alsaaeidy.com
+  qalaa-delegatehaiderninevehlast.service        loaded    active   running Qalaa Delegate API - delegatehaiderninevehlast.alsaaeidy.com
+  qalaa-demo-backend.service                     loaded    active   running Qalaa DEMO Backend
+  qalaa-demo-follower.service                    loaded    active   running Qalaa DEMO Follower Backend
+=== paths ===
+/opt/qalaa-runtime/SalesGateway EXISTS
+total 8256
+drwxr-xr-x 14 root  root     4096 Sep 28 01:52 .
+drwxr-xr-x 94 qalaa qalaa    4096 Sep 28 19:57 ..
+drwxrwxr-x  3 qalaa qalaa    4096 Sep 16 11:12 App_Data
+-rw-rw-rw-  1 root  root   400936 Feb 26  2024 Azure.Core.dll
+-rw-rw-rw-  1 root  root   342960 Jun 10  2024 Azure.Identity.dll
+-rwxr-xr-x  1 qalaa qalaa   72568 Sep 16 02:51 BE_SalesEmployee
+-rw-rw-rw-  1 root  root    22001 Sep 30 18:10 BE_SalesEmployee.deps.json
+-rw-rw-rw-  1 root  root   740352 Sep 30 18:10 BE_SalesEmployee.dll
+-rwxrwxrwx  1 root  root   151552 Sep 30 18:10 BE_SalesEmployee.exe
+-rw-rw-rw-  1 root  root   157752 Sep 30 18:10 BE_SalesEmployee.pdb
+-rw-rw-rw-  1 root  root      488 Sep 30 18:10 BE_SalesEmployee.runtimeconfig.json
+-rw-rw-rw-  1 root  root       53 Sep  2 22:48 BE_SalesEmployee.staticwebassets.endpoints.json
+-rw-rw-rw-  1 root  root   243712 Mar  6  2024 Dapper.dll
+-rw-rw-rw-  1 root  root    52008 Oct 22  2024 Microsoft.AspNetCore.Authentication.JwtBearer.dll
+-rw-rw-rw-  1 root  root    14720 Apr 15  2020 Microsoft.Bcl.AsyncInterfaces.dll
+-rw-rw-rw-  1 root  root   911480 Aug 27  2024 Microsoft.Data.SqlClient.dll
+-rw-rw-rw-  1 root  root    66592 Jun  7  2024 Microsoft.Identity.Client.Extensions.Msal.dll
+-rw-rw-rw-  1 root  root  1005600 Jun  7  2024 Microsoft.Identity.Client.dll
+-rw-rw-rw-  1 root  root    19488 Nov 18  2025 Microsoft.IdentityModel.Abstractions.dll
+-rw-rw-rw-  1 root  root   171552 Nov 18  2025 Microsoft.IdentityModel.JsonWebTokens.dll
+-rw-rw-rw-  1 root  root    38472 Nov 18  2025 Microsoft.IdentityModel.Logging.dll
+-rw-rw-rw-  1 root  root   120240 Nov 21  2023 Microsoft.IdentityModel.Protocols.OpenIdConnect.dll
+-rw-rw-rw-  1 root  root    40376 Nov 21  2023 Microsoft.IdentityModel.Protocols.dll
+-rw-rw-rw-  1 root  root   386584 Nov 18  2025 Microsoft.IdentityModel.Tokens.dll
+-rw-rw-rw-  1 root  root   233408 Mar  6  2024 Microsoft.OpenApi.dll
+-rw-rw-rw-  1 root  root    23976 Jan 27  2022 Microsoft.SqlServer.Server.dll
+-rw-rw-rw-  1 root  root    17408 May 21  2024 Swashbuckle.AspNetCore.Swagger.dll
+-rw-rw-rw-  1 root  root   118784 May 21  2024 Swashbuckle.AspNetCore.SwaggerGen.dll
+-rw-rw-rw-  1 root  root  2270720 May 21  2024 Swashbuckle.AspNetCore.SwaggerUI.dll
+/opt/qalaa-runtime EXISTS
+total 388
+drwxr-xr-x 94 qalaa qalaa 4096 Sep 28 19:57 .
+drwxr-xr-x 10 root  root  4096 Sep 16 03:26 ..
+drwxrwxr-x  3 qalaa qalaa 4096 Aug 28 04:17 .aspnet
+drwxr-xr-x 20 root  root  4096 Oct  3 00:20 AdminBaghdadKarkh
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 18:23 AdminBaghdadKarkh.bak-followerlists-20260919_191309
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 03:33 AdminBaghdadKarkh.bak-legal-20260919_182337
+drwxr-xr-x 20 root  root  4096 Oct  3 00:20 AdminBaghdadRusafa
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 18:23 AdminBaghdadRusafa.bak-followerlists-20260919_191309
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 03:33 AdminBaghdadRusafa.bak-legal-20260919_182337
+drwxr-xr-x 20 root  root  4096 Oct  3 00:20 AdminBasra
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 18:23 AdminBasra.bak-followerlists-20260919_191309
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 03:33 AdminBasra.bak-legal-20260919_182337
+drwxr-xr-x 20 root  root  4096 Oct  3 00:20 AdminBasraAlanwar
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 18:23 AdminBasraAlanwar.bak-followerlists-20260919_191309
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 03:33 AdminBasraAlanwar.bak-legal-20260919_182337
+drwxr-xr-x 20 root  root  4096 Oct  3 00:20 AdminDiwaniyah
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 18:23 AdminDiwaniyah.bak-followerlists-20260919_191309
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 03:33 AdminDiwaniyah.bak-legal-20260919_182337
+drwxr-xr-x 20 root  root  4096 Oct  3 00:20 AdminDiyala
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 18:24 AdminDiyala.bak-followerlists-20260919_191309
+drwxr-xr-x 20 qalaa qalaa 4096 Sep 19 03:33 AdminDiyala.bak-legal-20260919_182337
+drwxr-xr-x  5 root  root  4096 Oct  3 12:55 AdminFrontend
+drwxr-xr-x  4 root  root  4096 Sep 11 04:00 AdminFrontend-backup-20260912_190236
+drwxr-xr-x  4 root  root  4096 Sep 12 18:59 AdminFrontend-backup-20260912_194933
+drwxr-xr-x  4 root  root  4096 Sep  4 11:37 AdminFrontend-old
+drwxr-xr-x  5 qalaa qalaa 4096 Sep 19 03:58 AdminFrontend.bak-legal-20260919_182337
+drwxr-xr-x  5 root  root  4096 Sep 24 23:32 AdminFrontend.bak-maxsale-20260925_180325
+drwxr-xr-x  5 qalaa qalaa 4096 Sep 19 18:23 AdminFrontend.bak-reject-20260921_131434
+drwxr-xr-x  5 root  root  4096 Sep 21 13:14 AdminFrontend.bak-reject-20260921_140955
+/etc/qalaa-production EXISTS
+total 44
+drwx------   2 root root 4096 Sep 23 14:09 .
+drwxr-xr-x 115 root root 4096 Oct  2 06:46 ..
+-rw-------   1 root root  247 Sep 16 04:40 delegate-central-complaints.env
+-rw-------   1 root root  140 Sep 16 04:28 delegate-najaf-sales-gateway.env
+-rw-------   1 root root  484 Sep 16 03:19 delegated-manager.env
+-rw-------   1 root root  460 Sep 16 02:51 delegated-manager.env.bak-20260916-031532
+-rw-------   1 root root  468 Sep 16 03:15 delegated-manager.env.displayname-backup-20260916-031918
+-rw-r--r--   1 root root   58 Sep 23 14:09 main-follower.env
+-rw-r--r--   1 root root  284 Sep 23 14:09 main-follower.env.bak-before-remove-demo-mf
+-rw-------   1 root root  243 Sep 16 02:51 sales-exception-bridge.env
+-rw-------   1 root root  107 Sep 16 03:57 sales-gateway-branch-key.env
+/opt/qalaa-demo EXISTS
+total 124
+drwxr-xr-x 31 root  root  4096 Sep 21 20:41 .
+drwxr-xr-x 10 root  root  4096 Sep 16 03:26 ..
+drwxr-xr-x 19 root  root  4096 Oct  3 00:20 backend
+drwx------ 17 qalaa qalaa 4096 Aug 28 00:45 backend-backup-20260830-014518
+drwxr-xr-x 19 root  root  4096 Sep 12 18:17 backend-backup-20260913_004320
+drwxr-xr-x 19 root  root  4096 Sep 12 17:10 backend-new-20260912_171005
+drwxr-xr-x 19 root  root  4096 Sep 12 17:27 backend-old
+drwxr-xr-x  5 root  root  4096 Sep 12 18:17 backups
+drwxr-xr-x 19 root  root  4096 Sep 13 00:43 build-backend-20260913_004320
+drwxr-xr-x 16 qalaa qalaa 4096 Sep 21 20:41 follower-backend
+drwxr-xr-x  2 root  root  4096 Sep 21 20:41 follower-backend-bak-20260921_214110
+drwxr-xr-x 16 qalaa qalaa 4096 Sep  9 02:40 follower-backend-old
+drwxr-xr-x 16 qalaa qalaa 4096 Sep 10 23:46 follower-backend-old-20260911-004811
+drwxr-xr-x 16 qalaa qalaa 4096 Sep 11 00:49 follower-backend-old-20260911-010416
+drwxr-xr-x 16 qalaa qalaa 4096 Sep 11 01:06 follower-backend-old-20260911-011349
+drwxr-xr-x 16 qalaa qalaa 4096 Sep 11 01:15 follower-backend-old-20260911-015612
+drwxr-xr-x 16 qalaa qalaa 4096 Sep 11 01:57 follower-backend-old-20260911-022409
+drwxr-xr-x 16 qalaa qalaa 4096 Sep 11 02:26 follower-backend-old-20260911-030010
+drwxr-xr-x 16 qalaa qalaa 4096 Sep 11 03:02 follower-backend-old-20260911-033139
+drwxr-xr-x  4 root  root  4096 Oct  3 12:55 frontend
+drwxr-xr-x  4 root  root  4096 Aug 28 00:45 frontend-backup-20260830-005337
+drwxr-xr-x  4 root  root  4096 Aug 30 00:52 frontend-backup-20260830-012103
+drwxr-xr-x  4 root  root  4096 Sep 11 03:33 frontend-backup-20260912_190103
+drwxr-xr-x  4 root  root  4096 Sep 12 18:59 frontend-backup-20260913_004320
+drwxr-xr-x  2 root  root  4096 Sep  2 23:52 gateway-new
+drwxr-xr-x 13 root  root  4096 Sep 28 01:52 sales-gateway
+drwxr-xr-x  2 root  root  4096 Sep 13 23:26 sales-gateway-backup-20260915_172705
+drwxr-xr-x 13 root  root  4096 Sep 15 17:28 sales-gateway-build-20260915_172705
+drwxr-xr-x  2 root  root  4096 Sep 12 17:01 sales-gateway-old
+=== appsettings hits ===
+/opt/qalaa-runtime/AdminMaysan.bak-followerlists-20260919_191309/appsettings.json
+/opt/qalaa-runtime/AdminKarakAqeel.bak-followerlists-20260919_191309/appsettings.json
+/opt/qalaa-runtime/AdminMosul.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderDiyalaLast/appsettings.json
+/opt/qalaa-runtime/AdminBaghdadRusafa.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderAlMuthannaLast/appsettings.json
+/opt/qalaa-runtime/AdminNasiriyah/appsettings.json
+/opt/qalaa-runtime/AdminNajaf.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/AdminNasiriyah.bak-followerlists-20260919_191309/appsettings.json
+/opt/qalaa-runtime/AdminRusafaAqeel.bak-followerlists-20260919_191309/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderKarakLast/appsettings.json
+/opt/qalaa-runtime/AdminDiyala.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/AdminMaysan.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/AdminMosul/appsettings.json
+/opt/qalaa-runtime/AdminKarakAqeel/appsettings.json
+/opt/qalaa-runtime/AdminBaghdadKarkh.bak-followerlists-20260919_191309/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderNajafLast/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderBasraLast/appsettings.json
+/opt/qalaa-runtime/AdminBasra.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/AdminTest/appsettings.Development.json
+/opt/qalaa-runtime/AdminTest/appsettings.json
+/opt/qalaa-runtime/AdminNajaf.bak-followerlists-20260919_191309/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderKarbalaLast/appsettings.json
+/opt/qalaa-runtime/AdminBasraAlanwar.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/AdminMaysan/appsettings.json
+/opt/qalaa-runtime/AdminBasraAlanwar/appsettings.json
+/opt/qalaa-runtime/AdminBaghdadKarkh.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderAlQadisiyyahLast/appsettings.json
+/opt/qalaa-runtime/AdminDiwaniyah/appsettings.json
+/opt/qalaa-runtime/AdminBaghdadKarkh/appsettings.json
+/opt/qalaa-runtime/AdminStop/appsettings.Development.json
+/opt/qalaa-runtime/AdminStop/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderAlanwarLast/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderRusafaLast/appsettings.json
+/opt/qalaa-runtime/DelegateHaiderDhiQarLast/appsettings.json
+/opt/qalaa-runtime/AdminBasra.bak-followerlists-20260919_191309/appsettings.json
+/opt/qalaa-runtime/AdminHilla.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/AdminKirkuk.bak-followerlists-20260919_191309/appsettings.json
+/opt/qalaa-runtime/AdminDiwaniyah.bak-legal-20260919_182337/appsettings.json
+/opt/qalaa-runtime/AdminKirkuk.bak-legal-20260919_182337/appsettings.json
+=== env files ===
+/etc/qalaa-demo/sales-gateway.env
+/etc/systemd/system/qalaa-company-sharenewdewania.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewdewania.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewrbasra.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewrbasra.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-demo-sales-gateway.service.d
+/etc/systemd/system/qalaa-company-sharenewnajaf.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewnajaf.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewrkarkok.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewrkarkok.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewrkarak.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewrkarak.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-shortnewrosafaaqeel.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-shortnewrosafaaqeel.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewmaysanl.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewmaysanl.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-delegatehaidernajaflast.service.d/99-production-sales-gateway.conf
+/etc/systemd/system/qalaa-sales-gateway.service
+/etc/systemd/system/qalaa-sales-gateway.service.d
+/etc/systemd/system/qalaa-company-sharenewkot.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewkot.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-demo-backend.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewnasria.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewnasria.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewkarbala.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewkarbala.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewrosafa.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewrosafa.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewrdeiala.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewrdeiala.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-demo-sales-gateway.service
+/etc/systemd/system/multi-user.target.wants/qalaa-sales-gateway.service
+/etc/systemd/system/multi-user.target.wants/qalaa-demo-sales-gateway.service
+/etc/systemd/system/qalaa-company-shortnewkarakaqeel.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-shortnewkarakaqeel.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewrbabil.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewrbabil.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewrbasranwar.service.d/sales-gateway.conf
+/etc/systemd/system/qalaa-company-sharenewrbasranwar.service.d/99-sales-gateway-key.conf
+/etc/systemd/system/qalaa-company-sharenewmusol.service.d/sales-gateway.conf
+=== nginx tutorial ===
+
+=== listen 5280 ===
+LISTEN 0      512        127.0.0.1:5280      0.0.0.0:*    users:(("dotnet",pid=2690140,fd=274))                                                                                                                                                                      
+LISTEN 0      511          0.0.0.0:8080      0.0.0.0:*    users:(("nginx",pid=3148764,fd=10),("nginx",pid=3148763,fd=10),("nginx",pid=3148762,fd=10),("nginx",pid=3148761,fd=10),("nginx",pid=3148760,fd=10),("nginx",pid=3148759,fd=10),("nginx",pid=2522476,fd=10))

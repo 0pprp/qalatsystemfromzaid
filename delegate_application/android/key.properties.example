@@ -1,0 +1,6 @@
+# Optional production signing. Copy to key.properties and fill values.
+# If missing, release builds keep using the debug keystore (same as prior shipped APKs).
+storePassword=
+keyPassword=
+keyAlias=
+storeFile=../keystore/delegate-release.jks

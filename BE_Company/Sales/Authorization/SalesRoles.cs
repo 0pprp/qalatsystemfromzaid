@@ -22,16 +22,19 @@ namespace BE_Company.Sales.Authorization
         public const string RequestCreator = "RequestCreator";
 
         public static bool IsSalesEmployee(string? userType) =>
-            string.Equals(userType, UserTypeSalesEmployee, StringComparison.Ordinal);
+            string.Equals(NormalizeUserType(userType), UserTypeSalesEmployee, StringComparison.Ordinal);
 
         public static bool IsSalesManager(string? userType) =>
-            string.Equals(userType, UserTypeSalesManager, StringComparison.Ordinal);
+            string.Equals(NormalizeUserType(userType), UserTypeSalesManager, StringComparison.Ordinal);
 
         public static bool IsSalesFilterEmployee(string? userType) =>
-            string.Equals(userType, UserTypeSalesFilterEmployee, StringComparison.Ordinal);
+            string.Equals(NormalizeUserType(userType), UserTypeSalesFilterEmployee, StringComparison.Ordinal);
 
         public static bool IsBranchManager(string? userType) =>
-            string.Equals(userType, UserTypeBranchManager, StringComparison.Ordinal);
+            string.Equals(NormalizeUserType(userType), UserTypeBranchManager, StringComparison.Ordinal);
+
+        private static string? NormalizeUserType(string? userType) =>
+            string.IsNullOrWhiteSpace(userType) ? null : userType.Trim();
 
         public static bool IsFollower(string? userType) =>
             !string.IsNullOrWhiteSpace(userType)

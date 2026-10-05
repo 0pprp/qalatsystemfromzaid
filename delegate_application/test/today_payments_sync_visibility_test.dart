@@ -21,7 +21,7 @@ void main() {
     expect(row, isNotNull);
     expect(row!['SyncStatus'], 'Synced');
     expect(
-      IraqDate.isCreatedOnIraqCalendarDay(row['CreatedAtUtc']?.toString(), utcNow),
+      IraqDate.isCreatedOnIraqDay(row['CreatedAtUtc']?.toString(), utcNow),
       isTrue,
     );
   });
@@ -31,5 +31,62 @@ void main() {
     final at0300 = DateTime.utc(2026, 9, 15, 0, 0); // Sep 15 03:00 Baghdad
     expect(IraqDate.businessDateKey(at0259), '2026-09-14');
     expect(IraqDate.businessDateKey(at0300), '2026-09-15');
+  });
+
+  test('print strip uses local ledger after sync wipe (not server arrival)', () {
+    final utcNow = DateTime.utc(2026, 9, 14, 14, 0);
+    // Queue empty after successful upload deleted the row.
+    final queue = <Map<String, dynamic>>[];
+    final ledger = [
+      {
+        'CustomerId': 7,
+        'DelegateId': 3,
+        'Amount': 800000,
+        'CreatedAtUtc': '2026-09-14T08:00:00.000Z',
+        'ClientPaymentId': 'uuid-7',
+      },
+    ];
+    final merged = TodayPaymentsLogic.mergeLocalDayPayments(
+      localPayments: queue,
+      ledgerRows: ledger,
+      customerNames: {7: 'زبون تجريبي'},
+      utcNow: utcNow,
+    );
+    expect(merged.length, 1);
+    expect(merged.first['CustomerId'], 7);
+    expect(merged.first['CustomerName'], 'زبون تجريبي');
+    expect(merged.first['Amount'], 800000);
+    expect(merged.first['SyncStatus'], 'Synced');
+    expect(TodayPaymentsLogic.sumAmounts(merged), 800000);
+  });
+
+  test('merge prefers live queue row over duplicate ledger mark', () {
+    final utcNow = DateTime.utc(2026, 9, 14, 14, 0);
+    final queue = [
+      {
+        'CustomerId': 7,
+        'DelegateId': 3,
+        'Amount': 5000,
+        'CustomerName': 'من الطابور',
+        'SyncStatus': 'PendingSync',
+        'CreatedAtUtc': '2026-09-14T08:00:00.000Z',
+      },
+    ];
+    final ledger = [
+      {
+        'CustomerId': 7,
+        'DelegateId': 3,
+        'Amount': 5000,
+        'CreatedAtUtc': '2026-09-14T08:00:00.000Z',
+      },
+    ];
+    final merged = TodayPaymentsLogic.mergeLocalDayPayments(
+      localPayments: queue,
+      ledgerRows: ledger,
+      utcNow: utcNow,
+    );
+    expect(merged.length, 1);
+    expect(merged.first['CustomerName'], 'من الطابور');
+    expect(merged.first['SyncStatus'], 'PendingSync');
   });
 }

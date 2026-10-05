@@ -309,6 +309,40 @@ namespace BE_Company.Sales.Services
             var kinship = new List<int>();
             var kinshipSeen = new HashSet<int>();
 
+            // Phone index: O(customers) once then O(1) lookup instead of O(n) Matches per row.
+            Dictionary<string, List<int>>? phoneIndex = null;
+            var needlePhone = SalesPhoneNormalizer.ForMatch(customerPhone);
+            if (!string.IsNullOrWhiteSpace(needlePhone))
+            {
+                phoneIndex = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+                foreach (var c in customers)
+                {
+                    if (c.CustomerId <= 0)
+                    {
+                        continue;
+                    }
+
+                    var key = SalesPhoneNormalizer.ForMatch(c.Phone);
+                    if (string.IsNullOrWhiteSpace(key))
+                    {
+                        continue;
+                    }
+
+                    if (!phoneIndex.TryGetValue(key, out var list))
+                    {
+                        list = [];
+                        phoneIndex[key] = list;
+                    }
+
+                    list.Add(c.CustomerId);
+                }
+
+                if (phoneIndex.TryGetValue(needlePhone, out var hits))
+                {
+                    phone.AddRange(hits);
+                }
+            }
+
             foreach (var c in customers)
             {
                 if (c.CustomerId <= 0)
@@ -321,7 +355,8 @@ namespace BE_Company.Sales.Services
                     triple.Add(c.CustomerId);
                 }
 
-                if (!string.IsNullOrWhiteSpace(customerPhone)
+                if (phoneIndex is null
+                    && !string.IsNullOrWhiteSpace(customerPhone)
                     && SalesPhoneNormalizer.Matches(customerPhone, c.Phone))
                 {
                     phone.Add(c.CustomerId);

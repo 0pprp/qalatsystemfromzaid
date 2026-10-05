@@ -42,8 +42,8 @@ public sealed class SalesExceptionResult
     public static SalesExceptionResult NotFound() =>
         new() { Outcome = SalesExceptionOutcome.NotFound, Error = "الطلب غير موجود" };
 
-    public static SalesExceptionResult Conflict(string error) =>
-        new() { Outcome = SalesExceptionOutcome.Conflict, Error = error };
+    public static SalesExceptionResult Conflict(string error, SalesExceptionRequest? existing = null) =>
+        new() { Outcome = SalesExceptionOutcome.Conflict, Error = error, Request = existing };
 
     public static SalesExceptionResult Forbidden(string error) =>
         new() { Outcome = SalesExceptionOutcome.Forbidden, Error = error };
@@ -58,6 +58,8 @@ public sealed class SalesExceptionDetail
     public required IReadOnlyList<SalesExceptionAuditEntry> Audit { get; init; }
     /// <summary>Branch same-province review payload (null when not loaded).</summary>
     public object? Review { get; init; }
+    /// <summary>Full customer profile when WrongSale has CustomerId but no SalesRequestId.</summary>
+    public object? CustomerProfile { get; init; }
     public string? ReviewError { get; init; }
 }
 
@@ -114,7 +116,20 @@ public sealed class SalesExceptionService
             var active = await _store.FindActiveBySalesRequestIdAsync(salesRequestId, ct);
             if (active is not null)
             {
-                return SalesExceptionResult.Conflict("يوجد طلب استثناء نشط لهذا الطلب");
+                return SalesExceptionResult.Conflict("يوجد طلب استثناء نشط لهذا الطلب", active);
+            }
+        }
+
+        // WrongSale from first-collection / follower auth: idempotent on customer (retry-safe).
+        var isWrongSaleIntake = reason.Contains("مبيعات خاطئة", StringComparison.Ordinal)
+                                || reason.Contains("تقييم المتجر", StringComparison.Ordinal);
+        if (isWrongSaleIntake && input.CustomerId is int wrongCustomerId and > 0
+            && (input.SalesRequestId is null or <= 0))
+        {
+            var existingWrong = await _store.FindPendingWrongSaleByCustomerIdAsync(wrongCustomerId, ct);
+            if (existingWrong is not null)
+            {
+                return SalesExceptionResult.Success(existingWrong);
             }
         }
 
@@ -149,6 +164,8 @@ public sealed class SalesExceptionService
         };
 
         var created = await _store.CreateAsync(request, audit, ct);
+        // Hide the SalesRequest from «غير مسند» until DM decides / assign consumes.
+        await _holdPoster.SyncHoldAsync(created, ExceptionStatuses.Pending, ct);
         return SalesExceptionResult.Success(created);
     }
 
@@ -197,22 +214,48 @@ public sealed class SalesExceptionService
         }
 
         var audit = await _store.GetAuditAsync(id, ct);
-        if (request.SalesRequestId is null or <= 0)
+        var isWrongSale = IsWrongSaleReason(request.Reason);
+
+        // WrongSale (أو أي استثناء بلا SalesRequestId) يجب أن يُفتح دائماً —
+        // بروفايل + مطابقات الاسم/الهاتف من الفرع.
+        if (request.SalesRequestId is null or <= 0 || isWrongSale)
         {
-            return (SalesExceptionOutcome.Invalid, new SalesExceptionDetail
+            object? customerProfile = null;
+            object? review = null;
+            string? profileError = null;
+            if (request.CustomerId is > 0
+                && !string.IsNullOrWhiteSpace(request.CityValue)
+                && _aggregator is not null)
+            {
+                (customerProfile, profileError) = await TryLoadCustomerProfileAsync(
+                    request, request.CustomerId.Value, ct);
+                (review, var matchErr) = await TryLoadCustomerMatchReviewAsync(
+                    request, request.CustomerId.Value, ct);
+                profileError ??= matchErr;
+            }
+            else if (isWrongSale && request.CustomerId is null or <= 0)
+            {
+                profileError = "لا يوجد معرف زبون مرتبط بهذا الإشعار.";
+            }
+
+            return (SalesExceptionOutcome.Success, new SalesExceptionDetail
             {
                 Request = request,
-                Audit = audit
-            }, "لا يمكن تحميل تفاصيل طلب البيع الأصلي.");
+                Audit = audit,
+                Review = review,
+                CustomerProfile = customerProfile,
+                ReviewError = profileError
+            }, null);
         }
 
         if (string.IsNullOrWhiteSpace(request.CityValue))
         {
-            return (SalesExceptionOutcome.Invalid, new SalesExceptionDetail
+            return (SalesExceptionOutcome.Success, new SalesExceptionDetail
             {
                 Request = request,
-                Audit = audit
-            }, "محافظة الطلب غير متوفرة.");
+                Audit = audit,
+                ReviewError = "محافظة الطلب غير متوفرة."
+            }, null);
         }
 
         if (_aggregator is null)
@@ -226,55 +269,228 @@ public sealed class SalesExceptionService
             }, null);
         }
 
-        var proxyUser = new GatewayUser
-        {
-            UserID = "0",
-            UserName = request.RequestingManagerUserName ?? "delegated-manager",
-            UserType = SalesRoles.UserTypeSalesManager,
-            IsCentral = true,
-            CityValue = request.CityValue,
-            CityName = request.CityName ?? ""
-        };
+        var proxyUser = BuildProxyUser(request);
 
         try
         {
             var path = $"sales-manager/sales-requests/{request.SalesRequestId.Value}/exception-review-context";
             var (status, body) = await _aggregator.GetOneAsync(proxyUser, request.CityValue, path, ct);
+            object? customerProfile = null;
+            string? reviewError = null;
+            object? review = null;
+
             if (status == 404)
             {
-                return (SalesExceptionOutcome.Invalid, new SalesExceptionDetail
-                {
-                    Request = request,
-                    Audit = audit
-                }, "لا يمكن تحميل تفاصيل طلب البيع الأصلي.");
+                reviewError = "لا يمكن تحميل تفاصيل طلب البيع الأصلي.";
+            }
+            else if (status is < 200 or >= 300)
+            {
+                reviewError = ExtractBranchMessage(body) ?? "تعذر تحميل بيانات المراجعة من الفرع.";
+            }
+            else
+            {
+                review = UnwrapReviewBody(body);
             }
 
-            if (status is < 200 or >= 300)
+            // Always attach profile for WrongSale so DM sees shop evals / payments.
+            if (isWrongSale && request.CustomerId is > 0)
             {
-                var msg = ExtractBranchMessage(body) ?? "تعذر تحميل بيانات المراجعة من الفرع.";
-                return (SalesExceptionOutcome.Invalid, new SalesExceptionDetail
-                {
-                    Request = request,
-                    Audit = audit
-                }, msg);
+                (customerProfile, var profileErr) = await TryLoadCustomerProfileAsync(
+                    request, request.CustomerId.Value, ct);
+                reviewError ??= profileErr;
             }
 
             return (SalesExceptionOutcome.Success, new SalesExceptionDetail
             {
                 Request = request,
                 Audit = audit,
-                Review = UnwrapReviewBody(body)
+                Review = review,
+                CustomerProfile = customerProfile,
+                ReviewError = reviewError
             }, null);
         }
         catch
         {
-            return (SalesExceptionOutcome.Invalid, new SalesExceptionDetail
+            object? customerProfile = null;
+            if (request.CustomerId is > 0)
+            {
+                (customerProfile, _) = await TryLoadCustomerProfileAsync(
+                    request, request.CustomerId.Value, ct);
+            }
+
+            return (SalesExceptionOutcome.Success, new SalesExceptionDetail
             {
                 Request = request,
-                Audit = audit
-            }, "تعذر تحميل بيانات المراجعة من الفرع.");
+                Audit = audit,
+                CustomerProfile = customerProfile,
+                ReviewError = "تعذر تحميل بيانات المراجعة من الفرع."
+            }, null);
         }
     }
+
+    private static bool IsWrongSaleReason(string? reason) =>
+        !string.IsNullOrWhiteSpace(reason)
+        && (reason.Contains("مبيعات خاطئة", StringComparison.Ordinal)
+            || reason.Contains("تقييم المتجر", StringComparison.Ordinal));
+
+    private static GatewayUser BuildProxyUser(SalesExceptionRequest request) => new()
+    {
+        UserID = "0",
+        UserName = request.RequestingManagerUserName ?? "delegated-manager",
+        UserType = SalesRoles.UserTypeSalesManager,
+        IsCentral = true,
+        CityValue = request.CityValue,
+        CityName = request.CityName ?? ""
+    };
+
+    private async Task<(object? Profile, string? Error)> TryLoadCustomerProfileAsync(
+        SalesExceptionRequest request,
+        int customerId,
+        CancellationToken ct)
+    {
+        if (_aggregator is null || string.IsNullOrWhiteSpace(request.CityValue))
+        {
+            return (null, "مراجع الفرع غير متاح.");
+        }
+
+        try
+        {
+            var path = $"sales-manager/customers/{customerId}/profile";
+            var (status, body) = await _aggregator.GetOneAsync(
+                BuildProxyUser(request), request.CityValue, path, ct);
+            if (status is >= 200 and < 300)
+            {
+                return (body, null);
+            }
+
+            return (null, ExtractBranchMessage(body) ?? "تعذر تحميل بروفايل الزبون من الفرع.");
+        }
+        catch
+        {
+            return (null, "تعذر تحميل بروفايل الزبون من الفرع.");
+        }
+    }
+
+    /// <summary>Same-province name/phone matches (reuses waiver-review-context).</summary>
+    private async Task<(object? Review, string? Error)> TryLoadCustomerMatchReviewAsync(
+        SalesExceptionRequest request,
+        int customerId,
+        CancellationToken ct)
+    {
+        if (_aggregator is null || string.IsNullOrWhiteSpace(request.CityValue))
+        {
+            return (null, null);
+        }
+
+        try
+        {
+            var path = $"sales-manager/customers/{customerId}/waiver-review-context";
+            var (status, body) = await _aggregator.GetOneAsync(
+                BuildProxyUser(request), request.CityValue, path, ct);
+            if (status is >= 200 and < 300)
+            {
+                // WrongSale / DM: never show the same customer as a "similar" match.
+                return (ExcludeSelfFromMatchReview(UnwrapReviewBody(body), customerId), null);
+            }
+
+            return (null, null);
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// Waiver context includes the target row as «الزبون الحالي»; WrongSale inbox
+    /// only wants other province accounts (prior name/phone matches).
+    /// </summary>
+    private static object? ExcludeSelfFromMatchReview(object? review, int customerId)
+    {
+        if (review is null || customerId <= 0)
+        {
+            return review;
+        }
+
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(review);
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json);
+            if (node is null)
+            {
+                return review;
+            }
+
+            var matches = node["matchingCustomers"] ?? node["MatchingCustomers"];
+            if (matches is not System.Text.Json.Nodes.JsonArray arr)
+            {
+                return review;
+            }
+
+            var filtered = new System.Text.Json.Nodes.JsonArray();
+            foreach (var item in arr)
+            {
+                if (item is null)
+                {
+                    continue;
+                }
+
+                var idNode = item["customerId"] ?? item["CustomerId"];
+                var id = idNode?.GetValue<int?>() ?? 0;
+                var reasons = item["matchReasons"] ?? item["MatchReasons"];
+                var isSelf = id == customerId;
+                if (!isSelf && reasons is System.Text.Json.Nodes.JsonArray reasonArr)
+                {
+                    foreach (var r in reasonArr)
+                    {
+                        var text = r?.ToString() ?? "";
+                        if (text.Contains("الزبون الحالي", StringComparison.Ordinal))
+                        {
+                            isSelf = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!isSelf)
+                {
+                    filtered.Add(item.DeepClone());
+                }
+            }
+
+            if (node["matchingCustomers"] is not null)
+            {
+                node["matchingCustomers"] = filtered;
+            }
+            else
+            {
+                node["MatchingCustomers"] = filtered;
+            }
+
+            var classification = node["customerClassification"] ?? node["CustomerClassification"];
+            if (classification is not null)
+            {
+                if (classification["matchCount"] is not null)
+                {
+                    classification["matchCount"] = filtered.Count;
+                }
+
+                if (classification["MatchCount"] is not null)
+                {
+                    classification["MatchCount"] = filtered.Count;
+                }
+            }
+
+            return node;
+        }
+        catch
+        {
+            return review;
+        }
+    }
+
+    public Task<SalesExceptionRequest?> MarkReadAsync(Guid id, CancellationToken ct = default) =>
+        _store.MarkReadAsync(id, DateTime.UtcNow, ct);
 
     private static string? ExtractBranchMessage(object? body)
     {
@@ -308,6 +524,15 @@ public sealed class SalesExceptionService
     public Task<IReadOnlyDictionary<string, int>> DashboardCountsAsync(string? cityValue, CancellationToken ct = default) =>
         _store.CountByStatusAsync(cityValue, ct);
 
+    /// <summary>Hold-only status counts for dashboard (excludes WrongSale).</summary>
+    public Task<IReadOnlyDictionary<string, int>> HoldDashboardCountsAsync(
+        string? cityValue,
+        CancellationToken ct = default) =>
+        _store.CountHoldByStatusAsync(cityValue, ct);
+
+    public Task<int> UnreadWrongSalesCountAsync(string? cityValue, CancellationToken ct = default) =>
+        _store.CountUnreadWrongSalesAsync(cityValue, ct);
+
     /// <summary>
     /// Applies Approve/Reject/Cancel. Anything already decided comes back as Conflict so the API can answer 409.
     /// </summary>
@@ -334,6 +559,12 @@ public sealed class SalesExceptionService
         if (existing is null)
         {
             return SalesExceptionResult.NotFound();
+        }
+
+        if (IsWrongSaleReason(existing.Reason))
+        {
+            return SalesExceptionResult.Forbidden(
+                "المبيعات الخاطئة إشعار اطلاع فقط — لا موافقة ولا رفض.");
         }
 
         if (string.Equals(actorRole, SalesRoles.SalesManager, StringComparison.Ordinal)

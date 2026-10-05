@@ -126,3 +126,15 @@ BEGIN
          N'إصدار أولي');
 END
 GO
+
+IF NOT EXISTS (SELECT 1 FROM dbo.MobileAppReleases WHERE AppKey = N'main-follower')
+BEGIN
+    INSERT INTO dbo.MobileAppReleases
+        (AppKey, LatestVersionName, LatestVersionCode, MinimumSupportedVersionCode, ForceUpdate, ApkUrl, Sha256, ReleaseNotes)
+    VALUES
+        (N'main-follower', N'1.0.0', 1, 1, 0,
+         N'https://example.invalid/main-follower.apk',
+         N'0000000000000000000000000000000000000000000000000000000000000000',
+         N'إصدار أولي للمتابع الرئيسي');
+END
+GO

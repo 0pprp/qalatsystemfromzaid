@@ -9,11 +9,25 @@ class AppDate {
     return parsed?.toLocal();
   }
 
+  static String two(int n) => n.toString().padLeft(2, '0');
+
+  static String day(DateTime value) =>
+      '${value.year}/${two(value.month)}/${two(value.day)}';
+
+  static String isoDate(DateTime value) =>
+      '${value.year}-${two(value.month)}-${two(value.day)}';
+
+  static String formatScore(double value) {
+    var text = value.toStringAsFixed(2);
+    if (!text.contains('.')) return text;
+    text = text.replaceFirst(RegExp(r'0+$'), '');
+    if (text.endsWith('.')) text = text.substring(0, text.length - 1);
+    return text;
+  }
+
   static String format(DateTime? value) {
     if (value == null) return '-';
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${value.year}/${two(value.month)}/${two(value.day)}'
-        ' ${two(value.hour)}:${two(value.minute)}';
+    return '${day(value)} ${two(value.hour)}:${two(value.minute)}';
   }
 
   static String relative(DateTime? value, {DateTime? now}) {

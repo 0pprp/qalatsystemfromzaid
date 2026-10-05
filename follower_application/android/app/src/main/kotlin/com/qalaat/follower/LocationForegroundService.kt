@@ -386,20 +386,15 @@ class LocationForegroundService : Service() {
 
     private fun nextOfficialSlotMs(afterLastMs: Long): Long? {
         val start = if (shiftStartedAtUtcMs > 0L) shiftStartedAtUtcMs else return null
-        var index = 1L
-        while (index <= 2000L) {
-            val due = start + index * officialIntervalMs
-            if (due >= cutoffAtUtcMs) return null
-            if (due > afterLastMs) return due
-            index++
-        }
+        if (start >= cutoffAtUtcMs) return null
+        // Start+end model: only one official slot while active — the shift start.
+        if (afterLastMs < start) return start
         return null
     }
 
     private fun slotIndexFor(slotUtcMs: Long): Long {
         val start = if (shiftStartedAtUtcMs > 0L) shiftStartedAtUtcMs else return 1L
-        val index = (slotUtcMs - start) / officialIntervalMs
-        return if (index < 1L) 1L else index
+        return if (kotlin.math.abs(slotUtcMs - start) <= 5_000L) 1L else 2L
     }
 
     private fun persistDueOfficialPoints() {
@@ -412,9 +407,6 @@ class LocationForegroundService : Service() {
             }
             val start = if (shiftStartedAtUtcMs > 0L) shiftStartedAtUtcMs else {
                 log("FOLLOWER_LOCATION_RETRY reason=missing-shift-start")
-                return
-            }
-            if (now < start + officialIntervalMs) {
                 return
             }
             val due = nextOfficialSlotMs(lastOfficialAtMs) ?: return
@@ -430,7 +422,7 @@ class LocationForegroundService : Service() {
             if (insertOfficialPoint(loc, due, index)) {
                 lastOfficialAtMs = due
                 writeMeta(officialMetaKey(), due.toString())
-                writeMeta(firstOfficialMetaKey(), (start + officialIntervalMs).toString())
+                writeMeta(firstOfficialMetaKey(), start.toString())
                 log("FOLLOWER_LOCATION_CAPTURED seq=$index slotDueAtUtcMs=$due lat=${loc.latitude} lng=${loc.longitude}")
                 Thread {
                     flushPendingToServer()
@@ -448,7 +440,7 @@ class LocationForegroundService : Service() {
         val next = nextOfficialSlotMs(lastOfficialAtMs) ?: return
         if (next >= cutoffAtUtcMs) return
         val delay = (next - now).coerceAtLeast(1_000L)
-        log("FOLLOWER_NEXT_SLOT_DUE delayMs=$delay dueAtUtcMs=$next intervalMs=$officialIntervalMs")
+        log("FOLLOWER_NEXT_SLOT_DUE delayMs=$delay dueAtUtcMs=$next intervalMs=start-end")
         handler.postDelayed(officialTick, delay)
     }
 

@@ -68,6 +68,19 @@ public sealed class SalesExceptionConsumeWorkflowTests
     };
 
     [Fact]
+    public async Task Create_SyncsPendingHoldToBranch()
+    {
+        var (service, _, holds) = CreateService();
+        var created = await service.CreateAsync(Manager(), Input(76));
+
+        Assert.True(created.Ok);
+        Assert.Contains(holds.Posts, p =>
+            p.SalesRequestId == 76
+            && p.Status == ExceptionStatuses.Pending
+            && p.ExceptionId == created.Request!.Id);
+    }
+
+    [Fact]
     public async Task Create_DuplicateActiveForSameSalesRequest_IsConflict()
     {
         var (service, _, _) = CreateService();

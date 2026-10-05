@@ -16,6 +16,17 @@ class _TrustReceiptFormPageState extends State<TrustReceiptFormPage> {
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
   int? _receiptId;
+  final Map<String, String> _preservedSignatures = {};
+  static const _signatureKeys = [
+    'receiverSignature',
+    'delivererSignature',
+    'firstWitnessSignature',
+    'secondWitnessSignature',
+    'firstPartySignature',
+    'secondPartySignature',
+    'cashierSignature',
+    'salesRepresentativeSignature',
+  ];
 
   // Controllers for all text fields
   final Map<String, TextEditingController> _ctrls = {};
@@ -79,6 +90,13 @@ class _TrustReceiptFormPageState extends State<TrustReceiptFormPage> {
     _trustReceiptDate = _parseDate(data['trustReceiptDate']);
     _isProductInspected = data['isProductInspected'] == true;
     _isReceivedByBuyer = data['isReceivedByBuyer'] == true;
+    _preservedSignatures.clear();
+    for (final key in _signatureKeys) {
+      final v = data[key]?.toString();
+      if (v != null && v.isNotEmpty) {
+        _preservedSignatures[key] = v;
+      }
+    }
   }
 
   DateTime? _parseDate(dynamic val) {
@@ -160,15 +178,16 @@ class _TrustReceiptFormPageState extends State<TrustReceiptFormPage> {
       payload['isProductInspected'] = _isProductInspected;
       payload['isReceivedByBuyer'] = _isReceivedByBuyer;
 
-      // Signature fields - always empty (filled in physically on printed document)
-      payload['receiverSignature'] = '';
-      payload['delivererSignature'] = '';
-      payload['firstWitnessSignature'] = '';
-      payload['secondWitnessSignature'] = '';
-      payload['firstPartySignature'] = '';
-      payload['secondPartySignature'] = '';
-      payload['cashierSignature'] = '';
-      payload['salesRepresentativeSignature'] = '';
+      // Never wipe existing signatures when editing unrelated fields.
+      if (_receiptId == null) {
+        for (final key in _signatureKeys) {
+          payload[key] = '';
+        }
+      } else {
+        for (final e in _preservedSignatures.entries) {
+          payload[e.key] = e.value;
+        }
+      }
 
       // System
       payload['createdByUserID'] = delegateId;

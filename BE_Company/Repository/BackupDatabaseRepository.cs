@@ -31,7 +31,7 @@ namespace BE_Company.Repository
 
         private string? GetDatabaseName()
         {
-            var builder = new SqlConnectionStringBuilder(_connectionString);    
+            var builder = new SqlConnectionStringBuilder(_connectionString);
             return builder.InitialCatalog;
         }
     }

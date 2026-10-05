@@ -319,6 +319,20 @@ public sealed class SalesExceptionServiceTests
     }
 
     [Fact]
+    public async Task Create_DuplicateActiveSalesRequest_ReturnsConflictWithExisting()
+    {
+        var (service, _) = CreateService();
+        var first = await service.CreateAsync(Manager(), Input(salesRequestId: 77));
+        Assert.True(first.Ok);
+
+        var second = await service.CreateAsync(Manager(), Input(reason: "محاولة ثانية", salesRequestId: 77));
+        Assert.Equal(SalesExceptionOutcome.Conflict, second.Outcome);
+        Assert.NotNull(second.Request);
+        Assert.Equal(first.Request!.Id, second.Request!.Id);
+        Assert.Contains("نشط", second.Error);
+    }
+
+    [Fact]
     public async Task EnrichedDetail_With_Fake_Aggregator_Returns_Review()
     {
         var notes = new IntentRecordingBranchNotePoster();
@@ -376,6 +390,13 @@ public sealed class SalesExceptionServiceTests
             LastCity = cityValue;
             return Task.FromResult((Status, Body));
         }
+
+        public Task<(int Status, object? Body)> GetObjectFanoutAsync(GatewayUser user, string companyPath, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
+
+        public Task<(int Status, object? Body)> GetSalesRequestsPageFanoutAsync(
+            GatewayUser user, string companyPath, int page, int pageSize, CancellationToken ct) =>
+            Task.FromResult<(int, object?)>((501, null));
 
         public Task<(int Status, object? Body)> GetAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct) =>
             Task.FromResult<(int, object?)>((501, null));

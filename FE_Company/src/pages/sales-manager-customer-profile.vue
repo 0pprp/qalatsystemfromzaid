@@ -18,6 +18,18 @@ import {
   smPostForm,
   smPut,
 } from '@/composables/salesManagerApi'
+import {
+  directorCustomerDocumentFilePath,
+  directorCustomerNotesPath,
+  directorCustomerProfilePath,
+  directorGet,
+  directorGetBlob,
+  directorSaleShopImagePath,
+} from '@/composables/directorApi'
+import { loadCachedBlob, cachedBlobUrl } from '@/composables/useBlobUrlCache'
+import { isDemo } from '@/composables/useCities'
+import { isCentralSalesManager } from '@/composables/useSalesBranches'
+import { useUserRole } from '@/composables/useUserRole'
 import { formatIraqDate } from '@/composables/iraqDate'
 import { saleDisplayDocuments, saleDocumentTitle } from '@/composables/saleDocuments'
 import ShopLocationLink from '@/components/ShopLocationLink.vue'
@@ -27,11 +39,15 @@ import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone
 const toast = useToast()
 const route = useRoute()
 const router = useRouter()
+const { isDirector } = useUserRole()
+const readOnly = computed(() => isDirector.value)
 const loading = ref(false)
 const profile = ref(null)
 const sharedNotes = ref([])
 const shopUrls = ref({})
 const kycUrls = ref({})
+const kycBusyMap = ref({})
+const kycErrorMap = ref({})
 const kycOpen = ref(false)
 const kycOpenUrl = ref('')
 const kycBusy = ref(false)
@@ -133,21 +149,33 @@ async function load() {
   }
   loading.value = true
   try {
-    profile.value = await smGet(customerProfileApiPath(city, {
-      customerId: customerId.value,
-      name: customerName.value,
-      phone: customerPhone.value,
-    }))
-    await loadShopImages()
-    await loadCustomerDocuments()
-    await loadSharedNotes()
+    if (isDirector.value) {
+      if (!city || !customerId.value) {
+        throw new Error('المحافظة ومعرّف الزبون مطلوبان')
+      }
+      profile.value = await directorGet(directorCustomerProfilePath(city, customerId.value), {
+        timeoutMs: 15000,
+      })
+    }
+    else {
+      profile.value = await smGet(customerProfileApiPath(city, {
+        customerId: customerId.value,
+        name: customerName.value,
+        phone: customerPhone.value,
+      }), { timeoutMs: 15000 })
+    }
+    // First paint immediately after JSON — images/notes load in background.
+    loading.value = false
+    void Promise.all([
+      loadShopImages(),
+      loadCustomerDocuments(),
+      loadSharedNotes(),
+    ])
   }
   catch (err) {
     profile.value = null
     sharedNotes.value = []
-    toast.error(err?.response?.data?.message || 'تعذر فتح بروفايل الزبون')
-  }
-  finally {
+    toast.error(err?.response?.data?.message || err?.message || 'تعذر فتح بروفايل الزبون')
     loading.value = false
   }
 }
@@ -156,10 +184,19 @@ async function loadSharedNotes() {
   sharedNotes.value = []
   const id = pick(profile.value, 'customerId', 'CustomerId') || customerId.value
   const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
+  // Prefer notes already on profile payload when present.
+  const embedded = pick(profile.value, 'notes', 'Notes')
+  if (Array.isArray(embedded) && embedded.length) {
+    sharedNotes.value = embedded
+
+    return
+  }
   if (!id)
     return
   try {
-    const rows = await smGet(customerSharedNotesApiPath(city, id))
+    const rows = isDirector.value
+      ? await directorGet(directorCustomerNotesPath(city, id))
+      : await smGet(customerSharedNotesApiPath(city, id))
     sharedNotes.value = Array.isArray(rows) ? rows : []
   }
   catch {
@@ -168,41 +205,97 @@ async function loadSharedNotes() {
 }
 
 async function loadShopImages() {
-  Object.values(shopUrls.value).forEach(url => URL.revokeObjectURL(url))
   shopUrls.value = {}
   const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
+  if (!city && ((isCentralSalesManager() && !isDemo()) || isDirector.value)) {
+    return
+  }
+  const tasks = []
   for (const sale of sales.value) {
     const id = pick(sale, 'saleId', 'SaleId')
-    if (!id || !city)
+    if (!id)
       continue
-    try {
-      const blob = await smGetBlob(managerSalePath(city, id, '/shop-image'))
-      if (blob && blob.size)
-        shopUrls.value[id] = URL.createObjectURL(blob)
-    }
-    catch {
-      // no shop image for this sale
-    }
+    if (!city && ((isCentralSalesManager() && !isDemo()) || isDirector.value))
+      continue
+    tasks.push((async () => {
+      try {
+        const cacheKey = `shop:${city}:${id}`
+        const url = await loadCachedBlob(cacheKey, () => (
+          isDirector.value
+            ? directorGetBlob(directorSaleShopImagePath(city, id), { timeoutMs: 120000 })
+            : smGetBlob(managerSalePath(city, id, '/shop-image'), { timeoutMs: 120000 })
+        ))
+        if (url)
+          shopUrls.value = { ...shopUrls.value, [id]: url }
+      }
+      catch (e) {
+        console.warn('shop-image failed', city, id, e)
+      }
+    })())
   }
+  await Promise.all(tasks)
 }
 
 async function loadCustomerDocuments() {
-  Object.values(kycUrls.value).forEach(url => URL.revokeObjectURL(url))
   kycUrls.value = {}
+  kycBusyMap.value = {}
+  kycErrorMap.value = {}
   const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
-  for (const doc of customerDocuments.value) {
-    const id = pick(doc, 'id', 'Id')
-    if (!id || !city)
+  const needsCity = (isCentralSalesManager() && !isDemo()) || isDirector.value
+  if (!city && needsCity)
+    return
+
+  const docs = customerDocuments.value || []
+  // Instant paint from session blob cache before any network.
+  const seeded = {}
+  for (const doc of docs) {
+    const id = Number(pick(doc, 'id', 'Id', 'documentId', 'DocumentId') || 0)
+    if (!(id > 0))
       continue
-    try {
-      const blob = await smGetBlob(managerCustomerDocumentFilePath(city, id))
-      if (blob && blob.size)
-        kycUrls.value[id] = URL.createObjectURL(blob)
-    }
-    catch {
-      // image missing
-    }
+    const hit = cachedBlobUrl(`kyc:${city}:${id}`)
+    if (hit)
+      seeded[id] = hit
   }
+  if (Object.keys(seeded).length)
+    kycUrls.value = seeded
+
+  await Promise.all(docs.map(async (doc) => {
+    const id = Number(pick(doc, 'id', 'Id', 'documentId', 'DocumentId') || 0)
+    if (!(id > 0) || (!city && needsCity))
+      return
+    const cacheKey = `kyc:${city}:${id}`
+    kycBusyMap.value = { ...kycBusyMap.value, [id]: true }
+    try {
+      const url = await loadCachedBlob(cacheKey, () => (
+        isDirector.value
+          ? directorGetBlob(directorCustomerDocumentFilePath(city, id), { timeoutMs: 120000 })
+          : smGetBlob(managerCustomerDocumentFilePath(city, id), { timeoutMs: 120000 })
+      ))
+      if (url)
+        kycUrls.value = { ...kycUrls.value, [id]: url }
+      else
+        kycErrorMap.value = { ...kycErrorMap.value, [id]: 'الملف غير موجود على السيرفر' }
+    }
+    catch (e) {
+      console.warn('kyc-doc failed', city, id, e)
+      const msg = e?.response?.status === 404
+        ? 'الملف غير موجود على السيرفر'
+        : (e?.message || 'تعذر عرض الصورة')
+      kycErrorMap.value = { ...kycErrorMap.value, [id]: msg }
+    }
+    finally {
+      kycBusyMap.value = { ...kycBusyMap.value, [id]: false }
+    }
+  }))
+}
+
+function goBack() {
+  if (window.history.length > 1) {
+    router.back()
+
+    return
+  }
+  router.push(isDirector.value ? '/director-ratings' : '/sales-manager-requests')
 }
 
 function docLabel(doc) {
@@ -216,7 +309,7 @@ function docLabel(doc) {
 }
 
 function openKyc(doc) {
-  const url = kycUrls.value[pick(doc, 'id', 'Id')]
+  const url = kycUrls.value[pick(doc, 'id', 'Id', 'documentId', 'DocumentId')]
   if (!url)
     return
   kycOpenUrl.value = url
@@ -224,6 +317,8 @@ function openKyc(doc) {
 }
 
 function openEdit() {
+  if (readOnly.value)
+    return
   editForm.value = {
     name: pick(profile.value, 'customerName', 'CustomerName') || '',
     phone: pick(profile.value, 'phone', 'Phone') || '',
@@ -234,6 +329,8 @@ function openEdit() {
 }
 
 async function saveCustomer() {
+  if (readOnly.value)
+    return
   const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
   if (!city) {
     toast.error('حدد المحافظة أولاً')
@@ -309,6 +406,11 @@ async function onReplaceFile(event) {
 }
 
 async function uploadCustomerDocument(type, file) {
+  if (readOnly.value) {
+    toast.error('عرض فقط — لا يمكن تعديل المستمسكات من حساب المدير')
+
+    return false
+  }
   const city = pick(profile.value, 'cityValue', 'CityValue') || cityValue.value
   if (!city) {
     toast.error('حدد المحافظة')
@@ -389,9 +491,8 @@ async function openDocument(sale, doc) {
 watch(() => route.query, load, { deep: true })
 onMounted(load)
 onUnmounted(() => {
-  Object.values(shopUrls.value).forEach(url => URL.revokeObjectURL(url))
-  Object.values(kycUrls.value).forEach(url => URL.revokeObjectURL(url))
-  if (kycOpenUrl.value)
+  // Blob URLs are owned by the session cache — do not revoke on leave.
+  if (kycOpenUrl.value && !String(kycOpenUrl.value).startsWith('blob:'))
     URL.revokeObjectURL(kycOpenUrl.value)
 })
 </script>
@@ -408,7 +509,7 @@ onUnmounted(() => {
       </h4>
       <VBtn
         variant="text"
-        @click="router.back()"
+        @click="goBack"
       >
         رجوع
       </VBtn>
@@ -428,6 +529,7 @@ onUnmounted(() => {
             معلومات الزبون
           </h5>
           <VBtn
+            v-if="!readOnly"
             prepend-icon="tabler-edit"
             @click="openEdit"
           >
@@ -484,7 +586,10 @@ onUnmounted(() => {
         <h5 class="mb-4">
           مستندات الزبون
         </h5>
-        <div class="d-flex flex-wrap align-center ga-3 mb-4">
+        <div
+          v-if="!readOnly"
+          class="d-flex flex-wrap align-center ga-3 mb-4"
+        >
           <VSelect
             v-model="kycAddType"
             :items="kycTypes"
@@ -534,18 +639,24 @@ onUnmounted(() => {
               {{ docLabel(doc) }}
             </div>
             <VImg
-              v-if="kycUrls[pick(doc, 'id', 'Id')]"
-              :src="kycUrls[pick(doc, 'id', 'Id')]"
+              v-if="kycUrls[pick(doc, 'id', 'Id', 'documentId', 'DocumentId')]"
+              :src="kycUrls[pick(doc, 'id', 'Id', 'documentId', 'DocumentId')]"
               height="180"
               cover
               class="rounded cursor-pointer"
               @click="openKyc(doc)"
             />
             <div
+              v-else-if="kycBusyMap[pick(doc, 'id', 'Id', 'documentId', 'DocumentId')]"
+              class="text-medium-emphasis"
+            >
+              جاري تحميل الصورة…
+            </div>
+            <div
               v-else
               class="text-medium-emphasis"
             >
-              تعذر عرض الصورة.
+              {{ kycErrorMap[pick(doc, 'id', 'Id', 'documentId', 'DocumentId')] || 'تعذر عرض الصورة.' }}
             </div>
             <div class="d-flex flex-wrap ga-2 mt-2">
               <VBtn
@@ -556,6 +667,7 @@ onUnmounted(() => {
                 فتح
               </VBtn>
               <VBtn
+                v-if="!readOnly"
                 size="small"
                 variant="text"
                 :disabled="kycBusy"
@@ -564,6 +676,7 @@ onUnmounted(() => {
                 استبدال
               </VBtn>
               <VBtn
+                v-if="!readOnly"
                 size="small"
                 variant="text"
                 color="error"

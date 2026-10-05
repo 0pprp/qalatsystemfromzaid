@@ -45,6 +45,8 @@ IF NOT EXISTS (
         {
             await EnsureSchemaAsync(ct);
             await using var c = new SqlConnection(_cs);
+            // All governorate lists for follower ACL — do NOT filter by DevicePaymentState
+            // (that flag only gates payment-device permission on the delegate app).
             var rows = await c.QueryAsync<FollowerListOptionDTO>(new CommandDefinition(@"
 SELECT
     d.DelegateID AS ListId,
@@ -54,7 +56,6 @@ SELECT
     ci.CityName
 FROM dbo.Delegates d
 LEFT JOIN dbo.Cities ci ON ci.CityID = d.CityID
-WHERE ISNULL(d.DevicePaymentState, 0) = 1
 ORDER BY d.DelegateName;", cancellationToken: ct));
             return rows.ToList();
         }

@@ -154,6 +154,52 @@ ORDER BY d.CreatedAt DESC",
             return list;
         }
 
+        /// <summary>Indexed customer-scoped sales for profile open (&lt;1s). Never full-table scan.</summary>
+        public async Task<IReadOnlyList<SalesDraftDTO>> ListSalesForCustomerAsync(
+            int? customerId,
+            string? phone,
+            string? customerName,
+            CancellationToken ct,
+            int take = 30)
+        {
+            take = Math.Clamp(take <= 0 ? 30 : take, 1, 100);
+            var phoneNorm = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
+            var nameNorm = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim();
+            if (customerId is null or <= 0 && phoneNorm is null && nameNorm is null)
+            {
+                return [];
+            }
+
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            var rows = await connection.QueryAsync<SalesDraftDTO>(new CommandDefinition($@"
+SELECT TOP ({take}) d.SaleId, d.EmployeeId, d.UserName, d.UserType, d.CityValue, d.CityName, d.Status, d.CustomerId, d.SourceCityValue,
+ d.FullName, d.Phone, d.Province, d.NationalCardNumber, d.Address, d.NearestLandmark, d.MukhtarName, d.RationCenterNumber,
+ d.EvaluationLevel, d.EvaluationNote, d.BaseSalePrice, d.FinalSalePrice, d.DailyInstallment, d.DownPayment,
+ d.DefaultTotalSalePrice, d.DefaultDailyInstallment, d.DefaultDownPayment,
+ d.OverrideTotalSalePrice, d.OverrideDailyInstallment, d.OverrideDownPayment,
+ d.CreatedAt, d.CompletedAt, d.CompletedBy, d.DocumentsStatus, d.SalesRequestId, d.CustomerListId,
+ c.CustomerName AS AccountCustomerName,
+ r.CustomerName AS RequestCustomerName
+FROM dbo.SalesDrafts d
+LEFT JOIN dbo.Customers c ON c.CustomerID = d.CustomerId
+LEFT JOIN dbo.SalesRequests r ON r.Id = d.SalesRequestId
+WHERE (@CustomerId IS NOT NULL AND d.CustomerId = @CustomerId)
+   OR (@Phone IS NOT NULL AND d.Phone = @Phone)
+   OR (@Name IS NOT NULL AND d.FullName = @Name)
+ORDER BY ISNULL(d.CompletedAt, d.CreatedAt) DESC",
+                new { CustomerId = customerId is > 0 ? customerId : null, Phone = phoneNorm, Name = nameNorm },
+                cancellationToken: ct));
+            var list = rows.ToList();
+            foreach (var row in list)
+            {
+                SalesCustomerIdentity.ApplyDisplayName(row);
+            }
+
+            await SalesInventoryService.AttachListNamesAsync(connection, list, ct);
+            return list;
+        }
+
         public async Task<SalesDraftDTO?> GetSaleAsync(int saleId, CancellationToken ct)
         {
             var cs = RequireConnection();

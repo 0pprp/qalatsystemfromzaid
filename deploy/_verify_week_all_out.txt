@@ -1,0 +1,7 @@
+Changed language setting to us_english.
+Yesterday=2026-10-02
+27|27|27|0
+=== sample mismatches (if any) ===
+=== Najaf-wide: any Oct2 payer with Amount2=0? ===
+37|37|0
+

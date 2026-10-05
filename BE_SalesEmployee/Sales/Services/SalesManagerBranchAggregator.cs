@@ -10,6 +10,15 @@ namespace BE_SalesEmployee.Sales.Services
         Task<(int Status, object? Body)> GetAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> GetExactBranchArrayAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> GetOneAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
+        /// <summary>Fan-out object endpoints (e.g. branch-month) — wait all provinces, stamp cityValue.</summary>
+        Task<(int Status, object? Body)> GetObjectFanoutAsync(GatewayUser user, string companyPath, CancellationToken ct);
+        /// <summary>Paged sales-requests across all provinces (soft ~2s first paint).</summary>
+        Task<(int Status, object? Body)> GetSalesRequestsPageFanoutAsync(
+            GatewayUser user,
+            string companyPath,
+            int page,
+            int pageSize,
+            CancellationToken ct);
         Task<(int Status, object? Body)> SumCountAsync(GatewayUser user, string? cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> PostFanoutAsync(GatewayUser user, string? cityValue, string companyPath, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> GetFileAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
@@ -60,13 +69,41 @@ namespace BE_SalesEmployee.Sales.Services
                 return (200, Array.Empty<object>());
             }
 
-            var chunks = await Task.WhenAll(targets.Select(city => FetchArrayAsync(user, city, companyPath, ct)));
-            var merged = new List<JsonNode>();
-            foreach (var chunk in chunks)
+            // Single branch: wait fully (normal BranchTimeout).
+            if (targets.Count == 1)
             {
-                merged.AddRange(chunk);
+                var only = await FetchArrayAsync(user, targets[0], companyPath, BranchTimeout, ct);
+                return (200, only);
             }
 
+            // Multi-branch (الكل):
+            // Cheap lists: soft first-paint (~1s).
+            // Employees/followers: MUST wait for every province — soft-cut after the first
+            // city with data previously dropped slow branches (incomplete follower list).
+            var longList = NeedsLongBranchTimeout(companyPath);
+            var perBranch = longList ? FanoutSoftDeadline.LongListBranchTimeout : FanoutSoftDeadline.MultiBranchTimeout;
+            var tasks = targets
+                .Select(city => FetchArrayAsync(user, city, companyPath, perBranch, ct))
+                .ToList();
+            if (longList)
+            {
+                var mergedLong = await FanoutSoftDeadline.CollectAsync(
+                    tasks,
+                    softWait: TimeSpan.Zero,
+                    extendIfEmpty: TimeSpan.Zero,
+                    hasData: static _ => false,
+                    flatten: chunk => chunk,
+                    ct);
+                return (200, mergedLong);
+            }
+
+            var merged = await FanoutSoftDeadline.CollectAsync(
+                tasks,
+                FanoutSoftDeadline.SoftWait,
+                FanoutSoftDeadline.ExtendIfEmpty,
+                hasData: chunk => chunk.Count > 0,
+                flatten: chunk => chunk,
+                ct);
             return (200, merged);
         }
 
@@ -171,7 +208,11 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(BranchTimeout);
+            // Long-running branch calls: exception review, multi-month charts, employee rating enrich/lifetime.
+            var timeout = NeedsLongBranchTimeout(companyPath)
+                ? ExcelSearchTimeout
+                : BranchTimeout;
+            cts.CancelAfter(timeout);
             using var response = await _proxy.SendManagerAsync(
                 city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
             var raw = await response.Content.ReadAsStringAsync(ct);
@@ -181,6 +222,319 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             return ((int)response.StatusCode, Stamp(raw, city));
+        }
+
+        public async Task<(int Status, object? Body)> GetObjectFanoutAsync(
+            GatewayUser user,
+            string companyPath,
+            CancellationToken ct)
+        {
+            var targets = await GetTargetsAsync(null, ct);
+            if (targets.Count == 0)
+            {
+                return (200, Array.Empty<object>());
+            }
+
+            var timeout = NeedsLongBranchTimeout(companyPath)
+                ? FanoutSoftDeadline.LongListBranchTimeout
+                : FanoutSoftDeadline.MultiBranchTimeout;
+            var tasks = targets
+                .Select(city => FetchObjectStampedAsync(user, city, companyPath, timeout, ct))
+                .ToList();
+            var merged = await FanoutSoftDeadline.CollectAsync(
+                tasks,
+                softWait: TimeSpan.Zero,
+                extendIfEmpty: TimeSpan.Zero,
+                hasData: static o => o != null,
+                flatten: o => o == null ? Array.Empty<JsonObject>() : new[] { o },
+                ct);
+            return (200, merged);
+        }
+
+        /// <summary>
+        /// الكل: parallel paged fetch per province, soft-merge under ~2s.
+        /// Each branch returns a small page; gateway merges/sorts and returns one page + summed tabCounts.
+        /// </summary>
+        public async Task<(int Status, object? Body)> GetSalesRequestsPageFanoutAsync(
+            GatewayUser user,
+            string companyPath,
+            int page,
+            int pageSize,
+            CancellationToken ct)
+        {
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize <= 0 ? 40 : pageSize, 1, 100);
+            var targets = await GetTargetsAsync(null, ct);
+            if (targets.Count == 0)
+            {
+                return (200, new
+                {
+                    items = Array.Empty<object>(),
+                    total = 0,
+                    page,
+                    pageSize,
+                    hasMore = false,
+                    tabCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                });
+            }
+
+            // Smaller per-branch page keeps الكل under 2s across ~17 WAN hops.
+            var perBranchSize = Math.Clamp(Math.Max(pageSize, 12), 12, 24);
+            var path = AppendOrReplaceQuery(companyPath, ("page", page.ToString()), ("pageSize", perBranchSize.ToString()));
+            var perBranchTimeout = FanoutSoftDeadline.MultiBranchTimeout;
+            var tasks = targets
+                .Select(city => FetchPagedObjectAsync(user, city, path, perBranchTimeout, ct))
+                .ToList();
+
+            var pages = await FanoutSoftDeadline.CollectAsync(
+                tasks,
+                FanoutSoftDeadline.SoftWait,
+                FanoutSoftDeadline.ExtendIfEmpty,
+                hasData: p => p != null,
+                flatten: p => p == null ? Array.Empty<JsonObject>() : new[] { p },
+                ct);
+
+            var items = new List<JsonObject>();
+            var total = 0;
+            var hasMore = false;
+            var tabCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pageObj in pages)
+            {
+                total += ReadIntProp(pageObj, "total", "Total");
+                if (ReadBoolProp(pageObj, "hasMore", "HasMore"))
+                {
+                    hasMore = true;
+                }
+
+                MergeTabCounts(tabCounts, pageObj["tabCounts"] as JsonObject ?? pageObj["TabCounts"] as JsonObject);
+                var arr = pageObj["items"] as JsonArray ?? pageObj["Items"] as JsonArray;
+                if (arr == null)
+                {
+                    continue;
+                }
+
+                foreach (var node in arr.OfType<JsonObject>())
+                {
+                    items.Add(node);
+                }
+            }
+
+            var ordered = items
+                .OrderByDescending(ReadCreatedAt)
+                .Take(pageSize)
+                .Cast<JsonNode>()
+                .ToList();
+            if (items.Count > pageSize)
+            {
+                hasMore = true;
+            }
+
+            var root = new JsonObject
+            {
+                ["items"] = new JsonArray(ordered.Select(n => n.DeepClone()).ToArray()),
+                ["total"] = total,
+                ["page"] = page,
+                ["pageSize"] = pageSize,
+                ["hasMore"] = hasMore || (page * pageSize < total),
+                ["tabCounts"] = ToTabCountsObject(tabCounts)
+            };
+            return (200, root);
+        }
+
+        private async Task<JsonObject?> FetchPagedObjectAsync(
+            GatewayUser user,
+            AdminCity city,
+            string companyPath,
+            TimeSpan timeout,
+            CancellationToken ct)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(timeout);
+                using var response = await _proxy.SendManagerAsync(
+                    city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                var raw = await response.Content.ReadAsStringAsync(ct);
+                var node = JsonNode.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
+                if (node is not JsonObject obj)
+                {
+                    return null;
+                }
+
+                StampItemsArray(obj["items"] as JsonArray ?? obj["Items"] as JsonArray, city);
+                obj["cityValue"] = city.Value;
+                obj["cityName"] = city.Name;
+                return obj;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private async Task<JsonObject?> FetchObjectStampedAsync(
+            GatewayUser user,
+            AdminCity city,
+            string companyPath,
+            TimeSpan timeout,
+            CancellationToken ct)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(timeout);
+                using var response = await _proxy.SendManagerAsync(
+                    city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                var raw = await response.Content.ReadAsStringAsync(ct);
+                var stamped = Stamp(raw, city);
+                return stamped as JsonObject;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string AppendOrReplaceQuery(string companyPath, params (string Name, string Value)[] parts)
+        {
+            var path = companyPath ?? "";
+            var qIndex = path.IndexOf('?', StringComparison.Ordinal);
+            var basePath = qIndex >= 0 ? path[..qIndex] : path;
+            var query = qIndex >= 0 ? path[(qIndex + 1)..] : "";
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(query))
+            {
+                foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var kv = pair.Split('=', 2);
+                    if (kv.Length == 2)
+                    {
+                        map[Uri.UnescapeDataString(kv[0])] = Uri.UnescapeDataString(kv[1]);
+                    }
+                }
+            }
+
+            foreach (var (name, value) in parts)
+            {
+                map[name] = value;
+            }
+
+            var qs = string.Join("&", map.Select(kv =>
+                $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+            return string.IsNullOrEmpty(qs) ? basePath : $"{basePath}?{qs}";
+        }
+
+        private static int ReadIntProp(JsonObject obj, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (obj.TryGetPropertyValue(name, out var n) && n != null)
+                {
+                    try
+                    {
+                        return n.GetValue<int>();
+                    }
+                    catch
+                    {
+                        if (int.TryParse(n.ToString(), out var parsed))
+                        {
+                            return parsed;
+                        }
+                    }
+                }
+            }
+
+            return 0;
+        }
+
+        private static bool ReadBoolProp(JsonObject obj, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (obj.TryGetPropertyValue(name, out var n) && n != null)
+                {
+                    try
+                    {
+                        return n.GetValue<bool>();
+                    }
+                    catch
+                    {
+                        if (bool.TryParse(n.ToString(), out var parsed))
+                        {
+                            return parsed;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static DateTime ReadCreatedAt(JsonObject obj)
+        {
+            foreach (var name in new[] { "createdAtUtc", "CreatedAtUtc", "deletedAtUtc", "DeletedAtUtc" })
+            {
+                if (!obj.TryGetPropertyValue(name, out var n) || n == null)
+                {
+                    continue;
+                }
+
+                if (DateTime.TryParse(n.ToString(), out var dt))
+                {
+                    return dt;
+                }
+            }
+
+            return DateTime.MinValue;
+        }
+
+        private static void MergeTabCounts(Dictionary<string, int> into, JsonObject? from)
+        {
+            if (from == null)
+            {
+                return;
+            }
+
+            foreach (var (key, value) in from)
+            {
+                if (value == null)
+                {
+                    continue;
+                }
+
+                var n = 0;
+                try
+                {
+                    n = value.GetValue<int>();
+                }
+                catch
+                {
+                    int.TryParse(value.ToString(), out n);
+                }
+
+                into[key] = into.TryGetValue(key, out var prev) ? prev + n : n;
+            }
+        }
+
+        private static JsonObject ToTabCountsObject(Dictionary<string, int> counts)
+        {
+            var obj = new JsonObject();
+            foreach (var (k, v) in counts)
+            {
+                obj[k] = v;
+            }
+
+            return obj;
         }
 
         public async Task<(int Status, object? Body)> GetFileAsync(
@@ -201,17 +555,32 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(BranchTimeout);
+            // KYC / shop images can be multi‑MB over branch WAN — 8s BranchTimeout causes empty UI.
+            var timeout = NeedsLongFileTimeout(companyPath) ? ExcelSearchTimeout : BranchTimeout;
+            cts.CancelAfter(timeout);
             using var response = await _proxy.SendManagerAsync(
                 city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
             if (!response.IsSuccessStatusCode)
             {
                 var raw = await response.Content.ReadAsStringAsync(ct);
-                return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : BranchProxyService.TryParseJson(raw));
+                if (string.IsNullOrWhiteSpace(raw))
+                {
+                    return ((int)response.StatusCode, new { message = "الملف غير موجود على السيرفر." });
+                }
+
+                return ((int)response.StatusCode, BranchProxyService.TryParseJson(raw) ?? (object)new { message = raw });
             }
 
             var bytes = await response.Content.ReadAsByteArrayAsync(ct);
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+            if (string.Equals(contentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                // Infer from magic bytes so FE image checks stay reliable.
+                if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8)
+                    contentType = "image/jpeg";
+                else if (bytes.Length >= 8 && bytes[0] == 0x89 && bytes[1] == 0x50)
+                    contentType = "image/png";
+            }
             return (200, (bytes, contentType));
         }
 
@@ -234,7 +603,12 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(BranchTimeout);
+            // exception-hold is a quick write but must not share the aggressive 8s list timeout
+            // when the branch is under load — failed sync left Pending exceptions visible in غير مسند.
+            var timeout = companyPath.Contains("exception-hold", StringComparison.OrdinalIgnoreCase)
+                ? ExcelSearchTimeout
+                : BranchTimeout;
+            cts.CancelAfter(timeout);
             using var response = await _proxy.SendManagerAsync(
                 city.Link, companyPath, HttpMethod.Post, jsonBody, user.UserName, cts.Token);
             var raw = await response.Content.ReadAsStringAsync(ct);
@@ -564,11 +938,16 @@ namespace BE_SalesEmployee.Sales.Services
                 // keep defaults
             }
 
-            var body = await FetchJsonPostAsync(
+            var (ok, body, branchStatus, branchMessage) = await FetchJsonPostDetailedAsync(
                 user, city, "sales-manager/sales-requests/evaluation-hits", jsonBody, ct);
-            if (body is null)
+            if (!ok || body is null)
             {
-                return (502, new { message = "تعذر تحميل نتائج التقييم من محافظة الطلب." });
+                var detail = string.IsNullOrWhiteSpace(branchMessage)
+                    ? "تعذر تحميل نتائج التقييم من محافظة الطلب."
+                    : branchMessage;
+                // Prefer branch 4xx when present; otherwise 502 gateway failure.
+                var status = branchStatus is >= 400 and < 500 ? branchStatus.Value : 502;
+                return (status, new { message = detail });
             }
 
             return (200, JsonSerializer.Deserialize<object>(
@@ -774,24 +1153,66 @@ namespace BE_SalesEmployee.Sales.Services
             string jsonBody,
             CancellationToken ct)
         {
+            var (ok, body, _, _) = await FetchJsonPostDetailedAsync(user, city, companyPath, jsonBody, ct);
+            return ok ? body : null;
+        }
+
+        private async Task<(bool Ok, JsonNode? Body, int? Status, string? Message)> FetchJsonPostDetailedAsync(
+            GatewayUser user,
+            AdminCity city,
+            string companyPath,
+            string jsonBody,
+            CancellationToken ct)
+        {
             try
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(ExcelSearchTimeout);
                 using var response = await _proxy.SendManagerAsync(
                     city.Link, companyPath, HttpMethod.Post, jsonBody, user.UserName, cts.Token);
+                var raw = await response.Content.ReadAsStringAsync(ct);
                 if (!response.IsSuccessStatusCode)
                 {
-                    return null;
+                    var msg = TryReadMessage(raw)
+                              ?? $"فشل الفرع ({(int)response.StatusCode}) أثناء تحميل نتائج التقييم.";
+                    return (false, null, (int)response.StatusCode, msg);
                 }
 
-                var raw = await response.Content.ReadAsStringAsync(ct);
-                return JsonNode.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
+                return (true, JsonNode.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw), (int)response.StatusCode, null);
+            }
+            catch (OperationCanceledException)
+            {
+                return (false, null, 504, "انتهت مهلة تحميل نتائج التقييم من محافظة الطلب.");
             }
             catch
             {
+                return (false, null, null, null);
+            }
+        }
+
+        private static string? TryReadMessage(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
                 return null;
             }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(raw);
+                if (doc.RootElement.TryGetProperty("message", out var m)
+                    || doc.RootElement.TryGetProperty("Message", out m))
+                {
+                    var s = m.GetString();
+                    return string.IsNullOrWhiteSpace(s) ? null : s;
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return null;
         }
 
         private static readonly TimeSpan ExcelSearchTimeout = TimeSpan.FromSeconds(90);
@@ -864,29 +1285,48 @@ namespace BE_SalesEmployee.Sales.Services
             }
         }
 
+        private Task<List<JsonNode>> FetchArrayAsync(
+            GatewayUser user,
+            AdminCity city,
+            string companyPath,
+            CancellationToken ct) =>
+            FetchArrayAsync(user, city, companyPath, BranchTimeout, ct);
+
         private async Task<List<JsonNode>> FetchArrayAsync(
             GatewayUser user,
             AdminCity city,
             string companyPath,
+            TimeSpan timeout,
             CancellationToken ct)
         {
-            var (_, rows) = await TryFetchArrayAsync(user, city, companyPath, ct);
+            var (_, rows) = await TryFetchArrayAsync(user, city, companyPath, timeout, ct);
             return rows;
         }
 
         /// <summary>
         /// Soft-fail for fan-out (skip dead branches). Exact routing uses the bool.
         /// </summary>
-        private async Task<(bool Ok, List<JsonNode> Rows)> TryFetchArrayAsync(
+        private Task<(bool Ok, List<JsonNode> Rows)> TryFetchArrayAsync(
             GatewayUser user,
             AdminCity city,
             string companyPath,
             CancellationToken ct)
         {
+            var timeout = NeedsLongBranchTimeout(companyPath) ? ExcelSearchTimeout : BranchTimeout;
+            return TryFetchArrayAsync(user, city, companyPath, timeout, ct);
+        }
+
+        private async Task<(bool Ok, List<JsonNode> Rows)> TryFetchArrayAsync(
+            GatewayUser user,
+            AdminCity city,
+            string companyPath,
+            TimeSpan timeout,
+            CancellationToken ct)
+        {
             try
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cts.CancelAfter(BranchTimeout);
+                cts.CancelAfter(timeout);
                 using var response = await _proxy.SendManagerAsync(
                     city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
                 if (!response.IsSuccessStatusCode)
@@ -947,7 +1387,8 @@ namespace BE_SalesEmployee.Sales.Services
                 return (404, new { message = "المحافظة غير موجودة أو غير مسموحة لمدير المبيعات." });
             }
 
-            var (ok, rows) = await TryFetchArrayAsync(user, city, companyPath, ct);
+            var timeout = NeedsLongBranchTimeout(companyPath) ? ExcelSearchTimeout : BranchTimeout;
+            var (ok, rows) = await TryFetchArrayAsync(user, city, companyPath, timeout, ct);
             if (!ok)
             {
                 return (502, new { message = "تعذر الاتصال بخادم المحافظة." });
@@ -962,6 +1403,57 @@ namespace BE_SalesEmployee.Sales.Services
             return SalesBranchResolver.ResolveExact(cities, cityValue);
         }
 
+        private static bool NeedsLongFileTimeout(string companyPath)
+        {
+            if (string.IsNullOrWhiteSpace(companyPath))
+            {
+                return false;
+            }
+
+            return companyPath.Contains("customer-documents", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("shop-image", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("/documents/", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("download", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool NeedsLongBranchTimeout(string companyPath)
+        {
+            if (string.IsNullOrWhiteSpace(companyPath))
+            {
+                return false;
+            }
+
+            if (companyPath.Contains("exception-review-context", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("stats/trend", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("stats/branch-month", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("rating-trend", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("rating-customers", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("/profile", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("customers/profile", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // sales-manager/employees or sales-manager/followers list (with optional query) —
+            // both attach latest ratings server-side.
+            foreach (var prefix in new[] { "sales-manager/employees", "sales-manager/followers" })
+            {
+                var idx = companyPath.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0)
+                {
+                    continue;
+                }
+
+                var after = companyPath[(idx + prefix.Length)..];
+                if (after.Length == 0 || after[0] == '?')
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static object? Stamp(string raw, AdminCity city)
         {
             try
@@ -970,6 +1462,8 @@ namespace BE_SalesEmployee.Sales.Services
                 if (node is JsonObject obj)
                 {
                     StampObject(obj, city);
+                    // Paged sales-requests: stamp each item so FE branch keys stay correct.
+                    StampItemsArray(obj["items"] as JsonArray ?? obj["Items"] as JsonArray, city);
                     return obj;
                 }
 
@@ -978,6 +1472,19 @@ namespace BE_SalesEmployee.Sales.Services
             catch (JsonException)
             {
                 return raw;
+            }
+        }
+
+        private static void StampItemsArray(JsonArray? items, AdminCity city)
+        {
+            if (items == null)
+            {
+                return;
+            }
+
+            foreach (var item in items.OfType<JsonObject>())
+            {
+                StampObject(item, city);
             }
         }
 

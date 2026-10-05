@@ -50,6 +50,7 @@ void main() {
       final json = jsonDecode('''
       {
         "unreadComplaints": 4,
+        "unreadWrongSales": 2,
         "exceptions": {
           "pending": 3,
           "approved": 7,
@@ -62,6 +63,7 @@ void main() {
       final summary = DashboardSummary.fromJson(json);
 
       expect(summary.unreadComplaints, 4);
+      expect(summary.unreadWrongSales, 2);
       expect(summary.pendingExceptions, 3);
       expect(summary.approvedExceptions, 7);
       expect(summary.rejectedExceptions, 2);

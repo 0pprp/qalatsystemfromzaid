@@ -25,6 +25,9 @@ class AppSafeScaffold extends StatelessWidget {
     super.key,
     required this.body,
     this.appBar,
+    this.scaffoldKey,
+    this.drawer,
+    this.endDrawer,
     this.floatingActionButton,
     this.floatingActionButtonLocation,
     this.bottomNavigationBar,
@@ -38,6 +41,9 @@ class AppSafeScaffold extends StatelessWidget {
 
   final Widget body;
   final PreferredSizeWidget? appBar;
+  final GlobalKey<ScaffoldState>? scaffoldKey;
+  final Widget? drawer;
+  final Widget? endDrawer;
   final Widget? floatingActionButton;
   final FloatingActionButtonLocation? floatingActionButtonLocation;
   final Widget? bottomNavigationBar;
@@ -63,8 +69,11 @@ class AppSafeScaffold extends StatelessWidget {
     }
 
     return Scaffold(
+      key: scaffoldKey,
       backgroundColor: backgroundColor,
       appBar: appBar,
+      drawer: drawer,
+      endDrawer: endDrawer,
       extendBody: extendBody,
       resizeToAvoidBottomInset: resizeToAvoidBottomInset,
       floatingActionButton: floatingActionButton,

@@ -21,6 +21,8 @@
         public bool? DeviceSaleState { get; set; }
         public bool? BalancePaymentState { get; set; }
         public bool? DevicePaymentState { get; set; }
+        /// <summary>When true, collection is for followers; delegate device payments are blocked.</summary>
+        public bool? FollowerCollectionEnabled { get; set; }
         public string? ReceiptName { get; set; }
         public bool? UpdateReceipt { get; set; }
         public bool? DeleteReceipt { get; set; }

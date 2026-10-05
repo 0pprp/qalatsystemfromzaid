@@ -10,6 +10,7 @@ namespace BE_DelegateWebApplication.IRepository
         /// <summary>City/province of the authenticated follower account (Delegates.CityID → Cities).</summary>
         Task<string?> GetFollowerCityNameAsync(int followerDelegateId, CancellationToken ct = default);
         Task<string?> GetCityNameByIdAsync(int cityId, CancellationToken ct = default);
+        Task<IReadOnlyList<FollowerCustomerPaymentDTO>> ListCustomerPaymentsAsync(int customerId, CancellationToken ct = default);
         Task<IReadOnlyList<FollowerSalesDocumentRow>> ListCustomerSalesDocumentsAsync(int customerId, string? customerName, string? phone, CancellationToken ct = default);
         Task<FollowerSalesDocumentRow?> GetSalesDocumentAsync(int documentId, CancellationToken ct = default);
         Task<(string? ShopImageKey, int? SaleId)?> GetCustomerShopImageAsync(int customerId, string? customerName, string? phone, CancellationToken ct = default);
@@ -34,6 +35,10 @@ namespace BE_DelegateWebApplication.IRepository
             string customerSourceType,
             string saleRequestType,
             int? sourceListId = null,
+            int? shopRating = null,
+            string? shopRatingNote = null,
+            decimal? shopStockEstimatedValue = null,
+            decimal? estimatedDailyRevenue = null,
             CancellationToken ct = default);
     }
 }

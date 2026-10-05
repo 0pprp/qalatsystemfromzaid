@@ -175,7 +175,7 @@ namespace BE_Company.Repository
             }
         }
 
-        public async Task<CustomersGetDTO?> Customers_Update(int? customerID,CustomersPutDTO customersPutDTO)
+        public async Task<CustomersGetDTO?> Customers_Update(int? customerID, CustomersPutDTO customersPutDTO)
         {
             using (var connection = new SqlConnection(_connectionString))
             {

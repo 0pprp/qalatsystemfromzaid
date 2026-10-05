@@ -1,0 +1,66 @@
+ADMINS 21 AdminBaghdadKarkh,AdminBaghdadRusafa,AdminBasra,AdminBasraAlanwar,AdminDiwaniyah,AdminDiyala,AdminHilla,AdminKarakAqeel,AdminKarbala,AdminKirkuk,AdminKot,AdminMaysan,AdminMonthMenu,AdminMosul,AdminMuthanna,AdminNajaf,AdminNajaf-old,AdminNasiriyah,AdminRusafaAqeel,AdminStop,AdminTest
+==== AdminBaghdadKarkh DatabaseCompanyBaghdadKarak ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminBaghdadRusafa DatabaseCompanyBaghdadRosafa ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminBasra DatabaseCompanyBasra ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminBasraAlanwar DatabaseCompanyBasraAlanwar ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminDiwaniyah DatabaseCompanyDewania ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminDiyala DatabaseCompanyDeiala ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminHilla DatabaseCompanyBabil ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminKarakAqeel DatabaseCompanyKarakAqeel ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminKarbala DatabaseCompanyKarbala ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | UPDATED | cities=--------------
+==== AdminKirkuk DatabaseCompanyKarkok ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminKot DatabaseCompanyKot ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminMaysan DatabaseCompanyMaysan ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminMonthMenu DatabaseCompanyMonth ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminMosul DatabaseCompanyMusol ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminMuthanna DatabaseCompanyMothana ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | UPDATED | cities=--------------
+==== AdminNajaf DatabaseCompanyNajaf ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminNajaf-old DatabaseCompanyNajaf ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | UPDATED | cities=--------------
+==== AdminNasiriyah DatabaseCompanyNasria ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | UPDATED | cities=--------------
+==== AdminRusafaAqeel DatabaseCompanyRusafaAqeel ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminStop DatabaseCompanyStop ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+==== AdminTest DatabaseCompanyMusolTest ====
+jana => LOGIN_OK | UPDATED | cities=--------------
+hadi => LOGIN_OK | INSERTED | cities=--------------
+SUMMARY {'jana': {'ok': 21, 'fail': 0}, 'hadi': {'ok': 21, 'fail': 0}}
+DONE

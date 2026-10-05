@@ -193,8 +193,44 @@ namespace BE_SalesEmployee.Sales.Services
             item["hasAnyMatch"] = worstScore is not null;
             item["overallScore"] = worstScore;
             item["overallRatingLevel"] = worstLevel;
-            item["overallRatingLabel"] = worstScore is null ? "لا يوجد تطابق" : (worstLabel ?? LabelFromScore(worstScore.Value));
+            item["overallRatingLabel"] = worstScore is null
+                ? "لا يوجد تطابق"
+                : (string.IsNullOrWhiteSpace(worstLabel)
+                    ? LabelFromLevelOrScore(worstLevel, worstScore.Value)
+                    : NormalizeLegacyRatingLabel(worstLabel));
         }
+
+        private static string NormalizeLegacyRatingLabel(string label) =>
+            string.Equals(label.Trim(), "مرفوض", StringComparison.Ordinal)
+                ? "متلكئ"
+                : label;
+
+        private static string LabelFromLevelOrScore(string? level, int score)
+        {
+            if (!string.IsNullOrWhiteSpace(level))
+            {
+                switch (level.Trim().ToLowerInvariant())
+                {
+                    case "excellent": return "ممتاز";
+                    case "good": return "جيد";
+                    case "weak": return "ضعيف";
+                    case "rejected": return "متلكئ";
+                    case "bad": return "سيء";
+                    case "legal": return "قانونية";
+                }
+            }
+
+            return LabelFromScore(score);
+        }
+
+        private static string LabelFromScore(int score) => score switch
+        {
+            <= -10 => "سيء",
+            <= -5 => "متلكئ",
+            <= 0 => "ضعيف",
+            <= 5 => "جيد",
+            _ => "ممتاز"
+        };
 
         private static void Consider(
             JsonObject item,
@@ -223,15 +259,6 @@ namespace BE_SalesEmployee.Sales.Services
                 worstLabel = ReadString(cat, "worstRatingLabel", "WorstRatingLabel");
             }
         }
-
-        private static string LabelFromScore(int score) => score switch
-        {
-            <= -10 => "قانونية",
-            <= -5 => "مرفوض",
-            <= 0 => "ضعيف",
-            <= 5 => "جيد",
-            _ => "ممتاز"
-        };
 
         private static string ReadString(JsonObject obj, params string[] names)
         {

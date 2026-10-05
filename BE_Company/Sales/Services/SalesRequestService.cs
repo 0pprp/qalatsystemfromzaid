@@ -10,15 +10,18 @@ namespace BE_Company.Sales.Services
         private readonly ISalesRequestRepository _repo;
         private readonly IIraqClock _clock;
         private readonly ISalesManagerReadRepository? _employees;
+        private readonly ISalesCascadeVoidService? _cascadeVoid;
 
         public SalesRequestService(
             ISalesRequestRepository repo,
             IIraqClock clock,
-            ISalesManagerReadRepository? employees = null)
+            ISalesManagerReadRepository? employees = null,
+            ISalesCascadeVoidService? cascadeVoid = null)
         {
             _repo = repo;
             _clock = clock;
             _employees = employees;
+            _cascadeVoid = cascadeVoid;
         }
 
         public async Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct, bool validateIraqPhone = true)
@@ -74,8 +77,9 @@ namespace BE_Company.Sales.Services
                 CustomerProvince = request.Customer?.Province,
                 CustomerAddress = request.Customer?.Address,
                 Notes = request.Notes,
+                MaxSalePrice = SalesRequestPriceCeiling.Normalize(request.MaxSalePrice),
                 Status = SalesRequestStatuses.New,
-                FilterStatus = SalesFilterStatuses.PendingFilter,
+                FilterStatus = SalesFilterStatuses.ReadyForSale,
                 CreatedAtUtc = _clock.UtcNow
             };
             if (string.IsNullOrWhiteSpace(row.CustomerName))
@@ -238,7 +242,7 @@ namespace BE_Company.Sales.Services
                 CustomerAddress = address,
                 Notes = notes,
                 Status = SalesRequestStatuses.New,
-                FilterStatus = SalesFilterStatuses.PendingFilter,
+                FilterStatus = SalesFilterStatuses.ReadyForSale,
                 CreatedAtUtc = _clock.UtcNow
             };
             var saved = await _repo.InsertAsync(row, ct);
@@ -339,7 +343,7 @@ namespace BE_Company.Sales.Services
                 CustomerAddress = address,
                 Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(),
                 Status = SalesRequestStatuses.New,
-                FilterStatus = SalesFilterStatuses.PendingFilter,
+                FilterStatus = SalesFilterStatuses.ReadyForSale,
                 CreatedAtUtc = _clock.UtcNow
             };
             var saved = await _repo.InsertAsync(row, ct);
@@ -363,8 +367,7 @@ namespace BE_Company.Sales.Services
         public async Task<int> CountUnreadEmployeeSubmittedAsync(CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
-            var rows = await _repo.ListAsync(null, null, null, null, ct);
-            return rows.Count(r => SalesRequestSources.IsEmployeeSubmitted(r.CustomerSourceType) && r.ManagerReadAtUtc == null);
+            return await _repo.CountUnreadEmployeeSubmittedAsync(ct);
         }
 
         public async Task<SalesRequestDTO> MarkReadAsync(SalesIdentity manager, int id, CancellationToken ct)
@@ -427,9 +430,16 @@ namespace BE_Company.Sales.Services
             row.Status = SalesRequestStatuses.Rejected;
             row.RejectedAtUtc = _clock.UtcNow;
             row.RejectionReason = trimmed;
+            // Manager rejects leave the Rejected tab (employee-app only) and move to Deleted with the reason.
+            row.IsDeleted = true;
+            row.DeletedAtUtc = _clock.UtcNow;
+            row.DeletedByUserId = manager.EmployeeId;
+            row.DeletedByName = manager.EmployeeName;
+            row.DeleteReason = trimmed;
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(row, SalesRequestEvents.Rejected, manager, trimmed, ct, previous);
             await AppendHistoryAsync(row, SalesRequestEvents.RejectionReason, manager, trimmed, ct, previous);
+            await AppendHistoryAsync(row, SalesRequestEvents.ManagerRequestDeleted, manager, trimmed, ct, previous);
             return await HydrateAsync(row, ct);
         }
 
@@ -503,10 +513,18 @@ namespace BE_Company.Sales.Services
             return await HydrateAsync(row, ct);
         }
 
+        /// <summary>
+        /// Manager board list. Unbounded historical dumps were making gateway fan-out ~3s+;
+        /// cap recent rows when no date window is provided (detail still uses GetById).
+        /// </summary>
+        public const int ManagerListDefaultTake = 400;
+
         public async Task<IReadOnlyList<SalesRequestDTO>> ListForManagerAsync(string? status, int? employeeId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
-            var rows = await _repo.ListAsync(employeeId, status, fromUtc, toUtc, ct);
+            // Date-filtered lists stay exact; open list uses TOP for first-paint speed.
+            int? take = fromUtc == null && toUtc == null ? ManagerListDefaultTake : null;
+            var rows = await _repo.ListAsync(employeeId, status, fromUtc, toUtc, ct, take: take);
             var result = new List<SalesRequestDTO>();
             foreach (var row in rows)
             {
@@ -516,10 +534,71 @@ namespace BE_Company.Sales.Services
                     continue;
                 }
 
-                result.Add(await HydrateAsync(row, ct));
+                // List cards do not need history/name-transfers — hydrate only on GetById.
+                result.Add(WithTimeline(row));
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Production manager board: page + tab + search. No Timeline (detail uses GetById).
+        /// Target: first page under ~2s with 20k+ rows when indexes are present.
+        /// </summary>
+        public async Task<SalesRequestManagerListPageDTO> ListForManagerPageAsync(
+            string? tab,
+            int? employeeId,
+            string? q,
+            int page,
+            int pageSize,
+            CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize <= 0 ? 40 : pageSize, 1, 100);
+            var skip = (page - 1) * pageSize;
+
+            var countsTask = _repo.CountManagerTabsAsync(ct);
+            var pageTask = _repo.ListManagerPageAsync(tab, employeeId, q, skip, pageSize, ct);
+            await Task.WhenAll(countsTask, pageTask);
+
+            var (items, total) = await pageTask;
+            var counts = await countsTask;
+            return new SalesRequestManagerListPageDTO
+            {
+                Items = items,
+                Total = total,
+                Page = page,
+                PageSize = pageSize,
+                HasMore = skip + items.Count < total,
+                TabCounts = counts
+            };
+        }
+
+        public async Task<SalesRequestManagerListPageDTO> ListDeletedForManagerPageAsync(
+            string? q,
+            int page,
+            int pageSize,
+            CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize <= 0 ? 40 : pageSize, 1, 100);
+            var skip = (page - 1) * pageSize;
+            var countsTask = _repo.CountManagerTabsAsync(ct);
+            var pageTask = _repo.ListDeletedPageAsync(q, skip, pageSize, ct);
+            await Task.WhenAll(countsTask, pageTask);
+            var (items, total) = await pageTask;
+            var counts = await countsTask;
+            return new SalesRequestManagerListPageDTO
+            {
+                Items = items,
+                Total = total,
+                Page = page,
+                PageSize = pageSize,
+                HasMore = skip + items.Count < total,
+                TabCounts = counts
+            };
         }
 
         public async Task<SalesRequestDTO?> GetForManagerAsync(int id, CancellationToken ct)
@@ -532,8 +611,8 @@ namespace BE_Company.Sales.Services
         public async Task<IReadOnlyList<SalesRequestDTO>> ListForEmployeeAsync(int employeeId, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
-            // Server-side gate: only ReadyForSale reaches the sales employee app.
-            var rows = await _repo.ListAsync(employeeId, null, null, null, ct, SalesFilterStatuses.ReadyForSale);
+            // Filter stage retired: assigned employee sees their requests without ReadyForSale gate.
+            var rows = await _repo.ListAsync(employeeId, null, null, null, ct);
             var result = new List<SalesRequestDTO>();
             foreach (var row in rows.Where(r => r.TargetEmployeeId == employeeId && r.TargetEmployeeId > 0))
             {
@@ -782,12 +861,15 @@ namespace BE_Company.Sales.Services
                 row.Notes = request.Notes.Trim();
             }
 
+            // Assign is the manager send moment — always apply ceiling (null clears / means none).
+            row.MaxSalePrice = SalesRequestPriceCeiling.Normalize(request.MaxSalePrice);
+
             row.Status = SalesRequestStatuses.Assigned;
             row.AssignedAtUtc = _clock.UtcNow;
             row.AssignedByUserId = manager.EmployeeId;
             row.AssignedByName = string.IsNullOrWhiteSpace(manager.EmployeeName) ? "مدير المبيعات" : manager.EmployeeName;
-            // New assignments enter filter queue — not visible to sales employee until ReadyForSale.
-            row.FilterStatus = SalesFilterStatuses.PendingFilter;
+            // Filter stage retired: assignment goes straight to the sales employee inbox.
+            row.FilterStatus = SalesFilterStatuses.ReadyForSale;
             row.FilteredByUserId = null;
             row.FilterNote = null;
             row.FilterRejectReason = null;
@@ -795,6 +877,64 @@ namespace BE_Company.Sales.Services
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(row, SalesRequestEvents.Assigned, manager, null, ct);
             return await HydrateAsync(row, ct);
+        }
+
+        public const int AssignBatchMaxIds = 50;
+
+        public async Task<SalesRequestAssignBatchResultDTO> AssignBatchAsync(
+            SalesIdentity manager,
+            SalesRequestAssignBatchDTO request,
+            CancellationToken ct)
+        {
+            EnsureManager(manager);
+            if (request.EmployeeId <= 0)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "يجب اختيار موظف المبيعات.");
+            }
+
+            var ids = (request.RequestIds ?? [])
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+            if (ids.Count == 0)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "اختر طلباً واحداً على الأقل.");
+            }
+
+            if (ids.Count > AssignBatchMaxIds)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status400BadRequest,
+                    $"الحد الأقصى للإسناد الجماعي {AssignBatchMaxIds} طلباً.");
+            }
+
+            var result = new SalesRequestAssignBatchResultDTO();
+            var assignBody = new SalesRequestAssignDTO
+            {
+                EmployeeId = request.EmployeeId,
+                EmployeeName = request.EmployeeName,
+                CityValue = request.CityValue,
+                CityName = request.CityName
+            };
+
+            foreach (var id in ids)
+            {
+                try
+                {
+                    await AssignAsync(manager, id, assignBody, ct);
+                    result.Succeeded.Add(id);
+                }
+                catch (SalesCompleteException ex)
+                {
+                    result.Failed.Add(new SalesRequestAssignBatchFailureDTO
+                    {
+                        Id = id,
+                        Message = ex.Message
+                    });
+                }
+            }
+
+            return result;
         }
 
         public async Task SetExceptionHoldAsync(int id, string? holdStatus, Guid? exceptionId, CancellationToken ct)
@@ -844,7 +984,19 @@ namespace BE_Company.Sales.Services
 
             if (row.TargetEmployeeId <= 0)
             {
-                throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يوجد موظف مسند لإعادة الطلب إليه.");
+                // Employee-submitted requests keep TargetEmployeeId=0; return to creator.
+                if (SalesRequestSources.IsEmployeeSubmitted(row.CustomerSourceType)
+                    && row.CreatedByUserId > 0)
+                {
+                    row.TargetEmployeeId = row.CreatedByUserId;
+                    row.TargetEmployeeName = string.IsNullOrWhiteSpace(row.CreatedByName)
+                        ? "موظف مبيعات"
+                        : row.CreatedByName;
+                }
+                else
+                {
+                    throw new SalesCompleteException(StatusCodes.Status409Conflict, "لا يوجد موظف مسند لإعادة الطلب إليه.");
+                }
             }
 
             var trimmed = note.Trim();
@@ -854,6 +1006,9 @@ namespace BE_Company.Sales.Services
             row.ReturnNote = trimmed;
             // Returned work must be visible again to the assigned sales employee.
             row.FilterStatus = SalesFilterStatuses.ReadyForSale;
+            // Re-open as fresh incoming work (employee app treats null ViewedAtUtc as new).
+            row.ViewedAtUtc = null;
+            row.AssignedAtUtc ??= _clock.UtcNow;
             await _repo.UpdateAsync(row, ct);
             if (!string.Equals(row.RejectionReason, previousReason, StringComparison.Ordinal))
             {
@@ -921,6 +1076,18 @@ namespace BE_Company.Sales.Services
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(requestId, employeeId, ct);
             EnsureNotSold(row);
+            // saleId <= 0 clears a stale ConvertedToSaleId (reassigned request / missing draft).
+            if (saleId <= 0)
+            {
+                if (row.ConvertedToSaleId is > 0)
+                {
+                    row.ConvertedToSaleId = null;
+                    await _repo.UpdateAsync(row, ct);
+                }
+
+                return;
+            }
+
             if (row.ConvertedToSaleId is > 0 && row.ConvertedToSaleId != saleId)
             {
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مرتبط بعملية بيع أخرى.");
@@ -1286,7 +1453,7 @@ namespace BE_Company.Sales.Services
                 SaleRequestType = body.SaleRequestType,
                 SourceListId = body.SourceListId,
                 Status = assignEmployeeId > 0 ? SalesRequestStatuses.Assigned : SalesRequestStatuses.New,
-                FilterStatus = SalesFilterStatuses.PendingFilter,
+                FilterStatus = SalesFilterStatuses.ReadyForSale,
                 AssignedAtUtc = assignEmployeeId > 0 ? now : null,
                 CreatedAtUtc = now
             };
@@ -1341,6 +1508,7 @@ namespace BE_Company.Sales.Services
             row.DeletedAtUtc = _clock.UtcNow;
             row.DeletedByUserId = manager.EmployeeId;
             row.DeletedByName = manager.EmployeeName;
+            row.DeleteReason = $"نقل محافظة إلى {body.ToCityValue.Trim()}";
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(
                 row,
@@ -1373,32 +1541,88 @@ namespace BE_Company.Sales.Services
             }, ct);
         }
 
-        public async Task SoftDeleteAsync(SalesIdentity manager, int id, CancellationToken ct)
+        public async Task SoftDeleteAsync(SalesIdentity manager, int id, string reason, CancellationToken ct) =>
+            await SoftDeleteAsync(manager, id, reason, confirmCascadePayments: false, ct);
+
+        public async Task SoftDeleteAsync(
+            SalesIdentity manager,
+            int id,
+            string reason,
+            bool confirmCascadePayments,
+            CancellationToken ct)
         {
             EnsureManager(manager);
+            var trimmed = reason?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "سبب الحذف مطلوب.");
+            }
+
             await _repo.EnsureSchemaAsync(ct);
             var row = await _repo.GetByIdAsync(id, ct)
                       ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "الطلب غير موجود.");
 
-            if (SalesRequestStatuses.IsSold(row.Status) || row.ConvertedToSaleId is > 0)
+            if (row.IsDeleted)
             {
-                throw new SalesCompleteException(
-                    StatusCodes.Status409Conflict,
-                    "لا يمكن حذف طلب مرتبط بعملية بيع مكتملة أو محوّلة. استخدم الأرشفة فقط للطلبات غير المالية.");
+                return;
+            }
+
+            var linked = SalesRequestStatuses.IsSold(row.Status) || row.ConvertedToSaleId is > 0;
+            if (linked)
+            {
+                if (_cascadeVoid == null)
+                {
+                    throw new SalesCompleteException(
+                        StatusCodes.Status500InternalServerError,
+                        "خدمة التعويض المالي غير مهيأة. تعذر حذف طلب مرتبط بمبيع.");
+                }
+
+                await _cascadeVoid.VoidLinkedAsync(manager, row, confirmCascadePayments, trimmed, ct);
             }
 
             row.IsDeleted = true;
             row.DeletedAtUtc = _clock.UtcNow;
             row.DeletedByUserId = manager.EmployeeId;
             row.DeletedByName = manager.EmployeeName;
+            row.DeleteReason = trimmed;
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(
                 row,
                 SalesRequestEvents.ManagerRequestDeleted,
                 manager,
-                "حذف ناعم لطلب البيع",
+                trimmed,
                 ct,
                 row.Status);
+        }
+
+        public async Task<SalesRequestSoftDeleteImpactDTO> GetSoftDeleteImpactAsync(
+            SalesIdentity manager,
+            int id,
+            CancellationToken ct)
+        {
+            EnsureManager(manager);
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "الطلب غير موجود.");
+
+            if (_cascadeVoid == null || (row.ConvertedToSaleId is not > 0 && !SalesRequestStatuses.IsSold(row.Status)))
+            {
+                return new SalesRequestSoftDeleteImpactDTO
+                {
+                    RequestId = row.Id,
+                    WarningAr = "سيتم نقل الطلب إلى تبويب المحذوفين مع الاحتفاظ بكل البيانات."
+                };
+            }
+
+            return await _cascadeVoid.GetImpactAsync(row, ct);
+        }
+
+        public async Task<IReadOnlyList<SalesRequestDTO>> ListDeletedForManagerAsync(CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            // Legacy uncapped callers — hard cap so soft-deleted dumps cannot hang production.
+            var (items, _) = await _repo.ListDeletedPageAsync(null, 0, 200, ct);
+            return items;
         }
 
         private static void EnsureSalesEmployee(SalesIdentity actor)
@@ -1417,11 +1641,6 @@ namespace BE_Company.Sales.Services
             if (row.TargetEmployeeId <= 0 || row.TargetEmployeeId != employeeId)
             {
                 throw new SalesCompleteException(StatusCodes.Status403Forbidden, "لا يمكنك الوصول إلى طلب موظف آخر.");
-            }
-
-            if (!SalesFilterStatuses.IsVisibleToSalesEmployee(row.FilterStatus))
-            {
-                throw new SalesCompleteException(StatusCodes.Status404NotFound, "طلب المبيع غير موجود.");
             }
 
             return row;

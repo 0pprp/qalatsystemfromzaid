@@ -1,35 +1,64 @@
 import 'dart:convert';
+import 'package:delegate_application/services/delegate_base_url_trust.dart';
+import 'package:delegate_application/services/session_validation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 class AsyncIdChecker {
-  // دالة واحدة للفحص - تنفذ فقط عند الاستدعاء
-  static Future<bool> checkAsyncId() async {
+  static const Duration networkTimeout = Duration(seconds: 15);
+
+  /// Explicit validation: network failure → [SessionValidation.unverified],
+  /// never silently treated as Valid for destructive operations.
+  static Future<SessionValidation> validateSession() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String asyncId = prefs.getString('AsyncId') ?? '';
     String linkDelegate = prefs.getString('LinkDelegate') ?? '';
 
     if (asyncId.isEmpty || linkDelegate.isEmpty) {
-      return false;
+      return SessionValidation.invalid;
+    }
+
+    if (!DelegateBaseUrlTrust.isTrusted(linkDelegate)) {
+      return SessionValidation.invalid;
+    }
+
+    final uri = Uri.tryParse(
+        '${linkDelegate}Delegates/GetDelegateLogin/asyncId=$asyncId');
+    if (uri == null) {
+      return SessionValidation.invalid;
     }
 
     try {
-      var uri = Uri.parse(
-          '${linkDelegate}Delegates/GetDelegateLogin/asyncId=$asyncId');
-      var response = await http.get(uri);
+      var response = await http.get(uri).timeout(networkTimeout);
 
       if (response.statusCode == 200) {
-        var data = json.decode(response.body);
-        int delegateId = int.tryParse(data['delegateId'].toString()) ?? 0;
-        return delegateId != 0;
+        final data = json.decode(response.body);
+        if (data is! Map) {
+          return SessionValidation.invalid;
+        }
+        final raw = data['delegateId'] ?? data['DelegateId'];
+        final delegateId = int.tryParse(raw?.toString() ?? '') ?? 0;
+        return delegateId != 0
+            ? SessionValidation.valid
+            : SessionValidation.invalid;
       }
-      return true; // Keep logged in on server error (not 200) to avoid disruption
-    } catch (e) {
-      return true; // Keep logged in on network error
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        return SessionValidation.invalid;
+      }
+      // 404/5xx/etc.: do not wipe session — treat as unverified.
+      return SessionValidation.unverified;
+    } catch (_) {
+      return SessionValidation.unverified;
     }
   }
 
-  // دالة تسجيل الدخول - حفظ البيانات في SharedPreferences
+  /// Legacy UI gate: keep session while [unverified] (offline).
+  /// Only [invalid] forces logout. Destructive ops must call [validateSession].
+  static Future<bool> checkAsyncId() async {
+    final v = await validateSession();
+    return v != SessionValidation.invalid;
+  }
+
   static Future<void> login({
     required String asyncId,
     required String linkDelegate,
@@ -37,6 +66,9 @@ class AsyncIdChecker {
     required String delegateName,
     required String delegateCode,
   }) async {
+    if (!DelegateBaseUrlTrust.isTrusted(linkDelegate)) {
+      throw ArgumentError('رابط الدخول غير موثوق');
+    }
     SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString('AsyncId', asyncId);
     await prefs.setString('LinkDelegate', linkDelegate);
@@ -45,7 +77,6 @@ class AsyncIdChecker {
     await prefs.setString('DelegateCode', delegateCode);
   }
 
-  // دالة تسجيل الخروج - مسح كل البيانات من SharedPreferences
   static Future<void> logout() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.remove('AsyncId');
@@ -55,7 +86,6 @@ class AsyncIdChecker {
     await prefs.remove('DelegateCode');
   }
 
-  // دالة للحصول على بيانات المستخدم
   static Future<Map<String, String>> getUserData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     return {
@@ -67,7 +97,6 @@ class AsyncIdChecker {
     };
   }
 
-  // دالة للتحقق إذا كان المستخدم مسجل الدخول
   static Future<bool> isLoggedIn() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String asyncId = prefs.getString('AsyncId') ?? '';

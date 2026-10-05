@@ -18,6 +18,8 @@ public sealed class SalesExceptionRequest
     public string TargetApproverType { get; set; } = TargetApproverTypes.DelegatedManager;
     public string Status { get; set; } = ExceptionStatuses.Pending;
     public DateTime RequestedAtUtc { get; set; }
+    /// <summary>Null = غير مقروء (خاصة المبيعات الخاطئة في صندوق المدير المفوض).</summary>
+    public DateTime? ReadAtUtc { get; set; }
     public DateTime? DecidedAtUtc { get; set; }
     public string? DecisionMakerUserName { get; set; }
     public string? DecisionMakerDisplayName { get; set; }

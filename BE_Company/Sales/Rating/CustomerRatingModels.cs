@@ -5,8 +5,12 @@ public enum CustomerRatingLevel
     Excellent = 1,
     Good = 2,
     Weak = 3,
+    /// <summary>متلكئ — 180 إلى أقل من 200 يوم (أو معدل يوحي بذلك).</summary>
     Rejected = 4,
-    Legal = 5
+    /// <summary>قانونية — legacy enum value; calculator never assigns it (IsLegal ignored).</summary>
+    Legal = 5,
+    /// <summary>سيء — 200 يوم فأكثر (أو معدل يوحي بذلك). النقاط -10.</summary>
+    Bad = 6
 }
 
 public enum ListRiskIndicator
@@ -22,8 +26,10 @@ public static class CustomerRatingLabels
     public const string Excellent = "ممتاز";
     public const string Good = "جيد";
     public const string Weak = "ضعيف";
-    public const string Rejected = "مرفوض";
+    /// <summary>Was «مرفوض»; production label is متلكئ (180–&lt;200 days).</summary>
+    public const string Rejected = "متلكئ";
     public const string Legal = "قانونية";
+    public const string Bad = "سيء";
 
     public static string FromLevel(CustomerRatingLevel level) => level switch
     {
@@ -32,6 +38,7 @@ public static class CustomerRatingLabels
         CustomerRatingLevel.Weak => Weak,
         CustomerRatingLevel.Rejected => Rejected,
         CustomerRatingLevel.Legal => Legal,
+        CustomerRatingLevel.Bad => Bad,
         _ => Weak
     };
 }
@@ -46,7 +53,12 @@ public sealed record CustomerRatingFacts(
     double AmountTotalSales,
     double ReceiptsTotal,
     double AmountRemaining,
-    int ReceiptCount = 0);
+    int ReceiptCount = 0,
+    /// <summary>
+    /// Main-accountant rating equation (default 1). Scales receipts for open-account rate
+    /// and compresses settled days — ledger AmountPaid / ReceiptsTotal stay unchanged.
+    /// </summary>
+    double RatingEquationFactor = 1.0);
 
 public sealed record CustomerRatingResult(
     int CustomerId,
@@ -65,20 +77,30 @@ public sealed record CustomerRatingResult(
 
 public static class CustomerRatingCalculator
 {
-    public const double ExcellentRate = 7.1;
-    public const double GoodRate = 6.25;
-    public const double WeakRate = 5.5;
+    // days ≈ 1000 / rate  (constant daily payment model)
+    public const double ExcellentRate = 7.1;          // ~141 days
+    public const double GoodRate = 6.25;              // 160 days
+    public const double WeakRate = 1000.0 / 180.0;    // ~5.5556 → under 180 days
+    public const double LaggingMinRate = 1000.0 / 200.0; // 5.0 → under 200 days
 
-    public static CustomerRatingResult Evaluate(CustomerRatingFacts facts, DateTime asOfDate)
+    public const int ExcellentMaxDays = 140;
+    public const int GoodMaxDays = 160;
+    public const int WeakMaxDaysExclusive = 180;
+    public const int LaggingMaxDaysExclusive = 200; // متلكئ: 180..199 ; سيء: 200+
+
+    public static double NormalizeEquationFactor(double factor) =>
+        factor > 0 && !double.IsNaN(factor) && !double.IsInfinity(factor) ? factor : 1.0;
+
+    public static CustomerRatingResult Evaluate(
+        CustomerRatingFacts facts,
+        DateTime asOfDate,
+        bool usePhantomSaleDate = false)
     {
-        if (facts.IsLegal)
-        {
-            return Build(facts, CustomerRatingLevel.Legal, -10, "قانونية",
-                isSettled: facts.AmountRemaining == 0,
-                daysToSettle: null,
-                daysSinceSale: null,
-                paymentRate: null);
-        }
+        // IsLegal is informational only — it does not affect payment-speed rating.
+        var equation = NormalizeEquationFactor(facts.RatingEquationFactor);
+        var equationNote = Math.Abs(equation - 1.0) > 0.0001
+            ? $" (معادلة التقييم ×{equation:0.##})"
+            : string.Empty;
 
         if (facts.AmountRemaining < 0)
         {
@@ -92,7 +114,10 @@ public static class CustomerRatingCalculator
                 isSettled: facts.AmountRemaining == 0, null, null, null);
         }
 
-        var saleDate = facts.DateSaleDevice.Value.Date;
+        // Ledger DateSaleDevice stays real; phantom adjusts math-only sale date.
+        var saleDate = usePhantomSaleDate
+            ? (PhantomSaleDate.Adjust(facts.DateSaleDevice) ?? facts.DateSaleDevice.Value.Date)
+            : facts.DateSaleDevice.Value.Date;
         var asOf = asOfDate.Date;
 
         if (facts.AmountRemaining == 0)
@@ -110,8 +135,12 @@ public static class CustomerRatingCalculator
                     isSettled: true, daysToSettle, null, null);
             }
 
-            var (level, score) = ClassifySettledDays(daysToSettle);
-            var reason = $"{CustomerRatingLabels.FromLevel(level)} - أغلق الحساب خلال {daysToSettle} يوم";
+            // Virtual only: compress calendar days by equation (analogous to boosting receipts).
+            var effectiveDays = Math.Max(1, (int)Math.Ceiling(daysToSettle / equation));
+            var (level, score) = ClassifySettledDays(effectiveDays);
+            var reason = equationNote.Length == 0
+                ? $"{CustomerRatingLabels.FromLevel(level)} - أغلق الحساب خلال {daysToSettle} يوم"
+                : $"{CustomerRatingLabels.FromLevel(level)} - أغلق خلال {daysToSettle} يوم → فعلي للتقييم {effectiveDays} يوم{equationNote}";
             return Build(facts, level, score, reason, isSettled: true, daysToSettle, null, null);
         }
 
@@ -122,9 +151,13 @@ public static class CustomerRatingCalculator
                 isSettled: false, null, daysSinceSale, null);
         }
 
-        var rate = facts.ReceiptsTotal * 1000.0 / (facts.AmountTotalSales * daysSinceSale);
+        // Virtual receipts for rating only — real ledger ReceiptsTotal / AmountRemaining unchanged.
+        var effectiveReceipts = facts.ReceiptsTotal * equation;
+        var rate = effectiveReceipts * 1000.0 / (facts.AmountTotalSales * daysSinceSale);
         var (activeLevel, activeScore) = ClassifyActiveRate(rate);
-        var activeReason = $"{CustomerRatingLabels.FromLevel(activeLevel)} - معدل التسديد {rate:0.##}%";
+        var projectedDays = rate > 0 ? (1000.0 / rate) : double.PositiveInfinity;
+        var activeReason =
+            $"{CustomerRatingLabels.FromLevel(activeLevel)} - معدل التسديد {rate:0.##}% (≈{projectedDays:0.#} يوم للتصفير){equationNote}";
         return Build(facts, activeLevel, activeScore, activeReason,
             isSettled: false, null, daysSinceSale, rate);
     }
@@ -134,10 +167,11 @@ public static class CustomerRatingCalculator
 
     public static (CustomerRatingLevel Level, int Score) ClassifySettledDays(int days)
     {
-        if (days <= 140) return (CustomerRatingLevel.Excellent, 10);
-        if (days <= 160) return (CustomerRatingLevel.Good, 5);
-        if (days < 180) return (CustomerRatingLevel.Weak, 0);
-        return (CustomerRatingLevel.Rejected, -5);
+        if (days <= ExcellentMaxDays) return (CustomerRatingLevel.Excellent, 10);
+        if (days <= GoodMaxDays) return (CustomerRatingLevel.Good, 5);
+        if (days < WeakMaxDaysExclusive) return (CustomerRatingLevel.Weak, 0);
+        if (days < LaggingMaxDaysExclusive) return (CustomerRatingLevel.Rejected, -5); // متلكئ 180–199
+        return (CustomerRatingLevel.Bad, -10); // سيء 200+
     }
 
     public static (CustomerRatingLevel Level, int Score) ClassifyActiveRate(double rate)
@@ -145,7 +179,32 @@ public static class CustomerRatingCalculator
         if (rate >= ExcellentRate) return (CustomerRatingLevel.Excellent, 10);
         if (rate >= GoodRate) return (CustomerRatingLevel.Good, 5);
         if (rate >= WeakRate) return (CustomerRatingLevel.Weak, 0);
-        return (CustomerRatingLevel.Rejected, -5);
+        if (rate >= LaggingMinRate) return (CustomerRatingLevel.Rejected, -5); // متلكئ
+        return (CustomerRatingLevel.Bad, -10); // سيء — يصفّر بـ200 يوم فأكثر
+    }
+
+    /// <summary>
+    /// Parallel evaluate for large cohorts (branch / 100k-customer production loads).
+    /// Sequential below threshold to avoid thread-pool overhead on small lists.
+    /// </summary>
+    public static IReadOnlyList<CustomerRatingResult> EvaluateMany(
+        IReadOnlyList<CustomerRatingFacts> facts,
+        DateTime asOfDate,
+        int parallelThreshold = 2_000,
+        bool usePhantomSaleDate = false)
+    {
+        if (facts.Count == 0) return Array.Empty<CustomerRatingResult>();
+        if (facts.Count < parallelThreshold)
+        {
+            var sequential = new CustomerRatingResult[facts.Count];
+            for (var i = 0; i < facts.Count; i++)
+                sequential[i] = Evaluate(facts[i], asOfDate, usePhantomSaleDate);
+            return sequential;
+        }
+
+        var results = new CustomerRatingResult[facts.Count];
+        Parallel.For(0, facts.Count, i => results[i] = Evaluate(facts[i], asOfDate, usePhantomSaleDate));
+        return results;
     }
 
     private static CustomerRatingResult Build(
