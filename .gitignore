@@ -74,6 +74,17 @@ _ops_tmp*
 _sf_*
 _sfu_*
 _rusafa_*
+_nasria_*
+_dm_*
+bm_*_log*
+*_build_log.txt
+*_gradle_log.txt
+tomer-*
+Publish*.bat
+
+# Root scratch dumps / local reports
+/*.txt
+!README.txt
 
 # Python and shell ops scripts
 *.py
