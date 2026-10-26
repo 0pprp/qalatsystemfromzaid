@@ -16,6 +16,7 @@ import {
 import { trendMatchesRequest } from '@/composables/directorTrendIdentity'
 import { useToast } from '@/composables/useToast'
 import { createRequestGeneration } from '@/utils/provinceCatalog'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 
 defineOptions({ name: 'AccountantRatings' })
 definePage({ meta: { layout: 'default', keepAlive: true } })
@@ -707,18 +708,24 @@ async function refreshTrend(key = currentTrendKey(), request = null) {
 }
 
 function mapCustomerRows(list, fallbackLabel) {
-  return list.map(c => ({
-    customerId: c.customerId ?? c.CustomerId,
-    customerName: c.customerName || c.CustomerName || `زبون ${c.customerId ?? c.CustomerId}`,
-    phone: c.phone || c.Phone || '',
-    dateSale: c.dateSale ?? c.DateSale,
-    lastPaymentDate: c.lastPaymentDate ?? c.LastPaymentDate,
-    amountPaid: c.amountPaid ?? c.AmountPaid ?? 0,
-    amountRemaining: c.amountRemaining ?? c.AmountRemaining ?? 0,
-    amountTotal: c.amountTotal ?? c.AmountTotal ?? 0,
-    ratingLabel: c.ratingLabel || c.RatingLabel || fallbackLabel,
-    score: c.score ?? c.Score,
-  }))
+  return list.map(c => {
+    const hide = shouldHidePaidRemaining(c)
+
+    return {
+      customerId: c.customerId ?? c.CustomerId,
+      customerName: c.customerName || c.CustomerName || `زبون ${c.customerId ?? c.CustomerId}`,
+      phone: c.phone || c.Phone || '',
+      dateSale: c.dateSale ?? c.DateSale,
+      lastPaymentDate: c.lastPaymentDate ?? c.LastPaymentDate,
+      amountPaid: hide ? null : (c.amountPaid ?? c.AmountPaid ?? 0),
+      amountRemaining: hide ? null : (c.amountRemaining ?? c.AmountRemaining ?? 0),
+      amountTotal: c.amountTotal ?? c.AmountTotal ?? 0,
+      ratingLabel: c.ratingLabel || c.RatingLabel || fallbackLabel,
+      score: c.score ?? c.Score,
+      hidePaidRemaining: hide,
+      isLegal: c.isLegal ?? c.IsLegal ?? hide,
+    }
+  })
 }
 
 function unwrapCustomerList(data) {
@@ -1563,7 +1570,7 @@ onBeforeUnmount(() => {})
               <div class="customer-meta">
                 <span v-if="c.phone">{{ c.phone }}</span>
                 <span>{{ c.ratingLabel }}</span>
-                <span v-if="c.amountRemaining != null">متبقي: {{ money(c.amountRemaining) }}</span>
+                <span v-if="!c.hidePaidRemaining && c.amountRemaining != null">متبقي: {{ money(c.amountRemaining) }}</span>
               </div>
             </button>
           </div>

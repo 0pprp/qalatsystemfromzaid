@@ -67,6 +67,18 @@ namespace BE_Company.Sales.Services
         public int? PhantomBadCount { get; set; }
         public double? PhantomPeriodEndValue { get; set; }
         public string? PhantomPeriodRatingLabel { get; set; }
+
+        /// <summary>مجموع القسط (AmountDaySales) لزبائن القائمة بباقي &gt; 0.</summary>
+        public double? InstallmentSum { get; set; }
+    }
+
+    public sealed class ListPaymentsSumDto
+    {
+        public int ListId { get; set; }
+        public DateTime FromDate { get; set; }
+        public DateTime ToDate { get; set; }
+        public double TotalAmount { get; set; }
+        public int PaymentCount { get; set; }
     }
 
     public sealed class BranchManagerStatsCatalogDto
@@ -89,11 +101,21 @@ namespace BE_Company.Sales.Services
         public double AmountPaid { get; set; }
         public double AmountRemaining { get; set; }
         public double AmountTotal { get; set; }
+        /// <summary>True when customer IsLegal — الواصل/الباقي must not be shown.</summary>
+        public bool IsLegal { get; set; }
+        /// <summary>UI must hide AmountPaid / AmountRemaining (legal customers).</summary>
+        public bool HidePaidRemaining { get; set; }
     }
 
     public interface IBranchManagerStatsService
     {
         Task<BranchManagerStatsCatalogDto> GetCatalogAsync(CancellationToken ct);
+
+        /// <summary>
+        /// Lists for BM visit entry ratings — same set as المراقب متابعة المندوبين
+        /// (active payment within 40 days). Not the full stats catalog.
+        /// </summary>
+        Task<IReadOnlyList<BranchManagerEntityOptionDto>> GetVisitRatingListsAsync(CancellationToken ct);
         Task<BranchManagerTrendDto> GetTrendAsync(
             string scope,
             int id,
@@ -143,7 +165,15 @@ namespace BE_Company.Sales.Services
             CancellationToken ct,
             int take = 500,
             int skip = 0,
-            string? search = null);
+            string? search = null,
+            bool usePhantom = false);
+
+        /// <summary>مجموع مبالغ التسديدات لقائمة (DelegateID) ضمن فترة تواريخ.</summary>
+        Task<ListPaymentsSumDto> GetListPaymentsSumAsync(
+            int listId,
+            DateTime fromDate,
+            DateTime toDate,
+            CancellationToken ct);
     }
 
     /// <summary>
@@ -188,6 +218,17 @@ namespace BE_Company.Sales.Services
                 Followers = followers,
                 Employees = employees
             };
+        }
+
+        public async Task<IReadOnlyList<BranchManagerEntityOptionDto>> GetVisitRatingListsAsync(
+            CancellationToken ct)
+        {
+            var asOf = DateTime.UtcNow.AddHours(3).Date;
+            var rows = await LoadListsWithRecentPaymentAsync(asOf, ct);
+            var selected = BmVisitRatingListsRules.SelectForVisitRating(rows, asOf);
+            return selected
+                .Select(r => new BranchManagerEntityOptionDto { Id = r.Id, Name = r.Name })
+                .ToList();
         }
 
         public async Task<BranchManagerTrendDto> GetTrendAsync(
@@ -392,20 +433,7 @@ namespace BE_Company.Sales.Services
                 .Select(m =>
                 {
                     names.TryGetValue(m.Fact.CustomerId, out var info);
-                    return new EmployeeRatingCustomerCardDto
-                    {
-                        CustomerId = m.Fact.CustomerId,
-                        CustomerName = string.IsNullOrWhiteSpace(info.Name) ? $"زبون {m.Fact.CustomerId}" : info.Name!,
-                        Phone = info.Phone,
-                        Level = m.Rated.Level.ToString().ToLowerInvariant(),
-                        RatingLabel = m.Rated.RatingLabel,
-                        Score = m.Rated.Score,
-                        DateSale = m.Fact.DateSaleDevice,
-                        LastPaymentDate = m.Fact.LastPaymentDate,
-                        AmountPaid = m.Fact.ReceiptsTotal,
-                        AmountRemaining = m.Fact.AmountRemaining,
-                        AmountTotal = m.Fact.AmountTotalSales
-                    };
+                    return MapRatingCustomerCard(m.Fact, m.Rated, info.Name, info.Phone, maskLegalFinancials: true);
                 })
                 .OrderBy(c => c.CustomerName)
                 .ToList();
@@ -580,20 +608,7 @@ namespace BE_Company.Sales.Services
                 .Select(m =>
                 {
                     names.TryGetValue(m.Fact.CustomerId, out var info);
-                    return new EmployeeRatingCustomerCardDto
-                    {
-                        CustomerId = m.Fact.CustomerId,
-                        CustomerName = string.IsNullOrWhiteSpace(info.Name) ? $"زبون {m.Fact.CustomerId}" : info.Name!,
-                        Phone = info.Phone,
-                        Level = m.Rated.Level.ToString().ToLowerInvariant(),
-                        RatingLabel = m.Rated.RatingLabel,
-                        Score = m.Rated.Score,
-                        DateSale = m.Fact.DateSaleDevice,
-                        LastPaymentDate = m.Fact.LastPaymentDate,
-                        AmountPaid = m.Fact.ReceiptsTotal,
-                        AmountRemaining = m.Fact.AmountRemaining,
-                        AmountTotal = m.Fact.AmountTotalSales
-                    };
+                    return MapRatingCustomerCard(m.Fact, m.Rated, info.Name, info.Phone, maskLegalFinancials: true);
                 })
                 .OrderBy(c => c.CustomerName)
                 .ToList();
@@ -608,7 +623,8 @@ namespace BE_Company.Sales.Services
             CancellationToken ct,
             int take = 500,
             int skip = 0,
-            string? search = null)
+            string? search = null,
+            bool usePhantom = false)
         {
             const int maxTake = 1_000;
             const int nameResolveCap = 2_000;
@@ -617,7 +633,7 @@ namespace BE_Company.Sales.Services
 
             scope = (scope ?? "branch").Trim().ToLowerInvariant();
             var today = DateTime.UtcNow.AddHours(3).Date;
-            var from = (fromDate ?? new DateTime(today.Year, today.Month, 1)).Date;
+            var from = (fromDate ?? today.AddDays(-30)).Date;
             var to = (toDate ?? today).Date;
             if (to < from)
             {
@@ -649,11 +665,12 @@ namespace BE_Company.Sales.Services
 
             // list/follower/branch: same ActiveRatingCohort as headline ExcellentCount/…
             // Employee keeps sale-date period cohort (unchanged).
+            // Optional phantom=true: evaluate with PhantomSaleDate math (BM drill-down).
             List<(CustomerRatingFacts Fact, CustomerRatingResult Rated)> matched;
             var useActive = scope is "list" or "delegate" or "follower" or "branch";
             if (useActive)
             {
-                matched = ActiveRatingCohort.Build(facts, asOf)
+                matched = ActiveRatingCohort.Build(facts, asOf, usePhantomSaleDate: usePhantom)
                     .Where(m => wanted is null || m.Rated.Level == wanted)
                     .ToList();
             }
@@ -670,7 +687,7 @@ namespace BE_Company.Sales.Services
                     return [];
                 }
 
-                var rated = CustomerRatingCalculator.EvaluateMany(cohort, asOf);
+                var rated = CustomerRatingCalculator.EvaluateMany(cohort, asOf, usePhantomSaleDate: usePhantom);
                 matched = new List<(CustomerRatingFacts Fact, CustomerRatingResult Rated)>(cohort.Count);
                 for (var i = 0; i < cohort.Count; i++)
                 {
@@ -735,24 +752,47 @@ namespace BE_Company.Sales.Services
                 .Select(m =>
                 {
                     names.TryGetValue(m.Fact.CustomerId, out var info);
-                    return new EmployeeRatingCustomerCardDto
-                    {
-                        CustomerId = m.Fact.CustomerId,
-                        CustomerName = string.IsNullOrWhiteSpace(info.Name) ? $"زبون {m.Fact.CustomerId}" : info.Name!,
-                        Phone = info.Phone,
-                        Level = m.Rated.Level.ToString().ToLowerInvariant(),
-                        RatingLabel = m.Rated.RatingLabel,
-                        Score = m.Rated.Score,
-                        DateSale = m.Fact.DateSaleDevice,
-                        LastPaymentDate = m.Fact.LastPaymentDate,
-                        AmountPaid = m.Fact.ReceiptsTotal,
-                        AmountRemaining = m.Fact.AmountRemaining,
-                        AmountTotal = m.Fact.AmountTotalSales
-                    };
+                    // Mask after open-balance filter so legal customers stay in the cohort.
+                    return MapRatingCustomerCard(m.Fact, m.Rated, info.Name, info.Phone, maskLegalFinancials: false);
                 })
                 .Where(c => c.AmountRemaining > 0 && c.AmountTotal > 0)
+                .Select(c =>
+                {
+                    LegalCustomerFinancialVisibility.MaskRatingCustomerCard(c, c.IsLegal);
+                    return c;
+                })
                 .OrderBy(c => c.CustomerName, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
+        }
+
+        private static EmployeeRatingCustomerCardDto MapRatingCustomerCard(
+            CustomerRatingFacts fact,
+            CustomerRatingResult rated,
+            string? name,
+            string? phone,
+            bool maskLegalFinancials)
+        {
+            var card = new EmployeeRatingCustomerCardDto
+            {
+                CustomerId = fact.CustomerId,
+                CustomerName = string.IsNullOrWhiteSpace(name) ? $"زبون {fact.CustomerId}" : name!,
+                Phone = phone,
+                Level = rated.Level.ToString().ToLowerInvariant(),
+                RatingLabel = rated.RatingLabel,
+                Score = rated.Score,
+                DateSale = fact.DateSaleDevice,
+                LastPaymentDate = fact.LastPaymentDate,
+                AmountPaid = fact.ReceiptsTotal,
+                AmountRemaining = fact.AmountRemaining,
+                AmountTotal = fact.AmountTotalSales,
+                IsLegal = fact.IsLegal
+            };
+            if (maskLegalFinancials)
+            {
+                LegalCustomerFinancialVisibility.MaskRatingCustomerCard(card, fact.IsLegal);
+            }
+
+            return card;
         }
 
         private async Task<IReadOnlyList<CustomerRatingFacts>> LoadListFactsAsync(int listId, CancellationToken ct)
@@ -959,7 +999,101 @@ WHERE c.CustomerID IN @Ids;",
             var periodEnd = ListRatingTrendCalculator.PeriodAggregate(facts, saleFrom, saleTo, chartTo);
             var dto = BuildTrend("list", listId, name, ActiveMetricLabel, chartFrom, chartTo, series, periodEnd);
             await ApplyActiveCustomerHeadlineAsync(dto, facts, chartTo, periodEnd, saleFrom, saleTo, ct);
+            dto.InstallmentSum = await SumListInstallmentsAsync(listId, ct);
             return dto;
+        }
+
+        private async Task<double> SumListInstallmentsAsync(int listId, CancellationToken ct)
+        {
+            if (listId <= 0)
+                return 0;
+            try
+            {
+                var cs = _guard.GetSalesConnectionString();
+                if (string.IsNullOrWhiteSpace(cs))
+                    return 0;
+                await using var connection = new SqlConnection(cs);
+                var sum = await connection.ExecuteScalarAsync<double?>(new CommandDefinition(@"
+SELECT CAST(ISNULL(SUM(ISNULL(vc.AmountDaySales, 0)), 0) AS float)
+FROM dbo.Customers c
+LEFT JOIN dbo.View_Customers vc ON vc.CustomerID = c.CustomerID
+WHERE c.DelegateID = @ListId
+  AND ISNULL(vc.AmountRemaining, 0) > 0;",
+                    new { ListId = listId }, cancellationToken: ct));
+                return Math.Round(sum ?? 0, 0, MidpointRounding.AwayFromZero);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        public async Task<ListPaymentsSumDto> GetListPaymentsSumAsync(
+            int listId,
+            DateTime fromDate,
+            DateTime toDate,
+            CancellationToken ct)
+        {
+            var from = fromDate.Date;
+            var to = toDate.Date;
+            if (to < from)
+                (from, to) = (to, from);
+
+            var result = new ListPaymentsSumDto
+            {
+                ListId = listId,
+                FromDate = from,
+                ToDate = to,
+            };
+            if (listId <= 0)
+                return result;
+
+            try
+            {
+                var cs = _guard.GetSalesConnectionString();
+                if (string.IsNullOrWhiteSpace(cs))
+                    return result;
+
+                await using var connection = new SqlConnection(cs);
+                // Prefer view AmountDenar; fall back to Amount * 1448 if needed.
+                try
+                {
+                    var row = await connection.QuerySingleOrDefaultAsync<(double Total, int Cnt)>(
+                        new CommandDefinition(@"
+SELECT CAST(ISNULL(SUM(ISNULL(AmountDenar, 0)), 0) AS float) AS Total,
+       COUNT(1) AS Cnt
+FROM dbo.View_CustomersPayments
+WHERE DelegateID = @ListId
+  AND CONVERT(date, PaymentDate) >= @FromDate
+  AND CONVERT(date, PaymentDate) <= @ToDate;",
+                            new { ListId = listId, FromDate = from, ToDate = to },
+                            cancellationToken: ct));
+                    result.TotalAmount = Math.Round(row.Total, 0, MidpointRounding.AwayFromZero);
+                    result.PaymentCount = row.Cnt;
+                }
+                catch (SqlException)
+                {
+                    var row = await connection.QuerySingleOrDefaultAsync<(double Total, int Cnt)>(
+                        new CommandDefinition(@"
+SELECT CAST(ISNULL(SUM(ISNULL(r.AmountDenar, 0)), 0) AS float) AS Total,
+       COUNT(1) AS Cnt
+FROM dbo.View_ReceiptCustomerDate r
+INNER JOIN dbo.Customers c ON c.CustomerID = r.CustomerID
+WHERE c.DelegateID = @ListId
+  AND CONVERT(date, r.PaymentDate) >= @FromDate
+  AND CONVERT(date, r.PaymentDate) <= @ToDate;",
+                            new { ListId = listId, FromDate = from, ToDate = to },
+                            cancellationToken: ct));
+                    result.TotalAmount = Math.Round(row.Total, 0, MidpointRounding.AwayFromZero);
+                    result.PaymentCount = row.Cnt;
+                }
+            }
+            catch
+            {
+                // leave zeros
+            }
+
+            return result;
         }
 
         private async Task<BranchManagerTrendDto> FollowerTrendAsync(
@@ -1264,6 +1398,53 @@ SELECT TOP 1 ISNULL(UserName, N'موظف مبيعات') FROM dbo.Users WHERE Use
                 listIds, byList, saleFrom, saleTo, chartTo, chartFrom);
             var end = ListRatingTrendCalculator.PeriodAggregate(allFacts, saleFrom, saleTo, chartTo);
             return (series, end);
+        }
+
+        /// <summary>
+        /// Same cohort as DirectorDelegateFollowupService — lists with a payment
+        /// in the last <see cref="DirectorDelegateFollowupRules.MaxDaysListActivity"/> days.
+        /// </summary>
+        private async Task<IReadOnlyList<(int Id, string Name, DateTime? LastPaymentDate)>> LoadListsWithRecentPaymentAsync(
+            DateTime asOf,
+            CancellationToken ct)
+        {
+            try
+            {
+                var cs = _guard.GetSalesConnectionString();
+                if (string.IsNullOrWhiteSpace(cs))
+                    return [];
+
+                var cutoff = asOf.Date.AddDays(-DirectorDelegateFollowupRules.MaxDaysListActivity);
+                await using var connection = new SqlConnection(cs);
+                var rows = await connection.QueryAsync<(int Id, string? Name, DateTime? LastPaymentDate)>(
+                    new CommandDefinition(@"
+SELECT
+  d.DelegateID AS Id,
+  LTRIM(RTRIM(ISNULL(d.DelegateName, N''))) AS Name,
+  MAX(cp.PaymentDate) AS LastPaymentDate
+FROM dbo.Delegates d
+INNER JOIN dbo.Customers c ON c.DelegateID = d.DelegateID
+INNER JOIN dbo.CustomersPayments cp ON cp.CustomerID = c.CustomerID
+WHERE ISNULL(d.DelegateState, 1) = 1
+GROUP BY d.DelegateID, d.DelegateName
+HAVING MAX(cp.PaymentDate) IS NOT NULL
+   AND CONVERT(date, MAX(cp.PaymentDate)) >= @Cutoff
+ORDER BY d.DelegateName;",
+                        new { Cutoff = cutoff },
+                        cancellationToken: ct));
+
+                return rows
+                    .Where(r => r.Id > 0)
+                    .Select(r => (
+                        r.Id,
+                        string.IsNullOrWhiteSpace(r.Name) ? $"قائمة {r.Id}" : r.Name!.Trim(),
+                        r.LastPaymentDate))
+                    .ToList();
+            }
+            catch
+            {
+                return [];
+            }
         }
 
         private async Task<IReadOnlyList<BranchManagerEntityOptionDto>> LoadActiveListsAsync(

@@ -32,6 +32,7 @@ namespace BE_Company.Sales.Services
         public const string CategoryTriple = "tripleName";
         public const string CategoryPhone = "phone";
         public const string CategoryKinship = "fatherGrandfather";
+        public const string CategorySonFather = "sonFather";
 
         private readonly ISalesRequestRepository _requests;
         private readonly ISalesExcelCustomerSearchCatalog _catalog;
@@ -220,9 +221,7 @@ namespace BE_Company.Sales.Services
             pageSize = Math.Clamp(pageSize <= 0 ? 30 : pageSize, 1, 100);
             var customers = await _catalog.LoadCustomersAsync(ct);
             var matches = MatchCategories(customerName, customerPhone, customers);
-            var ids = cat.Equals(CategoryTriple, StringComparison.OrdinalIgnoreCase) ? matches.Triple
-                : cat.Equals(CategoryPhone, StringComparison.OrdinalIgnoreCase) ? matches.Phone
-                : matches.Kinship;
+            var ids = ResolveCategoryIds(cat, matches);
 
             var pageIds = ids.Skip((page - 1) * pageSize).Take(pageSize).ToList();
             var facts = await _rating.GetFactsByCustomerIdsAsync(pageIds, ct);
@@ -241,11 +240,7 @@ namespace BE_Company.Sales.Services
                 var rating = fact is null
                     ? null
                     : CustomerRatingCalculator.Evaluate(fact, asOf);
-                var reason = cat.Equals(CategoryPhone, StringComparison.OrdinalIgnoreCase)
-                    ? "تطابق رقم الهاتف"
-                    : cat.Equals(CategoryTriple, StringComparison.OrdinalIgnoreCase)
-                        ? "تشابه الاسم الثلاثي"
-                        : SalesRequestNameSimilarity.FatherGrandfatherMatchReason(customerName, cust.FullName);
+                var reason = MatchReasonFor(cat, customerName, cust.FullName);
 
                 items.Add(new SalesRequestEvaluationHitDTO
                 {
@@ -307,7 +302,9 @@ namespace BE_Company.Sales.Services
             var triple = new List<int>();
             var phone = new List<int>();
             var kinship = new List<int>();
+            var sonFather = new List<int>();
             var kinshipSeen = new HashSet<int>();
+            var sonFatherSeen = new HashSet<int>();
 
             // Phone index: O(customers) once then O(1) lookup instead of O(n) Matches per row.
             Dictionary<string, List<int>>? phoneIndex = null;
@@ -367,9 +364,15 @@ namespace BE_Company.Sales.Services
                 {
                     kinship.Add(c.CustomerId);
                 }
+
+                if (SalesRequestNameSimilarity.IsSonFatherMatch(customerName, c.FullName)
+                    && sonFatherSeen.Add(c.CustomerId))
+                {
+                    sonFather.Add(c.CustomerId);
+                }
             }
 
-            return new CategoryMatches(triple, phone, kinship);
+            return new CategoryMatches(triple, phone, kinship, sonFather);
         }
 
         private static SalesRequestEvaluationSummaryDTO BuildSummary(
@@ -381,8 +384,9 @@ namespace BE_Company.Sales.Services
             var tripleCat = BuildCategory(matches.Triple, ratings);
             var phoneCat = BuildCategory(matches.Phone, ratings);
             var kinCat = BuildCategory(matches.Kinship, ratings);
+            var sonFatherCat = BuildCategory(matches.SonFather, ratings);
             var overall = SalesRequestEvaluationAggregator.Overall(
-                ToPair(tripleCat), ToPair(phoneCat), ToPair(kinCat));
+                ToPair(tripleCat), ToPair(phoneCat), ToPair(kinCat), ToPair(sonFatherCat));
             var source = (sourceCityValue ?? "").Trim();
 
             return new SalesRequestEvaluationSummaryDTO
@@ -396,7 +400,8 @@ namespace BE_Company.Sales.Services
                 OverallRatingLevel = overall?.Level.ToString(),
                 TripleName = tripleCat,
                 Phone = phoneCat,
-                FatherGrandfather = kinCat
+                FatherGrandfather = kinCat,
+                SonFather = sonFatherCat
             };
         }
 
@@ -449,7 +454,30 @@ namespace BE_Company.Sales.Services
         private static bool IsKnownCategory(string cat) =>
             cat.Equals(CategoryTriple, StringComparison.OrdinalIgnoreCase)
             || cat.Equals(CategoryPhone, StringComparison.OrdinalIgnoreCase)
-            || cat.Equals(CategoryKinship, StringComparison.OrdinalIgnoreCase);
+            || cat.Equals(CategoryKinship, StringComparison.OrdinalIgnoreCase)
+            || cat.Equals(CategorySonFather, StringComparison.OrdinalIgnoreCase);
+
+        private static IReadOnlyList<int> ResolveCategoryIds(string cat, CategoryMatches matches)
+        {
+            if (cat.Equals(CategoryTriple, StringComparison.OrdinalIgnoreCase))
+                return matches.Triple;
+            if (cat.Equals(CategoryPhone, StringComparison.OrdinalIgnoreCase))
+                return matches.Phone;
+            if (cat.Equals(CategorySonFather, StringComparison.OrdinalIgnoreCase))
+                return matches.SonFather;
+            return matches.Kinship;
+        }
+
+        private static string MatchReasonFor(string cat, string? customerName, string? candidateName)
+        {
+            if (cat.Equals(CategoryPhone, StringComparison.OrdinalIgnoreCase))
+                return "تطابق رقم الهاتف";
+            if (cat.Equals(CategoryTriple, StringComparison.OrdinalIgnoreCase))
+                return "تشابه الاسم الثلاثي";
+            if (cat.Equals(CategorySonFather, StringComparison.OrdinalIgnoreCase))
+                return SalesRequestNameSimilarity.SonFatherMatchReason(customerName, candidateName);
+            return SalesRequestNameSimilarity.FatherGrandfatherMatchReason(customerName, candidateName);
+        }
 
         private static void EnsureManager(SalesIdentity actor)
         {
@@ -463,14 +491,16 @@ namespace BE_Company.Sales.Services
         private sealed class CategoryMatches(
             List<int> triple,
             List<int> phone,
-            List<int> kinship)
+            List<int> kinship,
+            List<int> sonFather)
         {
             public List<int> Triple { get; } = triple;
             public List<int> Phone { get; } = phone;
             public List<int> Kinship { get; } = kinship;
+            public List<int> SonFather { get; } = sonFather;
 
             public IEnumerable<int> AllCustomerIds() =>
-                Triple.Concat(Phone).Concat(Kinship).Distinct();
+                Triple.Concat(Phone).Concat(Kinship).Concat(SonFather).Distinct();
         }
     }
 }

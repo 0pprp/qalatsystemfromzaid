@@ -43,9 +43,16 @@ class _AllReceiptState extends State<AllReceipt> {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String linkDelegate = prefs.getString('LinkDelegate') ?? '0';
     int delegateId = int.parse(prefs.getString('DelegateID') ?? '0');
+    final asyncId = prefs.getString('AsyncId') ?? '';
 
-    final response = await http.get(Uri.parse(
-        '${linkDelegate}CustomersPayments/GetCustomersPaymentsCustomerName/id=$delegateId&&customerName=$name'));
+    final response = await http.get(
+      Uri.parse(
+          '${linkDelegate}CustomersPayments/GetCustomersPaymentsCustomerName/id=$delegateId&&customerName=$name'),
+      headers: {
+        if (asyncId.isNotEmpty) 'X-Async-Id': asyncId,
+        if (delegateId > 0) 'X-Delegate-Id': '$delegateId',
+      },
+    );
 
     if (response.statusCode == 200) {
       List<dynamic> data = jsonDecode(response.body);

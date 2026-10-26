@@ -122,6 +122,7 @@ export function categoryBlock(evalRow, key) {
     tripleName: evalRow.tripleName || evalRow.TripleName,
     phone: evalRow.phone || evalRow.Phone,
     fatherGrandfather: evalRow.fatherGrandfather || evalRow.FatherGrandfather,
+    sonFather: evalRow.sonFather || evalRow.SonFather,
   }
 
   return map[key] || null
@@ -186,7 +187,11 @@ export function patchCategoryFromHits(evalRow, categoryKey, total, sampleHit) {
     next.fatherGrandfather = patched
     next.FatherGrandfather = patched
   }
-  const has = ['tripleName', 'phone', 'fatherGrandfather']
+  else if (categoryKey === 'sonFather') {
+    next.sonFather = patched
+    next.SonFather = patched
+  }
+  const has = ['tripleName', 'phone', 'fatherGrandfather', 'sonFather']
     .some(k => (categoryResultCount(categoryBlock(next, k)) || 0) > 0)
   next.hasAnyMatch = has
   next.HasAnyMatch = has

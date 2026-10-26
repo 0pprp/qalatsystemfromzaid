@@ -1,0 +1,35 @@
+COLUMN_NAME
+-----------
+UserID
+UserName
+Email
+Password
+PhoneNumber
+
+(5 rows affected)
+
+
+Id|UserId|ListId|CreatedAtUtc
+--|------|------|------------
+1|10|1|2026-09-11 02:08:10.6374352
+8|27|1|2026-09-24 10:20:44.2748602
+
+(2 rows affected)
+
+
+Msg 207, Level 16, State 1, Server vmi3533397, Line 5
+Invalid column name 'DelegateName'.
+Msg 207, Level 16, State 1, Server vmi3533397, Line 5
+Invalid column name 'DelegateName'.
+Msg 207, Level 16, State 1, Server vmi3533397, Line 3
+Invalid column name 'DelegateName'.
+
+
+COLUMN_NAME
+-----------
+UserName
+
+(1 rows affected)
+
+
+DONE

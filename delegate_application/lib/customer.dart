@@ -20,7 +20,6 @@ import 'package:delegate_application/services/delegate_business_date_service.dar
 import 'package:delegate_application/services/manual_payment_sync_result.dart';
 import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:delegate_application/services/payment_sync_status.dart';
-import 'package:delegate_application/services/phantom_customer_rating.dart';
 import 'package:delegate_application/services/receipt_week_amounts.dart';
 import 'package:delegate_application/services/payment_validation.dart';
 import 'package:delegate_application/services/today_payments_logic.dart';
@@ -69,6 +68,7 @@ class CustomerPageState extends State<Customer> {
   _ListsLoadState _listsState = _ListsLoadState.loading;
   bool _listsRetrying = false;
   bool _sendingPayments = false;
+  bool _panelExpanded = false;
 
   /// Rebuild day counters when business day rolls @ 03:00 Baghdad
   /// (keeps IndexedStack-alive Customer tab from showing yesterday's totals).
@@ -209,11 +209,37 @@ class CustomerPageState extends State<Customer> {
     });
 
     try {
-      var reps = await _querySelectDelegates();
+      // Wait out any in-flight master refresh so we don't read mid-replace.
+      if (attemptNetworkRefreshIfEmpty ||
+          DelegateDataRefreshService.instance.isRefreshing) {
+        await DelegateDataRefreshService.instance.refreshIfPossible();
+      }
+
+      var reps = await _querySelectDelegatesWithRetry();
       if (reps.isEmpty && attemptNetworkRefreshIfEmpty) {
         // Do not clear cache on network failure — refresh only replaces on success.
-        await DelegateDataRefreshService.instance.refreshIfPossible();
-        reps = await _querySelectDelegates();
+        await DelegateDataRefreshService.instance
+            .refreshIfPossible(force: true);
+        reps = await _querySelectDelegatesWithRetry();
+      }
+
+      // Dedupe by DelegateId — duplicate dropdown values crash FormField.
+      final seen = <String>{};
+      reps = reps.where((r) {
+        final id = r['DelegateId']?.toString() ?? '';
+        if (id.isEmpty || id == '0' || id == 'null') return false;
+        return seen.add(id);
+      }).toList();
+
+      // Single-list mode: prefer login DelegateID (يوزر المندوب), else the only row.
+      final prefs = await SharedPreferences.getInstance();
+      final loginId = prefs.getString('DelegateID')?.trim();
+      String? autoId;
+      if (reps.isNotEmpty) {
+        final loginMatch = loginId != null &&
+            loginId.isNotEmpty &&
+            reps.any((r) => r['DelegateId'].toString() == loginId);
+        autoId = loginMatch ? loginId : reps.first['DelegateId'].toString();
       }
 
       if (!mounted) return;
@@ -224,33 +250,54 @@ class CustomerPageState extends State<Customer> {
           selectedRepresentative = null;
         } else {
           _listsState = _ListsLoadState.ready;
-          final stillValid = selectedRepresentative != null &&
-              reps.any((r) =>
-                  r['DelegateId'].toString() == selectedRepresentative);
-          if (!stillValid) {
-            selectedRepresentative = null;
-          }
+          selectedRepresentative = autoId;
         }
       });
+      if (autoId != null) {
+        final id = int.tryParse(autoId);
+        if (id != null && id > 0) {
+          await _loadClients(id);
+          await _loadPayments(id);
+        }
+      }
       assert(() {
-        debugPrint('SelectDelegate local count=${reps.length}');
+        debugPrint('SelectDelegate local count=${reps.length} auto=$autoId');
         return true;
       }());
-      // Always recompute day totals when lists reload (03:00 Baghdad reset).
-      await DelegateBusinessDateService.instance.ensureCurrentBusinessDay();
-      _onBusinessDayRefresh();
     } catch (e, st) {
       debugPrint('reloadLists failed: $e\n$st');
       if (!mounted) return;
-      setState(() {
-        _listsState = _ListsLoadState.error;
-      });
+      // Keep last good lists if we already had them.
+      if (representatives.isNotEmpty) {
+        setState(() => _listsState = _ListsLoadState.ready);
+      } else {
+        setState(() => _listsState = _ListsLoadState.error);
+      }
     }
+
+    // Day rollover must never flip lists into the error state.
+    try {
+      await DelegateBusinessDateService.instance.ensureCurrentBusinessDay();
+      _onBusinessDayRefresh();
+    } catch (_) {}
   }
 
   Future<List<Map<String, dynamic>>> _querySelectDelegates() async {
     final db = await DatabaseHelper().database;
     return db.query('SelectDelegate');
+  }
+
+  Future<List<Map<String, dynamic>>> _querySelectDelegatesWithRetry() async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await _querySelectDelegates();
+      } catch (e) {
+        lastError = e;
+        await Future<void>.delayed(Duration(milliseconds: 120 * (attempt + 1)));
+      }
+    }
+    throw lastError ?? StateError('SelectDelegate query failed');
   }
 
   Future<void> _retryLoadLists() async {
@@ -435,52 +482,39 @@ class CustomerPageState extends State<Customer> {
     );
   }
 
+  /// Fast GPS for payment save — never block the «جاري حفظ التسديد» dialog.
+  /// Does not show a permission prompt during submit (that hung some devices).
   Future<String> _getCurrentLocation() async {
+    const fallback = '1111,1111';
     try {
-      // التحقق من تفعيل خدمة الموقع
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        print('Location services are disabled.');
-        return '1111,1111';
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled()
+          .timeout(const Duration(milliseconds: 400), onTimeout: () => false);
+      if (!serviceEnabled) return fallback;
+
+      final permission = await Geolocator.checkPermission()
+          .timeout(const Duration(milliseconds: 400),
+              onTimeout: () => LocationPermission.denied);
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return fallback;
       }
 
-      // التحقق من صلاحيات الموقع
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          print('Location permission denied.');
-          return '1111,1111';
-        }
+      final last = await Geolocator.getLastKnownPosition()
+          .timeout(const Duration(milliseconds: 500), onTimeout: () => null);
+      if (last != null) {
+        return '${last.latitude},${last.longitude}';
       }
 
-      if (permission == LocationPermission.deniedForever) {
-        print('Location permission permanently denied.');
-        return '1111,1111';
-      }
-
-      // محاولة الحصول على آخر موقع معروف أولاً للسرعة
-      Position? position = await Geolocator.getLastKnownPosition();
-
-      if (position != null) {
-        debugPrint(
-            'Using last known location: ${position.latitude},${position.longitude}');
-        return '${position.latitude},${position.longitude}';
-      }
-
-      // إذا لم يكن هناك موقع سابق، حاول الحصول على الموقع الحالي مع تقليل الدقة ووقت الانتظار
-      position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-        timeLimit: const Duration(seconds: 3),
-      );
-
-      debugPrint(
-          'Current location fetched: ${position.latitude},${position.longitude}');
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.low,
+        timeLimit: const Duration(seconds: 1),
+      ).timeout(const Duration(milliseconds: 1200), onTimeout: () {
+        throw TimeoutException('payment-gps');
+      });
       return '${position.latitude},${position.longitude}';
-    } catch (e, stackTrace) {
-      print('Error getting location: $e');
-      print('Stack trace: $stackTrace');
-      return '1111,1111';
+    } catch (e) {
+      debugPrint('Payment location skipped: $e');
+      return fallback;
     }
   }
 
@@ -527,15 +561,17 @@ class CustomerPageState extends State<Customer> {
 // دالة لإضافة التسديد
   bool _paymentSubmitting = false;
 
-  Future<void> _addPayment(
+  /// Returns `true` when the payment was saved and the dialog was closed.
+  /// Returns `false` on validation/block so the caller can clear «جاري…».
+  Future<bool> _addPayment(
       Client client, double amount, BuildContext context) async {
-    if (_paymentSubmitting) return;
+    if (_paymentSubmitting) return false;
     _paymentSubmitting = true;
     try {
     final amountError = PaymentValidation.validateAmount(amount);
     if (amountError != null) {
       _showMessage(amountError, context);
-      return;
+      return false;
     }
 
     final db = await DatabaseHelper().database;
@@ -547,7 +583,7 @@ class CustomerPageState extends State<Customer> {
       whereArgs: [client.customerId, selectedRepresentative],
     );
 
-    if (!mounted) return;
+    if (!mounted) return false;
 
     final ledgerHas = await BusinessDayCollectionStore.hasCustomerOnBusinessDay(
       customerId: client.customerId,
@@ -570,7 +606,7 @@ class CustomerPageState extends State<Customer> {
             : 'يوجد تسديد سابق بانتظار الإرسال لهذا العميل — اضغط إرسال التسديدات أولاً',
         context,
       );
-      return;
+      return false;
     }
     String? currentLocation = await _getCurrentLocation();
     final clientPaymentId = const Uuid().v4();
@@ -585,9 +621,11 @@ class CustomerPageState extends State<Customer> {
       'CustomerId': client.customerId,
       'CustomerName': client.name,
       'DelegateId': selectedRepresentative,
-      'DelegateName': representatives.firstWhere((rep) =>
-          rep['DelegateId'].toString() ==
-          selectedRepresentative)['DelegateName'],
+      'DelegateName': representatives.firstWhere(
+        (rep) =>
+            rep['DelegateId'].toString() == selectedRepresentative,
+        orElse: () => {'DelegateName': 'Unknown'},
+      )['DelegateName'],
       'Amount': amount,
       'Location': currentLocation,
       'ClientPaymentId': clientPaymentId,
@@ -604,88 +642,105 @@ class CustomerPageState extends State<Customer> {
       clientPaymentId: clientPaymentId,
       createdAtUtc: createdAtUtc,
     );
-    // Confirmation sound = durable local save only (never wait for server / batch).
-    if (context.mounted) {
-      await PaymentSuccessFeedback.playLocalSaveSuccess(context);
-    }
 
-    final reloadDelegateId =
-        int.tryParse(selectedRepresentative?.toString() ?? '') ?? delegateId;
-    await _loadPayments(reloadDelegateId);
-    await _calculatePayments(reloadDelegateId);
-    await _refreshLocallyCollectedIds(reloadDelegateId);
-    TodayPaymentsRefresh.notify();
-
-    String customerName = client.name;
-    String countReceiptDevice = receiptNumber;
-    String receiptName = representatives.firstWhere(
-      (rep) => rep['DelegateId'].toString() == selectedRepresentative,
-      orElse: () => {'ReceiptName': 'Unknown'},
-    )['ReceiptName'];
-    String delegateName = representatives.firstWhere(
-      (rep) => rep['DelegateId'].toString() == selectedRepresentative,
-      orElse: () => {'DelegateName': 'Unknown'},
-    )['DelegateName'];
-    String itemsNames = client.itemsNames;
-    double amountTotalSales = client.salePrice;
-    // Include today's local collection immediately in remaining/receipt totals.
-    double receiptsTotal = client.receipt + amount;
-    double amountRemaining =
-        (client.remaining - amount) < 0 ? 0 : (client.remaining - amount);
-    double amountPush = amount;
-    String phoneNumberCompany = client.phoneNumberCompany;
-    final weekLabels = ReceiptWeekAmounts.ensureDayLabels(lastSevenDays);
-    List<double> lastSevenAmounts = ReceiptWeekAmounts.mergeLocalPayment(
-      serverAmounts: [
-        client.amount1,
-        client.amount2,
-        client.amount3,
-        client.amount4,
-        client.amount5,
-        client.amount6,
-        client.amount7,
-      ],
-      dayLabels: weekLabels,
-      paymentAmount: amount,
-    );
-    lastSevenAmounts = ReceiptWeekAmounts.guaranteeTodayShowsPayment(
-      weekAmounts: lastSevenAmounts,
-      amountPush: amountPush,
-    );
-
-    final report = ReportReceipt(
-      customerName: customerName,
-      receiptName: receiptName,
-      delegateName: delegateName,
-      itemsNames: itemsNames,
-      amountTotalSales: amountTotalSales,
-      receiptsTotal: receiptsTotal,
-      amountRemaining: amountRemaining,
-      amountPush: amountPush,
-      phoneNumberCompany: phoneNumberCompany,
-      lastSevenDays: weekLabels,
-      lastSevenAmounts: lastSevenAmounts,
-      countReceiptDevice: countReceiptDevice,
-      receiptNumberAlreadyPrinted: true,
-    );
-
-    // Close payment dialog before PDF so nested routes cannot leave a black screen.
+    // Close «جاري حفظ التسديد» immediately after durable local save.
+    // Reloads / ding / PDF / sync must never keep that spinner stuck.
     if (context.mounted && Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
 
+    final reloadDelegateId =
+        int.tryParse(selectedRepresentative?.toString() ?? '') ?? delegateId;
     final receiptContext = mounted ? this.context : null;
     if (receiptContext != null && receiptContext.mounted) {
-      await report.printReceipt(receiptContext);
+      unawaited(PaymentSuccessFeedback.playLocalSaveSuccess(receiptContext));
     }
 
-    // Offline-first: never block the UI on sync / send-window upload.
-    unawaited(PaymentSyncService.instance.syncPendingPayments().then((_) async {
+    TodayPaymentsRefresh.notify();
+    unawaited(() async {
+      await _loadPayments(reloadDelegateId);
+      await _calculatePayments(reloadDelegateId);
+      await _refreshLocallyCollectedIds(reloadDelegateId);
+    }());
+
+    // PDF + sync after pop — never await here (printing hung some devices for hours).
+    unawaited(() async {
+      try {
+        String customerName = client.name;
+        String countReceiptDevice = receiptNumber;
+        String receiptName = representatives.firstWhere(
+          (rep) => rep['DelegateId'].toString() == selectedRepresentative,
+          orElse: () => {'ReceiptName': 'Unknown'},
+        )['ReceiptName'];
+        String delegateName = representatives.firstWhere(
+          (rep) => rep['DelegateId'].toString() == selectedRepresentative,
+          orElse: () => {'DelegateName': 'Unknown'},
+        )['DelegateName'];
+        String itemsNames = client.itemsNames;
+        double amountTotalSales = client.salePrice;
+        double receiptsTotal = client.receipt + amount;
+        double amountRemaining =
+            (client.remaining - amount) < 0 ? 0 : (client.remaining - amount);
+        double amountPush = amount;
+        String phoneNumberCompany = client.phoneNumberCompany;
+        final weekLabels = ReceiptWeekAmounts.ensureDayLabels(lastSevenDays);
+        final localPayments = await db.query(
+          'CustomerPayment',
+          where: 'CustomerId = ?',
+          whereArgs: [client.customerId],
+        );
+        List<double> lastSevenAmounts = ReceiptWeekAmounts.buildWeekForReceipt(
+          serverAmounts: [
+            client.amount1,
+            client.amount2,
+            client.amount3,
+            client.amount4,
+            client.amount5,
+            client.amount6,
+            client.amount7,
+          ],
+          dayLabels: weekLabels,
+          localPayments: localPayments,
+          customerId: client.customerId,
+          extraPaymentJustSaved: amount,
+          assumeExtraAlreadyInLocalRows: true,
+        );
+        lastSevenAmounts = ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+          weekAmounts: lastSevenAmounts,
+          amountPush: amountPush,
+        );
+
+        final report = ReportReceipt(
+          customerName: customerName,
+          receiptName: receiptName,
+          delegateName: delegateName,
+          itemsNames: itemsNames,
+          amountTotalSales: amountTotalSales,
+          receiptsTotal: receiptsTotal,
+          amountRemaining: amountRemaining,
+          amountPush: amountPush,
+          phoneNumberCompany: phoneNumberCompany,
+          lastSevenDays: weekLabels,
+          lastSevenAmounts: lastSevenAmounts,
+          countReceiptDevice: countReceiptDevice,
+          receiptNumberAlreadyPrinted: true,
+        );
+
+        if (receiptContext != null && receiptContext.mounted) {
+          await report.printReceipt(receiptContext);
+        }
+      } catch (e) {
+        debugPrint('Payment receipt preview skipped: $e');
+      }
+
+      await PaymentSyncService.instance.syncPendingPayments();
       TodayPaymentsRefresh.notify();
       if (!mounted) return;
       await _loadPayments(reloadDelegateId);
       await _calculatePayments(reloadDelegateId);
-    }));
+    }());
+
+    return true;
     } finally {
       _paymentSubmitting = false;
     }
@@ -1184,12 +1239,17 @@ class CustomerPageState extends State<Customer> {
                     amountPush = 0.0;
                   }
 
-                  final weekLabels = ReceiptWeekAmounts.ensureDayLabels(null);
-                  // Reprint: do not blindly add amountPush (may already be in Amount1).
-                  // Only lift today's slot when snapshot still shows 0.
-                  final lastSevenAmounts =
-                      ReceiptWeekAmounts.guaranteeTodayShowsPayment(
-                    weekAmounts: [
+                  final weekLabels =
+                      ReceiptWeekAmounts.ensureDayLabels(lastSevenDays);
+                  final db = await DatabaseHelper().database;
+                  final localPayments = await db.query(
+                    'CustomerPayment',
+                    where: 'CustomerId = ?',
+                    whereArgs: [client.customerId],
+                  );
+                  // Reprint: merge local today queue into server week; never double-add.
+                  var lastSevenAmounts = ReceiptWeekAmounts.buildWeekForReceipt(
+                    serverAmounts: [
                       client.amount1,
                       client.amount2,
                       client.amount3,
@@ -1198,6 +1258,13 @@ class CustomerPageState extends State<Customer> {
                       client.amount6,
                       client.amount7,
                     ],
+                    dayLabels: weekLabels,
+                    localPayments: localPayments,
+                    customerId: client.customerId,
+                  );
+                  lastSevenAmounts =
+                      ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+                    weekAmounts: lastSevenAmounts,
                     amountPush: amountPush,
                   );
 
@@ -1371,8 +1438,13 @@ class CustomerPageState extends State<Customer> {
                                 return;
                               }
                             }
-                            // _addPayment pops this dialog after local save.
-                            await _addPayment(client, amount, dialogContext);
+                            // Pops dialog on success; false = blocked/validation
+                            // (must clear spinner — previously hung forever).
+                            final saved = await _addPayment(
+                                client, amount, dialogContext);
+                            if (!saved && dialogContext.mounted) {
+                              setDialogState(() => dialogSubmitting = false);
+                            }
                             } catch (_) {
                               if (dialogContext.mounted) {
                                 setDialogState(() => dialogSubmitting = false);
@@ -1397,9 +1469,8 @@ class CustomerPageState extends State<Customer> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: dialogSubmitting
-                              ? null
-                              : () {
+                          onPressed: () {
+                            // Always allow dismiss — never trap user on spinner.
                             Navigator.pop(dialogContext);
                           },
                           icon: Icon(Icons.cancel_outlined,
@@ -1480,23 +1551,25 @@ class CustomerPageState extends State<Customer> {
       child: AppSafeScaffold(
         backgroundColor: AppTheme.backgroundColor,
         safeBottom: !widget.embedded,
-        appBar: AppBar(
-          backgroundColor: AppTheme.primaryColor,
-          elevation: 0,
-          title: const Text('العملاء',
-              style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-          centerTitle: true,
-          iconTheme: const IconThemeData(color: Colors.white),
-        ),
+        appBar: widget.embedded
+            ? null
+            : AppBar(
+                backgroundColor: AppTheme.primaryColor,
+                elevation: 0,
+                title: const Text('العملاء',
+                    style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+                centerTitle: true,
+                iconTheme: const IconThemeData(color: Colors.white),
+              ),
         body: Column(
           children: [
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
               decoration: const BoxDecoration(
                 color: AppTheme.primaryColor,
                 borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(30),
-                  bottomRight: Radius.circular(30),
+                  bottomLeft: Radius.circular(24),
+                  bottomRight: Radius.circular(24),
                 ),
               ),
               child: Column(
@@ -1524,91 +1597,13 @@ class CustomerPageState extends State<Customer> {
                     _buildListsMessage(
                       message: 'لا توجد قوائم متاحة',
                       showRetry: true,
-                    )
-                  else
-                    DropdownButtonFormField<String>(
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: Theme.of(context).cardColor,
-                      hintText: 'اختر القائمة',
-                      hintStyle:
-                          const TextStyle(fontFamily: 'Cairo', fontSize: 14),
-                      prefixIcon:
-                          const Icon(Icons.list, color: AppTheme.primaryColor),
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 0),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none),
                     ),
-                    alignment: Alignment.centerRight,
-                    value: selectedRepresentative,
-                    items: representatives.map((rep) {
-                      return DropdownMenuItem<String>(
-                        value: rep['DelegateId'].toString(),
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: Text(
-                            rep['DelegateName']?.toString() ?? '',
-                            textAlign: TextAlign.right,
-                            style: const TextStyle(fontFamily: 'Cairo'),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      setState(() {
-                        selectedRepresentative = value;
-                        _loadClients(int.parse(value!));
-                        _loadPayments(int.parse(value));
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: Theme.of(context).cardColor,
-                      hintText: 'نوع العميل',
-                      hintStyle:
-                          const TextStyle(fontFamily: 'Cairo', fontSize: 14),
-                      prefixIcon: const Icon(Icons.category,
-                          color: AppTheme.primaryColor),
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 0),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none),
-                    ),
-                    alignment: Alignment.centerRight,
-                    value: customerType,
-                    items: [
-                      'العملاء المستمرين',
-                      'العملاء المتوقفين',
-                      'عملاء القانونية'
-                    ]
-                        .map((type) => DropdownMenuItem(
-                              value: type,
-                              child: Align(
-                                alignment: Alignment.centerRight,
-                                child: Text(type,
-                                    textAlign: TextAlign.right,
-                                    style:
-                                        const TextStyle(fontFamily: 'Cairo')),
-                              ),
-                            ))
-                        .toList(),
-                    onChanged: (value) async {
-                      setState(() {
-                        customerType = value!;
-                      });
-                      SharedPreferences prefs =
-                          await SharedPreferences.getInstance();
-                      await prefs.setString('customerType', value!);
-                    },
-                  ),
-                  const SizedBox(height: 10),
+                  // قائمة واحدة افتراضية (يوزر المندوب) — بدون حقل اختيار/عرض اسم.
+                  if (_listsState == _ListsLoadState.loading ||
+                      _listsRetrying ||
+                      _listsState == _ListsLoadState.error ||
+                      _listsState == _ListsLoadState.empty)
+                    const SizedBox(height: 10),
                   TextField(
                     onChanged: (value) {
                       setState(() {
@@ -1633,6 +1628,7 @@ class CustomerPageState extends State<Customer> {
                 ],
               ),
             ),
+            _buildCollapsibleToolsPanel(),
             Expanded(
               child: Builder(builder: (context) {
                 if (selectedRepresentative == null) {
@@ -1730,23 +1726,111 @@ class CustomerPageState extends State<Customer> {
                 );
               }),
             ),
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(30),
-                  topRight: Radius.circular(30),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, -5)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCollapsibleToolsPanel() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: AppTheme.primaryColor.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _panelExpanded = !_panelExpanded),
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(
+                    _panelExpanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    color: AppTheme.primaryColor,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'أدوات القائمة والتسديدات',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '$paymentCount · ${Formatters.formatNumber(totalPayments)}',
+                    style: const TextStyle(
+                      fontFamily: 'Cairo',
+                      fontSize: 12,
+                      color: Colors.grey,
+                    ),
+                  ),
                 ],
               ),
+            ),
+          ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 220),
+            crossFadeState: _panelExpanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            firstChild: const SizedBox(width: double.infinity, height: 0),
+            secondChild: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               child: Column(
                 children: [
+                  DropdownButtonFormField<String>(
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: AppTheme.primaryColor.withValues(alpha: 0.06),
+                      hintText: 'نوع العميل',
+                      hintStyle:
+                          const TextStyle(fontFamily: 'Cairo', fontSize: 14),
+                      prefixIcon: const Icon(Icons.category,
+                          color: AppTheme.primaryColor),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 0),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide.none),
+                    ),
+                    alignment: Alignment.centerRight,
+                    value: customerType,
+                    items: [
+                      'العملاء المستمرين',
+                      'العملاء المتوقفين',
+                      'عملاء القانونية'
+                    ]
+                        .map((type) => DropdownMenuItem(
+                              value: type,
+                              child: Align(
+                                alignment: Alignment.centerRight,
+                                child: Text(type,
+                                    textAlign: TextAlign.right,
+                                    style:
+                                        const TextStyle(fontFamily: 'Cairo')),
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: (value) async {
+                      setState(() {
+                        customerType = value!;
+                      });
+                      SharedPreferences prefs =
+                          await SharedPreferences.getInstance();
+                      await prefs.setString('customerType', value!);
+                    },
+                  ),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
                       Expanded(
@@ -1777,8 +1861,9 @@ class CustomerPageState extends State<Customer> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed:
-                          _sendingPayments ? null : _sendPendingPaymentsFromCustomers,
+                      onPressed: _sendingPayments
+                          ? null
+                          : _sendPendingPaymentsFromCustomers,
                       icon: _sendingPayments
                           ? const SizedBox(
                               width: 20,
@@ -1808,25 +1893,23 @@ class CustomerPageState extends State<Customer> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 15),
+                  const SizedBox(height: 12),
                   Container(
-                    padding: const EdgeInsets.all(15),
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(15),
-                      border: Border.all(
-                          color: AppTheme.primaryColor.withValues(alpha: 0.2)),
+                      color: AppTheme.primaryColor.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Column(
                       children: [
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text("عدد التسديدات",
+                            const Text('عدد التسديدات',
                                 style: TextStyle(
                                     fontFamily: 'Cairo',
                                     color: AppTheme.textColor)),
-                            Text("$paymentCount",
+                            Text('$paymentCount',
                                 style: const TextStyle(
                                     fontFamily: 'Cairo',
                                     fontWeight: FontWeight.bold,
@@ -1837,35 +1920,27 @@ class CustomerPageState extends State<Customer> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text("مبلغ التسديد الكلي",
+                            const Text('مبلغ التسديد الكلي',
                                 style: TextStyle(
                                     fontFamily: 'Cairo',
                                     color: AppTheme.textColor)),
-                            Row(
-                              children: [
-                                Text(Formatters.formatNumber(totalPayments),
-                                    style: const TextStyle(
-                                        fontFamily: 'Cairo',
-                                        fontWeight: FontWeight.bold,
-                                        color: AppTheme.primaryColor)),
-                                const SizedBox(width: 4),
-                                const Text("دع",
-                                    style: TextStyle(
-                                        fontFamily: 'Cairo',
-                                        fontWeight: FontWeight.bold,
-                                        color: AppTheme.primaryColor)),
-                              ],
+                            Text(
+                              '${Formatters.formatNumber(totalPayments)} دع',
+                              style: const TextStyle(
+                                  fontFamily: 'Cairo',
+                                  fontWeight: FontWeight.bold,
+                                  color: AppTheme.primaryColor),
                             ),
                           ],
                         ),
                       ],
                     ),
-                  )
+                  ),
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1886,8 +1961,14 @@ class ClientCard extends StatelessWidget {
   Future<Map<String, dynamic>> _fetchCustomerData(int customerId) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String linkDelegate = prefs.getString('LinkDelegate') ?? '0';
+    final asyncId = prefs.getString('AsyncId') ?? '';
     final response = await http.get(
-        Uri.parse('${linkDelegate}Customers/GetCustomersDataInfo/$customerId'));
+      Uri.parse('${linkDelegate}Customers/GetCustomersDataInfo/$customerId'),
+      headers: {
+        if (asyncId.isNotEmpty) 'X-Async-Id': asyncId,
+        if (delegateId > 0) 'X-Delegate-Id': '$delegateId',
+      },
+    );
     if (response.statusCode == 200) {
       return json.decode(response.body);
     } else {
@@ -2532,25 +2613,6 @@ class ClientCard extends StatelessWidget {
                                 fontWeight: FontWeight.bold,
                                 fontSize: 13,
                                 fontFamily: 'Cairo')),
-                      Builder(builder: (_) {
-                        final score =
-                            PhantomCustomerRating.scoreForClient(client);
-                        if (score == null) {
-                          return const SizedBox.shrink();
-                        }
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            PhantomCustomerRating.formatScore(score),
-                            style: const TextStyle(
-                              color: Color(0xFFE6A800),
-                              fontWeight: FontWeight.w800,
-                              fontSize: 13,
-                              fontFamily: 'Cairo',
-                            ),
-                          ),
-                        );
-                      }),
                     ],
                   ),
                 ),
@@ -2586,52 +2648,27 @@ class ClientCard extends StatelessWidget {
                     ? Formatters.formatDate(client.lastPaymentDate)
                     : 'لا يوجد'),
             const SizedBox(height: 15),
-            Row(
-              children: [
-                if (client.isLegal == "false" ||
-                    (client.isLegal != "1" && client.isLegal != "true"))
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: onPayment,
-                      icon: const Icon(Icons.payment, color: Colors.white),
-                      label: const Text('تسديد',
-                          style: TextStyle(
-                              fontFamily: 'Cairo',
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primaryColor,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                    ),
+            if (client.isLegal == "false" ||
+                (client.isLegal != "1" && client.isLegal != "true"))
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: onPayment,
+                  icon: const Icon(Icons.payment, color: Colors.white),
+                  label: const Text('تسديد',
+                      style: TextStyle(
+                          fontFamily: 'Cairo',
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
-                if (client.isLegal == "false" ||
-                    (client.isLegal != "1" && client.isLegal != "true"))
-                  const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () =>
-                        _showCustomerDialog(client.customerId, context),
-                    icon: const Icon(Icons.folder_copy_outlined,
-                        color: AppTheme.primaryColor),
-                    label: const Text('الملف',
-                        style: TextStyle(
-                            fontFamily: 'Cairo',
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.primaryColor)),
-                    style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        side: const BorderSide(
-                            color: AppTheme.primaryColor, width: 1.5)),
-                  ),
-                )
-              ],
-            )
+                ),
+              ),
           ],
         ),
       ),
@@ -2788,9 +2825,30 @@ class _PaymentsListState extends State<PaymentsList> {
           amountPush = 0.0;
         }
 
-        final weekLabels = ReceiptWeekAmounts.ensureDayLabels(null);
-        final lastSevenAmounts = ReceiptWeekAmounts.guaranteeTodayShowsPayment(
-          weekAmounts: [
+        final db = await DatabaseHelper().database;
+        final dateWeekRows = await db.query('DateWeek');
+        final List<String> weekLabels;
+        if (dateWeekRows.isNotEmpty) {
+          final row = dateWeekRows.first;
+          weekLabels = ReceiptWeekAmounts.ensureDayLabels([
+            row['Date1']?.toString(),
+            row['Date2']?.toString(),
+            row['Date3']?.toString(),
+            row['Date4']?.toString(),
+            row['Date5']?.toString(),
+            row['Date6']?.toString(),
+            row['Date7']?.toString(),
+          ]);
+        } else {
+          weekLabels = ReceiptWeekAmounts.ensureDayLabels(null);
+        }
+        final localPayments = await db.query(
+          'CustomerPayment',
+          where: 'CustomerId = ?',
+          whereArgs: [client.customerId],
+        );
+        var lastSevenAmounts = ReceiptWeekAmounts.buildWeekForReceipt(
+          serverAmounts: [
             client.amount1,
             client.amount2,
             client.amount3,
@@ -2799,6 +2857,12 @@ class _PaymentsListState extends State<PaymentsList> {
             client.amount6,
             client.amount7,
           ],
+          dayLabels: weekLabels,
+          localPayments: localPayments,
+          customerId: client.customerId,
+        );
+        lastSevenAmounts = ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+          weekAmounts: lastSevenAmounts,
           amountPush: amountPush,
         );
 

@@ -392,6 +392,10 @@ BEGIN
       AND ISNULL(V.IsLegal, 0) = 0
       AND ISNULL(V.IsFakeSale, 0) = 0
       AND (ISNULL(L.WeekPaid, 0) * 100.0) / V.AmountTotalSales <= 3.8
+      AND (
+            V.LastPaymentDate IS NULL
+            OR CONVERT(DATE, V.LastPaymentDate) <= DATEADD(DAY, -40, CONVERT(DATE, GETDATE()))
+          )
       AND NOT EXISTS (
             SELECT 1
             FROM dbo.Customers C
@@ -403,7 +407,7 @@ BEGIN
             FROM CustomerWeekDecisions D
             WHERE D.CustomerID = V.CustomerID
               AND (
-                    D.DecisionType IN (N'قانونية', N'وهمي')
+                    D.DecisionType IN (N'قانونية', N'وهمي', N'تنازل', N'طلب تنازل')
                     OR (
                         D.DecisionType = N'متواصل'
                         AND D.SnoozeUntil IS NOT NULL

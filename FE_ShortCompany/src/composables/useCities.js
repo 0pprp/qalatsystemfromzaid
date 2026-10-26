@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 
 const LOCAL_API = 'http://localhost:5180/api/'
-const CACHE_KEY = 'cached_employee_city_data'
+const CACHE_KEY = 'cached_admin_city_data'
 
 /** Vite DEV أو أي بناء يفتح من localhost — الحسابات التجريبية على Docker فقط */
 export function isLocalLab() {
@@ -16,8 +16,8 @@ export function isLocalLab() {
 
 function cityListUrl() {
   return import.meta.env.DEV
-    ? '/api-defaultdata/GetEmployee'
-    : 'http://defaultdata.alsaaeidy.com/GetEmployee'
+    ? '/api-defaultdata/GetAdmin'
+    : 'http://defaultdata.alsaaeidy.com/GetAdmin'
 }
 
 function resolveCityLink(itemLink) {

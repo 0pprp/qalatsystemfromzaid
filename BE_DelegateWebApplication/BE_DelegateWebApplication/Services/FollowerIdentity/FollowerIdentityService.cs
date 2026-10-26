@@ -1,4 +1,5 @@
 using Dapper;
+using BE_DelegateWebApplication.Utilities;
 using Microsoft.Data.SqlClient;
 
 namespace BE_DelegateWebApplication.Services.FollowerIdentity
@@ -17,6 +18,8 @@ namespace BE_DelegateWebApplication.Services.FollowerIdentity
         public string? CityName { get; set; }
         /// <summary>True when UserState is active (bit 1 / null treated as active).</summary>
         public bool IsActive { get; set; }
+        /// <summary>Loaded only for credential verify; never returned to clients.</summary>
+        public string? Password { get; set; }
     }
 
     public static class FollowerUserType
@@ -55,6 +58,8 @@ namespace BE_DelegateWebApplication.Services.FollowerIdentity
         public const string NotFollower = "هذا الحساب غير مخول لتطبيق المتابع";
         public const string Inactive = "هذا الحساب غير فعال";
         public const string InvalidSession = "الجلسة غير صالحة";
+        /// <summary>Deploy verification marker — keep referenced.</summary>
+        public const string DeployMarker = "FOLLOWER_LOGIN_PBKDF2_V1";
     }
 
     public interface IFollowerIdentityService
@@ -75,7 +80,8 @@ SELECT TOP 1
     u.UserType,
     city.CityId,
     city.CityName,
-    CAST(CASE WHEN ISNULL(u.UserState, 1) = 1 THEN 1 ELSE 0 END AS BIT) AS IsActive
+    CAST(CASE WHEN ISNULL(u.UserState, 1) = 1 THEN 1 ELSE 0 END AS BIT) AS IsActive,
+    u.Password
 FROM dbo.Users u
 OUTER APPLY (
     SELECT TOP 1 usc.CityID AS CityId, ci.CityName
@@ -125,20 +131,52 @@ ORDER BY u.UserID;",
             string? password,
             CancellationToken ct = default)
         {
-            if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrWhiteSpace(password))
+            if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrEmpty(password))
             {
                 return FollowerAuthOutcome.Fail(FollowerAuthFailure.InvalidCredentials);
             }
 
             await using var c = new SqlConnection(_cs);
-            // Same credential model as dbo.Users_GetUserLogin (plain Password match).
+            // FOLLOWER_LOGIN_PBKDF2_V1 — verify via PasswordHasher (hashed or legacy plaintext).
             var row = await c.QueryFirstOrDefaultAsync<FollowerUserIdentity>(new CommandDefinition(
                 UserSelectSql + @"
-WHERE LTRIM(RTRIM(u.UserName)) = LTRIM(RTRIM(@UserName))
-  AND u.Password = @Password;",
-                new { UserName = userName.Trim(), Password = password },
+WHERE LOWER(LTRIM(RTRIM(u.UserName))) = LOWER(LTRIM(RTRIM(@UserName)))
+ORDER BY u.UserID;",
+                new { UserName = userName.Trim() },
                 cancellationToken: ct));
 
+            if (row is null || row.UserId <= 0 || string.IsNullOrEmpty(row.Password))
+            {
+                return FollowerAuthOutcome.Fail(FollowerAuthFailure.InvalidCredentials);
+            }
+
+            if (!PasswordHasher.Verify(password, row.Password, out var needsUpgrade))
+            {
+                return FollowerAuthOutcome.Fail(FollowerAuthFailure.InvalidCredentials);
+            }
+
+            if (needsUpgrade)
+            {
+                var upgraded = PasswordHasher.Hash(password);
+                await c.ExecuteAsync(new CommandDefinition(
+                    "UPDATE dbo.Users SET Password = @Password WHERE UserID = @UserID;",
+                    new { Password = upgraded, UserID = row.UserId },
+                    cancellationToken: ct));
+            }
+
+            // Ensure AsyncID exists — Flutter requires it for session.
+            if (string.IsNullOrWhiteSpace(row.AsyncId))
+            {
+                var newAsync = Guid.NewGuid().ToString("N");
+                await c.ExecuteAsync(new CommandDefinition(
+                    "UPDATE dbo.Users SET AsyncID = @AsyncId WHERE UserID = @UserID AND (AsyncID IS NULL OR LTRIM(RTRIM(AsyncID)) = N'');",
+                    new { AsyncId = newAsync, UserID = row.UserId },
+                    cancellationToken: ct));
+                row.AsyncId = newAsync;
+            }
+
+            row.Password = null;
+            _ = FollowerAuthMessages.DeployMarker;
             return EvaluateRow(row);
         }
 
@@ -187,6 +225,7 @@ ORDER BY u.UserName;", cancellationToken: ct));
                 return FollowerAuthOutcome.Fail(FollowerAuthFailure.Inactive);
             }
 
+            row.Password = null;
             return FollowerAuthOutcome.Ok(row);
         }
     }

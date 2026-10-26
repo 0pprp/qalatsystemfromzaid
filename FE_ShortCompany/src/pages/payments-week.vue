@@ -32,7 +32,7 @@ const formattedNumber = num => {
 
 // دالة تنسيق التاريخ
 const formattedDate = date =>
-  date ? new Date(date).toLocaleDateString('en-CA')  : 'لا يوجد'
+  date ? new Date(date).toLocaleDateString('en-CA') : 'لا يوجد'
 
 // تعريف أعمدة الجدول لجميع الحقول المطلوبة (أسماء الحقول بأول حرف صغير)
 const headers = [
@@ -124,7 +124,7 @@ async function fetchDelegates() {
   }
 }
 
-// دالة جلب بيانات "أسبوع التسديدات" باستخدام الفلاتر (من خلال API Customers_GetMonthReceipt)
+// دالة جلب بيانات "أسبوع التسديدات" باستخدام الفلاتر (من خلال API Customers_GetWeekReceipt)
 async function fetchWeekPayments() {
   try {
     loading.value = true
@@ -133,8 +133,10 @@ async function fetchWeekPayments() {
     const delegateID = filters.value.delegateID || 0
     const showType = filters.value.showType || 'الجميع'
 
-    // يُفترض أن الـ API يعيد بيانات الفترة المطلوبة (يمكن أن تكون بيانات آخر أسبوع)
-    const response = await axios.get(`${apiUrl}Customers/Customers_GetWeekReceipt/${delegateID}&&${showType}`, { headers: authHeader })
+    const response = await axios.get(
+      `${apiUrl}Customers/Customers_GetWeekReceipt/${delegateID}&&${showType}`,
+      { headers: authHeader },
+    )
 
     weekPaymentsData.value = response.data
   } catch (error) {

@@ -54,6 +54,7 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await tester.scrollUntilVisible(find.text('طلبات البيع'), 200, scrollable: find.byType(Scrollable).first);
     await tester.tap(find.text('طلبات البيع'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -128,7 +129,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('ahmed'), findsNothing);
-    await tester.scrollUntilVisible(find.text('تم البيع'), 400);
+    await tester.scrollUntilVisible(find.text('تم البيع'), 400, scrollable: find.byType(Scrollable).first);
     await tester.tap(find.text('تم البيع'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));

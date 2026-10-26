@@ -1,6 +1,6 @@
 using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
-using Microsoft.AspNetCore.Http;
+using BE_DelegateWebApplication.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BE_DelegateWebApplication.Controllers
@@ -10,86 +10,143 @@ namespace BE_DelegateWebApplication.Controllers
     public class TrustReceiptsController : ControllerBase
     {
         private readonly ITrustReceiptRepository _repository;
+        private readonly IDelegateRepository _delegates;
 
-        public TrustReceiptsController(ITrustReceiptRepository repository)
+        public TrustReceiptsController(ITrustReceiptRepository repository, IDelegateRepository delegates)
         {
             _repository = repository;
+            _delegates = delegates;
         }
 
-        [HttpPost]
-        public async Task<ActionResult<int>> Create([FromBody] TrustReceiptDTO dto)
+        private async Task<(DelegateGetDTO? auth, IActionResult? error)> AuthenticateAsync(string? bodyAsyncId = null)
         {
+            var credential = DelegateComplaintAuth.ReadAsyncIdCredential(Request, bodyAsyncId);
+            var expected = DelegateComplaintAuth.ReadExpectedDelegateId(Request);
+            var result = await DelegateComplaintAuth.AuthenticateAsync(_delegates, credential, expected);
+            if (!result.Ok)
+            {
+                return (null, StatusCode(result.StatusCode, new { message = result.ErrorMessage }));
+            }
+
+            return (result.Delegate, null);
+        }
+
+        private IActionResult ForbiddenOwnership() =>
+            StatusCode(StatusCodes.Status403Forbidden, new { message = "الوصول محظور خارج نطاق المندوب" });
+
+        private static bool OwnsReceipt(DelegateGetDTO auth, TrustReceiptDTO? receipt) =>
+            receipt is not null &&
+            receipt.DelegateID is int owner &&
+            owner > 0 &&
+            owner == auth.DelegateId;
+
+        [HttpPost]
+        public async Task<IActionResult> Create([FromBody] TrustReceiptDTO dto)
+        {
+            var (auth, error) = await AuthenticateAsync();
+            if (error != null) return error!;
+
             try
             {
+                // Actor and ownership from session — never from client body.
+                dto.DelegateID = auth!.DelegateId;
+                dto.CreatedByUserID = auth.UserId is > 0 ? auth.UserId : auth.DelegateId;
+                dto.UpdatedByUserID = null;
+
                 var id = await _repository.CreateAsync(dto);
                 return Ok(id);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "حدث خطأ أثناء معالجة الطلب" });
             }
         }
 
-        [HttpPut("{id}")]
-        public async Task<ActionResult> Update(int id, [FromBody] TrustReceiptDTO dto)
+        [HttpPut("{id:int}")]
+        public async Task<IActionResult> Update(int id, [FromBody] TrustReceiptDTO dto)
         {
+            var (auth, error) = await AuthenticateAsync();
+            if (error != null) return error!;
+
             try
             {
+                var existing = await _repository.GetByIdAsync(id);
+                if (existing == null) return NotFound();
+                if (!OwnsReceipt(auth!, existing)) return ForbiddenOwnership();
+
                 dto.TrustReceiptID = id;
+                dto.DelegateID = auth!.DelegateId;
+                dto.UpdatedByUserID = auth.UserId is > 0 ? auth.UserId : auth.DelegateId;
+                dto.CreatedByUserID = existing.CreatedByUserID;
+
                 var success = await _repository.UpdateAsync(dto);
-                if (success)
-                    return Ok();
-                return NotFound();
+                return success ? Ok() : NotFound();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "حدث خطأ أثناء معالجة الطلب" });
             }
         }
 
-        [HttpDelete("{id}")]
-        public async Task<ActionResult> Delete(int id, [FromQuery] int? updatedByUserId)
+        [HttpDelete("{id:int}")]
+        public async Task<IActionResult> Delete(int id)
         {
+            var (auth, error) = await AuthenticateAsync();
+            if (error != null) return error!;
+
             try
             {
-                var success = await _repository.DeleteAsync(id, updatedByUserId);
-                if (success)
-                    return Ok();
-                return NotFound();
+                var existing = await _repository.GetByIdAsync(id);
+                if (existing == null) return NotFound();
+                if (!OwnsReceipt(auth!, existing)) return ForbiddenOwnership();
+
+                var actorUserId = auth!.UserId is > 0 ? auth.UserId : auth.DelegateId;
+                var success = await _repository.DeleteAsync(id, actorUserId);
+                return success ? Ok() : NotFound();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "حدث خطأ أثناء معالجة الطلب" });
             }
         }
 
-        [HttpGet("{id}")]
-        public async Task<ActionResult<TrustReceiptDTO>> GetById(int id)
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> GetById(int id)
         {
+            var (auth, error) = await AuthenticateAsync();
+            if (error != null) return error!;
+
             try
             {
                 var result = await _repository.GetByIdAsync(id);
-                if (result != null)
-                    return Ok(result);
-                return NotFound();
+                if (result == null) return NotFound();
+                if (!OwnsReceipt(auth!, result)) return ForbiddenOwnership();
+                return Ok(result);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "حدث خطأ أثناء معالجة الطلب" });
             }
         }
 
         [HttpGet("paged")]
-        public async Task<ActionResult<PagedResultDTO<TrustReceiptDTO>>> GetPaged([FromQuery] string? searchTerm = null, [FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 10, [FromQuery] int? delegateId = null)
+        public async Task<IActionResult> GetPaged(
+            [FromQuery] string? searchTerm = null,
+            [FromQuery] int pageNumber = 1,
+            [FromQuery] int pageSize = 10)
         {
+            var (auth, error) = await AuthenticateAsync();
+            if (error != null) return error!;
+
             try
             {
-                var result = await _repository.GetPagedAsync(searchTerm, pageNumber, pageSize, delegateId);
+                // Always scope to authenticated delegate — ignore client delegateId.
+                var result = await _repository.GetPagedAsync(searchTerm, pageNumber, pageSize, auth!.DelegateId);
                 return Ok(result);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "حدث خطأ أثناء معالجة الطلب" });
             }
         }
     }

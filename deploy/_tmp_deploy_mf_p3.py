@@ -163,7 +163,7 @@ def get(path, token):
     with urllib.request.urlopen(req, timeout=90) as r:
         return json.loads(r.read().decode())
 
-mf=post('/Auth/LoginMainFollower', {{'userName':'mf1','password':'Mf@12345'}})
+mf=post('/Auth/LoginMainFollower', {{'userName':'mf1','password':os.environ.get('MF_PASSWORD','')}})
 dm=post('/Auth/LoginDelegatedManager', {{'userName':'dm','password':'dm'}})
 committee=post('/delegated-manager/committees', {{'name':'لجنة مرحلة3','memberUserNames':['mf1','mf2']}}, dm['token'])
 mission=post('/delegated-manager/committees/missions', {{

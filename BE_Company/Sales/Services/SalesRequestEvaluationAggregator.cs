@@ -22,12 +22,14 @@ namespace BE_Company.Sales.Services
         public static (CustomerRatingLevel Level, int Score)? Overall(
             (CustomerRatingLevel Level, int Score)? triple,
             (CustomerRatingLevel Level, int Score)? phone,
-            (CustomerRatingLevel Level, int Score)? kinship)
+            (CustomerRatingLevel Level, int Score)? kinship,
+            (CustomerRatingLevel Level, int Score)? sonFather = null)
         {
             var list = new List<(CustomerRatingLevel, int)>();
             if (triple is { } t) list.Add(t);
             if (phone is { } p) list.Add(p);
             if (kinship is { } k) list.Add(k);
+            if (sonFather is { } s) list.Add(s);
             return list.Count == 0 ? null : WorstOf(list);
         }
 

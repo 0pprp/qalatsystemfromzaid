@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'company_loader.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 
 class ShopLocationButton extends StatelessWidget {
@@ -27,7 +28,7 @@ class ShopLocationButton extends StatelessWidget {
           ? const SizedBox(
               height: 22,
               width: 22,
-              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              child: CompanyLoader(size: 22),
             )
           : Text(captured ? 'تم تحديد الموقع' : 'تحديد الموقع'),
     );

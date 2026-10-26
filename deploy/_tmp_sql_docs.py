@@ -8,7 +8,7 @@ c.connect("169.58.236.52", username="root", password=os.environ["SSH_PASS"], tim
 
 # Query SQL for docs 2-5 and sale 2 shop image keys on Najaf
 sql = r"""
-sqlcmd -S 127.0.0.1 -U haider -P 'haider12345@@@@@' -d DatabaseCompanyNajaf -h -1 -W -Q "
+sqlcmd -S 127.0.0.1 -U haider -P '${SQL_PASSWORD}' -d DatabaseCompanyNajaf -h -1 -W -Q "
 SET NOCOUNT ON;
 SELECT Id, FileKey, ContentType, CustomerId FROM dbo.SalesCustomerDocuments WHERE Id IN (2,3,4,5);
 SELECT TOP 5 Id, FileKey FROM dbo.SalesCustomerDocuments ORDER BY Id DESC;

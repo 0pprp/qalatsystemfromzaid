@@ -533,6 +533,71 @@ public sealed class SalesExceptionService
     public Task<int> UnreadWrongSalesCountAsync(string? cityValue, CancellationToken ct = default) =>
         _store.CountUnreadWrongSalesAsync(cityValue, ct);
 
+    public Task<PagedResult<SalesExceptionRequest>> ListWrongSalesForBranchManagerAsync(
+        string? cityValue,
+        bool reviewed,
+        int page,
+        int pageSize,
+        CancellationToken ct = default) =>
+        _store.QueryWrongSalesForBranchManagerAsync(cityValue, reviewed, page, pageSize, ct);
+
+    public async Task<SalesExceptionResult> MarkBranchManagerReviewedAsync(
+        Guid id,
+        string? reviewerUserName,
+        string? reviewerDisplayName,
+        string? note,
+        CancellationToken ct = default)
+    {
+        var trimmedNote = (note ?? "").Trim();
+        if (trimmedNote.Length < 3)
+        {
+            return SalesExceptionResult.Invalid("ملاحظة المراجعة إجبارية (3 أحرف على الأقل)");
+        }
+
+        if (trimmedNote.Length > 2000)
+        {
+            return SalesExceptionResult.Invalid("الحد الأقصى لملاحظة المراجعة 2000 حرف");
+        }
+
+        var existing = await _store.GetAsync(id, ct);
+        if (existing is null)
+        {
+            return SalesExceptionResult.NotFound();
+        }
+
+        if (!IsWrongSaleReason(existing.Reason))
+        {
+            return SalesExceptionResult.Invalid("هذا الطلب ليس مبيعاً خاطئاً");
+        }
+
+        if (existing.BranchManagerReviewedAtUtc is not null)
+        {
+            return SalesExceptionResult.Conflict("تمت مراجعة هذا المبيع مسبقاً");
+        }
+
+        var reviewerName = string.IsNullOrWhiteSpace(reviewerUserName)
+            ? "branch-manager"
+            : reviewerUserName.Trim();
+        var displayName = string.IsNullOrWhiteSpace(reviewerDisplayName)
+            ? "مدير فرع"
+            : reviewerDisplayName.Trim();
+
+        var updated = await _store.TryMarkBranchManagerReviewedAsync(
+            id,
+            reviewerName,
+            displayName,
+            trimmedNote,
+            DateTime.UtcNow,
+            ct);
+
+        if (updated is null)
+        {
+            return SalesExceptionResult.Conflict("تمت مراجعة هذا المبيع مسبقاً");
+        }
+
+        return SalesExceptionResult.Success(updated);
+    }
+
     /// <summary>
     /// Applies Approve/Reject/Cancel. Anything already decided comes back as Conflict so the API can answer 409.
     /// </summary>

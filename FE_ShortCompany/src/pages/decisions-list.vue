@@ -4,6 +4,7 @@ import ModernStatCard from "@/components/ModernStatCard.vue"
 import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import * as XLSX from 'xlsx'
 import { useToast } from '@/composables/useToast'
 
 const apiUrl = localStorage.getItem('LinkCity')
@@ -112,6 +113,33 @@ function openProfile(item) {
   router.push({ name: 'customer-profile', query: { customerID: item.customerID } })
 }
 
+function exportToExcel() {
+  if (!decisions.value.length) {
+    toast.error('لا توجد قرارات للتصدير')
+
+    return
+  }
+
+  const dataToExport = decisions.value.map(d => ({
+    'الزبون': d.customerName || d.CustomerName || '—',
+    'الهاتف': d.phoneNumber || d.PhoneNumber || '—',
+    'نوع القرار': d.decisionType || d.DecisionType || '—',
+    'من قرر': d.userName || d.UserName || '—',
+    'النسبة %': d.paidPercent ?? d.PaidPercent ?? 0,
+    'مدفوع الأسبوع': d.weekPaid ?? d.WeekPaid ?? 0,
+    'سعر البيع': d.amountTotalSales ?? d.AmountTotalSales ?? 0,
+    'التاريخ': formattedDateTime(d.createdDate || d.CreatedDate),
+    'ملاحظة': d.note || d.Note || '—',
+  }))
+
+  const worksheet = XLSX.utils.json_to_sheet(dataToExport)
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'سجل القرارات')
+  const stamp = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(workbook, `سجل_القرارات_${stamp}.xlsx`)
+  toast.success(`تم تصدير ${dataToExport.length} قرار`)
+}
+
 onMounted(() => {
   fetchDecisions()
 })
@@ -172,7 +200,7 @@ onMounted(() => {
       <VCol
         md="3"
         cols="12"
-        class="d-flex align-end"
+        class="d-flex align-end flex-wrap gap-2"
       >
         <VBtn
           color="primary"
@@ -181,6 +209,15 @@ onMounted(() => {
           @click="fetchDecisions"
         >
           بحث
+        </VBtn>
+        <VBtn
+          color="success"
+          variant="tonal"
+          prepend-icon="tabler-file-spreadsheet"
+          :disabled="!decisions.length || loading"
+          @click="exportToExcel"
+        >
+          تصدير إلى إكسل
         </VBtn>
       </VCol>
     </VRow>

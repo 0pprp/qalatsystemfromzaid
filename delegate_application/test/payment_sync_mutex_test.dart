@@ -1,27 +1,35 @@
-import 'dart:async';
-
+import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// Documents mutex behavior expected by PaymentSyncService.
+/// Exercises the real PaymentSyncService mutex (not a local fake).
 void main() {
-  test('concurrent callers share one lock future', () async {
-    Completer<void>? lock;
-    var runs = 0;
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-    Future<void> syncOnce() async {
-      if (lock != null) return lock!.future;
-      final c = Completer<void>();
-      lock = c;
-      try {
-        runs++;
-        await Future<void>.delayed(const Duration(milliseconds: 30));
-      } finally {
-        lock = null;
-        if (!c.isCompleted) c.complete();
-      }
-    }
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({
+      'LinkDelegate': 'http://example.test/api/',
+      'AsyncId': 'test-async',
+      'DelegateID': '1',
+    });
+    PaymentSyncService.instance.resetSyncTestHooks();
+    PaymentSyncService.instance.isOnlineOverride = () async => false;
+  });
 
-    await Future.wait([syncOnce(), syncOnce(), syncOnce()]);
-    expect(runs, 1);
+  tearDown(() {
+    PaymentSyncService.instance.resetSyncTestHooks();
+  });
+
+  test('concurrent syncPendingPayments enter sync body once', () async {
+    // Gate open: 17:00 Baghdad = 14:00 UTC.
+    final utcNow = DateTime.utc(2026, 10, 5, 14, 0, 0);
+
+    await Future.wait([
+      PaymentSyncService.instance.syncPendingPayments(utcNow: utcNow),
+      PaymentSyncService.instance.syncPendingPayments(utcNow: utcNow),
+      PaymentSyncService.instance.syncPendingPayments(utcNow: utcNow),
+    ]);
+
+    expect(PaymentSyncService.instance.syncBodyEnterCount, 1);
   });
 }

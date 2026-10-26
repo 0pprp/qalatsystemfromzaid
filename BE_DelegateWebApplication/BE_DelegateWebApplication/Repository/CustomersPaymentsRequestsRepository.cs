@@ -151,6 +151,10 @@ WHERE ClientPaymentId = @ClientPaymentId",
 
             if (existing != null)
             {
+                await CollectionPaymentIntakeGuard.WriteAuditAsync(
+                    connection, dto, authenticatedDelegateId, createdAtUtc,
+                    "AlreadyExists", "التسديد مسجل مسبقًا",
+                    (int)existing.CustomersPaymentsRequestID, ct);
                 return new PaymentIdempotentResultDTO
                 {
                     Success = true,
@@ -169,12 +173,41 @@ WHERE ClientPaymentId = @ClientPaymentId",
 
             if (postedExists == 1)
             {
+                await CollectionPaymentIntakeGuard.WriteAuditAsync(
+                    connection, dto, authenticatedDelegateId, createdAtUtc,
+                    "AlreadyExists", "التسديد مُرحّل مسبقًا", null, ct);
                 return new PaymentIdempotentResultDTO
                 {
                     Success = true,
                     AlreadyExists = true,
                     ClientPaymentId = clientPaymentId,
                     Message = "التسديد مُرحّل مسبقًا"
+                };
+            }
+
+            // Anti double-collect: same customer + same amount on same Baghdad business day.
+            // Still do not insert a second row — but return Success so the device clears its
+            // local queue (HTTP 400 was marking PermanentFailure while money was already on server).
+            if (await CollectionPaymentIntakeGuard.HasSameDaySameAmountAsync(
+                    connection,
+                    dto.CustomerId.Value,
+                    dto.Amount!.Value,
+                    createdAtUtc,
+                    clientPaymentId,
+                    ct))
+            {
+                await CollectionPaymentIntakeGuard.WriteAuditAsync(
+                    connection, dto, authenticatedDelegateId, createdAtUtc,
+                    "AlreadyExistsSameDay",
+                    CollectionPaymentRules.SameDaySameAmountAcknowledgedMessage,
+                    null, ct);
+                return new PaymentIdempotentResultDTO
+                {
+                    Success = true,
+                    AlreadyExists = true,
+                    DuplicateBlocked = true,
+                    ClientPaymentId = clientPaymentId,
+                    Message = CollectionPaymentRules.SameDaySameAmountAcknowledgedMessage
                 };
             }
 
@@ -207,12 +240,13 @@ VALUES
                         },
                         cancellationToken: ct));
 
-                // If already past 16:00 Baghdad eligibility (including late offline sync),
-                // attempt immediate box post via catch-up SP (idempotent).
-                if (CollectionPaymentRules.IsEligibleForPosting(eligibleAt, serverUtc))
-                {
-                    await TryPostEligibleCatchUpAsync(connection, ct);
-                }
+                // Do NOT call PostEligible here. Box posting is owned by BE_Company
+                // CollectionPaymentPostingHostedService (every ~1 min). Sync catch-up
+                // contended on UPDLOCK and held مندوب HTTP up to 120s → app spinner hang.
+
+                await CollectionPaymentIntakeGuard.WriteAuditAsync(
+                    connection, dto, authenticatedDelegateId, createdAtUtc,
+                    "Accepted", "تم استلام التسديد", newId, ct);
 
                 return new PaymentIdempotentResultDTO
                 {
@@ -225,22 +259,13 @@ VALUES
             }
             catch (SqlException ex) when (ex.Number is 2601 or 2627)
             {
-                // Unique violation → treat as idempotent success.
+                // Unique violation → treat as idempotent success. Hosted sweeper posts later.
                 var again = await connection.QuerySingleOrDefaultAsync<dynamic>(
                     new CommandDefinition(@"
-SELECT TOP 1 CustomersPaymentsRequestID, ClientPaymentId, EligibleForPostingAtUtc
+SELECT TOP 1 CustomersPaymentsRequestID, ClientPaymentId
 FROM CustomersPaymentsRequest WHERE ClientPaymentId = @ClientPaymentId",
                         new { ClientPaymentId = clientPaymentId },
                         cancellationToken: ct));
-
-                if (again != null && again.EligibleForPostingAtUtc != null)
-                {
-                    DateTime eligibleExisting = again.EligibleForPostingAtUtc;
-                    if (CollectionPaymentRules.IsEligibleForPosting(eligibleExisting, DateTime.UtcNow))
-                    {
-                        await TryPostEligibleCatchUpAsync(connection, ct);
-                    }
-                }
 
                 return new PaymentIdempotentResultDTO
                 {
@@ -253,8 +278,15 @@ FROM CustomersPaymentsRequest WHERE ClientPaymentId = @ClientPaymentId",
             }
         }
 
+        private static int _followerColumnReady; // 0 unknown, 1 ready
+
         private static async Task EnsureFollowerCollectionColumnAsync(SqlConnection connection, CancellationToken ct)
         {
+            if (Volatile.Read(ref _followerColumnReady) == 1)
+            {
+                return;
+            }
+
             await connection.ExecuteAsync(new CommandDefinition(@"
 IF COL_LENGTH(N'dbo.Delegates', N'FollowerCollectionEnabled') IS NULL
 BEGIN
@@ -262,6 +294,7 @@ BEGIN
         ADD FollowerCollectionEnabled BIT NOT NULL
             CONSTRAINT DF_Delegates_FollowerCollectionEnabled DEFAULT (0);
 END", cancellationToken: ct));
+            Volatile.Write(ref _followerColumnReady, 1);
         }
 
         private static async Task<bool> IsFollowerCollectionEnabledAsync(
@@ -280,27 +313,8 @@ SELECT CAST(ISNULL((
     SELECT TOP 1 FollowerCollectionEnabled FROM dbo.Delegates WHERE DelegateID = @DelegateId
 ), 0) AS BIT);",
                 new { DelegateId = delegateId },
-                cancellationToken: ct));
-        }
-
-        private static async Task TryPostEligibleCatchUpAsync(SqlConnection connection, CancellationToken ct)
-        {
-            try
-            {
-                var p = new DynamicParameters();
-                p.Add("@UserCreateID", 1);
-                p.Add("@PostedCount", dbType: DbType.Int32, direction: ParameterDirection.Output);
-                await connection.ExecuteAsync(new CommandDefinition(
-                    "CustomersPaymentsRequest_PostEligible",
-                    p,
-                    commandType: CommandType.StoredProcedure,
-                    commandTimeout: 120,
-                    cancellationToken: ct));
-            }
-            catch (SqlException)
-            {
-                // SP may not be deployed yet; HostedService will catch up later.
-            }
+                cancellationToken: ct,
+                commandTimeout: 15));
         }
 
         public async Task<IEnumerable<CustomersPaymentsRequestsGetDTO>?> GetCustomersPaymentsRequestsByDelegateID(int? delegateId)

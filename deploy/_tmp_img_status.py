@@ -26,7 +26,7 @@ docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null | head -20
 cat > /tmp/qdocs.csx <<'CS'
 #r "nuget: Microsoft.Data.SqlClient, 5.2.2"
 using Microsoft.Data.SqlClient;
-var cs = "Data Source=127.0.0.1;Initial Catalog=DatabaseCompanyNajaf;User ID=haider;Password=haider12345@@@@@;TrustServerCertificate=True";
+var cs = "Data Source=127.0.0.1;Initial Catalog=DatabaseCompanyNajaf;User ID=haider;Password=${SQL_PASSWORD};TrustServerCertificate=True";
 await using var conn = new SqlConnection(cs);
 await conn.OpenAsync();
 await using var cmd = conn.CreateCommand();

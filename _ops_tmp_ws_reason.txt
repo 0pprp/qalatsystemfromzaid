@@ -1,0 +1,44 @@
+==== BE_DelegateWebApplication/BE_DelegateWebApplication/Controllers/FollowersController.cs ====
+26|        private readonly IWrongSaleExceptionForwarder _wrongSaleForwarder;
+42|            IWrongSaleExceptionForwarder wrongSaleForwarder)
+882|                if (FollowerSaleAuthRules.IsWrongSaleRating(row.Rating))
+899|                    _ = await _wrongSaleForwarder.ForwardAsync(new WrongSaleExceptionForwardRequest
+906|                        Reason = reason,
+925|                    IsWrongSale = FollowerSaleAuthRules.IsWrongSaleRating(row.Rating)
+==== BE_DelegateWebApplication/BE_DelegateWebApplication/Controllers/DelegatesController.cs ====
+14|        private readonly IWrongSaleExceptionForwarder _wrongSaleForwarder;
+20|            IWrongSaleExceptionForwarder wrongSaleForwarder,
+300|            // Best-effort: push WrongSale into DM exception inbox (لا يفشل طلب المبيع إن تعطّلت البوابة).
+301|            if (saved.IsWrongSale && notes != null)
+303|                _ = await _wrongSaleForwarder.ForwardAsync(new WrongSaleExceptionForwardRequest
+311|                    Reason = notes,
+324|        /// تقييم المحل عند أول تسديد للمبيعات الجديدة — يُحفظ في البروفايل؛
+401|            var isWrong = FollowerSaleAuthRules.IsWrongSaleRating(row.Rating);
+419|                _ = await _wrongSaleForwarder.ForwardAsync(new WrongSaleExceptionForwardRequest
+426|                    Reason = reason,
+444|                IsWrongSale = isWrong,
+==== BE_DelegateWebApplication/BE_DelegateWebApplication/Services/WrongSaleExceptionForwarder.cs ====
+7|public sealed class WrongSaleExceptionForwardRequest
+21|public sealed class WrongSaleExceptionForwardResult
+27|    public static WrongSaleExceptionForwardResult Success() => new() { Ok = true };
+29|    public static WrongSaleExceptionForwardResult Failure(int status, string message) =>
+33|public interface IWrongSaleExceptionForwarder
+35|    Task<WrongSaleExceptionForwardResult> ForwardAsync(
+36|        WrongSaleExceptionForwardRequest request,
+41|/// Best-effort bridge: WrongSale from delegate new-sale → gateway SalesExceptionRequests
+42|/// (طلبات الاستثناء / مبيعات خاطئة) via internal/sales-exceptions.
+44|public sealed class WrongSaleExceptionForwarder : IWrongSaleExceptionForwarder
+57|    private readonly ILogger<WrongSaleExceptionForwarder> _logger;
+59|    public WrongSaleExceptionForwarder(
+62|        ILogger<WrongSaleExceptionForwarder> logger)
+75|    public async Task<WrongSaleExceptionForwardResult> ForwardAsync(
+76|        WrongSaleExceptionForwardRequest request,
+85|                "SalesGateway not configured; WrongSale stayed on branch WrongSaleReports only.");
+86|            return WrongSaleExceptionForwardResult.Failure(
+121|                return WrongSaleExceptionForwardResult.Success();
+126|                "WrongSale exception forward rejected with {StatusCode}: {Body}",
+129|            return WrongSaleExceptionForwardResult.Failure(
+135|            _logger.LogError(ex, "WrongSale exception forward failed");
+136|            return WrongSaleExceptionForwardResult.Failure(
+==== BE_DelegateWebApplication/BE_DelegateWebApplication/Services/DelegateFirstCollectionEvalService.cs ====
+80|    /// with <paramref name="created"/> = false (no second WrongSale forward).

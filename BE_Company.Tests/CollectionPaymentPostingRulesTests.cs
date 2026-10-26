@@ -6,16 +6,16 @@ namespace BE_Company.Tests
     public sealed class CollectionPaymentPostingRulesTests
     {
         [Fact]
-        public void BeforeFour_NotPostedEarly()
+        public void BeforeFour_EligibleImmediatelyAtCreated()
         {
             var created = new DateTime(2026, 3, 26, 12, 0, 0, DateTimeKind.Utc); // 15:00 Baghdad
             var eligible = CollectionPaymentPostingRules.ComputeEligibleForPostingAtUtc(created);
-            Assert.False(CollectionPaymentPostingRules.IsEligible(eligible, created));
-            Assert.False(CollectionPaymentPostingRules.IsEligible(eligible, new DateTime(2026, 3, 26, 12, 59, 0, DateTimeKind.Utc)));
+            Assert.Equal(created, eligible);
+            Assert.True(CollectionPaymentPostingRules.IsEligible(eligible, created));
         }
 
         [Fact]
-        public void AtFour_BecomesEligible()
+        public void AtFour_StillEligibleAtCreated()
         {
             var created = new DateTime(2026, 3, 26, 12, 0, 0, DateTimeKind.Utc);
             var eligible = CollectionPaymentPostingRules.ComputeEligibleForPostingAtUtc(created);
@@ -24,12 +24,13 @@ namespace BE_Company.Tests
         }
 
         [Fact]
-        public void CatchUp_AfterRestartAt1605()
+        public void CatchUp_AfterRestart_EligibleFromCreate()
         {
             var created = new DateTime(2026, 3, 26, 10, 0, 0, DateTimeKind.Utc);
             var eligible = CollectionPaymentPostingRules.ComputeEligibleForPostingAtUtc(created);
             var restart = new DateTime(2026, 3, 26, 13, 5, 0, DateTimeKind.Utc); // 16:05 Baghdad
             Assert.True(CollectionPaymentPostingRules.IsEligible(eligible, restart));
+            Assert.True(CollectionPaymentPostingRules.IsEligible(eligible, created));
         }
 
         [Fact]
@@ -41,11 +42,12 @@ namespace BE_Company.Tests
         }
 
         [Fact]
-        public void LateReceiveAfterGate_PostsImmediately()
+        public void LateReceive_EligibleAtCreated()
         {
             var created = new DateTime(2026, 3, 26, 12, 30, 0, DateTimeKind.Utc); // 15:30
             var received = new DateTime(2026, 3, 26, 14, 0, 0, DateTimeKind.Utc); // 17:00
             var eligible = CollectionPaymentPostingRules.ComputeEligibleForPostingAtUtc(created);
+            Assert.Equal(created, eligible);
             Assert.True(CollectionPaymentPostingRules.IsEligible(eligible, received));
         }
 
@@ -65,6 +67,13 @@ namespace BE_Company.Tests
             var a = CollectionPaymentPostingRules.ComputeEligibleForPostingAtUtc(created);
             var b = CollectionPaymentPostingRules.ComputeEligibleForPostingAtUtc(created);
             Assert.Equal(a, b);
+            Assert.Equal(created, a);
+        }
+
+        [Fact]
+        public void EligibilityMode_DeployMarker()
+        {
+            Assert.Equal("ImmediateAtCreatedUtc", CollectionPaymentPostingRules.EligibilityMode);
         }
     }
 }

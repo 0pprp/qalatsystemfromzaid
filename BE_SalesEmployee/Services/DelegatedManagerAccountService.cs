@@ -76,6 +76,60 @@ public sealed class DelegatedManagerAccountService
         return false;
     }
 
+    /// <summary>Configured DM accounts (login id + display). Used for assignee pickers.</summary>
+    public IReadOnlyList<CentralDelegatedManagerIdentity> ListAccounts()
+    {
+        var list = new List<CentralDelegatedManagerIdentity>();
+        var primaryUser = _configuration["DelegatedManagerAccount:UserName"] ?? "";
+        var primaryDisplay = _configuration["DelegatedManagerAccount:DisplayName"] ?? "المدير المفوض";
+        if (!string.IsNullOrWhiteSpace(primaryUser))
+        {
+            list.Add(new CentralDelegatedManagerIdentity
+            {
+                UserName = primaryUser.Trim(),
+                DisplayName = string.IsNullOrWhiteSpace(primaryDisplay) ? primaryUser.Trim() : primaryDisplay.Trim(),
+            });
+        }
+
+        foreach (var child in _configuration.GetSection("DelegatedManagerAccounts").GetChildren())
+        {
+            var u = child["UserName"];
+            var d = child["DisplayName"];
+            if (string.IsNullOrWhiteSpace(u))
+                continue;
+
+            list.Add(new CentralDelegatedManagerIdentity
+            {
+                UserName = u.Trim(),
+                DisplayName = string.IsNullOrWhiteSpace(d) ? u.Trim() : d.Trim(),
+            });
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// Maps JWT UserName (login id or display name) to the stable login UserName used as AssigneeKey.
+    /// </summary>
+    public string ResolveStableKey(string? jwtUserName)
+    {
+        var claim = (jwtUserName ?? "").Trim();
+        if (claim.Length == 0)
+            return claim;
+
+        foreach (var account in ListAccounts())
+        {
+            if (UserNamesEqual(NormalizeUserName(claim), account.UserName)
+                || string.Equals(claim, account.DisplayName, StringComparison.OrdinalIgnoreCase)
+                || UserNamesEqual(NormalizeUserName(claim), account.DisplayName))
+            {
+                return account.UserName;
+            }
+        }
+
+        return claim;
+    }
+
     /// <summary>
     /// Arabic keyboards often insert alef-with-hamza (أ/إ/آ) while config stores plain alef (ا).
     /// Normalize both sides so login matches what ops typed on the server.

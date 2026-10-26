@@ -16,7 +16,7 @@ except ImportError:
     subprocess.check_call(['pip3', 'install', '-q', 'pymssql'])
     import pymssql
 
-conn = pymssql.connect(server='127.0.0.1', user='haider', password='haider12345@@@@@', database='DatabaseCompanyNajaf')
+conn = pymssql.connect(server='127.0.0.1', user='haider', password=os.environ['SQL_PASSWORD'], database='DatabaseCompanyNajaf')
 cur = conn.cursor(as_dict=True)
 print('--- docs 2-5 ---')
 cur.execute('SELECT Id, FileKey, ContentType, CustomerId, FileName FROM dbo.SalesCustomerDocuments WHERE Id IN (2,3,4,5)')

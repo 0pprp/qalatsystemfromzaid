@@ -483,10 +483,14 @@ class MockSalesRepository implements SalesRepository {
   Future<void> recordTrackingEvent(int? shiftId, String eventType) async {}
 
   final List<SalesWorkRequest> _requests = [];
+  final List<SalesWorkRequest> _submitted = [];
   final Map<int, int> _requestDrafts = {};
 
   @override
   Future<List<SalesWorkRequest>> salesRequests() async => List.of(_requests);
+
+  @override
+  Future<List<SalesWorkRequest>> submittedSalesRequests() async => List.of(_submitted);
 
   @override
   Future<SalesWorkRequest> salesRequest(int id) async =>
@@ -614,7 +618,7 @@ class MockSalesRepository implements SalesRepository {
     required String address,
     String? notes,
   }) async {
-    return SalesWorkRequest(
+    final row = SalesWorkRequest(
       id: DateTime.now().millisecondsSinceEpoch,
       customerName: fullName,
       customerPhone: phone,
@@ -624,6 +628,8 @@ class MockSalesRepository implements SalesRepository {
       status: 'New',
       createdAtUtc: DateTime.now().toUtc(),
     );
+    _submitted.insert(0, row);
+    return row;
   }
 
   void seedRequest(SalesWorkRequest row) => _requests.add(row);

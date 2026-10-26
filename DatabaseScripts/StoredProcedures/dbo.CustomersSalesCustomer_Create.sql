@@ -1,4 +1,4 @@
-﻿create proc [dbo].[CustomersSalesCustomer_Create]
+CREATE OR ALTER PROC [dbo].[CustomersSalesCustomer_Create]
 @CustomerName nvarchar(100),
 @PhoneNumber nvarchar(100),
 @Address nvarchar(100),
@@ -13,60 +13,73 @@
 @DelegateID int = NULL,
 @DiscountAmountTotal float = NULL,
 @DiscountAmountTotalDay float  = NULL
-as
-declare @DBName nvarchar(100) =  DB_NAME()
-declare @CityID int = (SELECT dbo.GetCityID(@DBName) AS CityID)
-insert into Customers (DelegateID,CityID,CustomerName,PhoneNumber,Address,ShopName,NearestFunctionPoint,SaleName,ReceiptName,Notes,UserID,AsyncID,AsyncState,CustomerState) values 
-(@DelegateID,@CityID,@CustomerName,@PhoneNumber,@Address,@ShopName,@NearestFunctionPoint,@SaleName,@ReceiptName,@Notes,@UserID,NEWID(),0,1)
-DECLARE @CustomerID int;
-SET @CustomerID = IDENT_CURRENT('Customers');
-INSERT INTO [dbo].[CustomersSales]
-           ([UserID]
-           ,[CustomerID]
-           ,[DateCreate]
-           ,[BoundNumber]
-           ,[StoreID]
-           ,[DelegateID]
-           ,[AccountZero]
-           ,[DelegateState]
-           ,[DiscountAmountTotal]
-           ,[DiscountAmountTotalDay]
-           ,[AsyncState]
-		   ,[AsyncID])
+AS
+BEGIN
+  SET NOCOUNT ON;
+  SET XACT_ABORT ON;
+
+  DECLARE @DBName nvarchar(100) = DB_NAME();
+  DECLARE @CityID int = (SELECT dbo.GetCityID(@DBName) AS CityID);
+  DECLARE @CustomerID int;
+  DECLARE @CustomerSaleID int;
+  DECLARE @WithdrawalStoresID int;
+  DECLARE @BoundNumber int;
+
+  BEGIN TRY
+    BEGIN TRAN;
+
+    INSERT INTO Customers (
+      DelegateID, CityID, CustomerName, PhoneNumber, Address, ShopName,
+      NearestFunctionPoint, SaleName, ReceiptName, Notes, UserID, AsyncID, AsyncState, CustomerState)
+    VALUES (
+      @DelegateID, @CityID, @CustomerName, @PhoneNumber, @Address, @ShopName,
+      @NearestFunctionPoint, @SaleName, @ReceiptName, @Notes, @UserID, NEWID(), 0, 1);
+
+    SET @CustomerID = CAST(SCOPE_IDENTITY() AS int);
+    IF @CustomerID IS NULL OR @CustomerID <= 0
+      THROW 50001, N'Customers insert did not return identity.', 1;
+
+    -- Serialize BoundNumber allocation for this session/table to avoid count(*)+1 races.
+    SELECT @BoundNumber = ISNULL(MAX(BoundNumber), 0) + 1
+    FROM dbo.CustomersSales WITH (UPDLOCK, HOLDLOCK);
+
+    INSERT INTO [dbo].[CustomersSales]
+           ([UserID],[CustomerID],[DateCreate],[BoundNumber],[StoreID],[DelegateID],
+            [AccountZero],[DelegateState],[DiscountAmountTotal],[DiscountAmountTotalDay],[AsyncState],[AsyncID])
      VALUES
-           (@UserID
-           ,@CustomerID
-           ,@DateCreate
-           ,(select count(*)+1 from CustomersSales)
-           ,@StoreID
-           ,@DelegateID
-           ,'false'
-           ,'false'
-           ,@DiscountAmountTotal
-           ,@DiscountAmountTotalDay
-           ,'false'
-		   ,NEWID())
-exec InsertWithdrawalStores @UserID=@UserID,@State='true',@WithdrawalStoresDate=@DateCreate,@StoreID=@StoreID
+           (@UserID,@CustomerID,@DateCreate,@BoundNumber,@StoreID,@DelegateID,
+            'false','false',@DiscountAmountTotal,@DiscountAmountTotalDay,'false',NEWID());
 
-DECLARE @CustomerSaleID int;
-SET @CustomerSaleID = IDENT_CURRENT('CustomersSales');
+    SET @CustomerSaleID = CAST(SCOPE_IDENTITY() AS int);
+    IF @CustomerSaleID IS NULL OR @CustomerSaleID <= 0
+      THROW 50002, N'CustomersSales insert did not return identity.', 1;
 
-DECLARE @WithdrawalStoresID int;
-SET @WithdrawalStoresID = IDENT_CURRENT('WithdrawalStores');
+    EXEC InsertWithdrawalStores @UserID=@UserID, @State='true', @WithdrawalStoresDate=@DateCreate, @StoreID=@StoreID;
+    -- Nested proc identity: @@IDENTITY (session) is required after EXEC; SCOPE_IDENTITY is outer-scope only.
+    SET @WithdrawalStoresID = CAST(@@IDENTITY AS int);
 
-exec InsertSelectItemsSaleFromSelectItemSalesTemporary @CustomerSaleID=@CustomerSaleID,@WithdrawalStoresID=@WithdrawalStoresID,@UserID=@UserID
-exec ClearSelectItemSalesTemporary @UserID=@UserID
-INSERT INTO [dbo].[Activities]
-           ([UserID]
-           ,[ActivityDescription]
-           ,[ActivityDate]
-           ,[AsyncState]
-           ,[AsyncID])
+    EXEC InsertSelectItemsSaleFromSelectItemSalesTemporary
+      @CustomerSaleID=@CustomerSaleID,
+      @WithdrawalStoresID=@WithdrawalStoresID,
+      @UserID=@UserID;
+    EXEC ClearSelectItemSalesTemporary @UserID=@UserID;
+
+    INSERT INTO [dbo].[Activities]
+           ([UserID],[ActivityDescription],[ActivityDate],[AsyncState],[AsyncID])
      VALUES
-           (@UserID
-           ,N'تم بيع '+(select  top 1 ItemsNames from View_CustomersSales order by CustomerSaleID desc)+N'  الى العميل '+(select  top 1 CustomerName from View_CustomersSales order by CustomerSaleID desc)+''
-           ,GETUTCDATE()
-           ,'false'
-           ,NEWID() )
-select * from View_CustomersDelegate where  CustomerID = @CustomerID
+           (@UserID,
+            N'?? ??? '+(SELECT TOP 1 ItemsNames FROM View_CustomersSales WHERE CustomerSaleID = @CustomerSaleID)+
+            N'  ??? ?????? '+(SELECT TOP 1 CustomerName FROM View_CustomersSales WHERE CustomerSaleID = @CustomerSaleID),
+            GETUTCDATE(),
+            'false',
+            NEWID());
 
+    COMMIT TRAN;
+
+    SELECT * FROM View_CustomersDelegate WHERE CustomerID = @CustomerID;
+  END TRY
+  BEGIN CATCH
+    IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+    THROW;
+  END CATCH
+END

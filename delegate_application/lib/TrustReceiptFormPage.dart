@@ -147,6 +147,7 @@ class _TrustReceiptFormPageState extends State<TrustReceiptFormPage> {
       final prefs = await SharedPreferences.getInstance();
       final linkDelegate = prefs.getString('LinkDelegate') ?? '0';
       final delegateId = int.parse(prefs.getString('DelegateID') ?? '0');
+      final asyncId = prefs.getString('AsyncId') ?? '';
 
       final Map<String, dynamic> payload = {};
 
@@ -204,7 +205,11 @@ class _TrustReceiptFormPageState extends State<TrustReceiptFormPage> {
 
       final response = await method(
         uri,
-        headers: {"Content-Type": "application/json"},
+        headers: {
+          "Content-Type": "application/json",
+          if (asyncId.isNotEmpty) "X-Async-Id": asyncId,
+          if (delegateId > 0) "X-Delegate-Id": '$delegateId',
+        },
         body: json.encode(payload),
       );
 

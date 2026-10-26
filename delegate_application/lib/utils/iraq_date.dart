@@ -3,7 +3,7 @@
 ///
 /// Collection day (single source of truth for «تسديدات اليوم» + local lock):
 /// - [businessDate] window [03:00 → next 02:59] Baghdad — daily reset boundary
-/// - [paymentSyncGateHour] 16:00 — PAYMENT HTTP upload gate (auto + manual)
+/// - Payment HTTP upload is always allowed when online (no 16:00 wait).
 ///
 /// [calendarDate] midnight helpers remain for legacy callers; prefer business day
 /// for collection UI and duplicate-payment checks.
@@ -13,7 +13,7 @@ class IraqDate {
   /// Local hour (Baghdad) when a new business day begins.
   static const int businessDayStartHour = 3;
 
-  /// Local hour (Baghdad) when pending payments become eligible for server upload.
+  /// Legacy constant (former 16:00 upload gate). Kept for call-site clarity only.
   static const int paymentSyncGateHour = 16;
 
   static DateTime nowIraq([DateTime? utcNow]) {
@@ -45,37 +45,14 @@ class IraqDate {
   /// Stable key for SharedPreferences / comparisons (yyyy-MM-dd).
   static String businessDateKey([DateTime? utcNow]) => formatBusinessDate(utcNow);
 
-  /// True when pending payments may be HTTP-uploaded (Baghdad).
+  /// True when pending payments may be HTTP-uploaded.
   ///
-  /// Open window for the business day: **[16:00 → next 02:59]** Baghdad.
-  /// - ≥16:00 same calendar day → open
-  /// - 00:00–02:59 → still previous business day after its 16:00 → open
-  /// - 03:00–15:59 → closed (new day, before afternoon send)
-  ///
-  /// Closing the gate at midnight (old bug) left pending stuck until the *next*
-  /// afternoon and inflated prior-day server totals when they finally uploaded.
-  static bool isPaymentSyncGateOpen([DateTime? utcNow]) {
-    final iraq = nowIraq(utcNow);
-    if (iraq.hour >= paymentSyncGateHour) return true;
-    if (iraq.hour < businessDayStartHour) return true;
-    return false;
-  }
+  /// Always open: uploads happen online immediately (server posting gate removed).
+  static bool isPaymentSyncGateOpen([DateTime? utcNow]) => true;
 
-  /// Duration until the next Baghdad 16:00 (zero if gate already open).
-  /// Uses wall-clock arithmetic only — never mixes DateTime kinds / device TZ.
-  static Duration delayUntilPaymentSyncGate([DateTime? utcNow]) {
-    if (isPaymentSyncGateOpen(utcNow)) {
-      return Duration.zero;
-    }
-    final iraq = nowIraq(utcNow);
-    // Closed only in [03:00, 15:59] → wait until 16:00 same calendar day.
-    return Duration(
-      hours: paymentSyncGateHour - iraq.hour,
-      minutes: -iraq.minute,
-      seconds: -iraq.second,
-      milliseconds: -iraq.millisecond,
-    );
-  }
+  /// Formerly delay until Baghdad 16:00; always zero now (gate always open).
+  static Duration delayUntilPaymentSyncGate([DateTime? utcNow]) =>
+      Duration.zero;
 
   /// Duration until the next Baghdad [businessDayStartHour] (03:00).
   /// Always positive: at exactly 03:00 returns 24h until the following rollover.

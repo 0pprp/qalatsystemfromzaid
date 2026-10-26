@@ -9,6 +9,8 @@ public static class ComplaintStatuses
 public static class ExceptionStatuses
 {
     public const string Pending = "Pending";
+    /// <summary>DM approved waiver amount; waiting for main accountant discount apply.</summary>
+    public const string AwaitingAccountant = "AwaitingAccountant";
     public const string Approved = "Approved";
     public const string Rejected = "Rejected";
     public const string Cancelled = "Cancelled";
@@ -38,8 +40,10 @@ public static class ExceptionStateMachine
         return from switch
         {
             ExceptionStatuses.Pending => to is ExceptionStatuses.Approved
+                or ExceptionStatuses.AwaitingAccountant
                 or ExceptionStatuses.Rejected
                 or ExceptionStatuses.Cancelled,
+            ExceptionStatuses.AwaitingAccountant => to is ExceptionStatuses.Approved,
             _ => false
         };
     }

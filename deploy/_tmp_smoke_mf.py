@@ -1,4 +1,4 @@
-﻿import os, json, urllib.request, paramiko
+import os, json, urllib.request, paramiko
 # smoke via server localhost to demo gateway
 c=paramiko.SSHClient(); c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 c.connect("169.58.236.52",username="root",password=os.environ["SSH_PASS"],timeout=60,allow_agent=False,look_for_keys=False)
@@ -12,7 +12,7 @@ def post(url, body):
 # try common local ports
 for base in ['http://127.0.0.1:8080/sales-gw/api','http://127.0.0.1:5000/api','http://127.0.0.1:5280/api']:
     try:
-        st, data = post(base+'/Auth/LoginMainFollower', {'userName':'mf1','password':'Mf@12345'})
+        st, data = post(base+'/Auth/LoginMainFollower', {'userName':'mf1','password':os.environ.get('MF_PASSWORD','')})
         print('LOGIN', base, st, data.get('userType'), data.get('userName'), 'token' in data)
         tok=data['token']
         req=urllib.request.Request(base+'/main-follower/missions', headers={'Authorization':'Bearer '+tok})

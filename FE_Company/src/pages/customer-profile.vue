@@ -10,6 +10,12 @@ import {
   accountantGetRatingEquation,
   accountantSetRatingEquation,
 } from '@/composables/accountantRatingsApi'
+import {
+  formatHiddenFinancial,
+  shouldHidePaidRemaining,
+  visibleAmountRemaining,
+  visibleReceiptsTotal,
+} from '@/composables/legalFinancialVisibility'
 
 const apiUrl = localStorage.getItem('LinkCity')
 const route = useRoute()
@@ -70,6 +76,10 @@ async function saveRatingEquation() {
     ratingEquationSaving.value = false
   }
 }
+
+const hidePaidRemaining = computed(() =>
+  shouldHidePaidRemaining(customer.value) || shouldHidePaidRemaining(ratingDetail.value),
+)
 
 const formattedNumber = num => {
   if (num === 0) return "0"
@@ -282,7 +292,9 @@ onMounted(fetchProfile)
             class="pa-4"
           >
             <div class="text-caption">الواصل</div>
-            <div class="text-h6">{{ formattedNumber(customer?.receiptsTotal) }}</div>
+            <div class="text-h6">
+              {{ hidePaidRemaining ? '—' : formatHiddenFinancial(visibleReceiptsTotal(customer), formattedNumber) }}
+            </div>
           </VSheet>
         </VCol>
         <VCol cols="12" sm="6" md="3">
@@ -292,7 +304,9 @@ onMounted(fetchProfile)
             class="pa-4"
           >
             <div class="text-caption">الباقي</div>
-            <div class="text-h6">{{ formattedNumber(customer?.amountRemaining) }}</div>
+            <div class="text-h6">
+              {{ hidePaidRemaining ? '—' : formatHiddenFinancial(visibleAmountRemaining(customer), formattedNumber) }}
+            </div>
           </VSheet>
         </VCol>
         <VCol cols="12" sm="6" md="3">

@@ -4,6 +4,7 @@ import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/utils/Formatters.dart';
+import 'package:follower_application/utils/display_name.dart';
 import 'package:follower_application/utils/thousand_separator_formatter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -268,7 +269,7 @@ class _PendingSalesPageState extends State<PendingSalesPage> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Text(
-                          'فائدة القسم: مبيعات جديدة على قوائمك بانتظار مصادقة المتابع '
+                          'فائدة القسم: مبيعات جديدة على قوائمك بانتظار مصادقة مسؤول اللجنة '
                           '(تقييم + ملاحظة + قيمة بضاعة المحل + الوارد اليومي). لا يُرسل طلب مبيع من هنا.',
                           style: TextStyle(fontFamily: 'Cairo', fontSize: 12, height: 1.5),
                         ),
@@ -286,7 +287,8 @@ class _PendingSalesPageState extends State<PendingSalesPage> {
                                 child: ListView.separated(
                                   padding: const EdgeInsets.all(12),
                                   itemCount: _items.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                                  separatorBuilder: (_, __) =>
+                                      const NameListSeparator(),
                                   itemBuilder: (context, i) {
                                     final item = _items[i];
                                     final name =
@@ -335,13 +337,10 @@ class _PendingSalesPageState extends State<PendingSalesPage> {
                                                 crossAxisAlignment:
                                                     CrossAxisAlignment.stretch,
                                                 children: [
-                                                  Text(name,
-                                                      style: const TextStyle(
-                                                          fontFamily: 'Cairo',
-                                                          fontWeight: FontWeight.bold)),
+                                                  PersonNameText(name),
                                                   const SizedBox(height: 4),
                                                   Text(
-                                                    '$listName\nالمبلغ: $total دع',
+                                                    '${listName}\nالمبلغ: $total دع',
                                                     style: const TextStyle(
                                                         fontFamily: 'Cairo', fontSize: 12),
                                                   ),

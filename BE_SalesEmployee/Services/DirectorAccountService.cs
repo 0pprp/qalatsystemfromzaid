@@ -19,10 +19,40 @@ public sealed class DirectorAccountService
         _configuration = configuration;
     }
 
+    /// <summary>
+    /// True when at least one director password is configured.
+    /// Missing config must fail closed — no bootstrap credentials.
+    /// </summary>
+    public bool HasConfiguredAccounts()
+    {
+        var primaryUser = _configuration["DirectorAccount:UserName"];
+        var primaryPass = _configuration["DirectorAccount:Password"];
+        if (!string.IsNullOrWhiteSpace(primaryUser) && !string.IsNullOrWhiteSpace(primaryPass))
+        {
+            return true;
+        }
+
+        foreach (var child in _configuration.GetSection("DirectorAccounts").GetChildren())
+        {
+            if (!string.IsNullOrWhiteSpace(child["UserName"]) &&
+                !string.IsNullOrWhiteSpace(child["Password"]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public bool TryAuthenticate(string? userName, string? password, out CentralDirectorIdentity? identity)
     {
         identity = null;
         if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrWhiteSpace(password))
+        {
+            return false;
+        }
+
+        if (!HasConfiguredAccounts())
         {
             return false;
         }
@@ -69,17 +99,6 @@ public sealed class DirectorAccountService
             {
                 UserName = u.Trim(),
                 DisplayName = string.IsNullOrWhiteSpace(d) ? u.Trim() : d.Trim(),
-            };
-            return true;
-        }
-
-        // Bootstrap when host env has no DirectorAccount password yet.
-        if (UserNamesEqual(normalized, "حيدر") && PasswordEquals(password, "حيدر"))
-        {
-            identity = new CentralDirectorIdentity
-            {
-                UserName = "حيدر",
-                DisplayName = string.IsNullOrWhiteSpace(primaryDisplay) ? "المدير" : primaryDisplay.Trim(),
             };
             return true;
         }

@@ -1,0 +1,27 @@
+=== NAJAF DELETE ===
+PayReq deleted=0
+Msg 547, Level 16, State 1, Server vmi3533397, Line 10
+The DELETE statement conflicted with the REFERENCE constraint "FK_dbo.AddToBox_dbo.CustomersPayments_CustomerPaymentID". The conflict occurred in database "DatabaseCompanyNajaf", table "dbo.AddToBox", column 'CustomerPaymentID'.
+=== GW DELETE WrongSale + audit ===
+Audit deleted=1
+WS deleted=1
+=== VERIFY ===
+CustomerPaymentID|BoundNumber|PaymentDate|ClientPaymentId
+-----------------|-----------|-----------|---------------
+419158|44833|2026-10-04 21:07:41|17fb84bf-b0b1-4b44-91e9-baba5ee4ff5b
+419005|341880|2026-10-04 15:35:31|NULL
+DfceLeft
+--------
+1
+PayReqLeft
+----------
+0
+WsLeft
+------
+0
+Id|CustomerId|Status|RequestedAtUtc
+--|----------|------|--------------
+EE90A196-A7E6-4E58-80AD-61C682B2BAA5|53385|Pending|2026-10-04 20:07:41
+6F3798E6-CBA8-4F88-B3B9-396AB014A741|53385|Pending|2026-10-04 19:48:58
+20283AC0-5C47-4AFA-A083-1D6784CC3A93|53385|Pending|2026-10-04 19:34:36
+OK

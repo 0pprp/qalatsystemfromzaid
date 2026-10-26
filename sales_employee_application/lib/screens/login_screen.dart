@@ -1,6 +1,8 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:sales_employee_application/config/app_env.dart';
 import 'package:sales_employee_application/config/company_branches.dart';
+import 'package:sales_employee_application/core/update/app_update_gate.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/device_handover.dart';
 import 'package:sales_employee_application/services/session.dart';
@@ -101,6 +103,8 @@ class _LoginScreenState extends State<LoginScreen> {
           'userType': 'موظف مبيعات',
         });
         if (!mounted) return;
+        final canContinueMock = await AppUpdateGate.checkAndPrompt(context);
+        if (!canContinueMock || !mounted) return;
         Navigator.pushReplacementNamed(context, '/shift');
         return;
       }
@@ -136,6 +140,8 @@ class _LoginScreenState extends State<LoginScreen> {
         'cityName': _selectedBranch?.name ?? AppEnv.loginCityLabel(),
       });
       if (!mounted) return;
+      final canContinue = await AppUpdateGate.checkAndPrompt(context);
+      if (!canContinue || !mounted) return;
       Navigator.pushReplacementNamed(context, '/shift');
     } on ApiException catch (e) {
       _alert(e.message);
@@ -199,7 +205,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (_loadingBranches) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
-        child: LinearProgressIndicator(minHeight: 2),
+        child: CompanyLoader(size: 32),
       );
     }
     if (_branchesError != null) {
@@ -234,87 +240,58 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final height = MediaQuery.of(context).size.height;
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        body: SingleChildScrollView(
-          child: SizedBox(
-            height: height,
-            child: Stack(
-              children: [
-                Positioned(
-                  top: -50,
-                  right: -50,
-                  child: Container(
-                    width: 200,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.05),
-                      shape: BoxShape.circle,
+    return Scaffold(
+      body: SafeArea(
+        child: LayoutBuilder(builder: (context, constraints) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: (constraints.maxHeight - 48).clamp(0, double.infinity)),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 440),
+                  child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    Center(child: Image.asset('assets/icons/LogoCompany.png', height: 120, fit: BoxFit.contain)),
+                    const SizedBox(height: 24),
+                    const Text('أهلًا بك', textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700, color: AppTheme.textColor)),
+                    const SizedBox(height: 6),
+                    const Text('سجّل دخولك إلى تطبيق موظف المبيعات', textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 14, color: AppTheme.subtitleColor)),
+                    const SizedBox(height: 32),
+                    const Text('الفرع', style: TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    _branchSection(),
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: _userCtrl,
+                      textInputAction: TextInputAction.next,
+                      autofillHints: const [AutofillHints.username],
+                      decoration: const InputDecoration(labelText: 'اسم المستخدم', prefixIcon: Icon(Icons.person_outline)),
                     ),
-                  ),
-                ),
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 25),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Image.asset('assets/icons/LogoCompany.png',
-                            height: height * 0.14),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'تطبيق موظف المبيعات',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.primaryColor,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        _branchSection(),
-                        SizedBox(height: height * 0.04),
-                        TextField(
-                          controller: _userCtrl,
-                          textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            hintText: 'اسم المستخدم',
-                            prefixIcon: Icon(Icons.person_outline,
-                                color: AppTheme.primaryColor),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        TextField(
-                          controller: _passCtrl,
-                          obscureText: true,
-                          textInputAction: TextInputAction.done,
-                          onSubmitted: (_) => _login(),
-                          decoration: const InputDecoration(
-                            hintText: 'كلمة المرور',
-                            prefixIcon: Icon(Icons.lock_outline,
-                                color: AppTheme.primaryColor),
-                          ),
-                        ),
-                        const SizedBox(height: 36),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 55,
-                          child: ElevatedButton(
-                            onPressed: _loading ? null : _login,
-                            child: _loading
-                                ? const CircularProgressIndicator(color: Colors.white)
-                                : const Text('تسجيل الدخول'),
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: _passCtrl,
+                      obscureText: true,
+                      textInputAction: TextInputAction.done,
+                      autofillHints: const [AutofillHints.password],
+                      onSubmitted: (_) { if (!_loading) _login(); },
+                      decoration: const InputDecoration(labelText: 'كلمة المرور', prefixIcon: Icon(Icons.lock_outline)),
                     ),
-                  ),
+                    const SizedBox(height: 28),
+                    ElevatedButton(
+                      onPressed: _loading ? null : _login,
+                      child: _loading ? const CompanyLoader(size: 30) : const Text('تسجيل الدخول'),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text('شركة قلعة الضمان', textAlign: TextAlign.center,
+                        style: TextStyle(color: AppTheme.subtitleColor, fontSize: 12)),
+                  ]),
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
+          );
+        }),
       ),
     );
   }

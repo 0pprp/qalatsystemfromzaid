@@ -1,0 +1,36 @@
+﻿DB DatabaseCompanyNasria
+==== STORES_SNAPSHOT ====
+StoreID|StoreName|CostBuyItemsCurrent|NumberOfTypes|NumberOfItems|AmountItemBuy|SalesTotalCost
+-------|---------|-------------------|-------------|-------------|-------------|--------------
+1|┘à╪«╪▓┘å ╪º┘ä┘å╪º╪╡╪▒┘è╪⌐|28123000|1786|46|3332009166|4254686916
+2|┘à╪«╪▓┘å ╪º┘ä╪º╪¼┘ç╪▓╪⌐ ╪º┘ä┘â┘ç╪▒╪¿╪º╪ª┘è╪⌐ ╪º┘ä╪╡┘è┘å┘è╪⌐|21159000|66|160|26248000|31068000
+==== ACTIVITIES_OCT3_ITEM_EDIT ====
+ActivityID|UserID|UserName|UserType|IraqAt|ActivityDescription
+----------|------|--------|--------|------|-------------------
+233062|18|hadi|┘à╪¡╪º╪│╪¿ ╪▒╪ª┘è╪│┘è|2026-10-03 09:39:06|╪¬┘à ╪│╪¡╪¿ ╪º┘ä┘à╪¿┘ä╪║ 3.85e+006 ┘à┘å ╪º┘ä╪«╪▓┘è┘å╪⌐ ╪«╪▓┘è┘å╪⌐ ╪º┘ä┘å╪º╪╡╪▒┘è╪⌐ ┘ä╪║╪▒╪╢ ╪┤╪▒╪º╪í ( A12 ( 5 ) ) ( Y9a ( 3 ) ) ( ┘ç┘ê╪¬ 10 ╪¿┘ä┘è 64 ( 5 ) ) ( ┘ç┘ê╪¬ T10 ╪░128 ( 5 ) ) ( ┘ç┘ê╪¬ 11╪¿┘ä┘è 128 ( 2 ) ) ( ╪º┘å┘ü┘å┘â╪│ ┘å┘ê╪¬ 11s╪░128 ( 3 ) ) ( ╪º┘å┘ü┘å┘â╪│ ┘å┘ê╪¬ 10 128/6 ( 3 ) ) ( ┘ç┘ê╪¬ 11s ╪░128/6 ( 5 ) ) ( ╪º┘å┘ü┘å┘â╪│ ┘å┘ê╪¬ 
+233067|18|hadi|┘à╪¡╪º╪│╪¿ ╪▒╪ª┘è╪│┘è|2026-10-03 09:39:07|╪¬┘à ╪┤╪▒╪º╪í ╪º┘ä╪╣┘å╪º╪╡╪▒ ( ┘ç┘ê┘å╪▒ 600 ( 1 ) ) ( ╪¬╪¼┘ç┘è╪▓ ┘à╪¡┘ä  ( 1 ) ) ( ╪¬╪¼┘ç┘è╪▓ ┘à╪¡┘ä ( 1 ) ) ┘à┘å ╪º┘ä┘à┘ê╪▒╪» ┘à┘ê╪▒╪» ╪º┘ä┘å╪º╪╡╪▒┘è╪⌐ ╪º┘ä┘ë ╪º┘ä┘à╪«╪▓┘å ┘à╪«╪▓┘å ╪º┘ä┘å╪º╪╡╪▒┘è╪⌐ 
+==== ACTIVITIES_OCT3_COST_CHANGE_ONLY ====
+ActivityID|UserID|UserName|IraqAt|ActivityDescription
+----------|------|--------|------|-------------------
+==== BUYS_OCT3 ====
+BuyID|StoreName|SupplierName|ItemsNames|AmountSpentDenar|IraqAt|UserName
+-----|---------|------------|----------|----------------|------|--------
+==== ITEMS_WITH_COST ====
+T|Cnt|SumCostTotal|SumQty|DistinctNames
+-|---|------------|------|-------------
+COUNT|1850|43182000|199|1640
+==== OCT3_ALL_USERS_ACTIVITY_COUNTS ====
+UserName|UserType|ActCount
+--------|--------|--------
+hadi|┘à╪¡╪º╪│╪¿ ╪▒╪ª┘è╪│┘è|337
+amaar|┘à╪¡╪º╪│╪¿ ╪▒╪ª┘è╪│┘è|19
+ahmed|┘à╪¡╪º╪│╪¿ ╪▒╪ª┘è╪│┘è|2
+
+RC 0
+==== PARSED_COST_DELTAS ====
+changes=0 unit_drop_sum=0 unit_rise_sum=0
+==== TARGET_DIFF 1336000 ====
+est_inventory_impact_delta_x_current_qty=0
+unit_drop_equals_target=False
+inv_impact_equals_target=False
+

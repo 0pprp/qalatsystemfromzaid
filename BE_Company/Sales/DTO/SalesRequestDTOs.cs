@@ -137,6 +137,8 @@ namespace BE_Company.Sales.DTO
         public string? CityValue { get; set; }
         public string? CityName { get; set; }
         public string CustomerSourceType { get; set; } = "NewCustomer";
+        /// <summary>Idempotency key for CRM_OF_ALDHAMAN order intake (null for non-CRM rows).</summary>
+        public Guid? ExternalCrmOrderUuid { get; set; }
         /// <summary>New | Old — set by follower/delegate submit flows.</summary>
         public string? SaleRequestType { get; set; }
         public int? SourceListId { get; set; }
@@ -151,6 +153,8 @@ namespace BE_Company.Sales.DTO
         public decimal? MaxSalePrice { get; set; }
         public string Status { get; set; } = "New";
         public DateTime CreatedAtUtc { get; set; }
+        /// <summary>Latest status-transition time from SalesRequestHistory (card «تاريخ آخر حالة»).</summary>
+        public DateTime? LastStatusAtUtc { get; set; }
         public DateTime? ViewedAtUtc { get; set; }
         public DateTime? ProcessingAtUtc { get; set; }
         public int? ConvertedToSaleId { get; set; }

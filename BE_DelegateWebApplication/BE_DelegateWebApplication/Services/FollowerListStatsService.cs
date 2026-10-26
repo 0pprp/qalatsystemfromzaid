@@ -34,6 +34,25 @@ BEGIN
     CREATE UNIQUE INDEX UX_FollowerListMonthlySnapshots_List_YM
         ON dbo.FollowerListMonthlySnapshots (ListId, YearMonth);
 END
+IF OBJECT_ID(N'dbo.FollowerListRatingSnapshots', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.FollowerListRatingSnapshots (
+        Id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_FollowerListRatingSnapshots_Stats PRIMARY KEY,
+        ListId INT NOT NULL,
+        AverageScore FLOAT NOT NULL,
+        RatingLabel NVARCHAR(32) NOT NULL,
+        RatedCustomerCount INT NOT NULL CONSTRAINT DF_FLRS_Stats_Count DEFAULT (0),
+        CapturedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_FLRS_Stats_Captured DEFAULT (SYSUTCDATETIME()),
+        CaptureDate DATE NOT NULL
+    );
+END
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'UQ_FollowerListRatingSnapshots_List_Day'
+      AND object_id = OBJECT_ID(N'dbo.FollowerListRatingSnapshots')
+)
+    CREATE UNIQUE INDEX UQ_FollowerListRatingSnapshots_List_Day
+        ON dbo.FollowerListRatingSnapshots (ListId, CaptureDate);
 ", cancellationToken: ct));
         Volatile.Write(ref _schemaReady, 1);
     }
@@ -44,81 +63,174 @@ END
         CancellationToken ct)
     {
         await EnsureSchemaAsync(ct);
+        List<(int ListId, string? ListName)> lists;
+        await using (var c = new SqlConnection(_cs))
+            lists = await LoadFollowerListsAsync(c, followerUserId, ct);
+
+        if (lists.Count == 0)
+            return Array.Empty<FollowerListStatsRow>();
+
+        var bag = new System.Collections.Concurrent.ConcurrentBag<(int Order, FollowerListStatsRow Row)>();
+        await Parallel.ForEachAsync(
+            lists.Select((l, i) => (l, i)),
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Math.Min(4, lists.Count),
+                CancellationToken = ct
+            },
+            async (item, token) =>
+            {
+                await using var conn = new SqlConnection(_cs);
+                await conn.OpenAsync(token);
+                var row = await BuildStatsRowAsync(
+                    conn, item.l.ListId, item.l.ListName, nowLocal, token);
+                bag.Add((item.i, row));
+            });
+
+        return bag.OrderBy(x => x.Order).Select(x => x.Row).ToList();
+    }
+
+    public async Task<FollowerListStatsRow?> GetStatsForListAsync(
+        int followerUserId,
+        int listId,
+        DateTime nowLocal,
+        CancellationToken ct)
+    {
+        await EnsureSchemaAsync(ct);
+        if (!await IsListLinkedAsync(followerUserId, listId, ct))
+            return null;
+
+        await using var c = new SqlConnection(_cs);
+        await c.OpenAsync(ct);
+        var name = await c.ExecuteScalarAsync<string?>(new CommandDefinition(@"
+SELECT d.DelegateName
+FROM dbo.Delegates d
+WHERE d.DelegateID = @ListId;",
+            new { ListId = listId },
+            cancellationToken: ct));
+        return await BuildStatsRowAsync(c, listId, name, nowLocal, ct);
+    }
+
+    private async Task<FollowerListStatsRow> BuildStatsRowAsync(
+        SqlConnection c,
+        int listId,
+        string? listName,
+        DateTime nowLocal,
+        CancellationToken ct)
+    {
         var yearMonth = FollowerListStatsRules.ToYearMonth(nowLocal);
         var prevYm = FollowerListStatsRules.PreviousYearMonth(yearMonth);
         var (monthStart, monthEnd) = MonthBounds(yearMonth);
-        var (weekFrom, weekTo) = WeakWeekWindow(nowLocal);
+        var asOf = nowLocal.Date;
+        var weekAgoDate = FollowerListTrendRules.WeekAgoDate(asOf);
+        var monthAgoDate = FollowerListTrendRules.MonthAgoDate(asOf);
 
-        await using var c = new SqlConnection(_cs);
-        var lists = await LoadFollowerListsAsync(c, followerUserId, ct);
-        var result = new List<FollowerListStatsRow>();
-        foreach (var list in lists)
-        {
-            var live = await LoadLiveAggregatesAsync(c, list.ListId, yearMonth, ct);
-            await UpsertSnapshotAsync(c, list.ListId, yearMonth, live, ct);
+        // One connection: keep queries sequential (SqlClient is not concurrent-safe).
+        var live = await LoadLiveAggregatesAsync(c, listId, yearMonth, ct);
+        await UpsertSnapshotAsync(c, listId, yearMonth, live, ct);
 
-            var prev = await c.QueryFirstOrDefaultAsync<(decimal TotalSalesSum, decimal DaySalesSum)?>(
-                new CommandDefinition(@"
+        var prev = await c.QueryFirstOrDefaultAsync<(decimal TotalSalesSum, decimal DaySalesSum)?>(
+            new CommandDefinition(@"
 SELECT TOP 1 TotalSalesSum, DaySalesSum
 FROM dbo.FollowerListMonthlySnapshots
 WHERE ListId = @ListId AND YearMonth = @YearMonth;",
-                    new { ListId = list.ListId, YearMonth = prevYm },
-                    cancellationToken: ct));
+                new { ListId = listId, YearMonth = prevYm },
+                cancellationToken: ct));
 
-            var facts = (await LoadRatingFactsAsync(c, list.ListId, ct))
-                .Where(f => f.AmountRemaining > 0)
-                .ToList();
-            // Rating = customers with payment in last 30 days (exclude unpaid for a month).
-            var ratingCutoff = nowLocal.Date.AddDays(-30);
-            var ratingFacts = facts
-                .Where(f => f.LastPaymentDate is DateTime lp && lp.Date >= ratingCutoff)
-                .ToList();
-            var rated = ratingFacts.Select(f => FollowerCustomerRatingCalculator.Evaluate(f, nowLocal.Date)).ToList();
-            var agg = FollowerListRatingAggregator.Aggregate(rated);
+        var ratingCutoff = asOf.AddDays(-30);
+        var rated = (await LoadRatingFactsAsync(c, listId, ct))
+            .Where(f => f.AmountRemaining > 0
+                        && !f.IsLegal
+                        && f.LastPaymentDate is DateTime lp
+                        && lp.Date >= ratingCutoff) // قانونية خارج التقييم
+            .Select(f => FollowerCustomerRatingCalculator.Evaluate(f, asOf))
+            .ToList();
+        var agg = FollowerListRatingAggregator.Aggregate(rated);
 
-            // Separate metric: week pay > 3.8% (الزبائن النشطين card).
-            var active = await CountActiveAsync(c, list.ListId, weekFrom, weekTo, ct);
-            var zeroed = await LoadZeroedMonthAsync(c, list.ListId, monthStart, monthEnd, ct);
-            var neu = await LoadNewMonthMoneyAsync(c, list.ListId, monthStart, monthEnd, ct);
+        await UpsertDailyRatingSnapshotAsync(
+            c, listId, agg.AverageScore, agg.FinalRatingLabel, agg.CustomerCount, asOf, ct);
+        var scoreWeekAgo = await FollowerListCardsService.LoadSnapshotScoreAsync(
+            c, listId, weekAgoDate, ct);
+        var scoreMonthAgo = await FollowerListCardsService.LoadSnapshotScoreAsync(
+            c, listId, monthAgoDate, ct);
 
-            var prevTotal = prev?.TotalSalesSum ?? 0m;
-            var prevDay = prev?.DaySalesSum ?? 0m;
-            result.Add(new FollowerListStatsRow
+        var zeroed = await LoadZeroedMonthAsync(c, listId, monthStart, monthEnd, ct);
+        var neu = await LoadNewMonthMoneyAsync(c, listId, monthStart, monthEnd, ct);
+        var prevTotal = prev?.TotalSalesSum ?? 0m;
+        var prevDay = prev?.DaySalesSum ?? 0m;
+
+        return new FollowerListStatsRow
+        {
+            ListId = listId,
+            ListName = listName,
+            YearMonth = yearMonth,
+            PreviousYearMonth = prevYm,
+            NewCustomersCount = live.NewCustomersCount,
+            NewCustomersSaleSum = neu.SaleSum,
+            NewCustomersDaySalesSum = neu.DaySum,
+            ZeroedCustomersCount = zeroed.Count,
+            ZeroedCustomersSaleSum = zeroed.SaleSum,
+            ZeroedCustomersDaySalesSum = zeroed.DaySum,
+            NetCustomersCount = live.NewCustomersCount - zeroed.Count,
+            NetSaleSum = neu.SaleSum - zeroed.SaleSum,
+            NetDaySalesSum = neu.DaySum - zeroed.DaySum,
+            // Expensive 3.8% week scan removed from hot path (UI no longer shows it).
+            ActiveCustomersCount = 0,
+            AverageScore = agg.AverageScore,
+            FinalRatingLabel = agg.FinalRatingLabel,
+            ScoreWeekAgo = scoreWeekAgo,
+            WeekTrend = FollowerListTrendRules.ComputeTrend(agg.AverageScore, scoreWeekAgo),
+            ScoreMonthAgo = scoreMonthAgo,
+            MonthTrend = FollowerListTrendRules.ComputeTrend(agg.AverageScore, scoreMonthAgo),
+            ExcellentCount = agg.ExcellentCount,
+            GoodCount = agg.GoodCount,
+            WeakCount = agg.WeakCount,
+            RejectedCount = agg.RejectedCount,
+            LegalCount = agg.LegalCount,
+            BadCount = agg.BadCount,
+            RatedCustomerCount = agg.CustomerCount,
+            CurrentTotalSales = live.TotalSalesSum,
+            PreviousTotalSales = prevTotal,
+            AddedAmount = FollowerListStatsRules.Delta(live.TotalSalesSum, prevTotal),
+            CurrentDaySales = live.DaySalesSum,
+            PreviousDaySales = prevDay,
+            DaySalesDelta = FollowerListStatsRules.Delta(live.DaySalesSum, prevDay),
+            PreviousMonthFrozen = prev != null
+        };
+    }
+
+    private static async Task UpsertDailyRatingSnapshotAsync(
+        SqlConnection c,
+        int listId,
+        double averageScore,
+        string? ratingLabel,
+        int ratedCount,
+        DateTime captureDate,
+        CancellationToken ct)
+    {
+        await c.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.FollowerListRatingSnapshots', N'U') IS NULL RETURN;
+MERGE dbo.FollowerListRatingSnapshots AS t
+USING (SELECT @ListId AS ListId, @CaptureDate AS CaptureDate) AS s
+ON t.ListId = s.ListId AND t.CaptureDate = s.CaptureDate
+WHEN MATCHED THEN UPDATE SET
+    AverageScore = @AverageScore,
+    RatingLabel = @RatingLabel,
+    RatedCustomerCount = @RatedCustomerCount,
+    CapturedAtUtc = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN INSERT
+    (ListId, AverageScore, RatingLabel, RatedCustomerCount, CapturedAtUtc, CaptureDate)
+VALUES
+    (@ListId, @AverageScore, @RatingLabel, @RatedCustomerCount, SYSUTCDATETIME(), @CaptureDate);",
+            new
             {
-                ListId = list.ListId,
-                ListName = list.ListName,
-                YearMonth = yearMonth,
-                PreviousYearMonth = prevYm,
-                NewCustomersCount = live.NewCustomersCount,
-                NewCustomersSaleSum = neu.SaleSum,
-                NewCustomersDaySalesSum = neu.DaySum,
-                ZeroedCustomersCount = zeroed.Count,
-                ZeroedCustomersSaleSum = zeroed.SaleSum,
-                ZeroedCustomersDaySalesSum = zeroed.DaySum,
-                NetCustomersCount = live.NewCustomersCount - zeroed.Count,
-                NetSaleSum = neu.SaleSum - zeroed.SaleSum,
-                NetDaySalesSum = neu.DaySum - zeroed.DaySum,
-                ActiveCustomersCount = active,
-                AverageScore = agg.AverageScore,
-                FinalRatingLabel = agg.FinalRatingLabel,
-                ExcellentCount = agg.ExcellentCount,
-                GoodCount = agg.GoodCount,
-                WeakCount = agg.WeakCount,
-                RejectedCount = agg.RejectedCount,
-                LegalCount = agg.LegalCount,
-                BadCount = agg.BadCount,
-                RatedCustomerCount = agg.CustomerCount,
-                CurrentTotalSales = live.TotalSalesSum,
-                PreviousTotalSales = prevTotal,
-                AddedAmount = FollowerListStatsRules.Delta(live.TotalSalesSum, prevTotal),
-                CurrentDaySales = live.DaySalesSum,
-                PreviousDaySales = prevDay,
-                DaySalesDelta = FollowerListStatsRules.Delta(live.DaySalesSum, prevDay),
-                PreviousMonthFrozen = prev != null
-            });
-        }
-
-        return result;
+                ListId = listId,
+                AverageScore = averageScore,
+                RatingLabel = ratingLabel ?? "",
+                RatedCustomerCount = ratedCount,
+                CaptureDate = captureDate.Date
+            },
+            cancellationToken: ct));
     }
 
     public async Task<IReadOnlyList<FollowerListStatsCustomerRow>> GetRatingCustomersAsync(
@@ -131,19 +243,24 @@ WHERE ListId = @ListId AND YearMonth = @YearMonth;",
         if (!await IsListLinkedAsync(followerUserId, listId, ct))
             throw new UnauthorizedAccessException("القائمة غير مرتبطة");
 
-        if (!FollowerCustomerRatingLabels.TryParseLevelKey(levelKey, out var level))
+        var allLevels = string.IsNullOrWhiteSpace(levelKey)
+                        || levelKey.Equals("all", StringComparison.OrdinalIgnoreCase);
+        FollowerCustomerRatingLevel level = default;
+        if (!allLevels && !FollowerCustomerRatingLabels.TryParseLevelKey(levelKey, out level))
             throw new ArgumentException("مستوى التقييم غير صالح");
 
         await using var c = new SqlConnection(_cs);
         // Match ExcellentCount/… on list cards: open balance + payment within last 30 days.
         var ratingCutoff = nowLocal.Date.AddDays(-30);
-        var facts = (await LoadRatingFactsAsync(c, listId, ct))
+        var rated = (await LoadRatingFactsAsync(c, listId, ct))
             .Where(f => f.AmountRemaining > 0
+                        && !f.IsLegal
                         && f.LastPaymentDate is DateTime lp
-                        && lp.Date >= ratingCutoff);
-        return facts
-            .Select(f => FollowerCustomerRatingCalculator.Evaluate(f, nowLocal.Date))
-            .Where(r => r.Level == level)
+                        && lp.Date >= ratingCutoff)
+            .Select(f => FollowerCustomerRatingCalculator.Evaluate(f, nowLocal.Date));
+        if (!allLevels)
+            rated = rated.Where(r => r.Level == level);
+        return rated
             .Select(ToCustomerRow)
             .OrderBy(r => r.CustomerName)
             .ToList();
@@ -189,6 +306,64 @@ ORDER BY ISNULL(vc.CustomerName, c.CustomerName);",
             new { ListId = listId, FromDate = weekFrom, ToDate = weekTo },
             cancellationToken: ct));
         return rows.ToList();
+    }
+
+    public async Task<IReadOnlyList<FollowerListStatsCustomerRow>> GetRemainderCustomersAsync(
+        int followerUserId,
+        int listId,
+        decimal maxRemainingExclusive,
+        DateTime nowLocal,
+        CancellationToken ct,
+        decimal minRemainingInclusive = 0)
+    {
+        if (!await IsListLinkedAsync(followerUserId, listId, ct))
+            throw new UnauthorizedAccessException("القائمة غير مرتبطة");
+        if (maxRemainingExclusive <= 0)
+            throw new ArgumentException("حد الباقي غير صالح");
+        if (minRemainingInclusive < 0 || minRemainingInclusive >= maxRemainingExclusive)
+            throw new ArgumentException("نطاق الباقي غير صالح");
+
+        await using var c = new SqlConnection(_cs);
+        // Band: minInclusive <= remaining < maxExclusive (no overlap between 0–100k and 100–200k).
+        try
+        {
+            var rows = await c.QueryAsync<FollowerListStatsCustomerRow>(new CommandDefinition(@"
+SELECT
+    c.CustomerID AS CustomerId,
+    ISNULL(vc.CustomerName, c.CustomerName) AS CustomerName,
+    ISNULL(vc.PhoneNumber, c.PhoneNumber) AS PhoneNumber,
+    CAST(ISNULL(vc.AmountTotalSales, 0) AS FLOAT) AS AmountTotalSales,
+    CAST(ISNULL(vc.AmountDaySales, 0) AS FLOAT) AS AmountDaySales,
+    CAST(ISNULL(vc.AmountRemaining, 0) AS FLOAT) AS AmountRemaining
+FROM dbo.Customers c
+LEFT JOIN dbo.View_Customers vc ON vc.CustomerID = c.CustomerID
+WHERE c.DelegateID = @ListId
+  AND ISNULL(vc.AmountRemaining, 0) >= @MinRem
+  AND ISNULL(vc.AmountRemaining, 0) < @MaxRem
+  AND ISNULL(vc.AmountRemaining, 0) > 0
+ORDER BY ISNULL(vc.AmountRemaining, 0), ISNULL(vc.CustomerName, c.CustomerName);",
+                new
+                {
+                    ListId = listId,
+                    MinRem = (double)minRemainingInclusive,
+                    MaxRem = (double)maxRemainingExclusive
+                },
+                cancellationToken: ct));
+            return rows.ToList();
+        }
+        catch
+        {
+            var facts = (await LoadRatingFactsAsync(c, listId, ct))
+                .Where(f => f.AmountRemaining > 0
+                            && !f.IsLegal
+                            && f.AmountRemaining >= (double)minRemainingInclusive
+                            && f.AmountRemaining < (double)maxRemainingExclusive);
+            return facts
+                .Select(f => ToCustomerRow(FollowerCustomerRatingCalculator.Evaluate(f, nowLocal.Date)))
+                .OrderBy(r => r.AmountRemaining)
+                .ThenBy(r => r.CustomerName)
+                .ToList();
+        }
     }
 
     private static FollowerListStatsCustomerRow ToCustomerRow(FollowerCustomerRatingResult r) => new()
@@ -380,8 +555,30 @@ WHERE c.DelegateID = @ListId
     private static async Task<List<FollowerCustomerRatingFacts>> LoadRatingFactsAsync(
         SqlConnection c, int listId, CancellationToken ct)
     {
-        // Prefer the same fact shape as BE_Company RatingDataSource when views exist.
+        // Fast path: View_Customers. Slow OUTER APPLY only if the view path fails.
         try
+        {
+            var rows = await c.QueryAsync<dynamic>(new CommandDefinition(@"
+SELECT
+    c.CustomerID AS CustomerId,
+    c.DelegateID AS DelegateId,
+    ISNULL(vc.CustomerName, c.CustomerName) AS CustomerName,
+    ISNULL(vc.PhoneNumber, c.PhoneNumber) AS PhoneNumber,
+    CAST(ISNULL(c.IsLegal, 0) AS bit) AS IsLegal,
+    vc.DateSaleDevice AS DateSaleDevice,
+    vc.LastPaymentDate AS LastPaymentDate,
+    CAST(ISNULL(vc.AmountTotalSales, 0) AS FLOAT) AS AmountTotalSales,
+    CAST(ISNULL(vc.ReceiptsTotal, 0) AS FLOAT) AS ReceiptsTotal,
+    CAST(ISNULL(vc.AmountRemaining, 0) AS FLOAT) AS AmountRemaining,
+    CAST(ISNULL(vc.AmountDaySales, 0) AS FLOAT) AS AmountDaySales
+FROM dbo.Customers c
+LEFT JOIN dbo.View_Customers vc ON vc.CustomerID = c.CustomerID
+WHERE c.DelegateID = @ListId;",
+                new { ListId = listId },
+                cancellationToken: ct));
+            return MapFacts(rows);
+        }
+        catch
         {
             var rows = await c.QueryAsync<dynamic>(new CommandDefinition(@"
 SELECT
@@ -413,28 +610,6 @@ OUTER APPLY (
     WHERE V.CustomerID = C.CustomerID
 ) P
 WHERE C.DelegateID = @ListId;",
-                new { ListId = listId },
-                cancellationToken: ct));
-            return MapFacts(rows);
-        }
-        catch
-        {
-            var rows = await c.QueryAsync<dynamic>(new CommandDefinition(@"
-SELECT
-    c.CustomerID AS CustomerId,
-    c.DelegateID AS DelegateId,
-    ISNULL(vc.CustomerName, c.CustomerName) AS CustomerName,
-    ISNULL(vc.PhoneNumber, c.PhoneNumber) AS PhoneNumber,
-    CAST(ISNULL(c.IsLegal, 0) AS bit) AS IsLegal,
-    vc.DateSaleDevice AS DateSaleDevice,
-    vc.LastPaymentDate AS LastPaymentDate,
-    CAST(ISNULL(vc.AmountTotalSales, 0) AS FLOAT) AS AmountTotalSales,
-    CAST(ISNULL(vc.ReceiptsTotal, 0) AS FLOAT) AS ReceiptsTotal,
-    CAST(ISNULL(vc.AmountRemaining, 0) AS FLOAT) AS AmountRemaining,
-    CAST(ISNULL(vc.AmountDaySales, 0) AS FLOAT) AS AmountDaySales
-FROM dbo.Customers c
-LEFT JOIN dbo.View_Customers vc ON vc.CustomerID = c.CustomerID
-WHERE c.DelegateID = @ListId;",
                 new { ListId = listId },
                 cancellationToken: ct));
             return MapFacts(rows);

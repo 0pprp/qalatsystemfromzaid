@@ -1,10 +1,10 @@
 <script setup>
-import { getAuthHeaders } from '@/services/tokenService' // تأكد من استيراد المكونات حسب المكتبة المستخدمة
-import axios from 'axios'
-import { computed, onMounted, ref } from 'vue'
+import { getAuthHeaders } from '@/services/tokenService'; // تأكد من استيراد المكونات حسب المكتبة المستخدمة
+import axios from 'axios';
+import { computed, onMounted, ref } from 'vue';
 
-import ModernStatCard from "@/components/ModernStatCard.vue"
-import * as XLSX from 'xlsx'
+import ModernStatCard from "@/components/ModernStatCard.vue";
+import * as XLSX from 'xlsx';
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -34,6 +34,23 @@ const formattedNumber = num => {
 const formattedDate = date =>
   date ? new Date(date).toLocaleDateString('en-CA') : 'لا يوجد'
 
+function dayOffsetYmd(offset) {
+  const d = new Date()
+  d.setDate(d.getDate() - offset)
+
+  return d.toLocaleDateString('en-CA')
+}
+
+function sumAmountCols(rows, fromIdx, toIdx) {
+  let sum = 0
+  for (const row of rows) {
+    for (let i = fromIdx; i <= toIdx; i++)
+      sum += Number(row[`amount${i}`]) || 0
+  }
+
+  return sum
+}
+
 // تعريف أعمدة الجدول لجميع الحقول المطلوبة (أسماء الحقول بأول حرف صغير)
 const headers = [
   { title: 'اسم العميل', key: 'customerName' },
@@ -55,7 +72,80 @@ for (let i = 1; i <= 30; i++) {
   headers.push({ title: formattedDate(new Date(new Date() - i * 24 * 60 * 60 * 1000)), key: `amount${i}` })
 }
 
+const periodPayments = ref([])
+
+const periodTotals = computed(() => {
+  const rows = periodPayments.value
+  const toYmd = value => {
+    if (!value) return ''
+    if (typeof value === 'string') {
+      const m = value.match(/^(\d{4}-\d{2}-\d{2})/)
+      if (m) return m[1]
+    }
+    const d = new Date(value)
+
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-CA')
+  }
+  const today = dayOffsetYmd(0)
+  const weekStart = dayOffsetYmd(6)
+  const monthStart = `${today.slice(0, 7)}-01`
+  let daily = 0
+  let weekly = 0
+  let monthly = 0
+  for (const row of rows) {
+    const ymd = toYmd(row.paymentDate)
+    if (!ymd) continue
+    const amount = Number(row.amountDenar) || 0
+    if (ymd === today) daily += amount
+    if (ymd >= weekStart && ymd <= today) weekly += amount
+    if (ymd >= monthStart && ymd <= today) monthly += amount
+  }
+
+  if (!rows.length && monthPaymentsData.value.length) {
+    daily = sumAmountCols(monthPaymentsData.value, 1, 1)
+    weekly = sumAmountCols(monthPaymentsData.value, 1, 7)
+    monthly = sumAmountCols(monthPaymentsData.value, 1, 30)
+  }
+
+  return { daily, weekly, monthly }
+})
+
 const totals = computed(() => [
+  {
+    icon: 'tabler-calendar-event',
+    value: formattedDate(dayOffsetYmd(30)),
+    title: 'من تاريخ',
+    color: 'primary',
+    gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+  },
+  {
+    icon: 'tabler-calendar-check',
+    value: formattedDate(dayOffsetYmd(1)),
+    title: 'إلى تاريخ',
+    color: 'primary',
+    gradient: 'linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%)',
+  },
+  {
+    icon: 'tabler-calendar-stats',
+    value: formattedNumber(periodTotals.value.daily),
+    title: 'تسديدات يومية',
+    color: 'info',
+    gradient: 'linear-gradient(135deg, #36D1DC 0%, #5B86E5 100%)',
+  },
+  {
+    icon: 'tabler-calendar-week',
+    value: formattedNumber(periodTotals.value.weekly),
+    title: 'تسديدات أسبوعية',
+    color: 'warning',
+    gradient: 'linear-gradient(135deg, #F7971E 0%, #FFD200 100%)',
+  },
+  {
+    icon: 'tabler-calendar-month',
+    value: formattedNumber(periodTotals.value.monthly),
+    title: 'تسديدات شهرية',
+    color: 'success',
+    gradient: 'linear-gradient(135deg, #00b09b 0%, #96c93d 100%)',
+  },
   {
     icon: 'tabler-user', // عدد العملاء
     value: monthPaymentsData.value.length,
@@ -130,9 +220,19 @@ async function fetchMonthPayments() {
     const authHeader = getAuthHeaders()
     const delegateID = filters.value.delegateID || 0
     const showType = filters.value.showType || 'الجميع'
-    const response = await axios.get(`${apiUrl}Customers/Customers_GetMonthReceipt/${delegateID}&&${showType}`, { headers: authHeader })
+    const from = `${dayOffsetYmd(0).slice(0, 7)}-01`
+    const to = dayOffsetYmd(0)
 
-    monthPaymentsData.value = response.data
+    const [monthRes, payRes] = await Promise.all([
+      axios.get(`${apiUrl}Customers/Customers_GetMonthReceipt/${delegateID}&&${showType}`, { headers: authHeader }),
+      axios.get(
+        `${apiUrl}CustomersPayments/CustomersPayments_GetAll/${from}&&${to}&&${delegateID}&&null`,
+        { headers: authHeader },
+      ).catch(() => ({ data: [] })),
+    ])
+
+    monthPaymentsData.value = monthRes.data
+    periodPayments.value = Array.isArray(payRes.data) ? payRes.data : []
   } catch (error) {
     console.error(error)
   } finally {
@@ -176,9 +276,28 @@ function exportToExcel() {
 onMounted(() => {
   fetchDelegates()
 
-  // يمكنك استدعاء fetchMonthPayments تلقائيًا عند الدخول إذا رغبت
   // fetchMonthPayments()
 })
+
+const colSlots = {
+  customerName: 'item.customerName',
+  phoneNumber: 'item.phoneNumber',
+  delegateName: 'item.delegateName',
+  itemsNames: 'item.itemsNames',
+  dateSaleDevice: 'item.dateSaleDevice',
+  numberOfDayDevice: 'item.numberOfDayDevice',
+  amountTotalSales: 'item.amountTotalSales',
+  amountDaySales: 'item.amountDaySales',
+  receiptsTotal: 'item.receiptsTotal',
+  amountRemaining: 'item.amountRemaining',
+  receiptRateDevice: 'item.receiptRateDevice',
+  countReceiptDevice: 'item.countReceiptDevice',
+  lastPaymentDate: 'item.lastPaymentDate',
+}
+
+for (let i = 1; i <= 30; i++) {
+  colSlots[`amount${i}`] = `item.amount${i}`
+}
 </script>
 
 <template>
@@ -265,67 +384,67 @@ onMounted(() => {
           class="text-no-wrap custom-data-table"
         >
           <!-- لكل حقل قالب بعرض 200px -->
-          <template #item.customerName="{ item }">
+          <template v-slot:[colSlots.customerName]="{ item }">
             <div>
               {{ item.customerName }}
             </div>
           </template>
-          <template #item.phoneNumber="{ item }">
+          <template v-slot:[colSlots.phoneNumber]="{ item }">
             <div>
               {{ item.phoneNumber || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.delegateName="{ item }">
+          <template v-slot:[colSlots.delegateName]="{ item }">
             <div>
               {{ item.delegateName || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.itemsNames="{ item }">
+          <template v-slot:[colSlots.itemsNames]="{ item }">
             <div>
               {{ item.itemsNames || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.dateSaleDevice="{ item }">
+          <template v-slot:[colSlots.dateSaleDevice]="{ item }">
             <div>
               {{ item.dateSaleDevice ? formattedDate(item.dateSaleDevice) : 'لا يوجد' }}
             </div>
           </template>
-          <template #item.numberOfDayDevice="{ item }">
+          <template v-slot:[colSlots.numberOfDayDevice]="{ item }">
             <div>
               {{ item.numberOfDayDevice || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.amountTotalSales="{ item }">
+          <template v-slot:[colSlots.amountTotalSales]="{ item }">
             <div class="premium-amount amt-total-sales">
               {{ formattedNumber(item.amountTotalSales) }}
             </div>
           </template>
-          <template #item.amountDaySales="{ item }">
+          <template v-slot:[colSlots.amountDaySales]="{ item }">
             <div class="premium-amount amt-installment">
               {{ formattedNumber(item.amountDaySales) }}
             </div>
           </template>
-          <template #item.receiptsTotal="{ item }">
+          <template v-slot:[colSlots.receiptsTotal]="{ item }">
             <div class="premium-amount amt-total-receipts">
               {{ formattedNumber(item.receiptsTotal) }}
             </div>
           </template>
-          <template #item.amountRemaining="{ item }">
+          <template v-slot:[colSlots.amountRemaining]="{ item }">
             <div class="premium-amount amt-remaining">
               {{ formattedNumber(item.amountRemaining) }}
             </div>
           </template>
-          <template #item.receiptRateDevice="{ item }">
+          <template v-slot:[colSlots.receiptRateDevice]="{ item }">
             <div>
               {{ item.receiptRateDevice || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.countReceiptDevice="{ item }">
+          <template v-slot:[colSlots.countReceiptDevice]="{ item }">
             <div>
               {{ item.countReceiptDevice || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.lastPaymentDate="{ item }">
+          <template v-slot:[colSlots.lastPaymentDate]="{ item }">
             <div>
               {{ item.lastPaymentDate ? formattedDate(item.lastPaymentDate) : 'لا يوجد' }}
             </div>
@@ -334,7 +453,7 @@ onMounted(() => {
           <template
             v-for="i in 30"
             :key="i"
-            #[`item.amount${i}`]="{ item }"
+            v-slot:[colSlots[`amount${i}`]]="{ item }"
           >
             <div class="premium-amount amt-total-receipts">
               {{ formattedNumber(item[`amount${i}`] !== undefined ? item[`amount${i}`] : 0) }}

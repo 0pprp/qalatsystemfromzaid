@@ -29,7 +29,7 @@ for line in env.splitlines():
     mf_pw=line.split('=',1)[1]
     break
 if not mf_pw:
-  mf_pw='Mf@12345'
+  mf_pw=os.environ.get('MF_PASSWORD','')
 
 def post(path, body, token=None):
     headers={'Content-Type':'application/json'}

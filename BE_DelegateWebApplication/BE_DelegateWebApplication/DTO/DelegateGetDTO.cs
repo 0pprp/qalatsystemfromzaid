@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations.Schema;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.ComponentModel.DataAnnotations;
 
 namespace BE_DelegateWebApplication.DTO
@@ -18,5 +18,7 @@ namespace BE_DelegateWebApplication.DTO
         public string? ReceiptName { get; set; }
         public bool? UpdateReceipt { get; set; }
         public bool? DeleteReceipt { get; set; }
+        /// <summary>When true, delegate collection login/session is locked (follower collects).</summary>
+        public bool? FollowerCollectionEnabled { get; set; }
     }
 }

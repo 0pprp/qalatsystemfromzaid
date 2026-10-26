@@ -1,7 +1,12 @@
-﻿using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 
 namespace BE_Company.Services
 {
+    /// <summary>
+    /// Copies identity claims into HttpContext.Items for legacy controllers.
+    /// Only trusts an authenticated ClaimsPrincipal (JWT already validated by the auth middleware).
+    /// Never parses unverified JWT payloads.
+    /// </summary>
     public class UserLevelMiddleware
     {
         private readonly RequestDelegate _next;
@@ -15,40 +20,29 @@ namespace BE_Company.Services
         {
             try
             {
-                if (context.Request.Headers.TryGetValue("Authorization", out var authHeader))
+                var user = context.User;
+                if (user?.Identity?.IsAuthenticated == true)
                 {
-                    var bearerToken = authHeader.ToString().Replace("Bearer ", "").Trim();
-                    if (!string.IsNullOrEmpty(bearerToken))
-                    {
-                        var handler = new JwtSecurityTokenHandler();
-                        var token = handler.ReadJwtToken(bearerToken);
-                        var UserID = token.Claims.FirstOrDefault(c => c.Type == "UserID")?.Value;
-                        var UserType = token.Claims.FirstOrDefault(c => c.Type == "UserType")?.Value;
-                        var VisitorID = token.Claims.FirstOrDefault(c => c.Type == "VisitorID")?.Value;
-
-                        if (!string.IsNullOrEmpty(UserID))
-                        {
-                            context.Items["UserID"] = UserID;
-                        }
-
-                        if (!string.IsNullOrEmpty(UserType))
-                        {
-                            context.Items["UserType"] = UserType;
-                        }
-
-                        if (!string.IsNullOrEmpty(VisitorID))
-                        {
-                            context.Items["VisitorID"] = VisitorID;
-                        }
-                    }
+                    CopyClaim(context, user, "UserID");
+                    CopyClaim(context, user, "UserType");
+                    CopyClaim(context, user, "VisitorID");
                 }
             }
             catch
             {
-                // Proceed even if token parsing fails; [Authorize] will handle it
+                // Proceed; [Authorize] and downstream checks remain authoritative.
             }
-            await _next(context);
 
+            await _next(context);
+        }
+
+        private static void CopyClaim(HttpContext context, ClaimsPrincipal user, string claimType)
+        {
+            var value = user.FindFirst(claimType)?.Value;
+            if (!string.IsNullOrEmpty(value))
+            {
+                context.Items[claimType] = value;
+            }
         }
     }
 }

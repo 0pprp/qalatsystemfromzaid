@@ -28,10 +28,11 @@ watch([
 // !SECTION
 
 const cityName = ref(localStorage.getItem('CityName'))
-const { canViewDecisions } = useUserRole()
+const { canViewDecisions, isAdmin } = useUserRole()
 
 const navItems = computed(() => {
   return allNavItems.filter(item => {
+    if (item.meta?.adminOnly && !isAdmin.value) return false
     if (item.title === 'القرارات' && !canViewDecisions.value) return false
 
     return true

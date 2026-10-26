@@ -119,5 +119,38 @@ namespace BE_Company.Sales.Services
                 ? "تطابق اسم الأب والجد"
                 : string.Empty;
         }
+
+        /// <summary>
+        /// Son↔father: A's tokens[1],[2] equal B's tokens[0],[1] (or reverse).
+        /// Example: request «حسين أحمد محمد» matches customer «أحمد محمد علي».
+        /// The side with father+grandfather pair needs ≥3 tokens; the other ≥2.
+        /// </summary>
+        public static bool IsSonFatherMatch(string? queryName, string? candidateName)
+        {
+            var q = MatchingTokens(queryName);
+            var c = MatchingTokens(candidateName);
+            return IsSonFatherTokenMatch(q, c) || IsSonFatherTokenMatch(c, q);
+        }
+
+        /// <summary>True when <paramref name="longer"/>[1],[2] equals <paramref name="shorter"/>[0],[1].</summary>
+        private static bool IsSonFatherTokenMatch(IReadOnlyList<string> longer, IReadOnlyList<string> shorter)
+        {
+            if (longer.Count < 3 || shorter.Count < 2)
+                return false;
+            if (longer[1].Length == 0 || longer[2].Length == 0)
+                return false;
+            if (shorter[0].Length == 0 || shorter[1].Length == 0)
+                return false;
+
+            return string.Equals(longer[1], shorter[0], StringComparison.Ordinal)
+                   && string.Equals(longer[2], shorter[1], StringComparison.Ordinal);
+        }
+
+        public static string SonFatherMatchReason(string? queryName, string? candidateName)
+        {
+            return IsSonFatherMatch(queryName, candidateName)
+                ? "تطابق ابن مع أب"
+                : string.Empty;
+        }
     }
 }

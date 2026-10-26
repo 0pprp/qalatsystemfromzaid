@@ -206,6 +206,69 @@ public sealed class InMemorySalesExceptionStore : ISalesExceptionStore
         }
     }
 
+    public Task<PagedResult<SalesExceptionRequest>> QueryWrongSalesForBranchManagerAsync(
+        string? cityValue,
+        bool reviewed,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var (normalizedPage, normalizedSize) = PagingDefaults.Normalize(page, pageSize);
+            var filtered = FilterCity(_rows, cityValue)
+                .Where(r => IsWrongSaleReason(r.Reason))
+                .Where(r => reviewed
+                    ? r.BranchManagerReviewedAtUtc is not null
+                    : r.BranchManagerReviewedAtUtc is null)
+                .OrderByDescending(r => reviewed
+                    ? r.BranchManagerReviewedAtUtc
+                    : r.RequestedAtUtc)
+                .ThenByDescending(r => r.Id)
+                .ToList();
+
+            var items = filtered
+                .Skip((normalizedPage - 1) * normalizedSize)
+                .Take(normalizedSize)
+                .Select(r => r.Clone())
+                .ToList();
+
+            return Task.FromResult(new PagedResult<SalesExceptionRequest>
+            {
+                Items = items,
+                Page = normalizedPage,
+                PageSize = normalizedSize,
+                TotalCount = filtered.Count
+            });
+        }
+    }
+
+    public Task<SalesExceptionRequest?> TryMarkBranchManagerReviewedAsync(
+        Guid id,
+        string reviewerUserName,
+        string reviewerDisplayName,
+        string reviewNote,
+        DateTime reviewedAtUtc,
+        CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var row = _rows.FirstOrDefault(r => r.Id == id);
+            if (row is null
+                || row.BranchManagerReviewedAtUtc is not null
+                || !IsWrongSaleReason(row.Reason))
+            {
+                return Task.FromResult<SalesExceptionRequest?>(null);
+            }
+
+            row.BranchManagerReviewedAtUtc = reviewedAtUtc;
+            row.BranchManagerReviewerUserName = reviewerUserName;
+            row.BranchManagerReviewerDisplayName = reviewerDisplayName;
+            row.BranchManagerReviewNote = reviewNote;
+            return Task.FromResult<SalesExceptionRequest?>(row.Clone());
+        }
+    }
+
     private static IEnumerable<SalesExceptionRequest> FilterCity(
         IEnumerable<SalesExceptionRequest> rows,
         string? cityValue)

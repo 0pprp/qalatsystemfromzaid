@@ -4,6 +4,7 @@ import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/services/follower_media_urls.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
+import 'package:follower_application/utils/display_name.dart';
 import 'package:follower_application/utils/iraq_datetime.dart';
 import 'package:follower_application/utils/thousand_separator_formatter.dart';
 import 'package:flutter/material.dart';
@@ -205,7 +206,11 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
                       children: [
                         Text(
                           _pick(p!, ['customerName', 'CustomerName']) ?? '',
-                          style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 18),
+                          style: const TextStyle(
+                              fontFamily: 'Cairo',
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                              height: 1.35),
                         ),
                         _phoneLine(_pick(p, ['phoneNumber', 'PhoneNumber'])),
                         _line('العنوان', _pick(p, ['address', 'Address'])),

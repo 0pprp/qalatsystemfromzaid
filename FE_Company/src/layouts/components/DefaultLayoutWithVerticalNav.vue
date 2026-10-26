@@ -43,7 +43,7 @@ function findByRouteName(items, name) {
   return null
 }
 
-const { canManageUsers, canBackup, canViewDecisions, isSalesManager, isDirector, canViewFollowerGps, isAdmin } = useUserRole()
+const { canManageUsers, canBackup, canViewDecisions, isSalesManager, isDirector, isMonitor, canViewFollowerGps, isAdmin } = useUserRole()
 useSalesRequestUnread()
 
 const ratingsNavItem = {
@@ -58,26 +58,65 @@ const tutorialVideoNavItem = {
   icon: { icon: 'tabler-video', size: '25' },
 }
 
+/** Director sidebar tab — injected explicitly so it always appears after التقييمات. */
+const directorSummaryNavItem = {
+  title: 'الملخص',
+  to: { name: 'director-summary' },
+  icon: { icon: 'tabler-table', size: '25' },
+}
+
 const navItems = computed(() => {
   const items = allNavItems.filter(item => {
+    if (isMonitor.value)
+      return item.title === 'التقييمات'
+        || item.title === 'متابعة المندوبين'
+        || item.title === 'متابعة المبيعات'
+        || item.title === 'عمل المتابعين'
+        || item.title === 'إدارة المبيعات'
+        || item.title === 'أسماء قانونية'
+        || item.title === 'لوحة الأسعار'
+
     if (isDirector.value)
-      return item.title === 'التقييمات' || item.title === 'طلبات البيع'
+      return item.title === 'التقييمات'
+        || item.title === 'الملخص'
+        || item.title === 'ملخص'
+        || item.title === 'متابعة المندوبين'
+        || item.title === 'متابعة المبيعات'
+        || item.title === 'عمل المتابعين'
+        || item.title === 'طلبات البيع'
+        || item.title === 'الفيديوهات التعليمية'
+        || item.title === 'الإعلانات'
+        || item.title === 'المهام'
+        || item.title === 'مهام اللجنة'
+        || item.title === 'ملاحظات التطبيقات'
+        || item.title === 'التنازلات'
 
     if (isSalesManager.value)
       return item.title === 'إدارة المبيعات'
 
     if (item.title === 'الدعم الفني') return false
     if (item.title === 'طلبات البيع') return false // يظهر للمدير فقط؛ مدير المبيعات عنده داخل إدارة المبيعات
+    if (item.title === 'الفيديوهات التعليمية') return false // يظهر للمدير فقط
+    if (item.title === 'الإعلانات') return false // يظهر للمدير فقط
+    if (item.title === 'المهام') return false // يظهر للمدير فقط
+    if (item.title === 'مهام اللجنة') return false // يظهر للمدير فقط
+    if (item.title === 'ملاحظات التطبيقات') return false // يظهر للمدير فقط
+    if (item.title === 'التنازلات') return false // يظهر للمدير فقط
     if (item.title === 'مشاهدة الفيديو التعليمي') return false // يُحقن للمحاسب الرئيسي فقط أدناه
 
     if (item.title === 'المستخدمين' && !canManageUsers.value) return false
     if (item.title === 'النسخ الاحتياطي' && !canBackup.value) return false
     if (item.title === 'القرارات' && !canViewDecisions.value) return false
-    if (item.title === 'إدارة المبيعات' && !isSalesManager.value) return false
-    // المحاسب: نحقن رابط التقييمات أدناه — نخفي عنصر المدير الخام
-    if (item.title === 'التقييمات' && !isDirector.value)
+    if (item.title === 'إدارة المبيعات' && !isSalesManager.value && !isMonitor.value) return false
+    // المحاسب: نحقن رابط التقييمات أدناه — نخفي عنصر المدير الخام (المراقب يراه أعلاه)
+    if (item.title === 'التقييمات' && !isDirector.value && !isMonitor.value)
+      return false
+    if ((item.title === 'ملخص' || item.title === 'الملخص') && !isDirector.value)
       return false
     if (item.title === 'متابعة المتابعين' && !canViewFollowerGps.value) return false
+    if (item.title === 'متابعة المندوبين' && !isDirector.value && !isMonitor.value) return false
+    if (item.title === 'متابعة المبيعات' && !isDirector.value && !isMonitor.value) return false
+    if (item.title === 'لوحة الأسعار' && !isAdmin.value && !isMonitor.value) return false
 
     return true
   }).map(item => {
@@ -85,6 +124,14 @@ const navItems = computed(() => {
       return {
         ...item,
         children: item.children.filter(c => c.title !== 'لوحة ضعفاء التسديد'),
+      }
+    }
+
+    // ملخص المبيعات: المراقب فقط داخل إدارة المبيعات
+    if (item.title === 'إدارة المبيعات' && item.children && !isMonitor.value) {
+      return {
+        ...item,
+        children: item.children.filter(c => c.title !== 'ملخص المبيعات'),
       }
     }
 
@@ -97,11 +144,49 @@ const navItems = computed(() => {
     }
   })
 
+  // المدير: ثبّت تبويب الملخص مباشرة بعد التقييمات (اسم التبويب في الشريط الجانبي)
+  if (isDirector.value) {
+    const hasSummary = items.some(i => i.title === 'الملخص' || i.title === 'ملخص' || i?.to?.name === 'director-summary')
+    if (!hasSummary) {
+      const ratingsIdx = items.findIndex(i => i.title === 'التقييمات')
+      const insertAt = ratingsIdx >= 0 ? ratingsIdx + 1 : 0
+      items.splice(insertAt, 0, { ...directorSummaryNavItem })
+    }
+    else {
+      // وحدّ الاسم الظاهر إلى «الملخص»
+      for (const it of items) {
+        if (it?.to?.name === 'director-summary' || it.title === 'ملخص')
+          it.title = 'الملخص'
+      }
+    }
+  }
+
   // المحاسب الرئيسي: ثبّت التقييمات مباشرة بعد الرئيسية + زر الفيديو التعليمي
+  // وحوّل «المبيعات» إلى مجموعة فيها قائمة المبيعات + المبيعات الخاطئة
   if (isAdmin.value) {
     const homeIdx = items.findIndex(i => i.title === 'الرئيسية')
     const insertAt = homeIdx >= 0 ? homeIdx + 1 : 0
     items.splice(insertAt, 0, { ...ratingsNavItem }, { ...tutorialVideoNavItem })
+
+    const salesIdx = items.findIndex(i => i.title === 'المبيعات')
+    if (salesIdx >= 0) {
+      items[salesIdx] = {
+        title: 'المبيعات',
+        icon: { icon: 'tabler-cash', size: '25' },
+        children: [
+          {
+            title: 'قائمة المبيعات',
+            to: { name: 'sales-list' },
+            icon: { icon: 'tabler-list', size: '22' },
+          },
+          {
+            title: 'المبيعات الخاطئة',
+            to: { name: 'accountant-wrong-sales' },
+            icon: { icon: 'tabler-alert-triangle', size: '22' },
+          },
+        ],
+      }
+    }
   }
 
   try {
@@ -176,17 +261,17 @@ const cityName = ref(localStorage.getItem('CityName'))
 
     <AppLoadingIndicator ref="refLoadingIndicator" />
 
-    <!-- 👉 Pages: keep director ratings alive so رجوع does not remount/reload -->
+    <!-- 👉 Pages: keepAlive pages use stable route.name so query (tab) changes do not remount -->
     <RouterView v-slot="{ Component, route: viewRoute }">
       <Suspense
         :timeout="0"
         @fallback="isFallbackStateActive = true"
         @resolve="isFallbackStateActive = false"
       >
-        <KeepAlive :include="['DirectorRatings']">
+        <KeepAlive :include="['DirectorRatings', 'AccountantRatings', 'DirectorFollowerWork', 'DirectorDelegateFollowup', 'DirectorDelegateFollowupCustomers']">
           <Component
             :is="Component"
-            :key="viewRoute.meta?.keepAlive ? 'DirectorRatings' : viewRoute.fullPath"
+            :key="viewRoute.meta?.keepAlive ? String(viewRoute.name || 'keep') : viewRoute.fullPath"
           />
         </KeepAlive>
       </Suspense>

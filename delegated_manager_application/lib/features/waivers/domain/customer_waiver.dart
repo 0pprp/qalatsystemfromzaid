@@ -4,6 +4,7 @@ import 'package:delegated_manager_application/features/exceptions/domain/sales_e
 
 class WaiverStatuses {
   static const pending = 'Pending';
+  static const awaitingAccountant = 'AwaitingAccountant';
   static const approved = 'Approved';
   static const rejected = 'Rejected';
 
@@ -11,6 +12,8 @@ class WaiverStatuses {
     switch ((status ?? '').trim()) {
       case pending:
         return 'قيد الانتظار';
+      case awaitingAccountant:
+        return 'بانتظار المحاسب';
       case approved:
         return 'موافق عليه';
       case rejected:

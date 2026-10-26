@@ -49,8 +49,13 @@ public static class JwtConfiguration
                 ValidateLifetime = true,
                 ValidateIssuerSigningKey = true,
                 ClockSkew = TimeSpan.Zero,
-                IssuerSigningKeys = KeysHandler.GetAllKeys(configuration),
+                IssuerSigningKeys = KeysHandler.GetAllKeys(configuration).ToList(),
             };
+            if (!options.TokenValidationParameters.IssuerSigningKeys.Any())
+            {
+                throw new InvalidOperationException(
+                    "Authentication:Schemes:Bearer:SigningKeys must be configured. Refusing to start without JWT keys.");
+            }
         });
     }
 }

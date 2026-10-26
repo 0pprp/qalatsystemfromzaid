@@ -133,7 +133,7 @@ public sealed class MainFollowerCustomerProfileTests
             Task.FromResult<(int, object?)>((501, null));
         public Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct) =>
             Task.FromResult<(int, object?)>((501, null));
-        public Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct) =>
+        public Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct, string? actorRole = null) =>
             Task.FromResult<(int, object?)>((501, null));
         public Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, string? cityValue, CancellationToken ct) =>
             Task.FromResult<(int, object?)>((501, null));

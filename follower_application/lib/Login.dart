@@ -2,6 +2,7 @@ import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/AsyncIdChecker.dart';
 import 'package:follower_application/LocalLabApi.dart';
 import 'package:follower_application/config/app_env.dart';
+import 'package:follower_application/services/follower_warm_cache.dart';
 import 'package:follower_application/tracking/shift_gate_coordinator.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:flutter/material.dart';
@@ -233,7 +234,7 @@ class _LoginState extends State<Login> {
       if (response.statusCode == 403) {
         _showErrorDialog(serverMessage.isNotEmpty
             ? serverMessage
-            : 'هذا الحساب غير مخول لتطبيق المتابع');
+            : 'هذا الحساب غير مخول لتطبيق مسؤول اللجنة');
         return;
       }
 
@@ -268,7 +269,7 @@ class _LoginState extends State<Login> {
           if (listsRes.statusCode == 401 || listsRes.statusCode == 403) {
             _showErrorDialog(serverMessage.isNotEmpty
                 ? serverMessage
-                : 'هذا الحساب غير مخول لتطبيق المتابع');
+                : 'هذا الحساب غير مخول لتطبيق مسؤول اللجنة');
             return;
           }
         } catch (_) {
@@ -284,6 +285,9 @@ class _LoginState extends State<Login> {
           cityId: data['cityId']?.toString(),
           cityName: data['cityName']?.toString() ?? _selectedGovernorate,
         );
+        // Index every major endpoint immediately so pages open from cache.
+        // ignore: unawaited_futures
+        FollowerWarmCache.warmAll(force: true);
         if (!mounted) return;
         final dest =
             await ShiftGateCoordinator().resolve(attachIfActive: true);
@@ -407,7 +411,7 @@ class _LoginState extends State<Login> {
                         ),
                         const SizedBox(height: 16),
                         const Text(
-                          'تطبيق المتابع',
+                          'تطبيق مسؤول اللجنة',
                           style: TextStyle(
                             fontFamily: 'Cairo',
                             fontSize: 26,

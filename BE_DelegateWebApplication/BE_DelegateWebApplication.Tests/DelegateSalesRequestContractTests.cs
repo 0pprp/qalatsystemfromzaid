@@ -31,8 +31,18 @@ namespace BE_DelegateWebApplication.Tests
         {
             const string clientProvince = "محافظة مزورة";
             const string serverProvince = "النجف";
-            var used = serverProvince;
+            var used = BE_DelegateWebApplication.Services.FollowerAuthorization
+                .ResolveProvinceWithListFallback(serverProvince, "البصرة", clientProvince);
+            Assert.Equal(serverProvince, used);
             Assert.NotEqual(clientProvince, used);
+        }
+
+        [Fact]
+        public void Province_FallsBackToAssignedListCity_WhenFollowerCityMissing()
+        {
+            var used = BE_DelegateWebApplication.Services.FollowerAuthorization
+                .ResolveProvinceWithListFallback(null, "كربلاء", "محافظة مزورة");
+            Assert.Equal("كربلاء", used);
         }
 
         [Fact]

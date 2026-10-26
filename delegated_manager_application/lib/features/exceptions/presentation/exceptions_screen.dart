@@ -15,10 +15,11 @@ enum ExceptionInboxMode {
   wrongSale,
 }
 
-/// WrongSale mailbox chip: unread vs read (everything stays stored).
+/// WrongSale mailbox chip: unread / read / BM-reviewed.
 enum WrongSaleMailboxFilter {
   unread,
   read,
+  reviewed,
 }
 
 /// Decision queue over `delegated-manager/exceptions`.
@@ -97,9 +98,13 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
     Iterable<ExceptionSummary> rows = _items.where((item) =>
         _isWrongSaleTab ? item.isWrongSale : !item.isWrongSale);
     if (_isWrongSaleTab) {
-      rows = _wrongSaleFilter == WrongSaleMailboxFilter.unread
-          ? rows.where((item) => item.isUnread)
-          : rows.where((item) => !item.isUnread);
+      rows = switch (_wrongSaleFilter) {
+        WrongSaleMailboxFilter.unread => rows.where((item) => item.isUnread),
+        WrongSaleMailboxFilter.read =>
+          rows.where((item) => !item.isUnread && !item.isBranchManagerReviewed),
+        WrongSaleMailboxFilter.reviewed =>
+          rows.where((item) => item.isBranchManagerReviewed),
+      };
     }
     final query = _searchController.text.trim();
     if (query.isEmpty) return rows.toList();
@@ -237,7 +242,7 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
                   children: [
                     Expanded(
                       child: _WrongSaleFilterChip(
-                        label: 'المبيعات الخاطئة غير المقروءة',
+                        label: 'غير المقروءة',
                         selected: _wrongSaleFilter ==
                             WrongSaleMailboxFilter.unread,
                         color: AppColors.primary,
@@ -254,7 +259,7 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
                     const SizedBox(width: AppSpacing.xs),
                     Expanded(
                       child: _WrongSaleFilterChip(
-                        label: 'المبيعات الخاطئة المقروءة',
+                        label: 'تمت رؤيتها',
                         selected:
                             _wrongSaleFilter == WrongSaleMailboxFilter.read,
                         color: Colors.orange.shade800,
@@ -264,6 +269,23 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
                           }
                           setState(() =>
                               _wrongSaleFilter = WrongSaleMailboxFilter.read);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    Expanded(
+                      child: _WrongSaleFilterChip(
+                        label: 'تمت مراجعتها',
+                        selected: _wrongSaleFilter ==
+                            WrongSaleMailboxFilter.reviewed,
+                        color: Colors.teal.shade700,
+                        onTap: () {
+                          if (_wrongSaleFilter ==
+                              WrongSaleMailboxFilter.reviewed) {
+                            return;
+                          }
+                          setState(() => _wrongSaleFilter =
+                              WrongSaleMailboxFilter.reviewed);
                         },
                       ),
                     ),
@@ -286,9 +308,14 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
     if (items.isEmpty) {
       return EmptyView(
         message: _isWrongSaleTab
-            ? (_wrongSaleFilter == WrongSaleMailboxFilter.unread
-                ? 'لا توجد مبيعات خاطئة غير مقروءة'
-                : 'لا توجد مبيعات خاطئة مقروءة')
+            ? switch (_wrongSaleFilter) {
+                WrongSaleMailboxFilter.unread =>
+                  'لا توجد مبيعات خاطئة غير مقروءة',
+                WrongSaleMailboxFilter.read =>
+                  'لا توجد مبيعات خاطئة تمت رؤيتها',
+                WrongSaleMailboxFilter.reviewed =>
+                  'لا توجد مبيعات خاطئة تمت مراجعتها',
+              }
             : 'لا توجد طلبات استثناء ${ExceptionStatuses.arabic(_status)}',
         icon: _isWrongSaleTab
             ? Icons.report_gmailerrorred_outlined
@@ -311,7 +338,13 @@ class ExceptionsScreenState extends State<ExceptionsScreen> {
           final item = items[index];
           return Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-            child: _ExceptionCard(item: item, onTap: () => _open(item)),
+            child: _ExceptionCard(
+              item: item,
+              showReviewMeta:
+                  _isWrongSaleTab &&
+                  _wrongSaleFilter == WrongSaleMailboxFilter.reviewed,
+              onTap: () => _open(item),
+            ),
           );
         },
       ),
@@ -367,16 +400,21 @@ class _WrongSaleFilterChip extends StatelessWidget {
 }
 
 class _ExceptionCard extends StatelessWidget {
-  const _ExceptionCard({required this.item, required this.onTap});
+  const _ExceptionCard({
+    required this.item,
+    required this.onTap,
+    this.showReviewMeta = false,
+  });
 
   final ExceptionSummary item;
   final VoidCallback onTap;
+  final bool showReviewMeta;
 
   @override
   Widget build(BuildContext context) {
     final unread = item.isUnread;
     return Card(
-      color: unread ? AppColors.unread : Colors.white,
+      color: unread && !showReviewMeta ? AppColors.unread : Colors.white,
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md),
         onTap: onTap,
@@ -389,12 +427,19 @@ class _ExceptionCard extends StatelessWidget {
                 children: [
                   CircleAvatar(
                     radius: 16,
-                    backgroundColor:
-                        unread ? AppColors.primary : AppColors.line,
+                    backgroundColor: showReviewMeta
+                        ? Colors.teal.shade700
+                        : (unread ? AppColors.primary : AppColors.line),
                     child: Icon(
-                      unread ? Icons.mail_outline : Icons.drafts_outlined,
+                      showReviewMeta
+                          ? Icons.fact_check_outlined
+                          : (unread
+                              ? Icons.mail_outline
+                              : Icons.drafts_outlined),
                       size: 16,
-                      color: unread ? Colors.white : AppColors.muted,
+                      color: showReviewMeta || unread
+                          ? Colors.white
+                          : AppColors.muted,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -413,15 +458,18 @@ class _ExceptionCard extends StatelessWidget {
                   ),
                   if (item.isWrongSale) ...[
                     StatusChip(
-                      label: 'مبيع خاطئ',
-                      color: Colors.orange.shade800,
+                      label: showReviewMeta ? 'تمت المراجعة' : 'مبيع خاطئ',
+                      color: showReviewMeta
+                          ? Colors.teal.shade700
+                          : Colors.orange.shade800,
                     ),
                     const SizedBox(width: 6),
                   ],
-                  StatusChip(
-                    label: unread ? 'غير مقروء' : 'مقروء',
-                    color: unread ? AppColors.primary : AppColors.muted,
-                  ),
+                  if (!showReviewMeta)
+                    StatusChip(
+                      label: unread ? 'غير مقروء' : 'مقروء',
+                      color: unread ? AppColors.primary : AppColors.muted,
+                    ),
                   if (!item.isWrongSale) ...[
                     const SizedBox(width: 6),
                     StatusChip(
@@ -432,31 +480,54 @@ class _ExceptionCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: AppSpacing.xs),
-              Text(
-                item.isWrongSale
-                    ? 'إشعار اطلاع — مبيع خاطئ (بدون موافقة/رفض)'
-                    : 'طالب الاستثناء: ${item.requestingManagerDisplayName ?? '-'}',
-                style: const TextStyle(color: AppColors.muted, fontSize: 13),
-              ),
-              const SizedBox(height: 2),
-              Row(
-                children: [
-                  const Icon(Icons.place_outlined,
-                      size: 15, color: AppColors.muted),
-                  const SizedBox(width: 4),
+              if (showReviewMeta) ...[
+                Text(
+                  'راجعه: ${item.branchManagerReviewerDisplayName ?? '—'}',
+                  style: const TextStyle(fontSize: 13),
+                ),
+                if ((item.branchManagerReviewNote ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 4),
                   Text(
-                    item.cityName ?? 'غير محددة',
-                    style:
-                        const TextStyle(color: AppColors.muted, fontSize: 12),
-                  ),
-                  const Spacer(),
-                  Text(
-                    AppDate.relative(item.requestedAtUtc),
-                    style:
-                        const TextStyle(color: AppColors.muted, fontSize: 11),
+                    item.branchManagerReviewNote!,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, color: AppColors.text),
                   ),
                 ],
-              ),
+                const SizedBox(height: 4),
+                Text(
+                  AppDate.relative(
+                      item.branchManagerReviewedAtUtc ?? item.requestedAtUtc),
+                  style:
+                      const TextStyle(color: AppColors.muted, fontSize: 11),
+                ),
+              ] else ...[
+                Text(
+                  item.isWrongSale
+                      ? 'إشعار اطلاع — مبيع خاطئ (بدون موافقة/رفض)'
+                      : 'طالب الاستثناء: ${item.requestingManagerDisplayName ?? '-'}',
+                  style: const TextStyle(color: AppColors.muted, fontSize: 13),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    const Icon(Icons.place_outlined,
+                        size: 15, color: AppColors.muted),
+                    const SizedBox(width: 4),
+                    Text(
+                      item.cityName ?? 'غير محددة',
+                      style:
+                          const TextStyle(color: AppColors.muted, fontSize: 12),
+                    ),
+                    const Spacer(),
+                    Text(
+                      AppDate.relative(item.requestedAtUtc),
+                      style:
+                          const TextStyle(color: AppColors.muted, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

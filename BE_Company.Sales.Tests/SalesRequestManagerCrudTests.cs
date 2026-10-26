@@ -108,6 +108,25 @@ public class SalesRequestManagerCrudTests
     }
 
     [Fact]
+    public async Task Manager_Can_Update_Name_On_Completed_Request()
+    {
+        var (repo, svc, row, _) = await SeedAsync();
+        row.Status = SalesRequestStatuses.Completed;
+        row.ConvertedToSaleId = 501;
+        row.ExistingCustomerId = 9001;
+        await repo.UpdateAsync(row, default);
+
+        var updated = await svc.ManagerUpdateAsync(Manager(), row.Id, new SalesRequestManagerUpdateDTO
+        {
+            CustomerName = "مؤمل حيدر عبدالكاظم"
+        }, default);
+
+        Assert.Equal("مؤمل حيدر عبدالكاظم", updated.CustomerName);
+        Assert.Equal(SalesRequestStatuses.Completed, updated.Status);
+        Assert.Equal("مؤمل حيدر عبدالكاظم", repo.Rows.First(r => r.Id == row.Id).CustomerName);
+    }
+
+    [Fact]
     public async Task Employee_Cannot_Use_Manager_Update()
     {
         var (_, svc, row, _) = await SeedAsync();
@@ -121,8 +140,11 @@ public class SalesRequestManagerCrudTests
     {
         var (repo, svc, row, cascade) = await SeedAsync();
         await svc.SoftDeleteAsync(Manager(), row.Id, "طلب مكرر", default);
-        Assert.True(repo.Rows.First(r => r.Id == row.Id).IsDeleted);
-        Assert.Equal("طلب مكرر", repo.Rows.First(r => r.Id == row.Id).DeleteReason);
+        var deleted = repo.Rows.First(r => r.Id == row.Id);
+        Assert.True(deleted.IsDeleted);
+        Assert.Equal("طلب مكرر", deleted.DeleteReason);
+        Assert.Equal(SalesRequestStatuses.Rejected, deleted.Status);
+        Assert.Equal("طلب مكرر", deleted.RejectionReason);
         Assert.Empty(await svc.ListForManagerAsync(null, null, null, null, default));
         Assert.Single(await svc.ListDeletedForManagerAsync(default));
         Assert.Equal(0, cascade.VoidCalls);
@@ -195,6 +217,56 @@ public class SalesRequestManagerCrudTests
         await svc.SoftDeleteAsync(Manager(), row.Id, "غير مناسب", default);
         Assert.Null(await svc.GetForManagerAsync(row.Id, default));
         Assert.Contains(repo.History, h => h.Event == SalesRequestEvents.ManagerRequestDeleted);
+    }
+
+    [Fact]
+    public async Task Cancel_Assigned_Returns_To_Unassigned_And_Hides_From_Employee()
+    {
+        var (repo, svc, row, cascade) = await SeedAsync();
+        await svc.AssignAsync(Manager(), row.Id, new() { EmployeeId = 1, EmployeeName = "أحمد" }, default);
+        Assert.Single(await svc.ListForEmployeeAsync(1, default));
+
+        var cancelled = await svc.CancelAndUnassignAsync(Manager(), row.Id, "إعادة توزيع", confirmCascadePayments: false, default);
+        Assert.Equal(SalesRequestStatuses.New, cancelled.Status);
+        Assert.Equal(0, cancelled.TargetEmployeeId);
+        Assert.False(cancelled.IsDeleted);
+        Assert.Empty(await svc.ListForEmployeeAsync(1, default));
+        Assert.Equal(0, cascade.VoidCalls);
+        Assert.Contains(repo.History, h => h.Event == SalesRequestEvents.CancelledToUnassigned);
+    }
+
+    [Fact]
+    public async Task Cancel_Rejected_Is_Blocked()
+    {
+        var (_, svc, row, _) = await SeedAsync();
+        row.Status = SalesRequestStatuses.Rejected;
+        var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+            svc.CancelAndUnassignAsync(Manager(), row.Id, "لا", false, default));
+        Assert.Equal(400, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task Cancel_Completed_Voids_Then_Unassigns()
+    {
+        var (repo, svc, _, cascade) = await SeedAsync();
+        var sold = await svc.CreateAsync(Manager(), new()
+        {
+            Customer = new() { FullName = "مباع", Phone = "07801112236" },
+            TargetEmployeeId = 1,
+            TargetEmployeeName = "أحمد"
+        }, default);
+        sold.Status = SalesRequestStatuses.Completed;
+        sold.ConvertedToSaleId = 99;
+        sold.TargetEmployeeId = 1;
+        sold.TargetEmployeeName = "أحمد";
+
+        var cancelled = await svc.CancelAndUnassignAsync(Manager(), sold.Id, "إلغاء مبيع", confirmCascadePayments: false, default);
+        Assert.Equal(1, cascade.VoidCalls);
+        Assert.Equal(SalesRequestStatuses.New, cancelled.Status);
+        Assert.Equal(0, cancelled.TargetEmployeeId);
+        Assert.Null(cancelled.ConvertedToSaleId);
+        Assert.False(repo.Rows.First(r => r.Id == sold.Id).IsDeleted);
+        Assert.Empty(await svc.ListForEmployeeAsync(1, default));
     }
 
     [Fact]

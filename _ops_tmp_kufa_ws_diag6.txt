@@ -1,0 +1,167 @@
+FILE /opt/qalaa-runtime/SalesGateway/appsettings.json False
+FILE /opt/qalaa-demo/sales-gateway/appsettings.json False
+# /etc/systemd/system/qalaa-sales-gateway.service
+[Unit]
+Description=Qalaa Sales Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qalaa
+Group=qalaa
+WorkingDirectory=/opt/qalaa-runtime/SalesGateway
+ExecStart=/usr/bin/dotnet /opt/qalaa-runtime/SalesGateway/BE_SalesEmployee.dll
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=ASPNETCORE_URLS=http://127.0.0.1:5280
+Environment=SalesManagement__RequireDemoDatabase=false
+Environment=GetAdminUrl=http://defaultdata.alsaaeidy.com/GetAdmin
+Environment=SalesManagerAccount__UserName=salesmanager
+Environment=SalesManagerAccount__DisplayName=SalesManager
+Environment=SalesManagerAccount__Password=ahmed
+Environment=InternalApiKey=ed2abcd374b013b4fd0ea8edb9417aafcdcfd18636d0c9febdf95842cc979bb0
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+# /etc/systemd/system/qalaa-sales-gateway.service.d/20-sales-manager-accounts.conf
+[Service]
+Environment="SalesManagerAccounts__0__UserName=fat"
+Environment="SalesManagerAccounts__0__Password=fat123"
+Environment="SalesManagerAccounts__0__DisplayName=فاطمة"
+Environment="SalesManagerAccounts__1__UserName=zai"
+Environment="SalesManagerAccounts__1__Password=zai123"
+Environment="SalesManagerAccounts__1__DisplayName=زينب"
+Environment="SalesManagerAccounts__2__UserName=ban"
+Environment="SalesManagerAccounts__2__Password=ban123"
+Environment="SalesManagerAccounts__2__DisplayName=بنين"
+Environment="SalesManagerAccounts__3__UserName=jin"
+Environment="SalesManagerAccounts__3__Password=jin123"
+Environment="SalesManagerAccounts__3__DisplayName=جنان"
+
+# /etc/systemd/system/qalaa-sales-gateway.service.d/company-jwt.conf
+[Service]
+Environment="Authentication__Schemes__Bearer__SigningKeys__0__Issuer=our-app"
+Environment="Authentication__Schemes__Bearer__SigningKeys__0__Value=yzrEicR8XT6/+XfPslbI3Cw1X/1d2uPhXNXcXkvCGuQ="
+
+# /etc/systemd/system/qalaa-sales-gateway.service.d/filter-app-disabled.conf
+[Service]
+Environment="SalesManagement__FilterAppEnabled=false"
+
+# /etc/systemd/system/qalaa-sales-gateway.service.d/sales-manager-accounts.conf
+[Service]
+Environment=SalesManagerAccounts__0__UserName="karrar"
+Environment=SalesManagerAccounts__0__Password="karrar123"
+Environment=SalesManagerAccounts__0__DisplayName="مدير المبيعات كرار"
+Environment=SalesManagerAccounts__1__UserName="saad"
+Environment=SalesManagerAccounts__1__Password="saad123"
+Environment=SalesManagerAccounts__1__DisplayName="مدير المبيعات سعد"
+Environment=SalesManagerAccounts__2__UserName="ayman"
+Environment=SalesManagerAccounts__2__Password="ayman123"
+Environment=SalesManagerAccounts__2__DisplayName="مدير المبيعات ايمن"
+Environment=SalesManagerAccounts__3__UserName="zai"
+Environment=SalesManagerAccounts__3__Password="zai123"
+Environment=SalesManagerAccounts__3__DisplayName="زينب"
+Environment=SalesManagerAccounts__4__UserName=""
+Environment=SalesManagerAccounts__4__Password=""
+Environment=SalesManagerAccounts__4__DisplayName=""
+Environment=SalesManagerAccounts__5__UserName=""
+Environment=SalesManagerAccounts__5__Password=""
+Environment=SalesManagerAccounts__5__DisplayName=""
+Environment=SalesManagerAccounts__6__UserName=""
+Environment=SalesManagerAccounts__6__Password=""
+Environment=SalesManagerAccounts__6__DisplayName=""
+Environment=SalesManagerAccounts__7__UserName=""
+Environment=SalesManagerAccounts__7__Password=""
+Environment=SalesManagerAccounts__7__DisplayName=""
+Environment=SalesManagerAccounts__8__UserName=""
+Environment=SalesManagerAccounts__8__Password=""
+Environment=SalesManagerAccounts__8__DisplayName=""
+Environment=SalesManagerAccounts__9__UserName=""
+Environment=SalesManagerAccounts__9__Password=""
+Environment=SalesManagerAccounts__9__DisplayName=""
+Environment=SalesManagerAccounts__10__UserName=""
+Environment=SalesManagerAccounts__10__Password=""
+Environment=SalesManagerAccounts__10__DisplayName=""
+Environment=SalesManagerAccounts__11__UserName=""
+Environment=SalesManagerAccounts__11__Password=""
+Environment=SalesManagerAccounts__11__DisplayName=""
+Environment=SalesManagerAccounts__12__UserName=""
+Environment=SalesManagerAccounts__12__Password=""
+Environment=SalesManagerAccounts__12__DisplayName=""
+Environment=SalesManagerAccounts__13__UserName=""
+Environment=SalesManagerAccounts__13__Password=""
+Environment=SalesManagerAccounts__13__DisplayName=""
+Environment=SalesManagerAccounts__14__UserName=""
+Environment=SalesManagerAccounts__14__Password=""
+Environment=SalesManagerAccounts__14__DisplayName=""
+Environment=SalesManagerAccounts__15__UserName=""
+Environment=SalesManagerAccounts__15__Password=""
+Environment=SalesManagerAccounts__15__DisplayName=""
+
+# /etc/systemd/system/qalaa-sales-gateway.service.d/zz-delegated-manager.conf
+[Service]
+EnvironmentFile=/etc/qalaa-production/delegated-manager.env
+DROPINS
+total 40
+drwxr-xr-x  2 root root  4096 Sep 23 14:09 .
+drwxr-xr-x 64 root root 12288 Sep 22 17:19 ..
+-rw-------  1 root root   680 Sep 12 14:52 20-sales-manager-accounts.conf
+-rw-------  1 root root   202 Sep 14 23:43 company-jwt.conf
+-rw-r--r--  1 root root    64 Sep 16 23:45 filter-app-disabled.conf
+-rw-r--r--  1 root root  2584 Oct  1 00:58 sales-manager-accounts.conf
+-rw-r--r--  1 root root    70 Sep 16 02:51 zz-delegated-manager.conf
+-rw-r--r--  1 root root    66 Sep 23 14:09 zz-main-follower.conf.bak
+--- /etc/qalaa-production/delegate-najaf-sales-gateway.env
+SalesGateway__BaseUrl=http://127.0.0.1:5280
+InternalApiKey=***
+--- /etc/qalaa-production/sales-gateway-branch-key.env
+SalesEmployee__GatewayKey=***
+--- /etc/qalaa-production/delegate-central-complaints.env
+SalesGateway__BaseUrl=http://127.0.0.1:5280/api/
+InternalApiKey=***
+SalesGateway__ApiKey=***
+--- /etc/qalaa-production/sales-exception-bridge.env
+SalesGateway__BaseUrl=http://127.0.0.1:5280/api/
+InternalApiKey=***
+SalesGateway__ApiKey=***
+=== DBs ===
+name
+----
+ClinicSaaS
+DatabaseCompanyBabil
+DatabaseCompanyBaghdadKarak
+DatabaseCompanyBaghdadRosafa
+DatabaseCompanyBasra
+DatabaseCompanyBasraAlanwar
+DatabaseCompanyDeiala
+DatabaseCompanyDewania
+DatabaseCompanyKarakAqeel
+DatabaseCompanyKarbala
+DatabaseCompanyKarkok
+DatabaseCompanyKot
+DatabaseCompanyMaysan
+DatabaseCompanyMonth
+DatabaseCompanyMothana
+DatabaseCompanyMusol
+DatabaseCompanyMusolTest
+DatabaseCompanyNajaf
+DatabaseCompanyNajaf_DEMO
+DatabaseCompanyNasria
+DatabaseCompanyRusafaAqeel
+DatabaseCompanyStop
+DatabaseSalesGateway
+DWConfiguration
+DWDiagnostics
+DWQueue
+Masnaei_Dev
+master
+model
+msdb
+PharmacyDB
+tempdb
+
+CAND DatabaseCompanyNajaf ['Msg 208, Level 16, State 1, Server vmi3533397, Line 1', "Invalid object name 'dbo.SalesExceptionRequests'."]
+CAND DatabaseCompanyNajaf_DEMO ['C', '-', '6']

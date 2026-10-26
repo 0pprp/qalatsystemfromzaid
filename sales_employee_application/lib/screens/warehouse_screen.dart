@@ -1,3 +1,4 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
@@ -83,7 +84,7 @@ class _WarehouseScreenState extends State<WarehouseScreen> {
                   ),
                 ),
               ),
-              if (_loading) const LinearProgressIndicator(minHeight: 2),
+              if (_loading) const CompanyLoader(size: 32),
               Expanded(
                 child: _error != null
                     ? Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)))

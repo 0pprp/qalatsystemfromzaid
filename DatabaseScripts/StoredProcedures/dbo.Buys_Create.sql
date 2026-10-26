@@ -1,4 +1,6 @@
-﻿CREATE proc [dbo].[Buys_Create]
+-- Safe Buys_Create: SCOPE_IDENTITY + transaction + serialized BoundNumber.
+-- Apply on isolated branch DB only. Do not run on production without reconciliation plan.
+CREATE OR ALTER PROC [dbo].[Buys_Create]
 @UserID int = NULL,
 @SupplierID int = NULL,
 @DateCreate datetime,
@@ -8,54 +10,56 @@
 @FinalAmountTotalDenar float = NULL,
 @AmountTotalDenar float = NULL,
 @RemainingAmountDenar float = NULL
-as
+AS
+BEGIN
+  SET NOCOUNT ON;
+  SET XACT_ABORT ON;
+  BEGIN TRY
+    BEGIN TRAN;
 
-INSERT INTO [dbo].[Buys]
-           ([UserID]
-           ,[SupplierID]
-           ,[BoundNumber]
-           ,[DateCreate]
-           ,[StoreID]
-           ,[BoxID]
-		   ,[AsyncID]
-		   ,AsyncState
-		   ,BuyState)
+    DECLARE @BoundNumber int =
+      (SELECT ISNULL(MAX(BoundNumber), 0) + 1
+       FROM dbo.Buys WITH (UPDLOCK, HOLDLOCK));
+
+    INSERT INTO [dbo].[Buys]
+           ([UserID],[SupplierID],[BoundNumber],[DateCreate],[StoreID],[BoxID],[AsyncID],AsyncState,BuyState)
      VALUES
-           (@UserID ,
-@SupplierID ,
-(select count(*)+1 from Buys) ,
-@DateCreate ,
-@StoreID ,
-@BoxID,NEWID(),'false','true'  )
-DECLARE @BuyID int;
-SET @BuyID = IDENT_CURRENT('Buys');
-DECLARE @Purpose nvarchar(max) = N'شراء '+(select top 1 ItemsNames from View_Buys order by BuyID desc)+'';
-DECLARE @Notes nvarchar(max) = N'لا يوجد';
-DECLARE @AmountAccount float = @FinalAmountTotalDenar-@AmountTotalDenar;
-DECLARE @FromAccount nvarchar(255) = N'من حساب الخزينة '+(select BoxName from Boxes where BoxID=@BoxID)+'';
-DECLARE @ToAccount nvarchar(255) = N'الى حساب المورد '+(select SupplierName from Suppliers where SupplierID=@SupplierID)+'';
-exec InsertBuysItemsFromSelectItemBuyTemporary @BuyID=@BuyID,@UserID=@UserID
-exec InsertWithdrawalFromBoxFromBuy @BoxID=@BoxID,@Amount=@AmountPaidDenar,@Purpose=@Purpose,@Notes=@Notes,@UserID=@UserID,@DateCreate=@DateCreate,@BuyID=@BuyID,@SupplierID=@SupplierID
-exec InsertSuppliersAccount @SupplierID=@SupplierID,@UserID=@UserID,@BuyID=@BuyID,@Amount=@AmountAccount,@AccountType=N'لنا',@AccountsDate=@DateCreate 
-exec InsertSuppliersAccount @SupplierID=@SupplierID,@UserID=@UserID,@BuyID=@BuyID,@Amount=@RemainingAmountDenar,@AccountType=N'علينا',@AccountsDate=@DateCreate 
-exec InsertDocument @UserID=@UserID,@FromAccount=@FromAccount,@ToAccount=@ToAccount,@DocumentDateCreate=@DateCreate,@Notes=@Notes,@DocumentType=N'سند صرف',@Amount=@AmountPaidDenar
-exec InsertAddToStore @UserID=@UserID, @DateAddToStore=@DateCreate, @StoreID=@StoreID 
-DECLARE @AddToStoreID int;
-SET @AddToStoreID = IDENT_CURRENT('AddToStores');
-exec InsertSelectItemsAddToStoresFromSelectItemBuyTemporary @AddToStoreID=@AddToStoreID,@UserID=@UserID
-delete from SelectItemBuyTemporary where UserID=@UserID
-INSERT INTO [dbo].[Activities]
-           ([UserID]
-           ,[ActivityDescription]
-           ,[ActivityDate]
-           ,[AsyncState]
-           ,[AsyncID])
+           (@UserID,@SupplierID,@BoundNumber,@DateCreate,@StoreID,@BoxID,NEWID(),'false','true');
+
+    DECLARE @BuyID int = CAST(SCOPE_IDENTITY() AS int);
+    IF @BuyID IS NULL OR @BuyID <= 0
+      THROW 50010, N'Buys insert did not return identity.', 1;
+
+    DECLARE @Purpose nvarchar(max) = N'شراء '+(SELECT TOP 1 ItemsNames FROM View_Buys WHERE BuyID=@BuyID);
+    DECLARE @Notes nvarchar(max) = N'لا يوجد';
+    DECLARE @AmountAccount float = @FinalAmountTotalDenar-@AmountTotalDenar;
+    DECLARE @FromAccount nvarchar(255) = N'من حساب الخزينة '+(SELECT BoxName FROM Boxes WHERE BoxID=@BoxID);
+    DECLARE @ToAccount nvarchar(255) = N'الى حساب المورد '+(SELECT SupplierName FROM Suppliers WHERE SupplierID=@SupplierID);
+
+    EXEC InsertBuysItemsFromSelectItemBuyTemporary @BuyID=@BuyID,@UserID=@UserID;
+    EXEC InsertWithdrawalFromBoxFromBuy @BoxID=@BoxID,@Amount=@AmountPaidDenar,@Purpose=@Purpose,@Notes=@Notes,@UserID=@UserID,@DateCreate=@DateCreate,@BuyID=@BuyID,@SupplierID=@SupplierID;
+    EXEC InsertSuppliersAccount @SupplierID=@SupplierID,@UserID=@UserID,@BuyID=@BuyID,@Amount=@AmountAccount,@AccountType=N'لنا',@AccountsDate=@DateCreate;
+    EXEC InsertSuppliersAccount @SupplierID=@SupplierID,@UserID=@UserID,@BuyID=@BuyID,@Amount=@RemainingAmountDenar,@AccountType=N'علينا',@AccountsDate=@DateCreate;
+    EXEC InsertDocument @UserID=@UserID,@FromAccount=@FromAccount,@ToAccount=@ToAccount,@DocumentDateCreate=@DateCreate,@Notes=@Notes,@DocumentType=N'سند صرف',@Amount=@AmountPaidDenar;
+    EXEC InsertAddToStore @UserID=@UserID, @DateAddToStore=@DateCreate, @StoreID=@StoreID;
+
+    DECLARE @AddToStoreID int = CAST(@@IDENTITY AS int);
+    EXEC InsertSelectItemsAddToStoresFromSelectItemBuyTemporary @AddToStoreID=@AddToStoreID,@UserID=@UserID;
+    DELETE FROM SelectItemBuyTemporary WHERE UserID=@UserID;
+
+    INSERT INTO [dbo].[Activities]
+           ([UserID],[ActivityDescription],[ActivityDate],[AsyncState],[AsyncID])
      VALUES
-           (@UserID
-           ,N'تم شراء العناصر '+(select  top 1 ItemsNames from View_Buys order by BuyID desc)+N' من المورد '+(select  top 1 SupplierName from View_Buys order by BuyID desc)+N' الى المخزن '+(select  top 1 StoreName from View_Buys order by BuyID desc)+' '
-           ,GETUTCDATE()
-           ,'false'
-           ,NEWID() )
-select * from View_Buys where BuyID=@BuyID
+           (@UserID,
+            N'تم شراء العناصر '+(SELECT TOP 1 ItemsNames FROM View_Buys WHERE BuyID=@BuyID)+N' من المورد '+(SELECT TOP 1 SupplierName FROM View_Buys WHERE BuyID=@BuyID)+N' الى المخزن '+(SELECT TOP 1 StoreName FROM View_Buys WHERE BuyID=@BuyID)+' ',
+            GETUTCDATE(),'false',NEWID());
 
-
+    COMMIT TRAN;
+    SELECT * FROM View_Buys WHERE BuyID=@BuyID;
+  END TRY
+  BEGIN CATCH
+    IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+    THROW;
+  END CATCH
+END
+GO

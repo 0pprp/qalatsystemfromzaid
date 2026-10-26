@@ -89,6 +89,17 @@ export function isFatherGrandfatherMatch(queryName, candidateName) {
   return father === c[1] && grandfather === c[2]
 }
 
+/** A[1],A[2] == B[0],B[1] (or reverse). Needs ≥3 tokens on one side, ≥2 on the other. */
+export function isSonFatherMatch(queryName, candidateName) {
+  const a = matchingTokens(queryName)
+  const b = matchingTokens(candidateName)
+  if (a.length >= 3 && b.length >= 2 && a[1] === b[0] && a[2] === b[1])
+    return true
+  if (b.length >= 3 && a.length >= 2 && b[1] === a[0] && b[2] === a[1])
+    return true
+  return false
+}
+
 function digitsOnly(value) {
   return String(value || '').replace(/\D+/g, '')
 }
@@ -151,7 +162,7 @@ function isSameRequest(a, b) {
 
 /**
  * Find other sales-request rows matching the given criterion.
- * @param {'tripleName'|'phone'|'fatherGrandfather'} category
+ * @param {'tripleName'|'phone'|'fatherGrandfather'|'sonFather'} category
  */
 export function findDuplicateRequests(self, rows, category) {
   const list = Array.isArray(rows) ? rows : []
@@ -171,6 +182,8 @@ export function findDuplicateRequests(self, rows, category) {
       return isPhoneMatch(selfPhone, phone)
     if (category === 'fatherGrandfather')
       return isFatherGrandfatherMatch(selfName, name)
+    if (category === 'sonFather')
+      return isSonFatherMatch(selfName, name)
     return false
   })
 }

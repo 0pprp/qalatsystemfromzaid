@@ -1,9 +1,18 @@
 import 'package:branch_manager_application/main.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  testWidgets('app boots', (tester) async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
+  testWidgets('app boots to إدارة الفرع login', (tester) async {
     await tester.pumpWidget(const BranchManagerApp());
-    expect(find.text('مدير الفرع'), findsOneWidget);
+    await tester.pump();
+    expect(find.text('تطبيق إدارة الفرع'), findsOneWidget);
+    expect(find.text('دخول'), findsOneWidget);
   });
 }

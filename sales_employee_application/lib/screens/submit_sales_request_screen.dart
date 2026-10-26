@@ -1,3 +1,4 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
@@ -142,7 +143,7 @@ class _SubmitSalesRequestScreenState extends State<SubmitSalesRequestScreen> {
                     ? const SizedBox(
                         width: 22,
                         height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        child: CompanyLoader(size: 22),
                       )
                     : const Text('إرسال طلب بيع'),
               ),

@@ -1,10 +1,10 @@
-﻿import json,os,urllib.request,urllib.error,paramiko
+import json,os,urllib.request,urllib.error,paramiko
 HOST="169.58.236.52"; SSH_PASS=os.environ["SSH_PASS"]
 remote=r"""
 import json,urllib.request,urllib.error
 base="http://127.0.0.1:5403/api"
 env=open("/etc/qalaa-demo/sales-gateway.env",encoding="utf-8",errors="replace").read()
-pw="Mf@12345"
+pw=os.environ.get('MF_PASSWORD','')
 for line in env.splitlines():
   if line.startswith("MainFollowerAccounts__0__Password="):
     pw=line.split("=",1)[1]; break

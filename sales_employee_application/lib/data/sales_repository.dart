@@ -33,6 +33,8 @@ abstract class SalesRepository {
   });
   Future<void> recordTrackingEvent(int? shiftId, String eventType);
   Future<List<SalesWorkRequest>> salesRequests();
+  /// Requests this employee submitted (EmployeeSubmitted), not inbox assignments.
+  Future<List<SalesWorkRequest>> submittedSalesRequests();
   Future<SalesWorkRequest> salesRequest(int id);
   Future<SalesWorkRequest> viewSalesRequest(int id);
   Future<SalesWorkRequest> startSalesRequest(int id);

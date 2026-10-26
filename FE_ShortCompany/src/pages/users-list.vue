@@ -180,21 +180,29 @@ async function updateUser() {
 }
 
 async function deleteUser() {
-  if (userIdToDelete.value) {
-    try {
-      const authHeader = getAuthHeaders()
+  if (!userIdToDelete.value) return
+  try {
+    const authHeader = getAuthHeaders()
 
-      await axios.delete(`${apiUrl}Users/Users_Delete/${userIdToDelete.value}`, { headers: authHeader })
+    await axios.delete(`${apiUrl}Users/Users_Delete/${userIdToDelete.value}`, { headers: authHeader })
 
-      const index = usersData.value.findIndex(user => user.userID === userIdToDelete.value)
-      if (index !== -1) {
-        usersData.value.splice(index, 1)
-      }
-      userCount.value = usersData.value.length
-      confirmDeleteDialog.value = false
-    } catch (error) {
-      console.error(error)
-    }
+    const index = usersData.value.findIndex(user => user.userID === userIdToDelete.value)
+    if (index !== -1)
+      usersData.value.splice(index, 1)
+
+    userCount.value = usersData.value.length
+    confirmDeleteDialog.value = false
+  }
+  catch (error) {
+    console.error(error)
+
+    const status = error?.response?.status
+    const msg = error?.response?.data?.message
+      || (status === 403 ? 'غير مصرح بحذف المستخدمين' : null)
+      || (status === 401 ? 'انتهت الجلسة، أعد تسجيل الدخول' : null)
+      || 'تعذر حذف المستخدم'
+
+    alert(msg)
   }
 }
 

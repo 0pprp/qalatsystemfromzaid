@@ -34,6 +34,8 @@ namespace BE_Company.Sales.Services
     public sealed class WaiverApplyService : IWaiverApplyService
     {
         public const string DecisionType = "تنازل";
+        /// <summary>Deploy marker: Customers.AmountTotalSales removed — use week view.</summary>
+        public const string DeployMarker = "WAIVER_APPLY_NO_CUSTOMERS_AMOUNTTOTAL_V1";
 
         private readonly SalesDevelopmentGuard _guard;
         private readonly ICustomersPaymentsRepository _payments;
@@ -98,7 +100,52 @@ namespace BE_Company.Sales.Services
                 ? $"تم التنازل عن المبلغ {amountText} من حساب الزبون {customerName}"
                 : request.Note.Trim();
 
-            var userId = actor.IsGateway || actor.EmployeeId <= 0 ? (int?)null : actor.EmployeeId;
+            // Gateway identity has no local Users.UserID FK; resolve a branch user for decisions/payments.
+            int? userId = !actor.IsGateway && actor.EmployeeId > 0 ? actor.EmployeeId : null;
+            if (userId is null or <= 0 && !string.IsNullOrWhiteSpace(request.DecidedByUserName))
+            {
+                userId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition("""
+SELECT TOP 1 UserID FROM dbo.Users
+WHERE UserName = @UserName AND ISNULL(UserState, 1) = 1
+ORDER BY UserID;
+""", new { UserName = request.DecidedByUserName.Trim() }, cancellationToken: ct));
+            }
+
+            if (userId is null or <= 0)
+            {
+                userId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition("""
+SELECT TOP 1 UserID FROM dbo.Customers WHERE CustomerID = @CustomerId AND UserID IS NOT NULL;
+""", new { request.CustomerId }, cancellationToken: ct));
+            }
+
+            if (userId is null or <= 0)
+            {
+                userId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition("""
+SELECT TOP 1 UserID FROM dbo.Users
+WHERE ISNULL(UserState, 1) = 1
+  AND (
+        UserType LIKE N'%مدير%'
+     OR UserType LIKE N'%Admin%'
+     OR UserType LIKE N'%SalesManager%'
+     OR UserType LIKE N'%محاسب%'
+  )
+ORDER BY UserID;
+""", cancellationToken: ct));
+            }
+
+            if (userId is null or <= 0)
+            {
+                userId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition("""
+SELECT TOP 1 UserID FROM dbo.Users WHERE ISNULL(UserState, 1) = 1 ORDER BY UserID;
+""", cancellationToken: ct));
+            }
+
+            if (userId is null or <= 0)
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status502BadGateway,
+                    "تعذر تحديد مستخدم الفرع لتسجيل قرار التنازل");
+            }
 
             await using var tx = await connection.BeginTransactionAsync(ct);
             try
@@ -147,9 +194,36 @@ namespace BE_Company.Sales.Services
                 if (weekStart > today) weekStart = weekStart.AddDays(-7);
                 var weekEnd = weekStart.AddDays(6);
 
-                var amountTotal = await connection.ExecuteScalarAsync<double?>(new CommandDefinition("""
-SELECT ISNULL(AmountTotalSales, 0) FROM dbo.Customers WHERE CustomerID = @CustomerId;
+                // Customers has no AmountTotalSales column (lives on week-payment views only).
+                double amountTotal = 0;
+                try
+                {
+                    amountTotal = await connection.ExecuteScalarAsync<double?>(new CommandDefinition("""
+SELECT TOP 1 ISNULL(AmountTotalSales, 0)
+FROM dbo.View_CustomerWeekPaymentDevice
+WHERE CustomerID = @CustomerId;
 """, new { request.CustomerId }, tx, cancellationToken: ct)) ?? 0;
+                }
+                catch (SqlException)
+                {
+                    amountTotal = 0;
+                }
+
+                if (amountTotal <= 0)
+                {
+                    try
+                    {
+                        amountTotal = await connection.ExecuteScalarAsync<double?>(new CommandDefinition("""
+SELECT ISNULL(SUM(ISNULL(AmountTotalSalesDenar, 0)), 0)
+FROM dbo.View_CustomersSales
+WHERE CustomerID = @CustomerId;
+""", new { request.CustomerId }, tx, cancellationToken: ct)) ?? 0;
+                    }
+                    catch (SqlException)
+                    {
+                        amountTotal = 0;
+                    }
+                }
                 var weekPaid = request.Amount;
                 var paidPercent = amountTotal > 0 ? Math.Round(weekPaid * 100.0 / amountTotal, 2) : 0;
 

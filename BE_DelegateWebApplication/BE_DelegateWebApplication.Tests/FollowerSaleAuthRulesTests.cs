@@ -74,10 +74,29 @@ public sealed class FollowerSaleAuthRulesTests
     {
         var block = FollowerSaleAuthRules.FormatShopEvaluationBlock(
             5, "ضعيف", 2_000_000, 80_000, "أحمد", "07801234567", 1_500_000);
-        Assert.Contains("مبيعات خاطئة", block);
         Assert.Contains("التقييم: 5", block);
         Assert.Contains("أحمد", block);
         Assert.Contains("07801234567", block);
         Assert.Contains("سعر البيع", block);
+        Assert.DoesNotContain("تقييم المتجر / مبيعات خاطئة", block);
+    }
+
+    [Fact]
+    public void FormatShopEvaluationBlock_WrongSaleTag_OnlyWhenRequested()
+    {
+        var plain = FollowerSaleAuthRules.FormatShopEvaluationBlock(5, "ضعيف", 1, 1);
+        Assert.DoesNotContain("مبيعات خاطئة", plain);
+        var tagged = FollowerSaleAuthRules.FormatShopEvaluationBlock(5, "ضعيف", 1, 1, includeWrongSaleTag: true);
+        Assert.Contains("مبيعات خاطئة", tagged);
+    }
+
+    [Fact]
+    public void SanitizeNotesForSalesEmployee_RemovesScareTitle()
+    {
+        var raw = "القائمة: الميثاق (#5)\nتقييم المتجر / مبيعات خاطئة\nالمصدر: مندوب الجباية\nالتقييم: 10";
+        var clean = FollowerSaleAuthRules.SanitizeNotesForSalesEmployee(raw);
+        Assert.DoesNotContain("مبيعات خاطئة", clean);
+        Assert.Contains("المصدر: مندوب الجباية", clean);
+        Assert.Contains("القائمة: الميثاق", clean);
     }
 }

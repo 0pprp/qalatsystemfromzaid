@@ -246,7 +246,7 @@ class _DownloadDialogState extends State<_DownloadDialog>
         _error = null;
         _apkPath = result.filePath ?? _apkPath;
         _status =
-            'فعّل السماح بتثبيت التطبيقات من مصدر «مدير الفرع» ثم ارجع للتطبيق — سيُفتح المثبت تلقائياً';
+            'فعّل السماح بتثبيت التطبيقات من مصدر «تطبيق إدارة الفرع» ثم ارجع للتطبيق — سيُفتح المثبت تلقائياً';
       });
       return;
     }

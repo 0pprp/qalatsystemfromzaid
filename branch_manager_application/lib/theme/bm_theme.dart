@@ -5,7 +5,7 @@ class BmTheme {
   static const Color primary = Color(0xFF0F5C5C);
   static const Color primaryDark = Color(0xFF0A3F3F);
   static const Color accent = Color(0xFFC45C26);
-  static const Color surface = Color(0xFFF3F6F5);
+  static const Color surface = Color(0xFFFFFFFF);
   static const Color card = Color(0xFFFFFFFF);
   static const Color danger = Color(0xFFB42318);
   static const Color warn = Color(0xFFB54708);
@@ -14,17 +14,26 @@ class BmTheme {
   static const Color muted = Color(0xFF5B6B6B);
 
   static ThemeData light() {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: primary,
+      primary: primary,
+      secondary: accent,
+      surface: surface,
+      brightness: Brightness.light,
+    ).copyWith(
+      surface: surface,
+      surfaceContainerLowest: surface,
+      surfaceContainerLow: surface,
+      surfaceContainer: surface,
+      surfaceContainerHigh: const Color(0xFFF7FBFA),
+      surfaceContainerHighest: const Color(0xFFF7FBFA),
+    );
     final base = ThemeData(
       useMaterial3: true,
       fontFamily: 'Cairo',
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: primary,
-        primary: primary,
-        secondary: accent,
-        surface: surface,
-        brightness: Brightness.light,
-      ),
+      colorScheme: scheme,
       scaffoldBackgroundColor: surface,
+      canvasColor: surface,
     );
     return base.copyWith(
       appBarTheme: const AppBarTheme(
@@ -41,7 +50,8 @@ class BmTheme {
       ),
       cardTheme: CardThemeData(
         color: card,
-        elevation: 0,
+        elevation: 1,
+        shadowColor: const Color(0x140F5C5C),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
           side: BorderSide(color: primary.withValues(alpha: 0.08)),

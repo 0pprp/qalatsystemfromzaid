@@ -87,12 +87,12 @@ public sealed record FollowerCustomerRatingResult(
 public static class FollowerCustomerRatingCalculator
 {
     // Keep in lockstep with BE_Company CustomerRatingCalculator.
-    public const double ExcellentRate = 7.1;
+    public const double ExcellentRate = 1000.0 / 150.0; // ~6.6667 → under 150 days
     public const double GoodRate = 6.25;
     public const double WeakRate = 1000.0 / 180.0;
     public const double LaggingMinRate = 1000.0 / 200.0;
 
-    public const int ExcellentMaxDays = 140;
+    public const int ExcellentMaxDays = 150;
     public const int GoodMaxDays = 160;
     public const int WeakMaxDaysExclusive = 180;
     public const int LaggingMaxDaysExclusive = 200;

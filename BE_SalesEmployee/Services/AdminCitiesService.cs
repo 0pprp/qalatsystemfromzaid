@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace BE_SalesEmployee.Services
 {
@@ -34,19 +35,31 @@ namespace BE_SalesEmployee.Services
         public string? SearchPassword { get; set; }
     }
 
+    /// <summary>
+    /// Branch directory loader. Cache lives in <see cref="IMemoryCache"/> (singleton lifetime),
+    /// not on the typed-HttpClient instance (which is transient per request).
+    /// </summary>
     public class AdminCitiesService
     {
+        public const string CacheKey = "admin-cities:v1";
+        public static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
+
         private readonly HttpClient _http;
         private readonly IConfiguration _configuration;
         private readonly ILogger<AdminCitiesService> _logger;
-        private List<AdminCity>? _cache;
-        private DateTime _cacheAt;
+        private readonly IMemoryCache _cache;
+        private readonly SemaphoreSlim _reloadGate = new(1, 1);
 
-        public AdminCitiesService(HttpClient http, IConfiguration configuration, ILogger<AdminCitiesService> logger)
+        public AdminCitiesService(
+            HttpClient http,
+            IConfiguration configuration,
+            ILogger<AdminCitiesService> logger,
+            IMemoryCache cache)
         {
             _http = http;
             _configuration = configuration;
             _logger = logger;
+            _cache = cache;
         }
 
         public async Task<List<AdminCity>> GetCitiesAsync(CancellationToken ct = default)
@@ -81,31 +94,51 @@ namespace BE_SalesEmployee.Services
                 ];
             }
 
-            if (_cache != null && DateTime.UtcNow - _cacheAt < TimeSpan.FromMinutes(10))
+            if (_cache.TryGetValue(CacheKey, out List<AdminCity>? cached) && cached != null)
             {
-                return _cache;
+                return cached;
             }
 
-            var url = _configuration["GetAdminUrl"] ?? "http://defaultdata.alsaaeidy.com/GetAdmin";
-            using var response = await _http.GetAsync(url, ct);
-            response.EnsureSuccessStatusCode();
-            await using var stream = await response.Content.ReadAsStreamAsync(ct);
-            var data = await JsonSerializer.DeserializeAsync<List<JsonElement>>(stream, cancellationToken: ct)
-                       ?? [];
-
-            var cities = data.Select(item => new AdminCity
+            await _reloadGate.WaitAsync(ct);
+            try
             {
-                Value = ReadString(item, "value"),
-                Name = ReadString(item, "name"),
-                Database = ReadString(item, "database"),
-                Link = NormalizeLink(ReadString(item, "link"))
-            }).Where(c => !string.IsNullOrWhiteSpace(c.Link)).ToList();
+                // Double-check after acquiring gate (stampede prevention).
+                if (_cache.TryGetValue(CacheKey, out cached) && cached != null)
+                {
+                    return cached;
+                }
 
-            _cache = cities;
-            _cacheAt = DateTime.UtcNow;
-            _logger.LogInformation("Loaded {Count} cities from GetAdmin", cities.Count);
-            return cities;
+                var url = _configuration["GetAdminUrl"] ?? "http://defaultdata.alsaaeidy.com/GetAdmin";
+                using var response = await _http.GetAsync(url, ct);
+                response.EnsureSuccessStatusCode();
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                var data = await JsonSerializer.DeserializeAsync<List<JsonElement>>(stream, cancellationToken: ct)
+                           ?? [];
+
+                var cities = data.Select(item => new AdminCity
+                {
+                    Value = ReadString(item, "value"),
+                    Name = ReadString(item, "name"),
+                    Database = ReadString(item, "database"),
+                    Link = NormalizeLink(ReadString(item, "link"))
+                }).Where(c => !string.IsNullOrWhiteSpace(c.Link)).ToList();
+
+                _cache.Set(CacheKey, cities, new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = CacheTtl
+                });
+                _logger.LogInformation("Loaded {Count} cities from GetAdmin (cache TTL {TtlMinutes}m)",
+                    cities.Count, CacheTtl.TotalMinutes);
+                return cities;
+            }
+            finally
+            {
+                _reloadGate.Release();
+            }
         }
+
+        /// <summary>Explicit invalidation for ops / after directory changes.</summary>
+        public void InvalidateCache() => _cache.Remove(CacheKey);
 
         public static bool IsExcludedSalesBranch(string? name)
         {

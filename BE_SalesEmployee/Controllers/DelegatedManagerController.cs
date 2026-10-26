@@ -363,6 +363,152 @@ public class DelegatedManagerController : ControllerBase
         return StatusCode(status, payload);
     }
 
+    /// <summary>
+    /// كروت المتابعين — نفس عمل المتابعين (director-follower-ops). قراءة فقط.
+    /// Impact: FE_Company DM ratings; BE_Company unchanged; Flutter unchanged.
+    /// </summary>
+    [HttpGet("followers/ops/follower-cards")]
+    public async Task<IActionResult> FollowerOpsFollowerCards(
+        [FromQuery] string? cityValue,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor, cityValue, "sales-manager/director-follower-ops/follower-cards", ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("followers/ops/summaries")]
+    public async Task<IActionResult> FollowerOpsSummaries(
+        [FromQuery] string? cityValue,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor, cityValue, "sales-manager/director-follower-ops/summaries", ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("followers/ops/{followerId:int}/work-bundle")]
+    public async Task<IActionResult> FollowerOpsWorkBundle(
+        int followerId,
+        [FromQuery] string? cityValue,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            $"sales-manager/director-follower-ops/followers/{followerId}/work-bundle",
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("followers/ops/{followerId:int}/remaining-customers")]
+    public async Task<IActionResult> FollowerOpsRemainingCustomers(
+        int followerId,
+        [FromQuery] string? cityValue,
+        [FromQuery] string? bucket,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+
+        var q = string.IsNullOrWhiteSpace(bucket) ? "" : $"?bucket={Uri.EscapeDataString(bucket)}";
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            $"sales-manager/director-follower-ops/followers/{followerId}/remaining-customers{q}",
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("followers/ops/{followerId:int}/collection")]
+    public async Task<IActionResult> FollowerOpsCollection(
+        int followerId,
+        [FromQuery] string? cityValue,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            $"sales-manager/director-follower-ops/followers/{followerId}/collection",
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("followers/ops/{followerId:int}/legal-followups")]
+    public async Task<IActionResult> FollowerOpsLegalFollowups(
+        int followerId,
+        [FromQuery] string? cityValue,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            $"sales-manager/director-follower-ops/followers/{followerId}/legal-followups",
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    /// <summary>
+    /// تفاصيل قائمة مثل متابعة المندوبين — نفس director-delegate-followup.
+    /// Impact: FE DM ratings list drill-down only.
+    /// </summary>
+    [HttpGet("delegate-followup/lists/{listId:int}/summary")]
+    public async Task<IActionResult> DelegateFollowupListSummary(
+        int listId,
+        [FromQuery] string? cityValue,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            $"sales-manager/director-delegate-followup/lists/{listId}/summary",
+            ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("delegate-followup/lists/{listId:int}/customers")]
+    public async Task<IActionResult> DelegateFollowupListCustomers(
+        int listId,
+        [FromQuery] string? cityValue,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor,
+            cityValue,
+            $"sales-manager/director-delegate-followup/lists/{listId}/customers",
+            ct);
+        return StatusCode(status, payload);
+    }
+
     [HttpGet("customers/{cityValue}/{customerId:int}/profile")]
     public async Task<IActionResult> CustomerProfileById(string cityValue, int customerId, CancellationToken ct)
     {
@@ -504,7 +650,12 @@ public class DelegatedManagerController : ControllerBase
         isWrongSale = IsWrongSaleReason(r.Reason),
         requestKind = IsWrongSaleReason(r.Reason) ? "WrongSale" : "Hold",
         r.ReadAtUtc,
-        isUnread = r.ReadAtUtc is null
+        isUnread = r.ReadAtUtc is null,
+        r.BranchManagerReviewedAtUtc,
+        r.BranchManagerReviewerUserName,
+        r.BranchManagerReviewerDisplayName,
+        r.BranchManagerReviewNote,
+        isBranchManagerReviewed = r.BranchManagerReviewedAtUtc is not null
     };
 
     internal static object ToExceptionDetail(SalesExceptionRequest r) => new
@@ -535,7 +686,12 @@ public class DelegatedManagerController : ControllerBase
         r.AssignedAtUtc,
         isWrongSale = IsWrongSaleReason(r.Reason),
         requestKind = IsWrongSaleReason(r.Reason) ? "WrongSale" : "Hold",
-        r.AssignedByManagerUserName
+        r.AssignedByManagerUserName,
+        r.BranchManagerReviewedAtUtc,
+        r.BranchManagerReviewerUserName,
+        r.BranchManagerReviewerDisplayName,
+        r.BranchManagerReviewNote,
+        isBranchManagerReviewed = r.BranchManagerReviewedAtUtc is not null
     };
 
     internal static object ToWaiverSummary(CustomerWaiverRequest r) => new

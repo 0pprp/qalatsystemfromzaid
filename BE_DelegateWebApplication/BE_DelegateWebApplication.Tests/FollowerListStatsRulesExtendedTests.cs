@@ -6,6 +6,15 @@ namespace BE_DelegateWebApplication.Tests;
 
 public sealed class FollowerListStatsRulesExtendedTests
 {
+    private static readonly DateTime AsOf = new(2026, 3, 1, 0, 0, 0, DateTimeKind.Unspecified);
+
+    private static FollowerCustomerRatingFacts Settled(int daysToSettle, bool isLegal = false) =>
+        new(
+            1, 5, "أ", null, isLegal,
+            AsOf.Date.AddDays(-(daysToSettle - 1)),
+            AsOf.Date,
+            100_000, 100_000, 0, 10_000);
+
     [Fact]
     public void ActiveCustomer_RequiresStrictlyAbove38Percent()
     {
@@ -18,14 +27,13 @@ public sealed class FollowerListStatsRulesExtendedTests
     [Fact]
     public void RatingCalculator_IsLegal_Does_Not_Override()
     {
-        var asOf = new DateTime(2026, 3, 1);
-        var r = FollowerCustomerRatingCalculator.Evaluate(
-            new FollowerCustomerRatingFacts(1, 5, "أ", null, true, asOf.AddDays(-99),
-                asOf, 100000, 100000, 0, 10000),
-            asOf);
-        Assert.Equal(FollowerCustomerRatingLevel.Excellent, r.Level);
-        Assert.Equal(10, r.Score);
-        Assert.Equal("ممتاز", r.RatingLabel);
+        // FollowerCustomerRatingCalculator: IsLegal is informational only (same as BE_Company).
+        var normal = FollowerCustomerRatingCalculator.Evaluate(Settled(100), AsOf, usePhantomSaleDate: false);
+        var legal = FollowerCustomerRatingCalculator.Evaluate(Settled(100, isLegal: true), AsOf, usePhantomSaleDate: false);
+        Assert.Equal(FollowerCustomerRatingLevel.Excellent, normal.Level);
+        Assert.Equal(normal.Level, legal.Level);
+        Assert.Equal(normal.Score, legal.Score);
+        Assert.Equal("ممتاز", legal.RatingLabel);
     }
 
     [Fact]
@@ -48,11 +56,7 @@ public sealed class FollowerListStatsRulesExtendedTests
     [Fact]
     public void RatingCalculator_Settled_200_Is_Bad()
     {
-        var asOf = new DateTime(2026, 3, 1);
-        var r = FollowerCustomerRatingCalculator.Evaluate(
-            new FollowerCustomerRatingFacts(1, 5, "أ", null, false, asOf.AddDays(-199),
-                asOf, 100000, 100000, 0, 10000),
-            asOf);
+        var r = FollowerCustomerRatingCalculator.Evaluate(Settled(200), AsOf, usePhantomSaleDate: false);
         Assert.Equal(FollowerCustomerRatingLevel.Bad, r.Level);
         Assert.Equal(-10, r.Score);
         Assert.Equal("سيء", r.RatingLabel);
@@ -61,11 +65,7 @@ public sealed class FollowerListStatsRulesExtendedTests
     [Fact]
     public void RatingCalculator_Settled_180_Is_Mutalaki()
     {
-        var asOf = new DateTime(2026, 3, 1);
-        var r = FollowerCustomerRatingCalculator.Evaluate(
-            new FollowerCustomerRatingFacts(1, 5, "أ", null, false, asOf.AddDays(-179),
-                asOf, 100000, 100000, 0, 10000),
-            asOf);
+        var r = FollowerCustomerRatingCalculator.Evaluate(Settled(180), AsOf, usePhantomSaleDate: false);
         Assert.Equal(FollowerCustomerRatingLevel.Rejected, r.Level);
         Assert.Equal(-5, r.Score);
         Assert.Equal("متلكئ", r.RatingLabel);

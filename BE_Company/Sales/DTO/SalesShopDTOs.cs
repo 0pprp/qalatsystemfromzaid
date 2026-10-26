@@ -86,6 +86,8 @@ namespace BE_Company.Sales.DTO
         public string? CustomerListName { get; set; }
         public string? CityValue { get; set; }
         public string? CityName { get; set; }
+        /// <summary>From Customers.IsLegal — UI hides الواصل/الباقي for accountant/director.</summary>
+        public bool IsLegal { get; set; }
         public SalesPaymentSummaryDTO? PaymentSummary { get; set; }
         public List<SalesCustomerPaymentDTO> Payments { get; set; } = [];
         public List<SalesOfficialSaleDTO> OfficialSales { get; set; } = [];

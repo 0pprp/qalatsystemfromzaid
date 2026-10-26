@@ -1,6 +1,7 @@
 using Dapper;
 using BE_Company.DTO;
 using BE_Company.IRepository;
+using BE_Company.Utilities;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using System.Data;
@@ -21,61 +22,79 @@ namespace BE_Company.Repository
 
         public async Task<UsersGetDTO?> Users_GetUserLoginAdmin(string? userName, string? password)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            var user = await AuthenticateAsync(userName, password);
+            if (user == null) return null;
+            if (user.UserType == "محاسب رئيسي" || user.UserType == "مدير فرع")
             {
-                var result = await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_GetUserLogin",
-                new
-                {
-                    UserName = userName,
-                    Password = password
-                },
-                commandType: CommandType.StoredProcedure);
-                if (result != null)
-                {
-                    if (result.UserType == "محاسب رئيسي" || result.UserType == "مدير فرع")
-                    {
-                        return result;
-                    }
-                }
-                return null;
+                return Sanitize(user);
             }
+
+            return null;
         }
 
         public async Task<UsersGetDTO?> Users_GetUserLoginEmployee(string? userName, string? password)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            var user = await AuthenticateAsync(userName, password);
+            if (user == null) return null;
+            if (user.UserType == "محاسب فرعي" || user.UserType == "مدير فرع" || user.UserType == "موظف مبيعات" || user.UserType == "مدير مبيعات" || user.UserType == "موظف فلترة المبيعات")
             {
-                var result = await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_GetUserLogin",
-                new
-                {
-                    UserName = userName,
-                    Password = password
-                },
-                commandType: CommandType.StoredProcedure);
-                if (result != null)
-                {
-                    if (result.UserType == "محاسب فرعي" || result.UserType == "مدير فرع" || result.UserType == "موظف مبيعات" || result.UserType == "مدير مبيعات" || result.UserType == "موظف فلترة المبيعات")
-                    {
-                        return result;
-                    }
-                }
-                return null;
+                return Sanitize(user);
             }
+
+            return null;
         }
 
         public async Task<UsersGetDTO?> Users_GetUserLogin(string? userName, string? password)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            var user = await AuthenticateAsync(userName, password);
+            return user is null ? null : Sanitize(user);
+        }
+
+        /// <summary>
+        /// Loads user by UserName, verifies password in-process (hashed or legacy plaintext),
+        /// and upgrades plaintext to PBKDF2 on successful login.
+        /// </summary>
+        private async Task<UsersGetDTO?> AuthenticateAsync(string? userName, string? password)
+        {
+            if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrEmpty(password))
             {
-                var result = await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_GetUserLogin",
-                new
-                {
-                    UserName = userName,
-                    Password = password
-                },
-                commandType: CommandType.StoredProcedure);
-                return result;
+                return null;
             }
+
+            await using var connection = new SqlConnection(_connectionString);
+            var user = await connection.QueryFirstOrDefaultAsync<UsersGetDTO>(@"
+SELECT TOP (1)
+    UserID, UserName, Email, Password, PhoneNumber, Address, UserType, UserImage
+FROM dbo.Users
+WHERE LOWER(LTRIM(RTRIM(UserName))) = LOWER(LTRIM(RTRIM(@UserName)));",
+                new { UserName = userName.Trim() });
+
+            if (user is null || string.IsNullOrEmpty(user.Password))
+            {
+                return null;
+            }
+
+            if (!PasswordHasher.Verify(password, user.Password, out var needsUpgrade))
+            {
+                return null;
+            }
+
+            if (needsUpgrade)
+            {
+                var upgraded = PasswordHasher.Hash(password);
+                await connection.ExecuteAsync(
+                    "UPDATE dbo.Users SET Password = @Password WHERE UserID = @UserID;",
+                    new { Password = upgraded, UserID = user.UserID });
+                user.Password = upgraded;
+            }
+
+            return user;
+        }
+
+        private static UsersGetDTO Sanitize(UsersGetDTO user)
+        {
+            user.Password = null;
+            return user;
         }
 
         private static int _sessionColumnReady;
@@ -126,12 +145,17 @@ WHERE UserID = @UserID;
                 {
                     userImage = await SaveImage(usersPostDTO.UserImage);
                 }
-                return await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_Create",
+
+                var hashed = string.IsNullOrEmpty(usersPostDTO.Password)
+                    ? usersPostDTO.Password
+                    : PasswordHasher.Hash(usersPostDTO.Password);
+
+                var created = await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_Create",
                 new
                 {
                     UserName = usersPostDTO.UserName?.Trim(),
                     Email = usersPostDTO.Email,
-                    Password = usersPostDTO.Password,
+                    Password = hashed,
                     PhoneNumber = usersPostDTO.PhoneNumber,
                     Address = usersPostDTO.Address,
                     UserCreateID = usersPostDTO.UserCreateID,
@@ -139,6 +163,7 @@ WHERE UserID = @UserID;
                     UserImage = userImage,
                 },
                 commandType: CommandType.StoredProcedure);
+                return created is null ? null : Sanitize(created);
             }
         }
 
@@ -175,13 +200,15 @@ WHERE LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName)
                 {
                     userImage = user?.UserImage;
                 }
-                return await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_Update",
+
+                var passwordToStore = ResolvePasswordForUpdate(usersPutDTO.Password, user?.Password);
+                var updated = await connection.QueryFirstOrDefaultAsync<UsersGetDTO>("Users_Update",
                 new
                 {
                     UserID = userID,
                     UserName = usersPutDTO.UserName?.Trim(),
                     Email = usersPutDTO.Email,
-                    Password = CheckPasswordValidation(usersPutDTO.Password, user?.Password),
+                    Password = passwordToStore,
                     PhoneNumber = usersPutDTO.PhoneNumber,
                     Address = usersPutDTO.Address,
                     UserUpdateID = usersPutDTO.UserUpdateID,
@@ -189,16 +216,24 @@ WHERE LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName)
                     UserImage = userImage,
                 },
                 commandType: CommandType.StoredProcedure);
+                return updated is null ? null : Sanitize(updated);
             }
         }
 
-        private string? CheckPasswordValidation(string? passwordNew, string? passwordOld)
+        private static string? ResolvePasswordForUpdate(string? passwordNew, string? passwordOld)
         {
             if (string.IsNullOrEmpty(passwordNew))
             {
                 return passwordOld;
             }
-            return passwordNew;
+
+            // Never re-hash an already-hashed value — that locks the account out of login.
+            if (PasswordHasher.IsHashed(passwordNew))
+            {
+                return passwordOld;
+            }
+
+            return PasswordHasher.Hash(passwordNew);
         }
 
         public async Task<UsersGetDTO?> Users_GetByUserID(int? userID)
@@ -218,7 +253,7 @@ WHERE LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName)
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.ExecuteAsync("Users_Delete",
+                await connection.ExecuteAsync("Users_Delete",
                 new
                 {
                     UserID = userID,
@@ -233,12 +268,18 @@ WHERE LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName)
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                return await connection.QueryAsync<UsersGetDTO>("Users_GetAll",
+                var rows = await connection.QueryAsync<UsersGetDTO>("Users_GetAll",
                 new
                 {
                     TextSearch = textSearch,
                 },
                 commandType: CommandType.StoredProcedure);
+                foreach (var row in rows)
+                {
+                    row.Password = null;
+                }
+
+                return rows;
             }
         }
 
@@ -255,6 +296,7 @@ WHERE LOWER(LTRIM(RTRIM(UserName))) = LOWER(@UserName)
                 commandType: CommandType.StoredProcedure);
             }
         }
+
         private async Task<string?> SaveImage(IFormFile? file)
         {
             if (file == null || file.Length == 0)

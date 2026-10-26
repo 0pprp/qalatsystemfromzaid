@@ -1,0 +1,14 @@
+CFG /opt/qalaa-runtime/DelegateHaiderNajafLast/appsettings.json
+DB 127.0.0.1 DatabaseCompanyNajaf haider
+=== LOOKUP customer + auth + list ===
+CustomerID|CustomerName|DelegateID|DelegateName|AuthId|Rating|FollowerName|FollowerUserId|AuthenticatedAtUtc
+----------|------------|----------|------------|------|------|------------|--------------|------------------
+53385|كرار اركان فليح|1|الشمالية|NULL|NULL|NULL|NULL|NULL
+
+=== DELETE auth for matching customers (Najaf northern list if named) ===
+DELETED_AUTH=0
+CustomerID|CustomerName|DelegateID|DelegateName|AuthState
+----------|------------|----------|------------|---------
+53385|كرار اركان فليح|1|الشمالية|NO_AUTH
+
+DONE

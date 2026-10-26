@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
+import 'package:follower_application/utils/display_name.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -22,10 +23,15 @@ class LegalFollowupDetailPage extends StatefulWidget {
 }
 
 class _DocSlot {
-  _DocSlot({required this.type, required this.label});
+  _DocSlot({
+    required this.type,
+    required this.label,
+    this.optional = false,
+  });
 
   final String type;
   final String label;
+  final bool optional;
   File? localFile;
   bool uploading = false;
   bool uploaded = false;
@@ -53,8 +59,14 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
     _DocSlot(type: 'NationalIdBack', label: 'البطاقة الوطنية - خلفية'),
     _DocSlot(type: 'ResidenceCardFront', label: 'بطاقة السكن - أمامية'),
     _DocSlot(type: 'ResidenceCardBack', label: 'بطاقة السكن - خلفية'),
-    _DocSlot(type: 'ResidenceCertificate', label: 'مضبطة تأييد سكن'),
+    _DocSlot(
+      type: 'ResidenceCertificate',
+      label: 'مضبطة تأييد سكن (اختياري)',
+      optional: true,
+    ),
   ];
+
+  final List<String> _debugLines = [];
 
   @override
   void initState() {
@@ -69,8 +81,20 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
   }
 
   void _log(String msg, [Object? err]) {
+    final line =
+        '${DateTime.now().toIso8601String().substring(11, 19)} $msg${err == null ? '' : ' :: $err'}';
     developer.log(msg, name: 'LegalFollowup', error: err);
-    debugPrint('[LegalFollowup] $msg${err == null ? '' : ' :: $err'}');
+    debugPrint('[LegalFollowup] $line');
+    if (mounted) {
+      setState(() {
+        _debugLines.add(line);
+        if (_debugLines.length > 40) {
+          _debugLines.removeRange(0, _debugLines.length - 40);
+        }
+      });
+    } else {
+      _debugLines.add(line);
+    }
   }
 
   String _pick(Map? m, List<String> keys) {
@@ -84,7 +108,9 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
 
   bool get _canSubmit {
     if (!_locationSelected || _lat == null || _lng == null) return false;
-    return _slots.every((s) => s.uploaded || s.remoteUrl != null);
+    return _slots
+        .where((s) => !s.optional)
+        .every((s) => s.uploaded || s.remoteUrl != null);
   }
 
   Future<void> _load() async {
@@ -243,22 +269,37 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
 
   Future<void> _pickDoc(_DocSlot slot) async {
     try {
+      _log('pick start type=${slot.type} case=${widget.caseId}');
+      if (_asyncId.isEmpty || _link.isEmpty) {
+        throw Exception('جلسة ناقصة — أعد تسجيل الدخول (asyncId/link فارغ)');
+      }
       final picker = ImagePicker();
       final x = await picker.pickImage(
         source: ImageSource.camera,
         imageQuality: 85,
         maxWidth: 2000,
       );
-      if (x == null) return;
+      if (x == null) {
+        _log('pick cancelled type=${slot.type}');
+        return;
+      }
+      final file = File(x.path);
+      final exists = await file.exists();
+      final size = exists ? await file.length() : 0;
+      _log(
+          'picked type=${slot.type} path=${x.path} exists=$exists bytes=$size');
+      if (!exists || size <= 0) {
+        throw Exception('ملف الصورة فارغ أو غير موجود: ${x.path}');
+      }
       setState(() {
-        slot.localFile = File(x.path);
+        slot.localFile = file;
         slot.uploading = true;
       });
-      _log('upload ${slot.type} path=${x.path}');
 
       final uri = Uri.parse(
               '${_link}Followers/LegalFollowups/${widget.caseId}/documents')
           .replace(queryParameters: {'asyncId': _asyncId});
+      _log('POST $uri documentType=${slot.type}');
       final req = http.MultipartRequest('POST', uri);
       req.fields['documentType'] = slot.type;
       req.fields['asyncId'] = _asyncId;
@@ -267,9 +308,11 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
       final streamed =
           await req.send().timeout(const Duration(seconds: 60));
       final res = await http.Response.fromStream(streamed);
-      _log('upload ${slot.type} status=${res.statusCode} body=${res.body}');
+      final bodyPreview =
+          res.body.length > 280 ? '${res.body.substring(0, 280)}…' : res.body;
+      _log('upload ${slot.type} HTTP ${res.statusCode} body=$bodyPreview');
       if (res.statusCode < 200 || res.statusCode >= 300) {
-        String msg = 'تعذر رفع ${slot.label}';
+        String msg = 'تعذر رفع ${slot.label} (HTTP ${res.statusCode})';
         try {
           final body = json.decode(res.body);
           if (body is Map && body['message'] != null) msg = '${body['message']}';
@@ -286,13 +329,15 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
               _pick(Map<String, dynamic>.from(body), ['downloadUrl', 'DownloadUrl']);
         }
       });
+      _log('upload ok ${slot.type} url=${slot.remoteUrl}');
     } catch (e) {
       _log('upload failed ${slot.type}', e);
       if (!mounted) return;
       setState(() => slot.uploading = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(e.toString().replaceFirst('Exception: ', ''),
-              style: const TextStyle(fontFamily: 'Cairo'))));
+              style: const TextStyle(fontFamily: 'Cairo')),
+          duration: const Duration(seconds: 6)));
     }
   }
 
@@ -359,11 +404,10 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    Text(_pick(_item, ['customerName', 'CustomerName']),
-                        style: const TextStyle(
-                            fontFamily: 'Cairo',
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold)),
+                    PersonNameText(
+                      _pick(_item, ['customerName', 'CustomerName']),
+                      style: const TextStyle(fontSize: 20),
+                    ),
                     const SizedBox(height: 8),
                     Text(
                         'الهاتف: ${_pick(_item, ['customerPhone', 'CustomerPhone'])}',
@@ -418,11 +462,19 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
                         ),
                       ),
                     const SizedBox(height: 20),
-                    const Text('المستمسكات (إجبارية)',
+                    const Text('المستمسكات',
                         style: TextStyle(
                             fontFamily: 'Cairo',
                             fontWeight: FontWeight.bold,
                             fontSize: 16)),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'تأييد السكن اختياري — باقي الصور مطلوبة',
+                      style: TextStyle(
+                          fontFamily: 'Cairo',
+                          color: Colors.black54,
+                          fontSize: 12),
+                    ),
                     const SizedBox(height: 8),
                     ..._slots.map((slot) => _DocTile(
                           slot: slot,
@@ -469,7 +521,7 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
                         const Padding(
                           padding: EdgeInsets.only(top: 8),
                           child: Text(
-                            'الزر يتفعّل بعد تحديد الموقع ورفع كل المستمسكات',
+                            'الزر يتفعّل بعد تحديد الموقع ورفع المستمسكات الإجبارية (بدون تأييد السكن)',
                             style: TextStyle(
                                 fontFamily: 'Cairo',
                                 color: Colors.black54,
@@ -477,6 +529,51 @@ class _LegalFollowupDetailPageState extends State<LegalFollowupDetailPage> {
                           ),
                         ),
                     ],
+                    const SizedBox(height: 16),
+                    ExpansionTile(
+                      initiallyExpanded: _debugLines.isNotEmpty,
+                      title: const Text('تصحيح مسار الصور',
+                          style: TextStyle(
+                              fontFamily: 'Cairo',
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14)),
+                      subtitle: Text(
+                        _debugLines.isEmpty
+                            ? 'سجّل خطوات الرفع هنا عند حدوث مشكلة'
+                            : 'آخر ${_debugLines.length} سطر',
+                        style: const TextStyle(
+                            fontFamily: 'Cairo', fontSize: 11),
+                      ),
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          constraints: const BoxConstraints(maxHeight: 220),
+                          margin: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.black87,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: _debugLines.isEmpty
+                              ? const Text('لا سجلات بعد',
+                                  style: TextStyle(
+                                      fontFamily: 'monospace',
+                                      color: Colors.white70,
+                                      fontSize: 11))
+                              : SingleChildScrollView(
+                                  reverse: true,
+                                  child: Text(
+                                    _debugLines.join('\n'),
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      color: Color(0xFFB2FF59),
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
     );

@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  static const Color darkGreen = Color(0xFF006D5B);
-  static const Color lightGreen = Color(0xFF26A69A);
-  static const Color background = Color(0xFFF7F8F4);
+  static const Color darkGreen = Color(0xFF006A64);
+  static const Color lightGreen = Color(0xFF1D6B50);
+  static const Color background = Color(0xFFF8F8F8);
   static const Color card = Colors.white;
-  static const Color text = Color(0xFF2C3332);
-  static const Color muted = Color(0xFF6B7674);
-  static const Color line = Color(0xFFE6EBE8);
+  static const Color text = Color(0xFF00201E);
+  static const Color muted = Color(0xFF6F797A);
+  static const Color line = Color(0xFFE5EEEC);
   static const Color danger = Color(0xFF8A4A4A);
   static const Color warningSoft = Color(0xFFF4EFE6);
 }
@@ -22,12 +22,12 @@ class AppSpacing {
 
 class AppRadius {
   static const double sm = 10;
-  static const double md = 14;
+  static const double md = 16;
   static const double lg = 18;
 }
 
 class AppTypography {
-  static const String fontFamily = 'Cairo';
+  static const String fontFamily = 'ElMessiri';
 }
 
 class AppTheme {
@@ -46,6 +46,34 @@ class AppTheme {
       primaryColor: primaryColor,
       scaffoldBackgroundColor: backgroundColor,
       fontFamily: fontFamily,
+      textTheme: const TextTheme(
+        headlineSmall: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: AppColors.text),
+        titleLarge: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: AppColors.text),
+        titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.text),
+        bodyLarge: TextStyle(fontSize: 16, height: 1.5, color: AppColors.text),
+        bodyMedium: TextStyle(fontSize: 14, height: 1.5, color: AppColors.text),
+        bodySmall: TextStyle(fontSize: 12, height: 1.4, color: AppColors.muted),
+      ),
+      dividerTheme: const DividerThemeData(color: AppColors.line, space: 24),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        height: 76,
+        indicatorColor: const Color(0xFFCCE1E0),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(
+          fontFamily: fontFamily, fontSize: 12,
+          fontWeight: states.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w400,
+          color: states.contains(WidgetState.selected) ? primaryColor : AppColors.muted,
+        )),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: const Color(0xFFF4FBF9),
+        selectedColor: const Color(0xFFCCE1E0),
+        side: BorderSide.none,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        labelStyle: const TextStyle(fontFamily: fontFamily, color: primaryColor),
+      ),
       colorScheme: ColorScheme.fromSeed(
         seedColor: primaryColor,
         primary: primaryColor,
@@ -53,7 +81,9 @@ class AppTheme {
         surface: cardColor,
       ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.transparent,
+        backgroundColor: backgroundColor,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
         elevation: 0,
         centerTitle: true,
         titleTextStyle: TextStyle(

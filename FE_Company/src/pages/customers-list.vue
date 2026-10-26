@@ -15,6 +15,13 @@ import {
   accountantGetRatingEquation,
   accountantSetRatingEquation,
 } from '@/composables/accountantRatingsApi'
+import {
+  formatHiddenFinancial,
+  shouldHidePaidRemaining,
+  sumVisibleFinancial,
+  visibleAmountRemaining,
+  visibleReceiptsTotal,
+} from '@/composables/legalFinancialVisibility'
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -82,6 +89,11 @@ const delegateOption = ref([])
 const itemsOptions = ref([])
 const dialogEdit = ref(false)
 const dialogMove = ref(false)
+/** Selected customer rows for bulk transfer (VDataTable v-model). */
+const selectedCustomers = ref([])
+const moveBusy = ref(false)
+/** 'single' | 'bulk' */
+const moveMode = ref('single')
 
 // حالة التحميل
 const loading = ref(false)
@@ -96,6 +108,7 @@ const paymentDetails = ref({
   amountRemaining: 0,
   paymentAmount: 0,
   paymentDate: new Date().toLocaleDateString('en-CA'),
+  hidePaidRemaining: false,
 })
 
 const filterDateFrom = ref(null)
@@ -138,12 +151,14 @@ function clearDateFilters() {
 // دالة فتح Dialog التسديد وملئ البيانات
 function openPaymentDialog(item) {
   currentCustomerID.value = item.customerID
+  const hideFin = shouldHidePaidRemaining(item, { showType: filters.value.showType })
   paymentDetails.value.customerName = item.customerName
   paymentDetails.value.delegateName = item.delegateName
   paymentDetails.value.amountTotalSales = item.amountTotalSales || 0
   paymentDetails.value.amountDaySales = item.amountDaySales || 0
-  paymentDetails.value.receiptsTotal = item.receiptsTotal || 0
-  paymentDetails.value.amountRemaining = item.amountRemaining || 0
+  paymentDetails.value.hidePaidRemaining = hideFin
+  paymentDetails.value.receiptsTotal = hideFin ? 0 : (item.receiptsTotal || 0)
+  paymentDetails.value.amountRemaining = hideFin ? 0 : (item.amountRemaining || 0)
   paymentDetails.value.paymentAmount = item.amountDaySales || 0
   paymentDetails.value.paymentDate =new Date().toLocaleDateString('en-CA')
   paymentDialog.value = true
@@ -275,18 +290,18 @@ const totals = computed(() => [
     gradient: "linear-gradient(135deg, #36D1DC 0%, #5B86E5 100%)",
   },
   {
-    icon: 'tabler-currency-dollar', // إجمالي الواصل
+    icon: 'tabler-currency-dollar', // إجمالي الواصل — يستثني القانونية
     value: formattedNumber(
-      customersData.value.reduce((sum, customer) => sum + (customer.receiptsTotal || 0), 0),
+      sumVisibleFinancial(customersData.value, c => c.receiptsTotal, { showType: filters.value.showType }),
     ),
     title: 'إجمالي الواصل',
     color: "error",
     gradient: "linear-gradient(135deg, #FF416C 0%, #FF4B2B 100%)",
   },
   {
-    icon: 'tabler-currency-dollar', // إجمالي المبلغ المتبقي
+    icon: 'tabler-currency-dollar', // إجمالي المبلغ المتبقي — يستثني القانونية
     value: formattedNumber(
-      customersData.value.reduce((sum, customer) => sum + (customer.amountRemaining || 0), 0),
+      sumVisibleFinancial(customersData.value, c => c.amountRemaining, { showType: filters.value.showType }),
     ),
     title: 'إجمالي المبلغ المتبقي',
     color: "secondary",
@@ -336,7 +351,18 @@ async function fetchCustomers() {
     const showType = filters.value.showType || 'الجميع'
     const response = await axios.get(`${apiUrl}Customers/Customers_GetAll/${delegateID}&&${textSearch}&&${showType}`, { headers: authHeader })
 
-    customersData.value = response.data || []
+    const showLegal = showType === 'القانونية'
+    customersData.value = (response.data || []).map(c => ({
+      ...c,
+      // Normalize + force legal when filter is القانونية (API IsLegal can be bit/string).
+      isLegal: showLegal
+        || c.isLegal === true
+        || c.isLegal === 'true'
+        || c.IsLegal === true
+        || c.IsLegal === 'true'
+        || c.IsLegal === 1
+        || c.isLegal === 1,
+    }))
     await enrichCustomerRatings(authHeader)
   } catch (error) {
     console.error(error)
@@ -379,8 +405,12 @@ function exportToExcel() {
     'سعر البيع': customer.amountTotalSales || 'لا يوجد',
     'سعر الشراء': customer.costTotalSales || 'لا يوجد',
     'القسط': customer.amountDaySales || 'لا يوجد',
-    'الواصل': customer.receiptsTotal || 'لا يوجد',
-    'الباقي': customer.amountRemaining || 'لا يوجد',
+    'الواصل': shouldHidePaidRemaining(customer, { showType: filters.value.showType })
+      ? '—'
+      : (customer.receiptsTotal || 'لا يوجد'),
+    'الباقي': shouldHidePaidRemaining(customer, { showType: filters.value.showType })
+      ? '—'
+      : (customer.amountRemaining || 'لا يوجد'),
     'نسبة التسديد': customer.receiptRateDevice !== undefined && customer.receiptRateDevice !== null ? `${customer.receiptRateDevice}%` : '0%',
     'عدد التسديدات': customer.countReceiptDevice || 'لا يوجد',
     'عدد الأيام': customer.numberOfDayDevice || 'لا يوجد',
@@ -498,10 +528,35 @@ function updateCustomer(item){
   dialogEdit.value = true
 }
 
-function moveCustomerDialog(item){
+function moveCustomerDialog(item) {
+  moveMode.value = 'single'
   formData.value.customerID = item.customerID
+  formData.value.moveDelegateID = ''
   dialogMove.value = true
 }
+
+function openBulkMoveDialog() {
+  const selected = selectedCustomers.value || []
+  if (!selected.length) {
+    toast.error('حدد زبوناً واحداً على الأقل للنقل')
+
+    return
+  }
+  moveMode.value = 'bulk'
+  formData.value.customerID = ''
+  formData.value.moveDelegateID = ''
+  dialogMove.value = true
+}
+
+const moveDialogSubtitle = computed(() => {
+  if (moveMode.value === 'bulk') {
+    const n = (selectedCustomers.value || []).length
+
+    return `نقل ${n} زبون إلى مندوب آخر`
+  }
+
+  return 'نقل العميل إلى مندوب آخر'
+})
 
 async function moveCustomerLegal(item) {
   try {
@@ -527,27 +582,95 @@ async function moveCustomerLegal(item) {
 
 
 
-async function moveCustomer() {
-  try {
-    const headers = getAuthHeaders()
-
-    const response = await axios.put(`${apiUrl}Customers/Customers_Move/${formData.value.customerID}&&${formData.value.moveDelegateID}`, {}, {
+async function moveOneCustomer(customerID, delegateID, headers) {
+  const response = await axios.put(
+    `${apiUrl}Customers/Customers_Move/${customerID}&&${delegateID}`,
+    {},
+    {
       headers: {
         ...headers,
         'Content-Type': 'application/json',
       },
-    })
+    },
+  )
 
+  return response.data
+}
+
+async function moveCustomer() {
+  const delegateID = formData.value.moveDelegateID
+  if (!delegateID) {
+    toast.error('اختر القائمة / المندوب')
+
+    return
+  }
+
+  const headers = getAuthHeaders()
+  moveBusy.value = true
+  try {
+    if (moveMode.value === 'bulk') {
+      const ids = (selectedCustomers.value || [])
+        .map(c => c?.customerID ?? c)
+        .filter(id => id != null && id !== '')
+      if (!ids.length) {
+        toast.error('لا يوجد زبائن محددون')
+
+        return
+      }
+
+      let ok = 0
+      const failed = []
+      for (const customerID of ids) {
+        try {
+          const data = await moveOneCustomer(customerID, delegateID, headers)
+          const customerIndex = customersData.value.findIndex(
+            customer => customer.customerID === customerID,
+          )
+          if (customerIndex !== -1) {
+            if (data && typeof data === 'object')
+              customersData.value[customerIndex] = { ...data }
+            else
+              customersData.value.splice(customerIndex, 1)
+          }
+          ok++
+        }
+        catch (err) {
+          console.error(err)
+          failed.push(customerID)
+        }
+      }
+
+      selectedCustomers.value = []
+      dialogMove.value = false
+      if (failed.length)
+        toast.error(`تم نقل ${ok} — فشل ${failed.length}`)
+      else
+        toast.success(`تم نقل ${ok} زبون بنجاح`)
+      await fetchCustomers()
+
+      return
+    }
+
+    const customerID = formData.value.customerID
+    const data = await moveOneCustomer(customerID, delegateID, headers)
     const customerIndex = customersData.value.findIndex(
-      customer => customer.customerID === formData.value.customerID,
+      customer => customer.customerID === customerID,
     )
-
     if (customerIndex !== -1) {
-      customersData.value[customerIndex] = { ...response.data }
+      if (data && typeof data === 'object')
+        customersData.value[customerIndex] = { ...data }
+      else
+        customersData.value.splice(customerIndex, 1)
     }
     dialogMove.value = false
-  } catch (error) {
+    toast.success('تم النقل بنجاح')
+  }
+  catch (error) {
     console.error(error)
+    toast.error(error.response?.data?.message || 'تعذر النقل')
+  }
+  finally {
+    moveBusy.value = false
   }
 }
 
@@ -1049,6 +1172,18 @@ onMounted(() => {
             اضافة مبيع جديد
           </VBtn>
           <VBtn
+            color="primary"
+            variant="tonal"
+            prepend-icon="tabler-arrows-right-left"
+            :disabled="!selectedCustomers.length"
+            @click="openBulkMoveDialog"
+          >
+            نقل المحددين
+            <span v-if="selectedCustomers.length">
+              ({{ selectedCustomers.length }})
+            </span>
+          </VBtn>
+          <VBtn
             variant="tonal"
             color="success"
             prepend-icon="tabler-upload"
@@ -1061,6 +1196,9 @@ onMounted(() => {
       <!-- عرض بيانات العملاء -->
       <VRow>
         <VDataTable
+          v-model="selectedCustomers"
+          show-select
+          item-value="customerID"
           :headers="headers"
           :items="customersData"
           :items-per-page="50"
@@ -1133,12 +1271,12 @@ onMounted(() => {
           </template>
           <template #item.receiptsTotal="{ item }">
             <div class="premium-amount amt-total-receipts">
-              {{ formattedNumber(item.receiptsTotal) }}
+              {{ formatHiddenFinancial(visibleReceiptsTotal(item, { showType: filters.showType }), formattedNumber) }}
             </div>
           </template>
           <template #item.amountRemaining="{ item }">
             <div class="premium-amount amt-remaining">
-              {{ formattedNumber(item.amountRemaining) }}
+              {{ formatHiddenFinancial(visibleAmountRemaining(item, { showType: filters.showType }), formattedNumber) }}
             </div>
           </template>
           <template #item.receiptRateDevice="{ item }">
@@ -2096,7 +2234,7 @@ onMounted(() => {
                   الواصل
                 </VLabel>
                 <VTextField
-                  :value="formattedNumber(paymentDetails.receiptsTotal)"
+                  :value="paymentDetails.hidePaidRemaining ? '—' : formattedNumber(paymentDetails.receiptsTotal)"
                   readonly
                   prepend-inner-icon="tabler-currency-dollar"
                 />
@@ -2107,7 +2245,7 @@ onMounted(() => {
                   الباقي
                 </VLabel>
                 <VTextField
-                  :value="formattedNumber(paymentDetails.amountRemaining)"
+                  :value="paymentDetails.hidePaidRemaining ? '—' : formattedNumber(paymentDetails.amountRemaining)"
                   readonly
                   prepend-inner-icon="tabler-alert-circle"
                 />
@@ -2326,7 +2464,7 @@ onMounted(() => {
               <h4 class="text-h6 font-weight-bold">
                 نقل إلى قائمة أخرى
               </h4>
-              <span class="text-caption text-medium-emphasis">نقل العميل إلى مندوب آخر</span>
+              <span class="text-caption text-medium-emphasis">{{ moveDialogSubtitle }}</span>
             </div>
           </div>
           <VBtn
@@ -2334,6 +2472,7 @@ onMounted(() => {
             variant="text"
             color="secondary"
             size="small"
+            :disabled="moveBusy"
             @click="dialogMove = false"
           >
             <VIcon
@@ -2354,6 +2493,7 @@ onMounted(() => {
               prepend-inner-icon="tabler-list"
               clearable
               required
+              :disabled="moveBusy"
             />
           </VForm>
         </VCardText>
@@ -2362,6 +2502,7 @@ onMounted(() => {
           <VBtn
             variant="tonal"
             color="secondary"
+            :disabled="moveBusy"
             @click="dialogMove = false"
           >
             <VIcon
@@ -2372,13 +2513,14 @@ onMounted(() => {
           </VBtn>
           <VBtn
             color="primary"
+            :loading="moveBusy"
             @click="moveCustomer"
           >
             <VIcon
               icon="tabler-arrow-right"
               class="me-2"
             />
-            نقل
+            {{ moveMode === 'bulk' ? 'نقل المحددين' : 'نقل' }}
           </VBtn>
         </VCardActions>
       </VCard>

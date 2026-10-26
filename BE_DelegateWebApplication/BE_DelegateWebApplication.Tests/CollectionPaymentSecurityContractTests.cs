@@ -37,6 +37,13 @@ namespace BE_DelegateWebApplication.Tests
             Assert.Contains("مقفل", FollowerCollectionPaymentGate.LockedMessage);
         }
 
+        [Fact]
+        public void FollowerCollectionEnabled_LocksDelegateLoginMessage()
+        {
+            Assert.Contains("جباية المتابع", FollowerCollectionLoginGate.LockedMessage);
+            Assert.Contains("غير فعال", FollowerCollectionLoginGate.LockedMessage);
+        }
+
         [Theory]
         [InlineData(true, false, true)]
         [InlineData(false, true, true)]

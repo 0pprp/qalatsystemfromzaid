@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using BE_Company.DTO;
 using BE_Company.IRepository;
 using Microsoft.Data.SqlClient;
@@ -31,44 +31,64 @@ namespace BE_Company.Repository
 
         public async Task<CustomersSalesGetDTO?> CustomersSales_Create(CustomersSalesPostDTO customersSalesPostDTO)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync();
+            await using var tx = await connection.BeginTransactionAsync();
+            try
             {
+                // Temp lines + sale SP share one connection/transaction so concurrent users
+                // cannot steal each other's SelectItemSalesTemporary rows mid-flight.
                 foreach (var item in customersSalesPostDTO.Contents.Where(c => c.ItemID != null))
                 {
-                    await SelectItemSalesTemporaryPost_Create(new SelectItemSalesTemporaryPostDTO()
-                    {
-                        ItemID = item.ItemID,
-                        Quantity = item.Quantity,
-                        UserCreateID = customersSalesPostDTO.UserCreateID
-                    });
+                    await connection.ExecuteAsync(
+                        "SelectItemSalesTemporaryPost_Create",
+                        new
+                        {
+                            ItemID = item.ItemID,
+                            Quantity = item.Quantity,
+                            UserCreateID = customersSalesPostDTO.UserCreateID,
+                        },
+                        transaction: (SqlTransaction)tx,
+                        commandType: CommandType.StoredProcedure);
                 }
-                return await connection.QueryFirstOrDefaultAsync<CustomersSalesGetDTO>("CustomersSales_Create",
-                new
-                {
-                    DelegateID = customersSalesPostDTO.DelegateID,
-                    StoreID = customersSalesPostDTO.StoreID,
-                    UserID = customersSalesPostDTO.UserCreateID,
-                    CustomerName = customersSalesPostDTO.CustomerName,
-                    PhoneNumber = customersSalesPostDTO.PhoneNumber,
-                    Address = customersSalesPostDTO.Address,
-                    ShopName = customersSalesPostDTO.ShopName,
-                    NearestFunctionPoint = customersSalesPostDTO.NearestFunctionPoint,
-                    SaleName = customersSalesPostDTO.SaleName,
-                    ReceiptName = customersSalesPostDTO.ReceiptName,
-                    Notes = customersSalesPostDTO.Notes,
-                    DateCreate = customersSalesPostDTO.DateCreate,
-                    DiscountAmountTotal = customersSalesPostDTO.DiscountAmountTotal / 1448,
-                    DiscountAmountTotalDay = customersSalesPostDTO.DiscountAmountDay / 1448
-                },
-                commandType: CommandType.StoredProcedure);
+
+                var created = await connection.QueryFirstOrDefaultAsync<CustomersSalesGetDTO>(
+                    "CustomersSales_Create",
+                    new
+                    {
+                        DelegateID = customersSalesPostDTO.DelegateID,
+                        StoreID = customersSalesPostDTO.StoreID,
+                        UserID = customersSalesPostDTO.UserCreateID,
+                        CustomerName = customersSalesPostDTO.CustomerName,
+                        PhoneNumber = customersSalesPostDTO.PhoneNumber,
+                        Address = customersSalesPostDTO.Address,
+                        ShopName = customersSalesPostDTO.ShopName,
+                        NearestFunctionPoint = customersSalesPostDTO.NearestFunctionPoint,
+                        SaleName = customersSalesPostDTO.SaleName,
+                        ReceiptName = customersSalesPostDTO.ReceiptName,
+                        Notes = customersSalesPostDTO.Notes,
+                        DateCreate = customersSalesPostDTO.DateCreate,
+                        // Historical IQD/box unit factor — do not change without balance reconciliation (F25).
+                        DiscountAmountTotal = customersSalesPostDTO.DiscountAmountTotal / 1448,
+                        DiscountAmountTotalDay = customersSalesPostDTO.DiscountAmountDay / 1448
+                    },
+                    transaction: (SqlTransaction)tx,
+                    commandType: CommandType.StoredProcedure);
+
+                await tx.CommitAsync();
+                return created;
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
             }
         }
 
         public async Task<bool?> SelectItemSalesTemporaryPost_Create(SelectItemSalesTemporaryPostDTO selectItemSalesTemporaryPostDTO)
         {
-            using (var connection = new SqlConnection(_connectionString))
-            {
-                return await connection.QueryFirstOrDefaultAsync<bool>("SelectItemSalesTemporaryPost_Create",
+            await using var connection = new SqlConnection(_connectionString);
+            return await connection.QueryFirstOrDefaultAsync<bool>("SelectItemSalesTemporaryPost_Create",
                 new
                 {
                     ItemID = selectItemSalesTemporaryPostDTO.ItemID,
@@ -76,7 +96,6 @@ namespace BE_Company.Repository
                     UserCreateID = selectItemSalesTemporaryPostDTO.UserCreateID,
                 },
                 commandType: CommandType.StoredProcedure);
-            }
         }
 
 

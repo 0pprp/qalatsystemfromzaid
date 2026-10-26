@@ -135,6 +135,46 @@ class _WrongSaleDetailScreenState extends State<WrongSaleDetailScreen> {
     ]);
 
     final widgets = <Widget>[
+      if (request.isBranchManagerReviewed)
+        Card(
+          color: Colors.teal.shade50,
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.fact_check_outlined, color: Colors.teal.shade800),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'بيانات المراجعة',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                InfoRow(
+                    label: 'المراجع',
+                    value: request.branchManagerReviewerDisplayName ?? '—'),
+                InfoRow(
+                  label: 'وقت المراجعة',
+                  value: request.branchManagerReviewedAtUtc == null
+                      ? '—'
+                      : AppDate.format(request.branchManagerReviewedAtUtc),
+                ),
+                InfoRow(
+                    label: 'الملاحظة',
+                    value: request.branchManagerReviewNote ?? '—'),
+              ],
+            ),
+          ),
+        ),
       Card(
         color: Colors.orange.shade50,
         child: Padding(

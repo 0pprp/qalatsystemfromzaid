@@ -236,17 +236,9 @@ namespace BE_Company.Sales.Services
                 var buyId = created?.BuyID;
                 if (buyId is not > 0)
                 {
-                    buyId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
-                        "SELECT CAST(IDENT_CURRENT(N'dbo.Buys') AS INT)",
-                        transaction: tx,
-                        cancellationToken: ct));
-                }
-
-                if (buyId is not > 0)
-                {
                     throw new SalesCompleteException(
                         StatusCodes.Status500InternalServerError,
-                        "تعذر تسجيل فاتورة الشراء في النظام الرئيسي.");
+                        "تعذر قراءة BuyID من نتيجة Buys_Create (لا يُستخدم IDENT_CURRENT).");
                 }
 
                 var postedAt = DateTime.UtcNow;

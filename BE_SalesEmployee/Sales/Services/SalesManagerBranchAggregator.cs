@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BE_SalesEmployee.Services;
@@ -23,7 +24,7 @@ namespace BE_SalesEmployee.Sales.Services
         Task<(int Status, object? Body)> PostFanoutAsync(GatewayUser user, string? cityValue, string companyPath, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> GetFileAsync(GatewayUser user, string cityValue, string companyPath, CancellationToken ct);
         Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct);
-        Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct);
+        Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct, string? actorRole = null);
         Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, string? cityValue, CancellationToken ct);
         Task<(int Status, object? Body)> ExcelSearchAsync(GatewayUser user, string? cityValue, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct);
@@ -115,6 +116,8 @@ namespace BE_SalesEmployee.Sales.Services
         {
             var targets = await GetTargetsAsync(cityValue, ct);
             var total = 0;
+            var failed = new System.Collections.Concurrent.ConcurrentBag<string>();
+            var succeeded = 0;
             await Task.WhenAll(targets.Select(async city =>
             {
                 try
@@ -125,6 +128,7 @@ namespace BE_SalesEmployee.Sales.Services
                         city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
                     if (!response.IsSuccessStatusCode)
                     {
+                        failed.Add(city.Value ?? city.Name ?? city.Link ?? "?");
                         return;
                     }
 
@@ -138,14 +142,16 @@ namespace BE_SalesEmployee.Sales.Services
                     }
 
                     Interlocked.Add(ref total, n);
+                    Interlocked.Increment(ref succeeded);
                 }
                 catch
                 {
-                    // skip unreachable branch
+                    failed.Add(city.Value ?? city.Name ?? city.Link ?? "?");
                 }
             }));
 
-            return (200, new { count = total });
+            var complete = failed.IsEmpty && succeeded == targets.Count;
+            return (200, BranchAggregateCountResult.From(total, succeeded, targets.Count, failed));
         }
 
         public async Task<(int Status, object? Body)> PostFanoutAsync(
@@ -207,21 +213,29 @@ namespace BE_SalesEmployee.Sales.Services
                 return (404, new { message = "المحافظة غير موجودة." });
             }
 
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            // Long-running branch calls: exception review, multi-month charts, employee rating enrich/lifetime.
-            var timeout = NeedsLongBranchTimeout(companyPath)
-                ? ExcelSearchTimeout
-                : BranchTimeout;
-            cts.CancelAfter(timeout);
-            using var response = await _proxy.SendManagerAsync(
-                city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
-            var raw = await response.Content.ReadAsStringAsync(ct);
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : BranchProxyService.TryParseJson(raw));
-            }
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                // Long-running branch calls: exception review, multi-month charts, employee rating enrich/lifetime.
+                var timeout = NeedsLongBranchTimeout(companyPath)
+                    ? ExcelSearchTimeout
+                    : BranchTimeout;
+                cts.CancelAfter(timeout);
+                using var response = await _proxy.SendManagerAsync(
+                    city.Link, companyPath, HttpMethod.Get, null, user.UserName, cts.Token);
+                var raw = await response.Content.ReadAsStringAsync(ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return ((int)response.StatusCode, string.IsNullOrWhiteSpace(raw) ? null : BranchProxyService.TryParseJson(raw));
+                }
 
-            return ((int)response.StatusCode, Stamp(raw, city));
+                return ((int)response.StatusCode, Stamp(raw, city));
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // CancelAfter fired — do not leak TaskCanceledException as opaque HTTP 500.
+                return (504, new { message = "انتهت مهلة الاتصال بمحافظة الفرع. أعد المحاولة." });
+            }
         }
 
         public async Task<(int Status, object? Body)> GetObjectFanoutAsync(
@@ -621,7 +635,8 @@ namespace BE_SalesEmployee.Sales.Services
             string companyPath,
             HttpMethod method,
             HttpContent? content,
-            CancellationToken ct)
+            CancellationToken ct,
+            string? actorRole = null)
         {
             if (string.IsNullOrWhiteSpace(cityValue))
             {
@@ -637,7 +652,7 @@ namespace BE_SalesEmployee.Sales.Services
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(30));
             using var response = await _proxy.SendManagerContentAsync(
-                city.Link, companyPath, method, content, user.UserName, cts.Token);
+                city.Link, companyPath, method, content, user.UserName, cts.Token, actorRole);
             if (method == HttpMethod.Get && response.IsSuccessStatusCode
                 && response.Content.Headers.ContentType?.MediaType is string media
                 && media.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
@@ -1215,7 +1230,9 @@ namespace BE_SalesEmployee.Sales.Services
             return null;
         }
 
-        private static readonly TimeSpan ExcelSearchTimeout = TimeSpan.FromSeconds(90);
+        // Follower-ops / rating / profile: branch WAN can exceed 60s nginx defaults if slow;
+        // keep gateway wait generous; BE endpoints are optimized to finish well under this.
+        private static readonly TimeSpan ExcelSearchTimeout = TimeSpan.FromSeconds(120);
 
         private async Task<(AdminCity City, JsonNode? Node)> FetchExcelSearchAsync(
             GatewayUser user,
@@ -1416,7 +1433,11 @@ namespace BE_SalesEmployee.Sales.Services
                 || companyPath.Contains("download", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool NeedsLongBranchTimeout(string companyPath)
+        /// <summary>
+        /// Paths that routinely exceed the default 8s single-branch CancelAfter
+        /// (rating / summary / متابعة المندوبين).
+        /// </summary>
+        public static bool NeedsLongBranchTimeout(string companyPath)
         {
             if (string.IsNullOrWhiteSpace(companyPath))
             {
@@ -1426,6 +1447,9 @@ namespace BE_SalesEmployee.Sales.Services
             if (companyPath.Contains("exception-review-context", StringComparison.OrdinalIgnoreCase)
                 || companyPath.Contains("stats/trend", StringComparison.OrdinalIgnoreCase)
                 || companyPath.Contains("stats/branch-month", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("director-summary", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("director-follower-ops", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("director-delegate-followup", StringComparison.OrdinalIgnoreCase)
                 || companyPath.Contains("rating-trend", StringComparison.OrdinalIgnoreCase)
                 || companyPath.Contains("rating-customers", StringComparison.OrdinalIgnoreCase)
                 || companyPath.Contains("/profile", StringComparison.OrdinalIgnoreCase)

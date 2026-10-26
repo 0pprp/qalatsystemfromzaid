@@ -1,7 +1,8 @@
 namespace BE_DelegateWebApplication.Services;
 
 /// <summary>
-/// Completion gate for follower legal follow-up: shop GPS + five mandatory ID images.
+/// Completion gate for follower legal follow-up: shop GPS + four mandatory ID images.
+/// ResidenceCertificate (مضبطة تأييد سكن) is optional.
 /// </summary>
 public static class LegalFollowupCompletionRules
 {
@@ -10,7 +11,11 @@ public static class LegalFollowupCompletionRules
         "NationalIdFront",
         "NationalIdBack",
         "ResidenceCardFront",
-        "ResidenceCardBack",
+        "ResidenceCardBack"
+    ];
+
+    public static readonly string[] OptionalDocumentTypes =
+    [
         "ResidenceCertificate"
     ];
 
@@ -27,7 +32,7 @@ public static class LegalFollowupCompletionRules
         "NationalIdBack" => "البطاقة الوطنية - خلفية",
         "ResidenceCardFront" => "بطاقة السكن - أمامية",
         "ResidenceCardBack" => "بطاقة السكن - خلفية",
-        "ResidenceCertificate" => "مضبطة تأييد سكن",
+        "ResidenceCertificate" => "مضبطة تأييد سكن (اختياري)",
         "ResidenceCard" => "بطاقة السكن",
         _ => documentType ?? ""
     };
@@ -36,8 +41,13 @@ public static class LegalFollowupCompletionRules
         !string.IsNullOrWhiteSpace(documentType)
         && RequiredDocumentTypes.Any(t => string.Equals(t, documentType.Trim(), StringComparison.OrdinalIgnoreCase));
 
+    public static bool IsOptionalType(string? documentType) =>
+        !string.IsNullOrWhiteSpace(documentType)
+        && OptionalDocumentTypes.Any(t => string.Equals(t, documentType.Trim(), StringComparison.OrdinalIgnoreCase));
+
     public static bool IsKnownUploadType(string? documentType) =>
         IsRequiredType(documentType)
+        || IsOptionalType(documentType)
         || string.Equals(documentType, "ResidenceCard", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Returns Arabic error message, or null when ready to submit.</summary>

@@ -135,8 +135,38 @@ class _HomePageState extends State<HomePage> {
                             borderRadius: BorderRadius.circular(10)),
                       ),
                       onPressed: () async {
-                        // حذف البيانات وقاعدة البيانات
-                        await DatabaseHelper().clearAllTables();
+                        final unresolved =
+                            await DatabaseHelper().countUnresolvedPayments();
+                        if (unresolved > 0) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'لا يمكن حذف البيانات: يوجد $unresolved تسديد غير مُرسَل/مرفوض. احفظ البيانات أو أرسل التسديدات أولاً.',
+                                  style: const TextStyle(fontFamily: 'Cairo'),
+                                ),
+                                backgroundColor: Colors.red.shade700,
+                              ),
+                            );
+                          }
+                          return;
+                        }
+                        try {
+                          await DatabaseHelper().clearAllTables();
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'تعذر مسح البيانات: $e',
+                                  style: const TextStyle(fontFamily: 'Cairo'),
+                                ),
+                                backgroundColor: Colors.red.shade700,
+                              ),
+                            );
+                          }
+                          return;
+                        }
                         await AsyncIdChecker.logout();
                         if (context.mounted) {
                           Navigator.of(context).pop();

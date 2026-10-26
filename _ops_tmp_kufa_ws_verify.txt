@@ -1,0 +1,24 @@
+active active
+PID 3428596
+PROC SalesGateway__BaseUrl=http://127.0.0.1:5280/api/
+PROC Branch__CityValue=DatabaseCompanyNajaf
+PROC Branch__CityName=النجف
+PROC SalesGateway__ApiKey=***
+ResolveCityValue True
+IsNajafFamilyLabel True
+الكوفة bytes False
+=== FirstCollection table ===
+HasFCE
+------
+NO
+HasDFCE
+-------
+NO
+
+=== Delegate 7 recent payments ===
+Msg 207, Level 16, State 1, Server vmi3533397, Line 3
+Invalid column name 'PaymentID'.
+
+=== journal WrongSale since restart ===
+
+OK

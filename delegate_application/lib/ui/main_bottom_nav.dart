@@ -1,9 +1,8 @@
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
 
-/// RTL bottom bar — equal tabs (no FAB):
-/// المبيعات | العملاء | الرئيسية | التسديدات
-/// Indices: 0 sales, 1 customers, 2 home, 3 payments.
+/// الرئيسية | التسديدات | العملاء | التقييم
+/// Indices: 0 home, 1 payments, 2 customers, 3 rating.
 class MainBottomNavBar extends StatelessWidget {
   const MainBottomNavBar({
     super.key,
@@ -17,11 +16,10 @@ class MainBottomNavBar extends StatelessWidget {
   static const double barHeight = 68;
 
   static const _items = <_NavSpec>[
-    _NavSpec(0, Icons.monetization_on_outlined, Icons.monetization_on, 'المبيعات'),
-    _NavSpec(1, Icons.people_outline, Icons.people, 'العملاء'),
-    _NavSpec(2, Icons.home_outlined, Icons.home, 'الرئيسية'),
-    _NavSpec(3, Icons.account_balance_wallet_outlined, Icons.account_balance_wallet,
-        'التسديدات'),
+    _NavSpec(0, Icons.home_outlined, Icons.home, 'الرئيسية'),
+    _NavSpec(1, Icons.payments_outlined, Icons.payments, 'التسديدات'),
+    _NavSpec(2, Icons.people_outline, Icons.people, 'العملاء'),
+    _NavSpec(3, Icons.star_outline, Icons.star, 'التقييم'),
   ];
 
   @override
@@ -41,7 +39,6 @@ class MainBottomNavBar extends StatelessWidget {
                   AnimatedPositioned(
                     duration: const Duration(milliseconds: 260),
                     curve: Curves.easeOutCubic,
-                    // RTL Stack: left=0 is visual left; index 0 is rightmost.
                     right: selectedIndex * tabW + tabW * 0.18,
                     left: null,
                     top: 8,
@@ -119,7 +116,7 @@ class _NavItem extends StatelessWidget {
                 selected ? selectedIcon : icon,
                 key: ValueKey(selected),
                 color: color,
-                size: 24,
+                size: 22,
               ),
             ),
             const SizedBox(height: 2),
@@ -131,7 +128,7 @@ class _NavItem extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontFamily: 'Cairo',
-                  fontSize: 11,
+                  fontSize: 10,
                   height: 1.1,
                   color: color,
                   fontWeight: selected ? FontWeight.bold : FontWeight.normal,

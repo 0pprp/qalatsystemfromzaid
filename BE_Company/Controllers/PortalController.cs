@@ -1,66 +1,79 @@
 using BE_Company.DTO;
 using BE_Company.IRepository;
-using BE_Company.Utilities;
+using BE_Company.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BE_Company.Controllers
 {
     /// <summary>
-    /// Public-facing customer portal API.
-    /// No authentication required — access is granted via encrypted token in the query string.
+    /// Public customer portal API. Access requires an authenticated AES-GCM portal token
+    /// (header X-Portal-Token or Authorization Bearer preferred; query token accepted for legacy links).
+    /// Legacy CBC tokens are rejected with no fallback.
     /// </summary>
     [Route("api/[controller]")]
     [ApiController]
     public class PortalController : ControllerBase
     {
-        private readonly ICustomersRepository _customersRepository;
         private readonly ICustomersPaymentsRepository _customersPaymentsRepository;
         private readonly ICustomersSalesRepository _customersSalesRepository;
-        private readonly IConfiguration _configuration;
+        private readonly PortalAccessService _portalAccess;
 
         public PortalController(
             ICustomersRepository customersRepository,
             ICustomersPaymentsRepository customersPaymentsRepository,
             ICustomersSalesRepository customersSalesRepository,
-            IConfiguration configuration)
+            PortalAccessService portalAccess)
         {
-            _customersRepository = customersRepository;
+            _ = customersRepository;
             _customersPaymentsRepository = customersPaymentsRepository;
             _customersSalesRepository = customersSalesRepository;
-            _configuration = configuration;
+            _portalAccess = portalAccess;
         }
 
-        /// <summary>
-        /// Validates the token and extracts customer ID.
-        /// Returns null with HTTP result if invalid.
-        /// </summary>
-        private ObjectResult? ValidateToken(string? token, out int customerId)
+        private ObjectResult? ValidateAccess(string? queryToken, out int customerId)
         {
             customerId = 0;
+            var token = ReadToken(queryToken);
+            if (!_portalAccess.TryAuthorize(token, out customerId, out var error))
+            {
+                if (string.Equals(error, "المعرف مفقود", StringComparison.Ordinal))
+                {
+                    return BadRequest(new { error });
+                }
 
-            if (string.IsNullOrEmpty(token))
-                return BadRequest(new { error = "المعرف مفقود" });
+                if (string.Equals(error, "خطأ في إعدادات الخادم", StringComparison.Ordinal))
+                {
+                    return StatusCode(500, new { error });
+                }
 
-            string encryptionKey = _configuration["PortalSettings:EncryptionKey"]!;
-            if (string.IsNullOrEmpty(encryptionKey))
-                return StatusCode(500, new { error = "خطأ في إعدادات الخادم" });
+                return Unauthorized(new { error = error ?? "المعرف غير صالح أو منتهي الصلاحية" });
+            }
 
-            int? id = EncryptionHelper.ValidateAndGetCustomerId(token, encryptionKey);
-            if (!id.HasValue)
-                return Unauthorized(new { error = "المعرف غير صالح أو منتهي الصلاحية" });
-
-            customerId = id.Value;
-            return null; // Token valid
+            return null;
         }
 
-        /// <summary>
-        /// GET /api/Portal/CustomerInfo?token={encrypted}
-        /// Returns full customer information including financial summary.
-        /// </summary>
+        private string? ReadToken(string? queryToken)
+        {
+            if (Request.Headers.TryGetValue("X-Portal-Token", out var headerToken) &&
+                !string.IsNullOrWhiteSpace(headerToken))
+            {
+                return headerToken.ToString().Trim();
+            }
+
+            var auth = Request.Headers.Authorization.ToString();
+            if (!string.IsNullOrWhiteSpace(auth) &&
+                auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                return auth["Bearer ".Length..].Trim();
+            }
+
+            return queryToken;
+        }
+
         [HttpGet("CustomerInfo")]
         public async Task<ActionResult<CustomersGetDTO>> CustomerInfo([FromQuery] string? token)
         {
-            var error = ValidateToken(token, out int customerId);
+            var error = ValidateAccess(token, out int customerId);
             if (error != null) return error;
 
             try
@@ -71,105 +84,106 @@ namespace BE_Company.Controllers
 
                 return Ok(customer);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(500, new { error = $"حدث خطأ: {ex.Message}" });
+                return StatusCode(500, new { error = "حدث خطأ أثناء معالجة الطلب" });
             }
         }
 
-        /// <summary>
-        /// GET /api/Portal/Payments?token={encrypted}&fromDate=yyyy-MM-dd&toDate=yyyy-MM-dd
-        /// Returns customer payments with optional date filtering.
-        /// </summary>
         [HttpGet("Payments")]
         public async Task<ActionResult<IEnumerable<CustomersPaymentsGetDTO>>> Payments(
             [FromQuery] string? token,
             [FromQuery] string? fromDate,
             [FromQuery] string? toDate)
         {
-            var error = ValidateToken(token, out int customerId);
+            var error = ValidateAccess(token, out int customerId);
             if (error != null) return error;
 
             try
             {
-                // Parse date filters
                 DateTime? parsedFrom = null;
                 DateTime? parsedTo = null;
 
-                if (!string.IsNullOrWhiteSpace(fromDate) && fromDate != "null")
+                if (!string.IsNullOrWhiteSpace(fromDate) && fromDate != "null" &&
+                    DateTime.TryParse(fromDate, out DateTime dtFrom))
                 {
-                    if (DateTime.TryParse(fromDate, out DateTime dt))
-                        parsedFrom = dt;
-                }
-                if (!string.IsNullOrWhiteSpace(toDate) && toDate != "null")
-                {
-                    if (DateTime.TryParse(toDate, out DateTime dt))
-                        parsedTo = dt;
+                    parsedFrom = dtFrom;
                 }
 
-                // Get all payments for this customer, then filter by date in-memory
-                // (The existing SP doesn't support date filtering by customer, so we filter here)
-                var allPayments = await _customersPaymentsRepository.CustomersPayments_GetByCustomerID(customerId);
-                if (allPayments == null)
+                if (!string.IsNullOrWhiteSpace(toDate) && toDate != "null" &&
+                    DateTime.TryParse(toDate, out DateTime dtTo))
+                {
+                    parsedTo = dtTo;
+                }
+
+                var filtered = await _customersPaymentsRepository.CustomersPayments_GetByCustomerID(
+                    customerId, parsedFrom, parsedTo);
+                if (filtered == null)
                     return Ok(new List<CustomersPaymentsGetDTO>());
-
-                var filtered = allPayments.AsEnumerable();
-
-                if (parsedFrom.HasValue)
-                    filtered = filtered.Where(p => p.PaymentDate >= parsedFrom.Value);
-
-                if (parsedTo.HasValue)
-                    filtered = filtered.Where(p => p.PaymentDate <= parsedTo.Value);
 
                 return Ok(filtered.OrderByDescending(p => p.PaymentDate));
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(500, new { error = $"حدث خطأ: {ex.Message}" });
+                return StatusCode(500, new { error = "حدث خطأ أثناء معالجة الطلب" });
             }
         }
 
-        /// <summary>
-        /// GET /api/Portal/Sales?token={encrypted}&fromDate=yyyy-MM-dd&toDate=yyyy-MM-dd
-        /// Returns customer sales with optional date filtering.
-        /// </summary>
         [HttpGet("Sales")]
         public async Task<ActionResult<IEnumerable<CustomersSalesGetDTO>>> Sales(
             [FromQuery] string? token,
             [FromQuery] string? fromDate,
             [FromQuery] string? toDate)
         {
-            var error = ValidateToken(token, out int customerId);
+            var error = ValidateAccess(token, out int customerId);
             if (error != null) return error;
 
             try
             {
-                // Parse date filters
                 DateTime? parsedFrom = null;
                 DateTime? parsedTo = null;
 
-                if (!string.IsNullOrWhiteSpace(fromDate) && fromDate != "null")
+                if (!string.IsNullOrWhiteSpace(fromDate) && fromDate != "null" &&
+                    DateTime.TryParse(fromDate, out DateTime dtFrom))
                 {
-                    if (DateTime.TryParse(fromDate, out DateTime dt))
-                        parsedFrom = dt;
-                }
-                if (!string.IsNullOrWhiteSpace(toDate) && toDate != "null")
-                {
-                    if (DateTime.TryParse(toDate, out DateTime dt))
-                        parsedTo = dt;
+                    parsedFrom = dtFrom;
                 }
 
-                // Get sales for this customer
+                if (!string.IsNullOrWhiteSpace(toDate) && toDate != "null" &&
+                    DateTime.TryParse(toDate, out DateTime dtTo))
+                {
+                    parsedTo = dtTo;
+                }
+
                 var allSales = await _customersSalesRepository.CustomersSales_GetByCustomerIDNew(customerId, parsedFrom, parsedTo);
                 if (allSales == null)
                     return Ok(new List<CustomersSalesGetDTO>());
 
                 return Ok(allSales);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(500, new { error = $"حدث خطأ: {ex.Message}" });
+                return StatusCode(500, new { error = "حدث خطأ أثناء معالجة الطلب" });
             }
+        }
+
+        /// <summary>Revoke a still-valid portal token (staff-facing; requires portal token itself).</summary>
+        [HttpPost("Revoke")]
+        public IActionResult Revoke([FromQuery] string? token)
+        {
+            var raw = ReadToken(token);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return BadRequest(new { error = "المعرف مفقود" });
+            }
+
+            if (!_portalAccess.TryAuthorize(raw, out _, out _))
+            {
+                return Unauthorized(new { error = "المعرف غير صالح أو منتهي الصلاحية" });
+            }
+
+            _portalAccess.RevokeToken(raw);
+            return Ok(new { revoked = true });
         }
     }
 }

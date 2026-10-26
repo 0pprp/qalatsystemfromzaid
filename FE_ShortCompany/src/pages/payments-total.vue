@@ -149,9 +149,12 @@ const changeDatePayment = ref({
 const formattedNumber = num => {
   if (num === 0) return "0"
   if (num) return num.toLocaleString() + " دع "
-  
+
   return "لا يوجد"
 }
+
+const formattedDate = date =>
+  date ? new Date(date).toLocaleDateString('en-CA') : 'لا يوجد'
 
 // تعريف عناوين جدول التسديدات
 const paymentsHeaders = [

@@ -237,6 +237,53 @@ public class SalesRequestEvaluationReceiptCountTests
         Assert.All(hits.Items, h => Assert.Equal("تطابق اسم الأب والجد", h.MatchReason));
         Assert.Equal(new[] { 1, 4 }, hits.Items.Select(h => h.CustomerId).OrderBy(x => x).ToArray());
     }
+
+    [Fact]
+    public async Task Evaluate_SonFather_Counts_And_Reason()
+    {
+        var (_, svc, catalog, rating, row) = await SeedAsync("حسين أحمد محمد", "07809999999");
+        catalog.Customers.Add(new() { CustomerId = 1, FullName = "أحمد محمد علي", Phone = "07801110000" });
+        catalog.Customers.Add(new() { CustomerId = 2, FullName = "أحمد علي محمد", Phone = "07802220000" });
+        catalog.Customers.Add(new() { CustomerId = 3, FullName = "علي أحمد محمد", Phone = "07803330000" });
+        foreach (var id in new[] { 1, 2, 3 })
+        {
+            rating.Facts.Add(new CustomerRatingFacts(
+                id, 1, IsLegal: false, IsFakeSale: false,
+                DateSaleDevice: DateTime.UtcNow.Date.AddDays(-30),
+                LastPaymentDate: DateTime.UtcNow.Date,
+                AmountTotalSales: 1000, ReceiptsTotal: 1000, AmountRemaining: 0, ReceiptCount: 1));
+        }
+
+        var summary = await svc.EvaluateBatchAsync(Manager(), new SalesRequestEvaluationBatchRequestDTO
+        {
+            Items =
+            [
+                new SalesRequestEvaluationPayloadDTO
+                {
+                    RequestId = row.Id,
+                    SourceCityValue = "najaf-demo",
+                    CustomerName = "حسين أحمد محمد",
+                    CustomerPhone = "07809999999"
+                }
+            ]
+        }, default);
+
+        Assert.Equal(1, summary.Items[0].SonFather.ResultCount);
+        Assert.Equal(0, summary.Items[0].TripleName.ResultCount);
+        Assert.Equal(0, summary.Items[0].Phone.ResultCount);
+
+        var hits = await svc.ListHitsAsync(
+            Manager(),
+            row.Id,
+            SalesRequestEvaluationService.CategorySonFather,
+            page: 1,
+            pageSize: 30,
+            default);
+
+        Assert.Equal(1, hits.Total);
+        Assert.All(hits.Items, h => Assert.Equal("تطابق ابن مع أب", h.MatchReason));
+        Assert.Equal(1, hits.Items[0].CustomerId);
+    }
 }
 
 public class SalesRequestProvinceTransferServiceTests

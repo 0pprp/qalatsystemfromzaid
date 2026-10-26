@@ -10,6 +10,8 @@ namespace BE_DelegateWebApplication.Repository
     public class DelegateRepository : IDelegateRepository
     {
         private readonly string _connectionString;
+        private static int _followerCollectionColumnReady;
+        private static readonly SemaphoreSlim FollowerCollectionColumnGate = new(1, 1);
 
         public DelegateRepository(IConfiguration configuration)
         {
@@ -18,14 +20,33 @@ namespace BE_DelegateWebApplication.Repository
 
         public async Task<DelegateGetDTO?> GetDelegateLogin(string? asyncID)
         {
+            if (string.IsNullOrWhiteSpace(asyncID)) return null;
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.QuerySingleOrDefaultAsync<DelegateGetDTO>("GetDelegateLogin",
-                new
-                {
-                    AsyncID = asyncID
-                },
-                commandType: CommandType.StoredProcedure);
+                // Fast auth path — View_Delegates aggregates all customers (~12s on Basra).
+                await EnsureFollowerCollectionColumnAsync(connection);
+                var result = await connection.QuerySingleOrDefaultAsync<DelegateGetDTO>(new CommandDefinition(@"
+-- login-via-Delegates-not-View_Delegates
+SELECT TOP (1)
+    D.DelegateID AS DelegateId,
+    D.UserID AS UserId,
+    D.CityID AS CityId,
+    D.DelegateName,
+    D.Address,
+    D.PhoneNumber,
+    D.Notes,
+    D.DeviceSaleState,
+    D.AsyncID AS AsyncId,
+    D.DevicePaymentState,
+    D.ReceiptName,
+    D.UpdateReceipt,
+    D.DeleteReceipt,
+    CAST(ISNULL(D.FollowerCollectionEnabled, 0) AS BIT) AS FollowerCollectionEnabled
+FROM dbo.Delegates D
+WHERE D.AsyncID = @AsyncID
+ORDER BY D.DelegateID;",
+                    new { AsyncID = asyncID.Trim().TrimEnd('/') },
+                    commandTimeout: 5));
                 return result;
             }
         }
@@ -58,19 +79,35 @@ namespace BE_DelegateWebApplication.Repository
             }
         }
 
+        /// <summary>
+        /// Returns only the logged-in delegate's own list (يوزر المندوب).
+        /// Sibling/SelectDelegate children (e.g. تجهيز محل) are no longer exposed to the app.
+        /// </summary>
         public async Task<IEnumerable<SelectDelegateGetDTO>?> GetDelegateSelect(int? delegateId)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            if (delegateId is null or <= 0)
             {
-                var result = await connection.QueryAsync<SelectDelegateGetDTO>("GetDelegateSelect",
-                    new
-                    {
-                        DelegateID = delegateId
-                    },
-                    commandType: CommandType.StoredProcedure,
-                    commandTimeout: 600);
-                return DelegateListDedupe.DistinctByDelegateId(result).ToList();
+                return Array.Empty<SelectDelegateGetDTO>();
             }
+
+            using var connection = new SqlConnection(_connectionString);
+            var result = await connection.QueryAsync<SelectDelegateGetDTO>(@"
+SELECT
+    d.DelegateID AS DelegateId,
+    d.DelegateID AS DelegateChildId,
+    d.DelegateID AS DelegateFatherId,
+    d.UserID AS UserId,
+    d.DelegateName,
+    d.ReceiptName,
+    CAST(ISNULL(d.UpdateReceipt, 0) AS BIT) AS UpdateReceipt,
+    CAST(ISNULL(d.DeleteReceipt, 0) AS BIT) AS DeleteReceipt,
+    CAST(ISNULL(d.DevicePaymentState, 0) AS BIT) AS DevicePaymentState,
+    CAST(ISNULL(d.FollowerCollectionEnabled, 0) AS BIT) AS FollowerCollectionEnabled
+FROM dbo.Delegates d
+WHERE d.DelegateID = @DelegateID;",
+                new { DelegateID = delegateId.Value },
+                commandTimeout: 60);
+            return DelegateListDedupe.DistinctByDelegateId(result).ToList();
         }
 
         /// <summary>
@@ -147,11 +184,19 @@ WHERE u.UserID = @UserId
                 }
 
                 // Legacy Delegate-linked followers only (pre User migration).
-                var result = await connection.QuerySingleOrDefaultAsync<LinkedFlagDTO>(
-                    "Followers_IsLinked",
-                    new { FatherID = fatherId, ChildID = childId },
-                    commandType: CommandType.StoredProcedure);
-                return result != null && result.IsLinked == 1;
+                try
+                {
+                    var result = await connection.QuerySingleOrDefaultAsync<LinkedFlagDTO>(
+                        "Followers_IsLinked",
+                        new { FatherID = fatherId, ChildID = childId },
+                        commandType: CommandType.StoredProcedure);
+                    return result != null && result.IsLinked == 1;
+                }
+                catch (SqlException)
+                {
+                    // SP missing / broken on some city DBs — callers fall back to GetDelegateSelect.
+                    return false;
+                }
             }
         }
 
@@ -172,13 +217,27 @@ END");
 
         private static async Task EnsureFollowerCollectionColumnAsync(SqlConnection connection)
         {
-            await connection.ExecuteAsync(@"
+            if (Volatile.Read(ref _followerCollectionColumnReady) == 1) return;
+            await FollowerCollectionColumnGate.WaitAsync();
+            try
+            {
+                if (Volatile.Read(ref _followerCollectionColumnReady) == 1) return;
+                // Dynamic SQL: static ALTER on hot dbo.Delegates compiles even when IF is false
+                // and contending SCH-M locks make every GetDelegateLogin exceed the APK 8s budget.
+                await connection.ExecuteAsync(new CommandDefinition(@"
 IF COL_LENGTH(N'dbo.Delegates', N'FollowerCollectionEnabled') IS NULL
-BEGIN
-    ALTER TABLE dbo.Delegates
-        ADD FollowerCollectionEnabled BIT NOT NULL
-            CONSTRAINT DF_Delegates_FollowerCollectionEnabled DEFAULT (0);
-END");
+    EXEC(N'ALTER TABLE dbo.Delegates ADD FollowerCollectionEnabled BIT NOT NULL CONSTRAINT DF_Delegates_FollowerCollectionEnabled DEFAULT (0)');
+", commandTimeout: 5));
+                Volatile.Write(ref _followerCollectionColumnReady, 1);
+            }
+            catch (SqlException)
+            {
+                // Leave ready=0 so a later request can retry; callers must not hang login.
+            }
+            finally
+            {
+                FollowerCollectionColumnGate.Release();
+            }
         }
     }
 }

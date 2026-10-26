@@ -90,8 +90,17 @@ public class ExceptionReviewServiceTests
             Task.FromResult<IEnumerable<CustomersPaymentsGetDTO>?>(Rows);
 
         public Task<IEnumerable<CustomersPaymentsGetDTO>?> CustomersPayments_GetByCustomerID(int? customerID) =>
+            CustomersPayments_GetByCustomerID(customerID, null, null);
+
+        public Task<IEnumerable<CustomersPaymentsGetDTO>?> CustomersPayments_GetByCustomerID(
+            int? customerID,
+            DateTime? fromDate,
+            DateTime? toDate) =>
             Task.FromResult<IEnumerable<CustomersPaymentsGetDTO>?>(
-                Rows.Where(r => r.CustomerID == customerID).ToList());
+                Rows.Where(r =>
+                    r.CustomerID == customerID
+                    && (!fromDate.HasValue || r.PaymentDate >= fromDate)
+                    && (!toDate.HasValue || r.PaymentDate <= toDate)).ToList());
 
         public Task<bool?> CustomersPayments_ChangePaymentDate(string? paymentlist, DateTime? newDate, int? userID) =>
             Task.FromResult<bool?>(true);

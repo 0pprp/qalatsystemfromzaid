@@ -1,4 +1,5 @@
 using BE_SalesEmployee.Sales.Authorization;
+using BE_SalesEmployee.Sales.Stores;
 using BE_SalesEmployee.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,7 +17,9 @@ namespace BE_SalesEmployee.Controllers
         private readonly DelegatedManagerAccountService _delegatedManagerAccount;
         private readonly MainFollowerAccountService _mainFollowerAccount;
         private readonly DirectorAccountService _directorAccount;
+        private readonly MonitorAccountService _monitorAccount;
         private readonly SalesFilterLoginService _filterLogin;
+        private readonly ISalesEmployeeAppBlockStore _appBlocks;
 
         public AuthController(
             AdminCitiesService cities,
@@ -26,7 +29,9 @@ namespace BE_SalesEmployee.Controllers
             DelegatedManagerAccountService delegatedManagerAccount,
             MainFollowerAccountService mainFollowerAccount,
             DirectorAccountService directorAccount,
-            SalesFilterLoginService filterLogin)
+            MonitorAccountService monitorAccount,
+            SalesFilterLoginService filterLogin,
+            ISalesEmployeeAppBlockStore appBlocks)
         {
             _cities = cities;
             _proxy = proxy;
@@ -35,7 +40,9 @@ namespace BE_SalesEmployee.Controllers
             _delegatedManagerAccount = delegatedManagerAccount;
             _mainFollowerAccount = mainFollowerAccount;
             _directorAccount = directorAccount;
+            _monitorAccount = monitorAccount;
             _filterLogin = filterLogin;
+            _appBlocks = appBlocks;
         }
 
         public class LoginRequest
@@ -75,6 +82,7 @@ namespace BE_SalesEmployee.Controllers
         }
 
         /// <summary>Central director login. No province — ratings across all branches.</summary>
+        /// <remarks>Also accepts monitor credentials so older clients that only call LoginDirector still work.</remarks>
         [HttpPost("LoginDirector")]
         public IActionResult LoginDirector([FromBody] LoginRequest request)
         {
@@ -83,20 +91,69 @@ namespace BE_SalesEmployee.Controllers
                 return BadRequest(new { message = "اسم المستخدم وكلمة المرور مطلوبان" });
             }
 
-            if (!_directorAccount.TryAuthenticate(request.UserName, request.Password, out var identity) ||
+            if (_directorAccount.TryAuthenticate(request.UserName, request.Password, out var directorIdentity) &&
+                directorIdentity != null)
+            {
+                var directorToken = _tokens.CreateDirectorToken(directorIdentity.DisplayName, out var directorExp);
+                return Ok(new
+                {
+                    token = directorToken,
+                    expiration = directorExp,
+                    userId = 0,
+                    userName = directorIdentity.DisplayName,
+                    userType = "المدير",
+                    cityLink = "",
+                    cityName = "كل المحافظات",
+                    cityValue = "",
+                    central = true
+                });
+            }
+
+            // Fallback: monitor accounts are also central / all-provinces.
+            if (_monitorAccount.TryAuthenticate(request.UserName, request.Password, out var monitorIdentity) &&
+                monitorIdentity != null)
+            {
+                var monitorToken = _tokens.CreateMonitorToken(monitorIdentity.DisplayName, out var monitorExp);
+                return Ok(new
+                {
+                    token = monitorToken,
+                    expiration = monitorExp,
+                    userId = 0,
+                    userName = monitorIdentity.DisplayName,
+                    userType = "المراقب",
+                    cityLink = "",
+                    cityName = "كل المحافظات",
+                    cityValue = "",
+                    central = true
+                });
+            }
+
+            return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
+        }
+
+        /// <summary>Central monitor login — «عمل المتابعين» only (all provinces).</summary>
+        [HttpPost("LoginMonitor")]
+        public IActionResult LoginMonitor([FromBody] LoginRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.UserName) || string.IsNullOrWhiteSpace(request.Password))
+            {
+                return BadRequest(new { message = "اسم المستخدم وكلمة المرور مطلوبان" });
+            }
+
+            if (!_monitorAccount.TryAuthenticate(request.UserName, request.Password, out var identity) ||
                 identity == null)
             {
                 return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
             }
 
-            var token = _tokens.CreateDirectorToken(identity.DisplayName, out var expiration);
+            var token = _tokens.CreateMonitorToken(identity.DisplayName, out var expiration);
             return Ok(new
             {
                 token,
                 expiration,
                 userId = 0,
                 userName = identity.DisplayName,
-                userType = "المدير",
+                userType = "المراقب",
                 cityLink = "",
                 cityName = "كل المحافظات",
                 cityValue = "",
@@ -190,6 +247,17 @@ namespace BE_SalesEmployee.Controllers
                     if (!login.Ok || !city.Accepts(login.UserType))
                     {
                         continue;
+                    }
+
+                    if (SalesRoles.IsSalesEmployee(login.UserType)
+                        && int.TryParse(login.UserId, out var empId)
+                        && empId > 0
+                        && await _appBlocks.IsBlockedAsync(city.Value, empId, ct))
+                    {
+                        return StatusCode(StatusCodes.Status403Forbidden, new
+                        {
+                            message = "تم إيقاف تطبيقك من الإدارة — لا يمكنك الدخول. تواصل مع المدير المفوض أو المدير."
+                        });
                     }
 
                     var token = _tokens.CreateToken(

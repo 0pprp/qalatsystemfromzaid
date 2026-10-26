@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -22,6 +23,7 @@ class ShortCompanyApp extends StatefulWidget {
 class _ShortCompanyAppState extends State<ShortCompanyApp> {
   late final WebViewController _controller;
   bool _isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -31,7 +33,13 @@ class _ShortCompanyAppState extends State<ShortCompanyApp> {
       ..setBackgroundColor(const Color(0xFF1e5799))
       ..setNavigationDelegate(NavigationDelegate(
         onPageFinished: (_) async {
-          if (mounted) setState(() => _isLoading = false);
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+              _loadError = null;
+            });
+          }
+          // F26: allow pinch-zoom / user scaling (removed maximum-scale=1 / user-scalable=no).
           await _controller.runJavaScript('''
             var meta = document.querySelector('meta[name="viewport"]');
             if (!meta) {
@@ -39,12 +47,31 @@ class _ShortCompanyAppState extends State<ShortCompanyApp> {
               meta.name = 'viewport';
               document.head.appendChild(meta);
             }
-            meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+            meta.content = 'width=device-width, initial-scale=1.0';
           ''');
         },
-        onWebResourceError: (error) {},
-      ))
-      ..loadRequest(Uri.parse('http://shortnewadmin.alsaaeidy.com/#/login'));
+        onWebResourceError: (error) {
+          if (!mounted) return;
+          setState(() {
+            _isLoading = false;
+            _loadError = error.description.isNotEmpty
+                ? error.description
+                : 'تعذر تحميل الصفحة';
+          });
+        },
+      ));
+    _controller.loadRequest(
+      Uri.parse('http://shortnewadmin.alsaaeidy.com/#/login'),
+    );
+  }
+
+  Future<void> _retry() async {
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
+    await _controller.loadRequest(
+        Uri.parse('http://shortnewadmin.alsaaeidy.com/#/login'));
   }
 
   @override
@@ -58,14 +85,37 @@ class _ShortCompanyAppState extends State<ShortCompanyApp> {
           child: Stack(
             children: [
               WebViewWidget(controller: _controller),
-              if (_isLoading)
+              if (_loadError != null)
+                Container(
+                  color: const Color(0xFF1e5799),
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.wifi_off, color: Colors.white, size: 48),
+                      const SizedBox(height: 16),
+                      Text(
+                        _loadError!,
+                        textAlign: TextAlign.center,
+                        textDirection: TextDirection.rtl,
+                        style: const TextStyle(color: Colors.white, fontSize: 16),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: _retry,
+                        child: const Text('إعادة المحاولة'),
+                      ),
+                    ],
+                  ),
+                )
+              else if (_isLoading)
                 Container(
                   color: const Color(0xFF1e5799),
                   child: Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Company Logo — round, no clipping
                         Container(
                           width: 140,
                           height: 140,
@@ -86,24 +136,30 @@ class _ShortCompanyAppState extends State<ShortCompanyApp> {
                               child: Image.asset(
                                 'assets/logo.png',
                                 fit: BoxFit.contain,
-                                errorBuilder: (_, __, ___) => const Icon(Icons.shield_outlined, size: 70, color: Color(0xFF1e5799)),
+                                errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.shield_outlined,
+                                    size: 70,
+                                    color: Color(0xFF1e5799)),
                               ),
                             ),
                           ),
                         ),
                         const SizedBox(height: 32),
                         const Text('قلعة الضمان',
-                          style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
-                        ),
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold)),
                         const SizedBox(height: 8),
                         const Text('لأنظمة الإدارة',
-                          style: TextStyle(color: Colors.white70, fontSize: 16),
-                        ),
+                            style:
+                                TextStyle(color: Colors.white70, fontSize: 16)),
                         const SizedBox(height: 40),
                         const SizedBox(
                           width: 28,
                           height: 28,
-                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5, color: Colors.white),
                         ),
                       ],
                     ),

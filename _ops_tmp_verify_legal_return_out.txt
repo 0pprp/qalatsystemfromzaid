@@ -1,0 +1,11 @@
+﻿FE {'╪Ñ╪▒╪│╪º┘ä ┘ä┘ä┘é╪º┘å┘ê┘å┘è╪⌐': True, '╪¬┘à╪¬ ╪Ñ╪╣╪º╪»╪⌐ ╪º┘ä╪╖┘ä╪¿ ┘ä┘å┘ü╪│ ╪º┘ä┘à┘ê╪╕┘ü ΓÇö ┘è╪╕┘ç╪▒ ┘ü┘è ╪º┘ä┘ê╪º╪▒╪»': True, '╪ú┘ê ╪Ñ╪▒╪│╪º┘ä ┘ä┘ä┘à╪¬╪º╪¿╪╣╪⌐ ╪º┘ä┘é╪º┘å┘ê┘å┘è╪⌐': True}
+STDERR  19, in <module>
+  File "/usr/lib/python3.12/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'strings'
+

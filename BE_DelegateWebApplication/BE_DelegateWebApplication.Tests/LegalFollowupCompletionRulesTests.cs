@@ -16,17 +16,17 @@ public class LegalFollowupCompletionRulesTests
     }
 
     [Fact]
-    public void ValidateReady_Fails_WhenDocMissing()
+    public void ValidateReady_Fails_WhenRequiredDocMissing()
     {
         var docs = LegalFollowupCompletionRules.RequiredDocumentTypes
-            .Where(t => t != "ResidenceCertificate")
+            .Where(t => t != "NationalIdFront")
             .ToArray();
         var err = LegalFollowupCompletionRules.ValidateReady(32.0, 44.3, docs);
         Assert.Contains("مستمسك", err!);
     }
 
     [Fact]
-    public void ValidateReady_Passes_WithLocationAndAllDocs()
+    public void ValidateReady_Passes_WithoutResidenceCertificate()
     {
         var err = LegalFollowupCompletionRules.ValidateReady(
             32.0289,
@@ -36,13 +36,25 @@ public class LegalFollowupCompletionRulesTests
     }
 
     [Fact]
-    public void RequiredTypes_AreFiveImages()
+    public void ValidateReady_Passes_WithLocationAndAllRequiredDocs()
     {
-        Assert.Equal(5, LegalFollowupCompletionRules.RequiredDocumentTypes.Length);
+        var docs = LegalFollowupCompletionRules.RequiredDocumentTypes
+            .Concat(LegalFollowupCompletionRules.OptionalDocumentTypes)
+            .ToArray();
+        var err = LegalFollowupCompletionRules.ValidateReady(32.0289, 44.3356, docs);
+        Assert.Null(err);
+    }
+
+    [Fact]
+    public void RequiredTypes_AreFourImages_ResidenceOptional()
+    {
+        Assert.Equal(4, LegalFollowupCompletionRules.RequiredDocumentTypes.Length);
         Assert.Contains("NationalIdFront", LegalFollowupCompletionRules.RequiredDocumentTypes);
         Assert.Contains("NationalIdBack", LegalFollowupCompletionRules.RequiredDocumentTypes);
         Assert.Contains("ResidenceCardFront", LegalFollowupCompletionRules.RequiredDocumentTypes);
         Assert.Contains("ResidenceCardBack", LegalFollowupCompletionRules.RequiredDocumentTypes);
-        Assert.Contains("ResidenceCertificate", LegalFollowupCompletionRules.RequiredDocumentTypes);
+        Assert.DoesNotContain("ResidenceCertificate", LegalFollowupCompletionRules.RequiredDocumentTypes);
+        Assert.Contains("ResidenceCertificate", LegalFollowupCompletionRules.OptionalDocumentTypes);
+        Assert.True(LegalFollowupCompletionRules.IsKnownUploadType("ResidenceCertificate"));
     }
 }

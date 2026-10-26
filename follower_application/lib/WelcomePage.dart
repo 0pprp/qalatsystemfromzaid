@@ -17,10 +17,13 @@ class _WelcomePage extends State<WelcomePage> {
   }
 
   Future<void> _boot() async {
-    await Future.delayed(const Duration(milliseconds: 600));
+    await Future.delayed(const Duration(milliseconds: 120));
     if (!mounted) return;
     final dest = await ShiftGateCoordinator().resolve(attachIfActive: true);
     if (!mounted) return;
+    if (dest == ShiftGateDestination.home) {
+      ShiftGateCoordinator.markHomeOk();
+    }
     final route = ShiftGateCoordinator.routeFor(dest);
     Navigator.pushNamedAndRemoveUntil(context, route, (r) => false);
   }
@@ -61,7 +64,7 @@ class _WelcomePage extends State<WelcomePage> {
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'تطبيق المتابع',
+                  'تطبيق مسؤول اللجنة',
                   style: TextStyle(
                     fontFamily: 'Cairo',
                     fontSize: 22,

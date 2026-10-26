@@ -47,7 +47,8 @@ async function login() {
   if (validForm.valid === true) {
     loginLoadingBtn.value = true
 
-    // Central roles: city optional. Try director first, then sales manager.
+    // Central roles (كل المحافظات): city optional — المدير، المراقب، مدير المبيعات.
+    let centralAuthHint = ''
     if (selectCity.value == null || selectCity.value === '') {
       try {
         const directorRes = await fetch(`${salesGatewayBase()}Auth/LoginDirector`, {
@@ -56,7 +57,7 @@ async function login() {
           body: JSON.stringify(form.value),
         }).then(res => res.json()).catch(() => null)
 
-        if (directorRes?.token && (directorRes.userType === 'المدير' || directorRes.central)) {
+        if (directorRes?.token && directorRes.userType === 'المدير') {
           localStorage.setItem('Token', directorRes.token)
           localStorage.setItem('Expiration', directorRes.expiration)
           localStorage.setItem('UserID', String(directorRes.userId ?? 0))
@@ -67,12 +68,71 @@ async function login() {
           localStorage.setItem('CityName', 'كل المحافظات')
           localStorage.removeItem('Database')
           localStorage.removeItem('SalesManagerScope')
+          localStorage.removeItem('MonitorScope')
           loginLoadingBtn.value = false
-          // Warm hub cache in background while navigating.
           import('@/composables/warmDirectorCache').then(m => m.warmDirectorCacheInBackground()).catch(() => {})
-          router.push('/director-ratings')
+          router.push({ path: '/director-ratings', query: {} })
 
           return
+        }
+
+        // LoginDirector may return المراقب (gateway fallback) — all provinces, no city.
+        if (directorRes?.token && directorRes.userType === 'المراقب') {
+          localStorage.setItem('Token', directorRes.token)
+          localStorage.setItem('Expiration', directorRes.expiration)
+          localStorage.setItem('UserID', String(directorRes.userId ?? 0))
+          localStorage.setItem('UserName', directorRes.userName || form.value.userName)
+          localStorage.setItem('UserType', 'المراقب')
+          localStorage.setItem('MonitorScope', 'central')
+          localStorage.setItem('LinkCity', salesGatewayBase())
+          localStorage.setItem('CityName', 'كل المحافظات')
+          localStorage.removeItem('Database')
+          localStorage.removeItem('SalesManagerScope')
+          localStorage.removeItem('DirectorScope')
+          loginLoadingBtn.value = false
+          import('@/composables/warmDirectorCache').then(m => m.warmDirectorCacheInBackground()).catch(() => {})
+          router.push({ path: '/director-ratings', query: {} })
+
+          return
+        }
+
+        const monitorRes = await fetch(`${salesGatewayBase()}Auth/LoginMonitor`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userName: form.value.userName,
+            password: form.value.password,
+          }),
+        }).then(async res => {
+          const body = await res.json().catch(() => null)
+
+          return { ok: res.ok, status: res.status, body }
+        }).catch(() => null)
+
+        if (monitorRes?.body?.token && monitorRes.body.userType === 'المراقب') {
+          localStorage.setItem('Token', monitorRes.body.token)
+          localStorage.setItem('Expiration', monitorRes.body.expiration)
+          localStorage.setItem('UserID', String(monitorRes.body.userId ?? 0))
+          localStorage.setItem('UserName', monitorRes.body.userName || form.value.userName)
+          localStorage.setItem('UserType', 'المراقب')
+          localStorage.setItem('MonitorScope', 'central')
+          localStorage.setItem('LinkCity', salesGatewayBase())
+          localStorage.setItem('CityName', 'كل المحافظات')
+          localStorage.removeItem('Database')
+          localStorage.removeItem('SalesManagerScope')
+          localStorage.removeItem('DirectorScope')
+          loginLoadingBtn.value = false
+          import('@/composables/warmDirectorCache').then(m => m.warmDirectorCacheInBackground()).catch(() => {})
+          router.push({ path: '/director-ratings', query: {} })
+
+          return
+        }
+
+        if (monitorRes?.status === 404) {
+          centralAuthHint = 'مسار دخول المراقب غير متاح على السيرفر — انشر/أعد تشغيل بوابة المبيعات'
+        }
+        else if (monitorRes?.body?.message) {
+          centralAuthHint = String(monitorRes.body.message)
         }
       }
       catch {
@@ -109,11 +169,48 @@ async function login() {
       catch {
         // fall through — require province for branch login
       }
+
+      // المدير المفوض: نفس زر تسجيل الدخول — بدون محافظة وبدون صفحة منفصلة
+      try {
+        const dmRes = await fetch(`${salesGatewayBase()}Auth/LoginDelegatedManager`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userName: form.value.userName,
+            password: form.value.password,
+          }),
+        }).then(res => res.json()).catch(() => null)
+
+        if (dmRes?.token && (dmRes.userType === 'مدير مفوض' || dmRes.UserType === 'مدير مفوض')) {
+          localStorage.setItem('Token', dmRes.token)
+          localStorage.setItem('Expiration', dmRes.expiration || dmRes.Expiration || '')
+          localStorage.setItem('UserID', String(dmRes.userId ?? dmRes.UserId ?? 0))
+          localStorage.setItem('UserName', dmRes.userName || dmRes.UserName || form.value.userName)
+          localStorage.setItem('UserType', 'مدير مفوض')
+          localStorage.setItem('DmScope', 'central')
+          localStorage.setItem('LinkCity', salesGatewayBase())
+          localStorage.setItem('CityName', dmRes.cityName || dmRes.CityName || 'كل المحافظات')
+          localStorage.removeItem('Database')
+          localStorage.removeItem('DirectorScope')
+          localStorage.removeItem('MonitorScope')
+          localStorage.removeItem('SalesManagerScope')
+          loginLoadingBtn.value = false
+          router.push('/dm-dashboard')
+
+          return
+        }
+        if (dmRes?.message)
+          centralAuthHint = String(dmRes.message)
+      }
+      catch {
+        // fall through
+      }
     }
 
     if (selectCity.value == null || selectCity.value === '') {
       showAlert.value = true
-      errorMessage.value = 'يجب اختيار المحافظة'
+      errorMessage.value = centralAuthHint
+        || 'بيانات الدخول غير صحيحة — أو اختر المحافظة لحساب الفرع (المحاسب)'
       loginLoadingBtn.value = false
 
       return
@@ -287,7 +384,7 @@ const isPasswordVisible = ref(false)
                 item-title="name"
                 item-value="value"
                 label="اختر المحافظة"
-                placeholder="مطلوبة للمحاسب — اختيارية لمدير المبيعات"
+                placeholder="مطلوبة للمحاسب — اختيارية للمدير / المراقب / مدير المبيعات / المدير المفوض"
                 :rules="[]"
                 variant="outlined"
                 density="comfortable"

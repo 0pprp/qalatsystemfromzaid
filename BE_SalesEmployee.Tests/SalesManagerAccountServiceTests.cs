@@ -92,7 +92,7 @@ namespace BE_SalesEmployee.Tests
         }
 
         [Fact]
-        public void Amar1_TemporaryAccount_StillWorks()
+        public void Amar1_HardcodedFallback_Removed()
         {
             var svc = CreateService(new Dictionary<string, string?>
             {
@@ -101,12 +101,11 @@ namespace BE_SalesEmployee.Tests
                 ["SalesManagerAccount:DisplayName"] = "مدير المبيعات",
             });
 
+            // SalesManagerAccountService: no bootstrap / hardcoded credentials (security remediation).
             var ok = svc.TryAuthenticate("amar1", "amar1", out var identity);
 
-            Assert.True(ok);
-            Assert.NotNull(identity);
-            Assert.Equal("amar1", identity!.UserName, ignoreCase: true);
-            Assert.Equal("مدير المبيعات", identity.DisplayName);
+            Assert.False(ok);
+            Assert.Null(identity);
         }
 
         [Fact]

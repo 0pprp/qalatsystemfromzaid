@@ -1,0 +1,6 @@
+Msg 102, Level 15, State 1, Server vmi3533397, Line 5
+Incorrect syntax near '2026'.
+Msg 102, Level 15, State 1, Server vmi3533397, Line 10
+Incorrect syntax near '7'.
+
+RC 0

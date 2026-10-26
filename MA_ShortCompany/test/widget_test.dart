@@ -1,30 +1,48 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:ma_short_company/main.dart';
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
+
+import 'fake_webview_platform.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  setUpAll(() {
+    WebViewPlatform.instance = FakeWebViewPlatform();
+  });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+  testWidgets('ShortCompanyApp smoke: splash branding while WebView loads',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const ShortCompanyApp());
+    // First frame: splash still visible (fake load finishes after Duration.zero).
     await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('قلعة الضمان'), findsOneWidget);
+    expect(find.text('لأنظمة الإدارة'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    // Allow deferred onPageFinished + setState.
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const Key('fake-webview')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('ShortCompanyApp shows retry UI on WebView resource error',
+      (WidgetTester tester) async {
+    WebViewPlatform.instance = FakeWebViewPlatform(failLoad: true);
+    await tester.pumpWidget(const ShortCompanyApp());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump();
+
+    expect(find.text('إعادة المحاولة'), findsOneWidget);
+    expect(find.textContaining('تعذر'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 }

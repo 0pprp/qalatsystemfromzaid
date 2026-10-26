@@ -36,7 +36,7 @@ public sealed class MainFollowerAuthTests
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Jwt:Key"] = "SalesEmployeeGwSigningKey-2026-ChangeMe!!"
+                ["Jwt:Key"] = "unit-test-signing-key-that-is-long-enough-123456"
             })
             .Build();
         var tokens = new TokenService(config);

@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using BE_Company.DTO;
 using BE_Company.IRepository;
 using Microsoft.Data.SqlClient;
@@ -185,6 +185,11 @@ BEGIN
     ALTER TABLE dbo.Delegates
         ADD FollowerCollectionEnabled BIT NOT NULL
             CONSTRAINT DF_Delegates_FollowerCollectionEnabled DEFAULT (0);
+END
+IF COL_LENGTH(N'dbo.Delegates', N'FollowerCollectionAssignedAtUtc') IS NULL
+BEGIN
+    ALTER TABLE dbo.Delegates
+        ADD FollowerCollectionAssignedAtUtc DATETIME2 NULL;
 END", cancellationToken: ct));
         }
 
@@ -198,6 +203,7 @@ SELECT
     d.DelegateID AS DelegateId,
     d.DelegateName,
     CAST(ISNULL(d.FollowerCollectionEnabled, 0) AS BIT) AS FollowerCollectionEnabled,
+    d.FollowerCollectionAssignedAtUtc AS FollowerCollectionAssignedAtUtc,
     ISNULL((
         SELECT COUNT(1) FROM dbo.Customers c
         WHERE c.DelegateID = d.DelegateID AND ISNULL(c.CustomerState, 1) = 1
@@ -213,6 +219,9 @@ ORDER BY d.DelegateName;", cancellationToken: ct));
             return rows.ToList();
         }
 
+        // Deploy verify: FollowerCollectionSafeUserId
+        public const string CollectionToggleDeployMarker = "FollowerCollectionSafeUserId";
+
         public async Task<bool> SetFollowerCollectionEnabledAsync(
             int delegateId,
             bool enabled,
@@ -224,37 +233,93 @@ ORDER BY d.DelegateName;", cancellationToken: ct));
                 return false;
             }
 
+            _ = CollectionToggleDeployMarker;
             await EnsureFollowerCollectionColumnAsync(ct);
             await using var connection = new SqlConnection(_connectionString);
 
             // Prefer SP when present; otherwise inline update + activity.
+            // Gateway director UserIDs often do not exist in branch dbo.Users — Activities FK would 500.
+            var safeUserId = await ResolveLocalActivityUserIdAsync(connection, userId, ct);
+
             var hasSp = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
 SELECT CASE WHEN OBJECT_ID(N'dbo.UpdateFollowerCollectionEnabled', N'P') IS NULL THEN 0 ELSE 1 END",
                 cancellationToken: ct));
 
             if (hasSp == 1)
             {
-                await connection.ExecuteAsync(new CommandDefinition(
-                    "UpdateFollowerCollectionEnabled",
-                    new { DelegateID = delegateId, State = enabled, UserID = userId },
-                    commandType: CommandType.StoredProcedure,
+                try
+                {
+                    await connection.ExecuteAsync(new CommandDefinition(
+                        "UpdateFollowerCollectionEnabled",
+                        new { DelegateID = delegateId, State = enabled, UserID = safeUserId },
+                        commandType: CommandType.StoredProcedure,
+                        cancellationToken: ct));
+                }
+                catch
+                {
+                    // Fall through: still apply Delegates update below if SP fails on Activities FK.
+                }
+
+                // Keep assigned-at in sync even when SP exists (SP may not know the new column yet).
+                await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE dbo.Delegates
+SET FollowerCollectionAssignedAtUtc = CASE WHEN @State = 1 THEN SYSUTCDATETIME() ELSE FollowerCollectionAssignedAtUtc END,
+    FollowerCollectionEnabled = @State
+WHERE DelegateID = @DelegateID;",
+                    new { DelegateID = delegateId, State = enabled },
                     cancellationToken: ct));
                 return true;
             }
 
             await connection.ExecuteAsync(new CommandDefinition(@"
 DECLARE @Name NVARCHAR(200) = (SELECT TOP 1 DelegateName FROM dbo.Delegates WHERE DelegateID = @DelegateID);
-DECLARE @Old NVARCHAR(10) = (SELECT TOP 1 CONVERT(ISNULL(FollowerCollectionEnabled, 0) AS NVARCHAR(10))
+DECLARE @Old NVARCHAR(10) = (SELECT TOP 1 CAST(ISNULL(FollowerCollectionEnabled, 0) AS NVARCHAR(10))
                              FROM dbo.Delegates WHERE DelegateID = @DelegateID);
-INSERT INTO dbo.Activities (UserID, ActivityDescription, ActivityDate, AsyncState, AsyncID)
-VALUES (@UserID,
-        N'تم تعديل جباية المتابعين للقائمة ' + ISNULL(@Name, N'') + N' من ' + ISNULL(@Old, N'0')
-            + N' الى ' + CONVERT(NVARCHAR(10), @State),
-        GETUTCDATE(), 'false', NEWID());
-UPDATE dbo.Delegates SET FollowerCollectionEnabled = @State WHERE DelegateID = @DelegateID;",
-                new { DelegateID = delegateId, State = enabled, UserID = userId },
+
+UPDATE dbo.Delegates
+SET FollowerCollectionEnabled = @State,
+    FollowerCollectionAssignedAtUtc = CASE WHEN @State = 1 THEN SYSUTCDATETIME() ELSE FollowerCollectionAssignedAtUtc END
+WHERE DelegateID = @DelegateID;
+
+IF @UserID IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.Users WHERE UserID = @UserID)
+BEGIN
+    INSERT INTO dbo.Activities (UserID, ActivityDescription, ActivityDate, AsyncState, AsyncID)
+    VALUES (@UserID,
+            N'تم تعديل جباية المتابعين للقائمة ' + ISNULL(@Name, N'') + N' من ' + ISNULL(@Old, N'0')
+                + N' الى ' + CONVERT(NVARCHAR(10), @State),
+            GETUTCDATE(), 'false', NEWID());
+END;",
+                new { DelegateID = delegateId, State = enabled, UserID = safeUserId },
                 cancellationToken: ct));
             return true;
+        }
+
+        /// <summary>
+        /// Activities.UserID has FK to branch Users. Director tokens carry gateway IDs — map to a local user or null.
+        /// </summary>
+        private static async Task<int?> ResolveLocalActivityUserIdAsync(
+            SqlConnection connection, int? userId, CancellationToken ct)
+        {
+            if (userId is int uid && uid > 0)
+            {
+                var exists = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
+SELECT CASE WHEN EXISTS (SELECT 1 FROM dbo.Users WHERE UserID = @Id) THEN 1 ELSE 0 END",
+                    new { Id = uid }, cancellationToken: ct));
+                if (exists == 1)
+                {
+                    return uid;
+                }
+            }
+
+            return await connection.ExecuteScalarAsync<int?>(new CommandDefinition(@"
+SELECT TOP 1 UserID FROM dbo.Users
+WHERE ISNULL(UserState, 1) = 1
+  AND UserType IN (N'محاسب رئيسي', N'مدير مبيعات', N'مدير فرع')
+ORDER BY CASE UserType
+    WHEN N'محاسب رئيسي' THEN 0
+    WHEN N'مدير مبيعات' THEN 1
+    ELSE 2 END, UserID;",
+                cancellationToken: ct));
         }
     }
 }

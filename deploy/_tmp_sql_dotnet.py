@@ -20,7 +20,7 @@ if command -v node >/dev/null; then echo has_node; fi
 mkdir -p /tmp/sqlq && cd /tmp/sqlq
 cat > Program.cs <<'CS'
 using Microsoft.Data.SqlClient;
-var cs = "Data Source=127.0.0.1;Initial Catalog=DatabaseCompanyNajaf;User ID=haider;Password=haider12345@@@@@;TrustServerCertificate=True";
+var cs = "Data Source=127.0.0.1;Initial Catalog=DatabaseCompanyNajaf;User ID=haider;Password=${SQL_PASSWORD};TrustServerCertificate=True";
 await using var conn = new SqlConnection(cs);
 await conn.OpenAsync();
 async Task Dump(string sql) {

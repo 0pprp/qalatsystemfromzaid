@@ -1,3 +1,5 @@
+import com.android.build.gradle.BaseExtension
+
 allprojects {
     repositories {
         google()
@@ -15,8 +17,15 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+
+// Force plugins (file_picker, etc.) onto compileSdk 36 — required by
+// flutter_plugin_android_lifecycle AAR metadata.
 subprojects {
-    project.evaluationDependsOn(":app")
+    afterEvaluate {
+        extensions.findByType<BaseExtension>()?.apply {
+            compileSdkVersion(36)
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {

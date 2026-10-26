@@ -54,8 +54,17 @@ BEGIN
         ApprovedAmount                  FLOAT            NULL,
         PaymentPosted                   BIT              NOT NULL CONSTRAINT DF_CustomerWaiver_PaymentPosted DEFAULT (0),
         AccountantNotified              BIT              NOT NULL CONSTRAINT DF_CustomerWaiver_AcctNotified DEFAULT (0),
-        CONSTRAINT CK_CustomerWaiver_Status CHECK (Status IN (N'Pending', N'Approved', N'Rejected'))
+        CONSTRAINT CK_CustomerWaiver_Status CHECK (Status IN (N'Pending', N'AwaitingAccountant', N'Approved', N'Rejected'))
     );
+END
+
+-- Allow AwaitingAccountant on existing DBs.
+IF OBJECT_ID(N'dbo.CustomerWaiverRequests', N'U') IS NOT NULL
+BEGIN
+    IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_CustomerWaiver_Status' AND parent_object_id = OBJECT_ID(N'dbo.CustomerWaiverRequests'))
+        ALTER TABLE dbo.CustomerWaiverRequests DROP CONSTRAINT CK_CustomerWaiver_Status;
+    ALTER TABLE dbo.CustomerWaiverRequests ADD CONSTRAINT CK_CustomerWaiver_Status
+        CHECK (Status IN (N'Pending', N'AwaitingAccountant', N'Approved', N'Rejected'));
 END
 
 IF OBJECT_ID(N'dbo.CustomerWaiverAudit', N'U') IS NULL

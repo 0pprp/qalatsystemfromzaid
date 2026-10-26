@@ -122,10 +122,16 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
           ),
         );
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر إرسال الطلب', style: TextStyle(fontFamily: 'Cairo'))),
+          SnackBar(
+            content: Text(
+              'تعذر إرسال الطلب: $e',
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+            duration: const Duration(seconds: 6),
+          ),
         );
       }
     } finally {
@@ -162,8 +168,8 @@ class _FollowerSalesRequestPageState extends State<FollowerSalesRequestPage> {
             children: [
               Text(
                 _isNew
-                    ? 'زبون جديد — لن يُنشأ في Customers الآن. المصدر: المتابع. المحافظة تُحدد تلقائياً من حسابك.'
-                    : 'طلب لزبون موجود. المصدر: المتابع. المحافظة تُحدد تلقائياً من حسابك.',
+                    ? 'زبون جديد — لن يُنشأ في Customers الآن. المصدر: مسؤول اللجنة. المحافظة تُحدد تلقائياً من حسابك.'
+                    : 'طلب لزبون موجود. المصدر: مسؤول اللجنة. المحافظة تُحدد تلقائياً من حسابك.',
                 style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey),
               ),
               const SizedBox(height: 16),

@@ -3,7 +3,7 @@ description: تطبيق موظف المبيعات — بحث، تقييم، مب
 
 publish_to: "none"
 
-version: 1.0.0+1
+version: 1.0.5+6
 
 environment:
   sdk: ^3.13.1
@@ -21,6 +21,8 @@ dependencies:
   sqflite: ^2.4.2
   permission_handler: ^12.0.1
   connectivity_plus: ^6.1.4
+  package_info_plus: ^8.3.0
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:
@@ -35,6 +37,16 @@ flutter:
     - assets/fonts/Cairo-Regular.ttf
     - assets/fonts/Cairo-Bold.ttf
   fonts:
+    - family: ElMessiri
+      fonts:
+        - asset: assets/fonts/ElMessiri-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/ElMessiri-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/ElMessiri-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/ElMessiri-Bold.ttf
+          weight: 700
     - family: Cairo
       fonts:
         - asset: assets/fonts/Cairo-Regular.ttf

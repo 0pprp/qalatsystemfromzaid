@@ -144,6 +144,18 @@ public sealed class InternalWaiversController : ControllerBase
         });
     }
 
+    /// <summary>Branch accountant applied discount — finalize gateway status.</summary>
+    [HttpPost("{id:guid}/accountant-applied")]
+    public async Task<IActionResult> AccountantApplied(Guid id, CancellationToken ct)
+    {
+        if (!HasValidGatewayKey(Request, _configuration))
+        {
+            return Unauthorized(new { message = "مفتاح البوابة الداخلي غير صالح" });
+        }
+
+        return MapResult(await _waivers.MarkAccountantAppliedAsync(id, ct));
+    }
+
     private IActionResult MapResult(CustomerWaiverResult result) => result.Outcome switch
     {
         CustomerWaiverOutcome.Success => Ok(DelegatedManagerController.ToWaiverDetail(result.Request!)),

@@ -2,9 +2,13 @@ import 'dart:convert';
 
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/customer_profile_page.dart';
+import 'package:follower_application/services/follower_json_cache.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
+import 'package:follower_application/ui/rating_trend_row.dart';
+import 'package:follower_application/ui/stripe_container.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/utils/Formatters.dart';
+import 'package:follower_application/utils/display_name.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,6 +22,7 @@ class ListStatsPage extends StatefulWidget {
 
 class _ListStatsPageState extends State<ListStatsPage> {
   bool _loading = true;
+  bool _refreshing = false;
   String _error = '';
   List<Map<String, dynamic>> _items = [];
   int? _yearMonth;
@@ -25,7 +30,35 @@ class _ListStatsPageState extends State<ListStatsPage> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _boot();
+  }
+
+  Future<void> _boot() async {
+    await _loadCache();
+    // Never block first paint on network when cache exists.
+    // ignore: unawaited_futures
+    _load(silent: _items.isNotEmpty);
+  }
+
+  Future<void> _loadCache() async {
+    final data = await FollowerJsonCache.loadMap(FollowerJsonCache.listStatsAll());
+    if (data == null || !mounted) return;
+    final list = ((data['items'] ?? []) as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    if (list.isEmpty) return;
+    setState(() {
+      _items = list;
+      _yearMonth = int.tryParse('${data['yearMonth'] ?? ''}');
+      _loading = false;
+    });
+  }
+
+  Future<void> _saveCache(Map data, List<Map<String, dynamic>> list) async {
+    await FollowerJsonCache.save(FollowerJsonCache.listStatsAll(), {
+      'items': list,
+      'yearMonth': data['yearMonth'] ?? data['YearMonth'],
+    });
   }
 
   Future<Map<String, String>> _session() async {
@@ -36,41 +69,55 @@ class _ListStatsPageState extends State<ListStatsPage> {
     };
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = '';
-    });
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = _items.isEmpty;
+        _refreshing = _items.isNotEmpty;
+        _error = '';
+      });
+    } else if (mounted) {
+      setState(() => _refreshing = true);
+    }
     try {
       final s = await _session();
       final uri = Uri.parse('${s['link']}Followers/ListStats')
           .replace(queryParameters: {'asyncId': s['asyncId']});
-      final res = await http.get(uri).timeout(const Duration(seconds: 60));
+      final res = await http.get(uri).timeout(const Duration(seconds: 35));
       if (res.statusCode != 200) throw Exception('http ${res.statusCode}');
       final data = json.decode(res.body) as Map;
       final raw = data['items'] ?? data['Items'] ?? [];
       final list = (raw as List)
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
+      await _saveCache(data, list);
       if (mounted) {
         setState(() {
           _items = list;
           _yearMonth =
               int.tryParse('${data['yearMonth'] ?? data['YearMonth'] ?? ''}');
           _loading = false;
+          _refreshing = false;
+          _error = '';
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = 'تعذر تحميل الإحصائيات';
+          _refreshing = false;
+          if (_items.isEmpty) _error = 'تعذر تحميل الإحصائيات';
         });
       }
     }
   }
 
   double _num(dynamic v) => double.tryParse('$v') ?? 0;
+
+  double? _numOrNull(dynamic v) {
+    if (v == null) return null;
+    return double.tryParse('$v');
+  }
 
   int _int(dynamic v) => int.tryParse('$v') ?? _num(v).round();
 
@@ -92,23 +139,108 @@ class _ListStatsPageState extends State<ListStatsPage> {
     );
   }
 
-  void _openActive(Map<String, dynamic> item) {
-    final listId = _int(item['listId'] ?? item['ListId']);
-    final name = _pick(item, ['listName', 'ListName']);
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ListStatsCustomersPage(
-          listId: listId,
-          listName: name,
-          title: 'الزبائن النشطين',
-          mode: ListStatsCustomersMode.active,
-        ),
-      ),
-    );
+  Map<String, dynamic> _followerSummary() {
+    if (_items.isEmpty) {
+      return {
+        'score': 0.0,
+        'scoreWeekAgo': null,
+        'scoreMonthAgo': null,
+        'weekTrend': 'flat',
+        'monthTrend': 'flat',
+        'newCount': 0,
+        'newSale': 0.0,
+        'newDay': 0.0,
+        'zeroCount': 0,
+        'zeroSale': 0.0,
+        'zeroDay': 0.0,
+        'netCount': 0,
+        'netSale': 0.0,
+        'netDay': 0.0,
+      };
+    }
+    var scoreSum = 0.0, weekSum = 0.0, monthSum = 0.0;
+    var weekN = 0, monthN = 0;
+    var upW = 0, downW = 0, flatW = 0;
+    var upM = 0, downM = 0, flatM = 0;
+    var newCount = 0, zeroCount = 0, netCount = 0;
+    var newSale = 0.0, newDay = 0.0;
+    var zeroSale = 0.0, zeroDay = 0.0;
+    var netSale = 0.0, netDay = 0.0;
+
+    for (final item in _items) {
+      scoreSum += _num(item['averageScore'] ?? item['AverageScore']);
+      final sw = _numOrNull(item['scoreWeekAgo'] ?? item['ScoreWeekAgo']);
+      if (sw != null) {
+        weekSum += sw;
+        weekN++;
+      }
+      final sm = _numOrNull(item['scoreMonthAgo'] ?? item['ScoreMonthAgo']);
+      if (sm != null) {
+        monthSum += sm;
+        monthN++;
+      }
+      switch (_pick(item, ['weekTrend', 'WeekTrend']).toLowerCase()) {
+        case 'up':
+          upW++;
+          break;
+        case 'down':
+          downW++;
+          break;
+        default:
+          flatW++;
+      }
+      switch (_pick(item, ['monthTrend', 'MonthTrend']).toLowerCase()) {
+        case 'up':
+          upM++;
+          break;
+        case 'down':
+          downM++;
+          break;
+        default:
+          flatM++;
+      }
+      newCount += _int(item['newCustomersCount'] ?? item['NewCustomersCount']);
+      newSale += _num(item['newCustomersSaleSum'] ?? item['NewCustomersSaleSum']);
+      newDay +=
+          _num(item['newCustomersDaySalesSum'] ?? item['NewCustomersDaySalesSum']);
+      zeroCount +=
+          _int(item['zeroedCustomersCount'] ?? item['ZeroedCustomersCount']);
+      zeroSale +=
+          _num(item['zeroedCustomersSaleSum'] ?? item['ZeroedCustomersSaleSum']);
+      zeroDay += _num(
+          item['zeroedCustomersDaySalesSum'] ?? item['ZeroedCustomersDaySalesSum']);
+      netCount += _int(item['netCustomersCount'] ?? item['NetCustomersCount']);
+      netSale += _num(item['netSaleSum'] ?? item['NetSaleSum']);
+      netDay += _num(item['netDaySalesSum'] ?? item['NetDaySalesSum']);
+    }
+
+    String maj(int u, int d, int f) {
+      if (u >= d && u >= f) return 'up';
+      if (d >= u && d >= f) return 'down';
+      return 'flat';
+    }
+
+    return {
+      'score': scoreSum / _items.length,
+      'scoreWeekAgo': weekN == 0 ? null : weekSum / weekN,
+      'scoreMonthAgo': monthN == 0 ? null : monthSum / monthN,
+      'weekTrend': maj(upW, downW, flatW),
+      'monthTrend': maj(upM, downM, flatM),
+      'newCount': newCount,
+      'newSale': newSale,
+      'newDay': newDay,
+      'zeroCount': zeroCount,
+      'zeroSale': zeroSale,
+      'zeroDay': zeroDay,
+      'netCount': netCount,
+      'netSale': netSale,
+      'netDay': netDay,
+    };
   }
 
   @override
   Widget build(BuildContext context) {
+    final summary = _followerSummary();
     return Directionality(
       textDirection: TextDirection.rtl,
       child: AppSafeScaffold(
@@ -119,7 +251,21 @@ class _ListStatsPageState extends State<ListStatsPage> {
           ),
           backgroundColor: AppTheme.primaryColor,
           actions: [
-            IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+            if (_refreshing)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  ),
+                ),
+              ),
+            IconButton(
+                onPressed: () => _load(silent: false),
+                icon: const Icon(Icons.refresh)),
           ],
         ),
         body: _loading
@@ -137,26 +283,152 @@ class _ListStatsPageState extends State<ListStatsPage> {
                         ),
                       )
                     : RefreshIndicator(
-                        onRefresh: _load,
+                        onRefresh: () => _load(silent: false),
                         child: ListView.separated(
                           padding: const EdgeInsets.all(12),
-                          itemCount: _items.length,
+                          itemCount: _items.length + 1,
                           separatorBuilder: (_, __) =>
                               const SizedBox(height: 12),
                           itemBuilder: (context, i) {
-                            final item = _items[i];
+                            if (i == 0) {
+                              return _FollowerRatingSummary(
+                                summary: summary,
+                                fmt: _fmt,
+                                stripeIndex: 0,
+                              );
+                            }
+                            final item = _items[i - 1];
                             return _ListStatsCard(
                               item: item,
                               fmt: _fmt,
                               num: _num,
+                              numOrNull: _numOrNull,
                               asInt: _int,
                               pick: _pick,
                               onOpen: () => _openBuckets(item),
-                              onActive: () => _openActive(item),
+                              stripeIndex: i, // 1,2,3… alternates with summary
                             );
                           },
                         ),
                       ),
+      ),
+    );
+  }
+}
+
+class _FollowerRatingSummary extends StatelessWidget {
+  const _FollowerRatingSummary({
+    required this.summary,
+    required this.fmt,
+    this.stripeIndex = 0,
+  });
+
+  final Map<String, dynamic> summary;
+  final String Function(double) fmt;
+  final int stripeIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    final score = summary['score'] as double;
+    final weekAgo = summary['scoreWeekAgo'] as double?;
+    final monthAgo = summary['scoreMonthAgo'] as double?;
+    final newCount = summary['newCount'] as int;
+    final zeroCount = summary['zeroCount'] as int;
+    final netCount = summary['netCount'] as int;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: StripeContainer.decoration(stripeIndex, radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'تقييم مسؤول اللجنة',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Cairo',
+              fontWeight: FontWeight.bold,
+              fontSize: 17,
+              color: AppTheme.primaryColor,
+            ),
+          ),
+          const SizedBox(height: 12),
+          RatingTrendRow(
+            previousLabel: 'الشهر السابق',
+            currentLabel: 'الشهر الحالي',
+            previousScore: monthAgo,
+            currentScore: score,
+            trend: '${summary['monthTrend']}',
+            compact: true,
+            stripeIndex: stripeIndex,
+          ),
+          const SizedBox(height: 10),
+          RatingTrendRow(
+            previousLabel: 'الأسبوع السابق',
+            currentLabel: 'الأسبوع الحالي',
+            previousScore: weekAgo,
+            currentScore: score,
+            trend: '${summary['weekTrend']}',
+            compact: true,
+            stripeIndex: stripeIndex + 1,
+          ),
+          const Divider(height: 22),
+          _row('العملاء الجدد', '$newCount'),
+          _row('إجمالي بيع الجدد', '${fmt(summary['newSale'] as double)} دع'),
+          _row('قسط الجدد', '${fmt(summary['newDay'] as double)} دع'),
+          const SizedBox(height: 6),
+          _row('المصفرون', '$zeroCount'),
+          _row('إجمالي بيع المصفرين',
+              '${fmt(summary['zeroSale'] as double)} دع'),
+          _row('قسط المصفرين', '${fmt(summary['zeroDay'] as double)} دع'),
+          const SizedBox(height: 6),
+          _signed('فرق العدد (جدد − مصفرون)', netCount.toDouble(), isCount: true),
+          _signed('فرق سعر البيع', summary['netSale'] as double),
+          _signed('فرق القسط', summary['netDay'] as double),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label,
+                style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey)),
+          ),
+          Text(value,
+              style: const TextStyle(
+                  fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  Widget _signed(String label, double v, {bool isCount = false}) {
+    final color = v > 0
+        ? Colors.green.shade700
+        : v < 0
+            ? Colors.red.shade700
+            : Colors.grey.shade700;
+    final sign = v > 0 ? '+' : '';
+    final text = isCount ? '$sign${v.round()}' : '$sign${fmt(v)} دع';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label,
+                style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey)),
+          ),
+          Text(text,
+              style: TextStyle(
+                  fontFamily: 'Cairo',
+                  fontWeight: FontWeight.bold,
+                  color: color)),
+        ],
       ),
     );
   }
@@ -167,27 +439,31 @@ class _ListStatsCard extends StatelessWidget {
     required this.item,
     required this.fmt,
     required this.num,
+    required this.numOrNull,
     required this.asInt,
     required this.pick,
     required this.onOpen,
-    required this.onActive,
+    this.stripeIndex = 0,
   });
 
   final Map<String, dynamic> item;
   final String Function(double) fmt;
   final double Function(dynamic) num;
+  final double? Function(dynamic) numOrNull;
   final int Function(dynamic) asInt;
   final String Function(Map, List<String>) pick;
   final VoidCallback onOpen;
-  final VoidCallback onActive;
+  final int stripeIndex;
 
   @override
   Widget build(BuildContext context) {
     final name = pick(item, ['listName', 'ListName']);
     final score = num(item['averageScore'] ?? item['AverageScore']);
     final label = pick(item, ['finalRatingLabel', 'FinalRatingLabel']);
-    final active =
-        asInt(item['activeCustomersCount'] ?? item['ActiveCustomersCount']);
+    final weekAgo = numOrNull(item['scoreWeekAgo'] ?? item['ScoreWeekAgo']);
+    final monthAgo = numOrNull(item['scoreMonthAgo'] ?? item['ScoreMonthAgo']);
+    final weekTrend = pick(item, ['weekTrend', 'WeekTrend']).toLowerCase();
+    final monthTrend = pick(item, ['monthTrend', 'MonthTrend']).toLowerCase();
     final newCount =
         asInt(item['newCustomersCount'] ?? item['NewCustomersCount']);
     final newSale =
@@ -206,19 +482,14 @@ class _ListStatsCard extends StatelessWidget {
     final netDay = num(item['netDaySalesSum'] ?? item['NetDaySalesSum']);
 
     return Material(
-      color: Theme.of(context).cardColor,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: onOpen,
         child: Container(
           padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: AppTheme.primaryColor.withValues(alpha: 0.25),
-            ),
-          ),
+          decoration: StripeContainer.decoration(stripeIndex),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -235,47 +506,36 @@ class _ListStatsCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
+                  if (label.isNotEmpty)
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 12,
+                        color: AppTheme.primaryColor,
+                      ),
                     ),
-                    child: Column(
-                      children: [
-                        Text(
-                          score.toStringAsFixed(score == score.roundToDouble()
-                              ? 0
-                              : 1),
-                          style: const TextStyle(
-                            fontFamily: 'Cairo',
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                            color: AppTheme.primaryColor,
-                          ),
-                        ),
-                        Text(
-                          label.isEmpty ? '—' : label,
-                          style: const TextStyle(
-                            fontFamily: 'Cairo',
-                            fontSize: 11,
-                            color: AppTheme.primaryColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
-              const SizedBox(height: 12),
-              InkWell(
-                onTap: onActive,
-                child: _metricBlock(
-                  'الزبائن النشطين (تسديد 7 أيام > 3.8%)',
-                  '$active',
-                  accent: true,
-                ),
+              const SizedBox(height: 10),
+              RatingTrendRow(
+                previousLabel: 'الشهر السابق',
+                currentLabel: 'الشهر الحالي',
+                previousScore: monthAgo,
+                currentScore: score,
+                trend: monthTrend.isEmpty ? 'flat' : monthTrend,
+                stripeIndex: stripeIndex,
+                compact: true,
+              ),
+              const SizedBox(height: 8),
+              RatingTrendRow(
+                previousLabel: 'الأسبوع السابق',
+                currentLabel: 'الأسبوع الحالي',
+                previousScore: weekAgo,
+                currentScore: score,
+                trend: weekTrend.isEmpty ? 'flat' : weekTrend,
+                compact: true,
+                stripeIndex: stripeIndex + 1,
               ),
               const Divider(height: 20),
               _sectionTitle('زبائن جدد هذا الشهر'),
@@ -315,23 +575,18 @@ class _ListStatsCard extends StatelessWidget {
                 color: AppTheme.primaryColor)),
       );
 
-  Widget _metricBlock(String label, String value, {bool accent = false}) {
+  Widget _metricBlock(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         children: [
           Expanded(
             child: Text(label,
-                style: TextStyle(
-                    fontFamily: 'Cairo',
-                    color: accent ? AppTheme.primaryColor : Colors.grey,
-                    fontWeight: accent ? FontWeight.w600 : FontWeight.normal)),
+                style: const TextStyle(fontFamily: 'Cairo', color: Colors.grey)),
           ),
           Text(value,
-              style: TextStyle(
-                  fontFamily: 'Cairo',
-                  fontWeight: FontWeight.bold,
-                  color: accent ? AppTheme.primaryColor : null)),
+              style: const TextStyle(
+                  fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -399,7 +654,10 @@ class ListStatsRatingBucketsPage extends StatelessWidget {
       textDirection: TextDirection.rtl,
       child: AppSafeScaffold(
         appBar: AppBar(
-          title: Text(name.isEmpty ? 'تقييم القائمة' : 'تقييم — $name',
+          title: Text(
+              name.isEmpty
+                  ? 'تقييم القائمة'
+                  : 'تقييم — $name',
               style: const TextStyle(fontFamily: 'Cairo')),
           backgroundColor: AppTheme.primaryColor,
         ),
@@ -414,10 +672,10 @@ class ListStatsRatingBucketsPage extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  Expanded(
+                  const Expanded(
                     child: Text(
                       'متوسط التقييم',
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontFamily: 'Cairo', fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -612,7 +870,7 @@ class _ListStatsCustomersPageState extends State<ListStatsCustomersPage> {
                     : ListView.separated(
                         padding: const EdgeInsets.all(12),
                         itemCount: _rows.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        separatorBuilder: (_, __) => const NameListSeparator(),
                         itemBuilder: (context, i) {
                           final row = _rows[i];
                           final id = int.tryParse(
@@ -632,10 +890,8 @@ class _ListStatsCustomersPageState extends State<ListStatsCustomersPage> {
                                   color: AppTheme.primaryColor
                                       .withValues(alpha: 0.2)),
                             ),
-                            title: Text(name.isEmpty ? 'زبون #$id' : name,
-                                style: const TextStyle(
-                                    fontFamily: 'Cairo',
-                                    fontWeight: FontWeight.bold)),
+                            title: PersonNameText(
+                                name.isEmpty ? 'زبون #$id' : name),
                             subtitle: Text(
                               [
                                 if (phone.isNotEmpty) phone,

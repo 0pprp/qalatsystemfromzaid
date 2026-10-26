@@ -9,10 +9,21 @@ public class LegalFollowupStatusTests
     [Theory]
     [InlineData("Completed", "تمت المتابعة")]
     [InlineData("InProgress", "قيد العمل")]
+    [InlineData("Cancelled", "ملغاة")]
     [InlineData(null, "قيد العمل")]
     public void Arabic_MapsKnownStatuses(string? status, string expected)
     {
         Assert.Equal(expected, LegalFollowupStatuses.Arabic(status));
+    }
+
+    [Theory]
+    [InlineData("InProgress", true)]
+    [InlineData("Completed", false)]
+    [InlineData("Cancelled", false)]
+    [InlineData(null, false)]
+    public void CanCancel_OnlyInProgress(string? status, bool expected)
+    {
+        Assert.Equal(expected, LegalFollowupService.CanCancelCase(status));
     }
 
     [Fact]

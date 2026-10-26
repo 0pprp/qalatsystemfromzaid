@@ -1,3 +1,4 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +14,7 @@ import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/inventory_search.dart';
 import 'package:sales_employee_application/utils/iraq_phone.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
+import 'package:sales_employee_application/ui/list_delegate_rating_gate.dart';
 import 'package:sales_employee_application/widgets/customer_document_slot.dart';
 import 'package:sales_employee_application/widgets/inventory_item_info.dart';
 import 'package:sales_employee_application/widgets/shop_location_button.dart';
@@ -74,6 +76,9 @@ class _SaleScreenState extends State<SaleScreen> {
   bool _loadingStock = false;
   bool _saving = false;
   SalesWorkRequest? _fromRequest;
+  /// Locked when opening from an assigned request that already carries a customer name.
+  bool _nameLocked = false;
+  String _lockedCustomerName = '';
   List<SalesCustomerList> _customerLists = [];
   int? _customerListId;
   int? _preferredListId;
@@ -144,6 +149,12 @@ class _SaleScreenState extends State<SaleScreen> {
       _preferList(arg.delegateId);
       _applyPreferredList();
       _fillIfPresent(_name, arg.customerName);
+      final incomingName = arg.customerName.trim();
+      if (incomingName.isNotEmpty) {
+        _nameLocked = true;
+        _lockedCustomerName = incomingName;
+        _name.text = incomingName;
+      }
       _fillIfPresent(_phone, IraqPhone.normalize(arg.customerPhone));
       _fillIfPresent(_province, arg.customerProvince);
       _fillIfPresent(_address, arg.customerAddress);
@@ -152,6 +163,13 @@ class _SaleScreenState extends State<SaleScreen> {
       }
       _resumeDraftIfAny();
     }
+  }
+
+  String get _effectiveCustomerName {
+    if (_nameLocked && _lockedCustomerName.isNotEmpty) {
+      return _lockedCustomerName;
+    }
+    return _name.text.trim();
   }
 
   Future<void> _resumeDraftIfAny() async {
@@ -172,7 +190,11 @@ class _SaleScreenState extends State<SaleScreen> {
   void _applyDraft(SalesDraft draft) {
     _created = draft;
     _previewDocs = const [];
-    if (draft.fullName.trim().isNotEmpty) _name.text = draft.fullName.trim();
+    if (_nameLocked && _lockedCustomerName.isNotEmpty) {
+      _name.text = _lockedCustomerName;
+    } else if (draft.fullName.trim().isNotEmpty) {
+      _name.text = draft.fullName.trim();
+    }
     if ((draft.phone ?? '').trim().isNotEmpty) {
       _phone.text = IraqPhone.normalize(draft.phone);
     }
@@ -480,7 +502,7 @@ class _SaleScreenState extends State<SaleScreen> {
   }
 
   Map<String, String> _customerPayload() => {
-        'fullName': _name.text.trim(),
+        'fullName': _effectiveCustomerName,
         'phone': IraqPhone.normalize(_phone.text),
         'province': _province.text.trim(),
         'nationalCardNumber': _card.text.trim(),
@@ -657,7 +679,7 @@ class _SaleScreenState extends State<SaleScreen> {
               ? _picked!.customerId
               : null,
           customer: {
-            'fullName': _name.text.trim(),
+            'fullName': _effectiveCustomerName,
             'phone': IraqPhone.normalize(_phone.text),
             'province': _province.text.trim(),
             'nationalCardNumber': _card.text.trim(),
@@ -723,6 +745,12 @@ class _SaleScreenState extends State<SaleScreen> {
     try {
       final result = await SalesRepositoryFactory.instance.completeSale(created.saleId, shop);
       final download = await _downloadAll(result.documents);
+      if (!mounted) return;
+      await promptListDelegateRatingAfterSale(
+        context,
+        listId: _customerListId ?? created.customerListId,
+        listName: _customerListName(),
+      );
       if (!mounted) return;
       await Navigator.pushReplacement(
         context,
@@ -1039,7 +1067,7 @@ class _SaleScreenState extends State<SaleScreen> {
                               ? const SizedBox(
                                   height: 22,
                                   width: 22,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                  child: CompanyLoader(size: 22),
                                 )
                               : Text(_step < _lastStep ? 'التالي' : 'تم البيع'),
                         ),
@@ -1136,7 +1164,20 @@ class _SaleScreenState extends State<SaleScreen> {
                   style: TextStyle(color: AppColors.muted, fontSize: 12)),
             ),
           const SizedBox(height: AppSpacing.sm),
-          _field(_name, 'الاسم الكامل *', validator: _req),
+          _field(
+            _name,
+            _nameLocked ? 'الاسم الكامل * (من الطلب)' : 'الاسم الكامل *',
+            validator: _req,
+            readOnly: _nameLocked,
+          ),
+          if (_nameLocked)
+            const Padding(
+              padding: EdgeInsets.only(bottom: AppSpacing.sm),
+              child: Text(
+                'لا يمكن تغيير اسم الزبون القادم من طلب البيع',
+                style: TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
+            ),
           _field(
             _phone,
             'رقم الهاتف *',
@@ -1177,11 +1218,13 @@ class _SaleScreenState extends State<SaleScreen> {
 
   Widget _field(TextEditingController c, String label,
       {TextInputType? keyboard, String? Function(String?)? validator, bool last = false,
-      List<TextInputFormatter>? formatters}) {
+      List<TextInputFormatter>? formatters, bool readOnly = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: TextFormField(
         controller: c,
+        readOnly: readOnly,
+        enabled: !readOnly,
         keyboardType: keyboard,
         inputFormatters: formatters,
         validator: validator,
@@ -1195,6 +1238,8 @@ class _SaleScreenState extends State<SaleScreen> {
           alignLabelWithHint: true,
           floatingLabelBehavior: FloatingLabelBehavior.auto,
           contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+          filled: readOnly,
+          fillColor: readOnly ? AppColors.muted.withValues(alpha: 0.12) : null,
         ),
       ),
     );
@@ -1202,7 +1247,7 @@ class _SaleScreenState extends State<SaleScreen> {
 
   Widget _itemsStep() {
     if (_loadingStock) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: CompanyLoader(label: 'جارٍ تحميل البيانات'));
     }
     final filtered = filterInventoryItems(_stock, _stockQuery.text);
     return Column(
@@ -1402,7 +1447,7 @@ class _SaleScreenState extends State<SaleScreen> {
       children: [
         const Text('بيانات الزبون', style: TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: AppSpacing.sm),
-        Text(_name.text),
+        Text(_effectiveCustomerName),
         const SizedBox(height: 6),
         TappablePhone(_phone.text),
         const SizedBox(height: 6),

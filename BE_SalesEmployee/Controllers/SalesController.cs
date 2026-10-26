@@ -2,6 +2,7 @@ using System.Text.Json;
 using BE_SalesEmployee.Sales.Authorization;
 using BE_SalesEmployee.Sales.DTO;
 using BE_SalesEmployee.Sales.Services;
+using BE_SalesEmployee.Sales.Stores;
 using BE_SalesEmployee.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -19,19 +20,22 @@ namespace BE_SalesEmployee.Controllers
         private readonly SalesDevelopmentGuard _guard;
         private readonly IGlobalCustomerSearchService _search;
         private readonly IHubContext<BE_SalesEmployee.Hubs.SalesTrackingHub> _hub;
+        private readonly ISalesEmployeeAppBlockStore _appBlocks;
 
         public SalesController(
             BranchProxyService proxy,
             AdminCitiesService cities,
             SalesDevelopmentGuard guard,
             IGlobalCustomerSearchService search,
-            IHubContext<BE_SalesEmployee.Hubs.SalesTrackingHub> hub)
+            IHubContext<BE_SalesEmployee.Hubs.SalesTrackingHub> hub,
+            ISalesEmployeeAppBlockStore appBlocks)
         {
             _proxy = proxy;
             _cities = cities;
             _guard = guard;
             _search = search;
             _hub = hub;
+            _appBlocks = appBlocks;
         }
 
         [Authorize(Policy = SalesPolicies.AnySales)]
@@ -249,6 +253,29 @@ namespace BE_SalesEmployee.Controllers
             ProxyAssigned($"sales/customer-documents/{documentId}", HttpMethod.Delete, null, ct);
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("list-delegate-ratings/status")]
+        public Task<IActionResult> ListDelegateRatingStatus([FromQuery] int listId, CancellationToken ct) =>
+            ProxyAssigned(
+                $"sales/list-delegate-ratings/status?listId={listId}",
+                HttpMethod.Get,
+                null,
+                ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("list-delegate-ratings")]
+        public async Task<IActionResult> SubmitListDelegateRating([FromBody] JsonElement body, CancellationToken ct)
+        {
+            var json = body.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
+                ? "{}"
+                : body.GetRawText();
+            return await ProxyAssigned(
+                "sales/list-delegate-ratings",
+                HttpMethod.Post,
+                new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+                ct);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("{id:int}/complete")]
         public async Task<IActionResult> Complete(int id, [FromBody] JsonElement body, CancellationToken ct)
         {
@@ -305,6 +332,18 @@ namespace BE_SalesEmployee.Controllers
         [HttpPost("shifts/start")]
         public async Task<IActionResult> StartShift(CancellationToken ct)
         {
+            var user = TokenService.FromPrincipal(User);
+            if (int.TryParse(user.UserID, out var empId)
+                && empId > 0
+                && !string.IsNullOrWhiteSpace(user.CityValue)
+                && await _appBlocks.IsBlockedAsync(user.CityValue, empId, ct))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    message = "تم إيقاف تطبيقك من الإدارة — لا يمكنك بدء الدوام."
+                });
+            }
+
             return await ProxyAssigned("sales/shifts/start", HttpMethod.Post, null, ct);
         }
 
@@ -425,6 +464,23 @@ namespace BE_SalesEmployee.Controllers
         [HttpGet("requests")]
         public Task<IActionResult> Requests(CancellationToken ct) =>
             ProxyAssigned("sales/requests", HttpMethod.Get, null, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("requests/submitted")]
+        public Task<IActionResult> SubmittedRequests(CancellationToken ct) =>
+            ProxyAssigned("sales/requests/submitted", HttpMethod.Get, null, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("requests/submit")]
+        public async Task<IActionResult> SubmitRequest([FromBody] JsonElement body, CancellationToken ct) =>
+            await ProxyAssigned(
+                "sales/requests/submit",
+                HttpMethod.Post,
+                new StringContent(
+                    body.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "{}" : body.GetRawText(),
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+                ct);
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpGet("transfer-peers")]

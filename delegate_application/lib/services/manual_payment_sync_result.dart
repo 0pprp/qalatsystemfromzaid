@@ -66,5 +66,5 @@ class ManualPaymentSyncResult {
 
   static const offlineMessage = 'يجب الحصول على انترنت لارسال التسديدات';
   static const gateClosedMessage =
-      'إرسال التسديدات متاح بعد الساعة 4 عصراً حتى 3 فجراً بتوقيت بغداد';
+      'التسديدات تُرفع أونلاين فوراً — لا حاجة لانتظار الساعة 4 مساءً';
 }

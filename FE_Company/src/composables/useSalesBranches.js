@@ -9,8 +9,8 @@ export function isExcludedSalesBranch(name) {
 
 export function isCentralSalesManager() {
   const userType = localStorage.getItem('UserType')
-  // المدير يستخدم نفس بوابة مدير المبيعات المركزي لطلبات البيع
-  if (userType === 'المدير')
+  // المدير / المراقب يستخدمان بوابة المبيعات المركزية
+  if (userType === 'المدير' || userType === 'المراقب')
     return true
 
   return userType === 'مدير مبيعات'

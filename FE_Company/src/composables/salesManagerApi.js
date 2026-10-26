@@ -34,8 +34,9 @@ export function salesManagerBase() {
   if (isDemo())
     return `${DEMO_API}sales-manager/`
 
-  // المدير ومدير المبيعات المركزي — دائماً عبر بوابة المبيعات
-  if (isCentralSalesManager() || localStorage.getItem('UserType') === 'المدير') {
+  // المدير / المراقب / مدير المبيعات المركزي — دائماً عبر بوابة المبيعات
+  // isCentralSalesManager() already includes المراقب + المدير
+  if (isCentralSalesManager() || localStorage.getItem('UserType') === 'المدير' || localStorage.getItem('UserType') === 'المراقب') {
     const gw = salesGatewayBase()
     return `${gw}sales-manager/`
   }
@@ -326,12 +327,41 @@ export async function smStatsRatingCustomers({
   return smGet(withCityQuery(`stats/rating-customers?${params}`, cityValue), { timeoutMs: 120000 })
 }
 
-function assertSmWriteAllowed() {
-  if (localStorage.getItem('UserType') === 'المدير') {
-    const err = new Error('عرض فقط — لا يمكن تنفيذ الإجراء من حساب المدير')
-    err.response = { status: 403, data: { message: err.message } }
-    throw err
-  }
+/** Paths المدير may mutate (educational videos + announcements). */
+export function isDirectorWritePath(path) {
+  const p = String(path || '').split('?')[0].replace(/^\/+|\/+$/g, '')
+  if (p === 'tutorial-videos' || p === 'tutorial-videos/apps')
+    return true
+  // tutorial-videos/{id}
+  if (/^tutorial-videos\/\d+$/.test(p))
+    return true
+  if (p === 'announcements' || p === 'announcements/apps' || p === 'announcements/upload-image')
+    return true
+  if (/^announcements\/\d+$/.test(p))
+    return true
+  if (p === 'committee-tasks')
+    return true
+  if (/^committee-tasks\/\d+$/.test(p))
+    return true
+  // assigned-tasks (+ assignee-options, {guid}, {guid}/attachments)
+  if (p === 'assigned-tasks' || p === 'assigned-tasks/assignee-options')
+    return true
+  if (/^assigned-tasks\/[0-9a-fA-F-]{36}$/.test(p))
+    return true
+  if (/^assigned-tasks\/[0-9a-fA-F-]{36}\/attachments$/.test(p))
+    return true
+
+  return false
+}
+
+function assertSmWriteAllowed(path) {
+  if (localStorage.getItem('UserType') !== 'المدير')
+    return
+  if (isDirectorWritePath(path))
+    return
+  const err = new Error('عرض فقط — لا يمكن تنفيذ الإجراء من حساب المدير')
+  err.response = { status: 403, data: { message: err.message } }
+  throw err
 }
 
 /** POST bodies that only read (evaluate / hits) — allowed for المدير. */
@@ -341,6 +371,8 @@ export function isDirectorReadPostPath(path) {
     return true
   // sales-requests/{cityValue}/evaluate
   if (/^sales-requests\/[^/]+\/evaluate$/.test(p))
+    return true
+  if (isDirectorWritePath(p))
     return true
 
   return false
@@ -357,7 +389,7 @@ export async function smGet(path, { timeoutMs } = {}) {
 
 export async function smPost(path, body, { timeoutMs } = {}) {
   if (!isDirectorReadPostPath(path))
-    assertSmWriteAllowed()
+    assertSmWriteAllowed(path)
   const { data } = await axios.post(`${salesManagerBase()}${path}`, body, {
     headers: getAuthHeaders(),
     timeout: timeoutMs ?? 60000,
@@ -438,14 +470,14 @@ export async function assignExceptionRequest(exceptionId, { employeeId, employee
 }
 
 export async function smPut(path, body) {
-  assertSmWriteAllowed()
+  assertSmWriteAllowed(path)
   const { data } = await axios.put(`${salesManagerBase()}${path}`, body, { headers: getAuthHeaders() })
 
   return data
 }
 
 export async function smPostForm(path, formData) {
-  assertSmWriteAllowed()
+  assertSmWriteAllowed(path)
   const token = getToken()
   const { data } = await axios.post(`${salesManagerBase()}${path}`, formData, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -475,12 +507,14 @@ export function smErrorMessage(err, fallback) {
       return fallback
     }
   }
+  if (err?.message && err.message !== 'Network Error')
+    return err.message
 
   return fallback
 }
 
 export async function smDelete(path) {
-  assertSmWriteAllowed()
+  assertSmWriteAllowed(path)
   const { data } = await axios.delete(`${salesManagerBase()}${path}`, { headers: getAuthHeaders() })
 
   return data
@@ -604,6 +638,8 @@ export const requestHistoryLabel = {
   Inspected: 'تم الكشف',
   Completed: 'اكتمال',
   LegalFollowupSent: 'إرسال للقانونية',
+  CancelledToUnassigned: 'إلغاء → غير مسند',
+  ManagerRequestDeleted: 'حذف',
 }
 
 export function customerProfileApiPath(city, { customerId, name, phone } = {}) {

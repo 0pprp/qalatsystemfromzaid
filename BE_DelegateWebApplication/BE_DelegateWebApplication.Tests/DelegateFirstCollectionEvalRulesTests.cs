@@ -26,6 +26,9 @@ public sealed class DelegateFirstCollectionEvalRulesTests
         Assert.Contains("التقييم: 5", block);
         Assert.Contains("سعر البيع:", block);
         Assert.Contains("500", block);
-        Assert.Contains("مبيعات خاطئة", block);
+        Assert.DoesNotContain("تقييم المتجر / مبيعات خاطئة", block);
+        var tagged = FollowerSaleAuthRules.FormatShopEvaluationBlock(
+            5, "ضعيف", 100000, 20000, "زبون", "07701234567", 500000, includeWrongSaleTag: true);
+        Assert.Contains("مبيعات خاطئة", tagged);
     }
 }

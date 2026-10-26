@@ -2,17 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:delegate_application/AsyncIdChecker.dart';
-import 'package:delegate_application/AllSale.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:delegate_application/main.dart';
 import 'package:delegate_application/customer.dart';
 import 'package:delegate_application/core/update/app_update_gate.dart';
 import 'package:delegate_application/core/update/app_version.dart';
+import 'package:delegate_application/rating_tab_page.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
-import 'package:delegate_application/services/manual_payment_sync_result.dart';
-import 'package:delegate_application/services/payment_sync_service.dart';
-import 'package:delegate_application/services/tutorial_video_service.dart';
+import 'package:delegate_application/tutorial_questions_page.dart';
 import 'package:delegate_application/today_payments_page.dart';
+import 'package:delegate_application/ui/announcements_banner.dart';
 import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:delegate_application/ui/delegate_complaint_sheet.dart';
 import 'package:delegate_application/ui/main_bottom_nav.dart';
@@ -24,8 +23,6 @@ import 'package:delegate_application/utils/Formatters.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
 import 'package:delegate_application/services/phantom_customer_rating.dart';
 import 'package:delegate_application/utils/iraq_date.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -33,33 +30,79 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String delegateName = 'جار التحميل...';
   String receiptName = 'المندوب';
   String phone = '';
   String city = '';
-  int numberOfCustomer = 0;
-  int numberOfCustomerIsLegal = 0;
-  int numberOfCustomerIsNotZero = 0;
-  int numberOfCustomerIsZero = 0;
-  double amountRecever = 0;
-  double amountRemaining = 0;
-  double amountTotal = 0;
-  bool _sendingPayments = false;
-  double amountDay = 0;
   bool isLoading = true;
   double _overallPhantomScore = 0;
+  double _weekAgoPhantomScore = 0;
+  double _installmentSum = 0;
+  String _ratingTrend = 'flat';
+  bool _kickingSession = false;
+  Timer? _sessionWatchdog;
 
-  int _selectedIndex = 2; // Default to Home
-  final GlobalKey<TodayPaymentsPageState> _todayKey =
+  /// 0 الرئيسية | 1 التسديدات | 2 العملاء | 3 التقييم
+  int _selectedIndex = 0;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final GlobalKey<TodayPaymentsPageState> _paymentsKey =
       GlobalKey<TodayPaymentsPageState>();
   final GlobalKey<CustomerPageState> _customerKey =
       GlobalKey<CustomerPageState>();
+  final GlobalKey<RatingTabPageState> _ratingKey =
+      GlobalKey<RatingTabPageState>();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeData();
+    _sessionWatchdog = Timer.periodic(const Duration(seconds: 20), (_) {
+      unawaited(_enforceCollectionSession());
+    });
+  }
+
+  @override
+  void dispose() {
+    _sessionWatchdog?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_enforceCollectionSession());
+    }
+  }
+
+  Future<void> _enforceCollectionSession() async {
+    if (!mounted || _kickingSession) return;
+    final msg = await AsyncIdChecker.enforceSessionKickMessage();
+    if (msg == null || !mounted) return;
+    _kickingSession = true;
+    _sessionWatchdog?.cancel();
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('انتهت الجلسة',
+              style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+          content: Text(msg, style: const TextStyle(fontFamily: 'Cairo')),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('حسناً', style: TextStyle(fontFamily: 'Cairo')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, '/Login', (r) => false);
   }
 
   Future<void> _initializeData() async {
@@ -67,10 +110,12 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     await AppUpdateGate.checkAndPrompt(context);
     if (!mounted) return;
-    await DelegateDataRefreshService.instance.refreshIfPossible();
-    // Customer tab may have loaded empty SelectDelegate during IndexedStack build.
+    // Finish master refresh before tabs read SelectDelegate / Customer.
+    await DelegateDataRefreshService.instance.refreshIfPossible(force: true);
+    if (!mounted) return;
     await _customerKey.currentState
         ?.reloadLists(attemptNetworkRefreshIfEmpty: false);
+    await _ratingKey.currentState?.reload();
     await fetchData();
   }
 
@@ -79,7 +124,28 @@ class _HomePageState extends State<HomePage> {
     if (loggedIn) {
       bool isValidSession = await AsyncIdChecker.checkAsyncId();
       if (!isValidSession) {
+        final msg = AsyncIdChecker.lastInvalidMessage;
         await AsyncIdChecker.logout();
+        if (!mounted) return;
+        if (msg != null && msg.isNotEmpty) {
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => Directionality(
+              textDirection: TextDirection.rtl,
+              child: AlertDialog(
+                title: const Text('تنبيه', style: TextStyle(fontFamily: 'Cairo')),
+                content: Text(msg, style: const TextStyle(fontFamily: 'Cairo')),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child:
+                        const Text('حسناً', style: TextStyle(fontFamily: 'Cairo')),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
         if (mounted) Navigator.pushReplacementNamed(context, '/Login');
         return;
       }
@@ -111,22 +177,11 @@ class _HomePageState extends State<HomePage> {
               receiptName = data['receiptName'] ?? 'Delegate';
               phone = data['phone'] ?? '';
               city = data['city'] ?? '';
-              numberOfCustomer = data['numberOfCustomer'] ?? 0;
-              numberOfCustomerIsLegal = data['numberOfCustomerIsLegal'] ?? 0;
-              numberOfCustomerIsNotZero =
-                  data['numberOfCustomerIsNotZero'] ?? 0;
-              numberOfCustomerIsZero = data['numberOfCustomerIsZero'] ?? 0;
-              amountRecever = data['amountRecever']?.toDouble() ?? 0;
-              amountRemaining = data['amountRemaining']?.toDouble() ?? 0;
-              amountTotal = data['amountTotal']?.toDouble() ?? 0;
-              amountDay = data['amountDay']?.toDouble() ?? 0;
               isLoading = false;
             });
           }
         }
-      } catch (e) {
-        // Log error
-      }
+      } catch (_) {}
     }
     await _refreshOverallPhantomScore();
   }
@@ -135,94 +190,26 @@ class _HomePageState extends State<HomePage> {
     try {
       final db = await DatabaseHelper().database;
       final rows = await db.query('Customer');
-      // تقييمك = متوسط من سدّد خلال 30 يوم فقط (الباقي > 0).
-      final score = PhantomCustomerRating.averageCustomerScore(
-        rows,
-        IraqDate.calendarDate(),
-      );
+      final today = IraqDate.calendarDate();
+      final weekAgo = today.subtract(const Duration(days: 7));
+      final current = PhantomCustomerRating.summarizeCohort(rows, today);
+      final prior = PhantomCustomerRating.summarizeCohort(rows, weekAgo);
       if (!mounted) return;
-      setState(() => _overallPhantomScore = score);
-    } catch (_) {
-      // Keep last known score if local DB is unavailable.
-    }
-  }
-
-  Future<void> _sendPendingPayments() async {
-    if (_sendingPayments) return;
-    setState(() => _sendingPayments = true);
-    try {
-      final result =
-          await PaymentSyncService.instance.sendPendingPaymentsNow();
-      if (!mounted) return;
-      final message = result.summaryMessage();
-      final ok = result.isCompleteSuccess ||
-          (result.outcome == ManualPaymentSyncOutcome.nothingPending &&
-              result.permanentFailures == 0);
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message, style: const TextStyle(fontFamily: 'Cairo')),
-          backgroundColor:
-              ok ? Colors.teal.shade700 : Colors.orange.shade800,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 6),
-        ),
-      );
-      if (result.outcome == ManualPaymentSyncOutcome.uploaded ||
-          result.outcome == ManualPaymentSyncOutcome.partial) {
-        TodayPaymentsRefresh.notify();
-        await _customerKey.currentState
-            ?.reloadLists(attemptNetworkRefreshIfEmpty: false);
-        await fetchData();
-      }
-    } finally {
-      if (mounted) setState(() => _sendingPayments = false);
-    }
+      setState(() {
+        _overallPhantomScore = current.averageScore;
+        _weekAgoPhantomScore = prior.averageScore;
+        _installmentSum = current.installmentSum;
+        _ratingTrend = PhantomCustomerRating.trendArrow(
+            current.averageScore, prior.averageScore);
+      });
+    } catch (_) {}
   }
 
   Future<void> _openTutorialVideo() async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-    Uri? uri;
-    try {
-      uri = await TutorialVideoService.resolveLaunchUri();
-    } finally {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-    }
     if (!mounted) return;
-    if (uri == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'لم يُحدَّد رابط الفيديو بعد. عدّله من لوحة مدير المبيعات.',
-            style: TextStyle(fontFamily: 'Cairo'),
-          ),
-        ),
-      );
-      return;
-    }
-    try {
-      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!ok && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تعذر فتح الفيديو التعليمي',
-                style: TextStyle(fontFamily: 'Cairo')),
-          ),
-        );
-      }
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تعذر فتح الفيديو التعليمي',
-              style: TextStyle(fontFamily: 'Cairo')),
-        ),
-      );
-    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const TutorialQuestionsPage()),
+    );
   }
 
   Future<void> _logout() async {
@@ -324,22 +311,95 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _onItemTapped(int index) {
+    unawaited(_enforceCollectionSession());
     setState(() {
       _selectedIndex = index;
     });
+    if (index == 0) {
+      fetchData();
+    }
     if (index == 1) {
-      // IndexedStack may have created Customer before SelectDelegate was filled.
+      unawaited(_paymentsKey.currentState?.reload() ?? Future.value());
+      unawaited(DelegateBusinessDateService.instance.ensureCurrentBusinessDay());
+    }
+    if (index == 2) {
       _customerKey.currentState
           ?.reloadLists(attemptNetworkRefreshIfEmpty: true);
       unawaited(DelegateBusinessDateService.instance.ensureCurrentBusinessDay());
     }
-    if (index == 2) {
-      fetchData();
-    }
     if (index == 3) {
-      unawaited(DelegateBusinessDateService.instance.ensureCurrentBusinessDay());
-      _todayKey.currentState?.reload();
+      _ratingKey.currentState?.reload();
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AppSafeScaffold(
+        scaffoldKey: _scaffoldKey,
+        backgroundColor: AppTheme.backgroundColor,
+        extendBody: false,
+        safeBottom: false,
+        drawer: Drawer(
+          child: SafeArea(
+            child: ListView(
+              children: [
+                DrawerHeader(
+                  decoration: BoxDecoration(color: AppTheme.primaryColor),
+                  child: const Align(
+                    alignment: Alignment.bottomRight,
+                    child: Text(
+                      'القائمة',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.receipt_long_outlined),
+                  title: const Text(
+                    'طلبات البيع',
+                    style: TextStyle(fontFamily: 'Cairo'),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/DelegateSalesRequests');
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
+        floatingActionButton: SafeArea(
+          child: FloatingActionButton(
+            heroTag: 'delegate_complaint_fab',
+            tooltip: 'شكوى إلى المدير المفوض',
+            backgroundColor: AppTheme.primaryColor,
+            onPressed: () => DelegateComplaintSheet.show(context),
+            child: const Icon(Icons.chat_bubble_outline, color: Colors.white),
+          ),
+        ),
+        bottomNavigationBar: MainBottomNavBar(
+          selectedIndex: _selectedIndex,
+          onTap: _onItemTapped,
+        ),
+        body: IndexedStack(
+          index: _selectedIndex,
+          children: [
+            _buildHomeDashboard(),
+            TodayPaymentsPage(key: _paymentsKey, embedded: true),
+            Customer(key: _customerKey, embedded: true),
+            RatingTabPage(key: _ratingKey),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildHomeDashboard() {
@@ -356,20 +416,6 @@ class _HomePageState extends State<HomePage> {
               border: Border.all(
                   color: AppTheme.primaryColor.withValues(alpha: 0.05),
                   width: 30),
-            ),
-          ),
-        ),
-        Positioned(
-          top: 50,
-          right: -80,
-          child: Container(
-            width: 300,
-            height: 300,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                  color: AppTheme.primaryColor.withValues(alpha: 0.05),
-                  width: 50),
             ),
           ),
         ),
@@ -403,6 +449,12 @@ class _HomePageState extends State<HomePage> {
                     );
                   },
                 ),
+                _buildHeader(),
+                const SizedBox(height: 16),
+                const AnnouncementsBanner(),
+                const SizedBox(height: 8),
+                _buildWeekRatingCard(),
+                const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -426,15 +478,31 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
-                _buildHeader(),
-                const SizedBox(height: 30),
-                _buildSummaryCard(),
-                const SizedBox(height: 20),
-                _buildOverallRatingSection(),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () =>
+                        DelegateComplaintSheet.show(context, asNote: true),
+                    icon: const Icon(Icons.note_alt_outlined, size: 22),
+                    label: const Text(
+                      'إرسال ملاحظة إلى المدير',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.primaryColor,
+                      side: BorderSide(color: AppTheme.primaryColor),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 12),
-                _buildReportSection(),
-                const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -454,40 +522,6 @@ class _HomePageState extends State<HomePage> {
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppTheme.primaryColor,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _sendingPayments ? null : _sendPendingPayments,
-                    icon: _sendingPayments
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.4,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.cloud_upload_rounded,
-                            color: Colors.white),
-                    label: Text(
-                      _sendingPayments
-                          ? 'جاري إرسال التسديدات...'
-                          : 'إرسال التسديدات',
-                      style: const TextStyle(
-                        fontFamily: 'Cairo',
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.teal.shade700,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
@@ -515,36 +549,22 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: AppSafeScaffold(
-        backgroundColor: AppTheme.backgroundColor,
-        extendBody: false,
-        safeBottom: false,
-        floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
-        floatingActionButton: SafeArea(
-          child: FloatingActionButton(
-            heroTag: 'delegate_complaint_fab',
-            tooltip: 'شكوى إلى المدير المفوض',
-            backgroundColor: AppTheme.primaryColor,
-            onPressed: () => DelegateComplaintSheet.show(context),
-            child: const Icon(Icons.chat_bubble_outline, color: Colors.white),
-          ),
-        ),
-        bottomNavigationBar: MainBottomNavBar(
-          selectedIndex: _selectedIndex,
-          onTap: _onItemTapped,
-        ),
-        body: IndexedStack(
-          index: _selectedIndex,
-          children: [
-            const AllSale(embedded: true),
-            Customer(key: _customerKey, embedded: true),
-            _buildHomeDashboard(),
-            TodayPaymentsPage(key: _todayKey, embedded: true),
-          ],
+  Widget _phantomScoreChip(String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
+      ),
+      child: Text(
+        value,
+        style: const TextStyle(
+          fontFamily: 'Cairo',
+          fontWeight: FontWeight.w900,
+          fontSize: 22,
+          color: Colors.black,
+          height: 1.1,
         ),
       ),
     );
@@ -552,8 +572,25 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildHeader() {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
+        Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Theme.of(context).cardColor,
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.grey.withValues(alpha: 0.1),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4)),
+            ],
+          ),
+          child: IconButton(
+            tooltip: 'القائمة',
+            icon: Icon(Icons.menu, color: AppTheme.textColor),
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          ),
+        ),
+        const SizedBox(width: 4),
         Container(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
@@ -581,109 +618,70 @@ class _HomePageState extends State<HomePage> {
             },
           ),
         ),
-        Row(
+        const SizedBox(width: 8),
+        _phantomScoreChip(
+            PhantomCustomerRating.formatAverageScore(_overallPhantomScore)),
+        const Spacer(),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  receiptName,
-                  style: TextStyle(
-                    fontFamily: 'Cairo',
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: Theme.of(context).textTheme.bodyLarge?.color,
-                  ),
-                ),
-                Text(
-                  delegateName.length > 20
-                      ? "${delegateName.substring(0, 15)}..."
-                      : delegateName,
-                  style: const TextStyle(
-                    fontFamily: 'Cairo',
-                    fontSize: 12,
-                    color: Colors.grey,
-                  ),
-                ),
-              ],
+            Text(
+              receiptName,
+              style: TextStyle(
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Theme.of(context).textTheme.bodyLarge?.color,
+              ),
             ),
-            const SizedBox(width: 10),
-            InkWell(
-              onTap: _logout,
-              child: const CircleAvatar(
-                radius: 22,
-                backgroundColor: AppTheme.primaryColor,
-                child: Icon(Icons.person, color: Colors.white),
+            Text(
+              delegateName.length > 20
+                  ? "${delegateName.substring(0, 15)}..."
+                  : delegateName,
+              style: const TextStyle(
+                fontFamily: 'Cairo',
+                fontSize: 12,
+                color: Colors.grey,
               ),
             ),
           ],
+        ),
+        const SizedBox(width: 10),
+        InkWell(
+          onTap: _logout,
+          child: const CircleAvatar(
+            radius: 22,
+            backgroundColor: AppTheme.primaryColor,
+            child: Icon(Icons.person, color: Colors.white),
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildSummaryCard() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(25),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          )
-        ],
-      ),
-      padding: const EdgeInsets.all(25),
-      child: Column(
-        children: [
-          _buildInfoRow("اسم المندوب", delegateName),
-          if (phone.isNotEmpty) _buildInfoRow("رقم الهاتف", phone),
-          if (city.isNotEmpty) _buildInfoRow("المدينة", city),
-          const Divider(),
-          _buildInfoRow("عدد العملاء الكلي", "$numberOfCustomer", isBold: true),
-          _buildInfoRow("العملاء المصفرين", "$numberOfCustomerIsZero",
-              color: Colors.green),
-          _buildInfoRow("العملاء الغير مصفرين", "$numberOfCustomerIsNotZero",
-              color: Colors.orange),
-          _buildInfoRow("العملاء القانونية", "$numberOfCustomerIsLegal",
-              color: Colors.red),
-        ],
-      ),
-    );
+  IconData _trendIcon(String trend) {
+    switch (trend) {
+      case 'up':
+        return Icons.arrow_upward_rounded;
+      case 'down':
+        return Icons.arrow_downward_rounded;
+      default:
+        return Icons.drag_handle_rounded;
+    }
   }
 
-  Widget _buildInfoRow(String label, String value,
-      {bool isBold = false, Color? color}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            value,
-            style: TextStyle(
-              fontFamily: 'Cairo',
-              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
-              fontSize: 14,
-              color: color ?? Theme.of(context).textTheme.bodyLarge?.color,
-            ),
-          ),
-          Text(
-            label,
-            style: const TextStyle(
-              fontFamily: 'Cairo',
-              color: Colors.grey,
-              fontSize: 14,
-            ),
-          ),
-        ],
-      ),
-    );
+  Color _trendColor(String trend) {
+    switch (trend) {
+      case 'up':
+        return Colors.green.shade700;
+      case 'down':
+        return Colors.red.shade700;
+      default:
+        return Colors.grey.shade600;
+    }
   }
 
-  Widget _buildOverallRatingSection() {
+  Widget _buildWeekRatingCard() {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -697,138 +695,74 @@ class _HomePageState extends State<HomePage> {
           )
         ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-      child: Row(
-        textDirection: TextDirection.rtl,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text(
-            'تقييمك :',
-            style: TextStyle(
-              fontFamily: 'Cairo',
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-              color: AppTheme.textColor,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            PhantomCustomerRating.formatAverageScore(_overallPhantomScore),
-            style: const TextStyle(
-              fontFamily: 'Cairo',
-              fontWeight: FontWeight.w800,
-              fontSize: 22,
-              color: Color(0xFFE6A800),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildReportSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.primaryColor.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(25),
-      ),
       padding: const EdgeInsets.all(20),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          Row(
             children: [
-              Text(
-                "التقرير المالي",
-                style: TextStyle(
-                    fontFamily: 'Cairo',
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                    color: AppTheme.primaryColor),
+              Expanded(
+                child: _weekMetric(
+                  'الأسبوع السابق',
+                  PhantomCustomerRating.formatAverageScore(_weekAgoPhantomScore),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Icon(
+                  _trendIcon(_ratingTrend),
+                  color: _trendColor(_ratingTrend),
+                  size: 32,
+                ),
+              ),
+              Expanded(
+                child: _weekMetric(
+                  'الحالي',
+                  PhantomCustomerRating.formatAverageScore(_overallPhantomScore),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 20),
-          _buildStatCard("سعر البيع", "مجموع سعر القائمة", amountTotal),
-          _buildStatCard("الأقساط", "مجموع سعر الأقساط", amountDay),
-          _buildStatCard("الواصل", "مجموع الأموال المستلمة", amountRecever),
-          _buildStatCard("الباقي", "مجموع الأموال المتبقية", amountRemaining,
-              isTotal: true),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard(String title, String subtitle, double value,
-      {bool isTotal = false}) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(16),
-        border:
-            isTotal ? Border.all(color: AppTheme.primaryColor, width: 1) : null,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
+          const Divider(height: 28),
           Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                "دع",
-                style: TextStyle(
-                  fontFamily: 'Cairo',
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: AppTheme.textColor,
-                ),
-              ),
-              const SizedBox(width: 4),
               Text(
-                Formatters.formatNumber(value),
-                textDirection: TextDirection.rtl,
+                '${Formatters.formatNumber(_installmentSum)} دع',
                 style: const TextStyle(
                   fontFamily: 'Cairo',
                   fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: AppTheme.textColor,
-                ),
-              ),
-            ],
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontFamily: 'Cairo',
-                  fontWeight: FontWeight.bold,
                   fontSize: 15,
-                  color: Theme.of(context).textTheme.bodyLarge?.color,
                 ),
               ),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontFamily: 'Cairo',
-                  fontSize: 11,
-                  color: Colors.grey[500],
-                ),
+              const Text(
+                'مجموع القسط',
+                style: TextStyle(fontFamily: 'Cairo', color: Colors.grey),
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+
+  Widget _weekMetric(String label, String value) {
+    return Column(
+      children: [
+        Text(label,
+            style: const TextStyle(
+                fontFamily: 'Cairo', color: Colors.grey, fontSize: 12)),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: const TextStyle(
+            fontFamily: 'Cairo',
+            fontWeight: FontWeight.w900,
+            fontSize: 22,
+            color: Colors.black,
+          ),
+        ),
+      ],
     );
   }
 }

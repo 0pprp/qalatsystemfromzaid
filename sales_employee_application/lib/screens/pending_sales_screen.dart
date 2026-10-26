@@ -1,3 +1,4 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:sales_employee_application/data/sales_models.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
@@ -10,6 +11,7 @@ import 'package:sales_employee_application/tracking/shift_tracking_controller.da
 import 'package:sales_employee_application/tracking/work_shift.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
+import 'package:sales_employee_application/widgets/home_price_board_banner.dart';
 import 'package:sales_employee_application/widgets/tappable_phone.dart';
 
 class PendingSalesScreen extends StatefulWidget {
@@ -46,13 +48,45 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
   String? _error;
   String? _shiftError;
   bool _openedToday = false;
+  final _homeSearch = TextEditingController();
+  String _homeQuery = '';
 
   bool get _isDashboard => widget.binIndex == null;
 
   @override
   void initState() {
     super.initState();
+    _homeSearch.addListener(() {
+      final q = _homeSearch.text.trim();
+      if (q == _homeQuery) return;
+      setState(() => _homeQuery = q);
+    });
     _load();
+  }
+
+  @override
+  void dispose() {
+    _homeSearch.dispose();
+    super.dispose();
+  }
+
+  List<SalesWorkRequest> _searchMatches(String query) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return const [];
+    final digits = q.replaceAll(RegExp(r'\D'), '');
+    return _requests.where((r) {
+      final name = r.customerName.toLowerCase();
+      final province = (r.customerProvince ?? '').toLowerCase();
+      final notes = (r.notes ?? '').toLowerCase();
+      final phone = (r.customerPhone ?? '').replaceAll(RegExp(r'\D'), '');
+      if (name.contains(q) || province.contains(q) || notes.contains(q)) {
+        return true;
+      }
+      if (digits.isNotEmpty && phone.contains(digits)) {
+        return true;
+      }
+      return false;
+    }).toList();
   }
 
   @override
@@ -203,6 +237,11 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
           title: Text(Session.userName.isEmpty ? 'موظف المبيعات' : Session.userName),
           actions: [
             IconButton(
+              tooltip: 'لوحة الأسعار',
+              onPressed: () => Navigator.pushNamed(context, '/price-board'),
+              icon: const Icon(Icons.sell_outlined),
+            ),
+            IconButton(
               tooltip: 'مخزن الفرع',
               onPressed: () => Navigator.pushNamed(context, '/warehouse'),
               icon: const Icon(Icons.inventory_2_outlined),
@@ -218,44 +257,7 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
             ),
           ],
         ),
-        body: Column(
-          children: [
-            _shiftCard(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pushNamed(context, '/submit-request'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.darkGreen,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size.fromHeight(48),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.send_outlined, size: 20),
-                      SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          'إرسال طلب بيع',
-                          maxLines: 1,
-                          overflow: TextOverflow.visible,
-                          softWrap: false,
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Expanded(child: _dashboardBody()),
-          ],
-        ),
+        body: _dashboardBody(),
       );
     }
 
@@ -267,17 +269,83 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
   }
 
   Widget _dashboardBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)));
-    }
+    final searching = _homeQuery.isNotEmpty;
+    final matches = searching ? _searchMatches(_homeQuery) : const <SalesWorkRequest>[];
     return RefreshIndicator(
       onRefresh: _load,
-      child: ListView.separated(
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.lg),
-        itemCount: _bins.length,
-        separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.md),
-        itemBuilder: (context, i) => _binCard(i),
+        children: [
+          Row(children: [
+            Image.asset('assets/icons/LogoCompany.png', width: 48, height: 52, fit: BoxFit.contain),
+            const SizedBox(width: 12),
+            const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('مساحة المبيعات', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+              Text('تابع دوامك وطلبات زبائنك من مكان واحد', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+            ])),
+          ]),
+          const SizedBox(height: 20),
+          _shiftCard(),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pushNamed(context, '/submit-request'),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('إرسال طلب بيع'),
+          ),
+          const SizedBox(height: 24),
+          const HomePriceBoardBanner(),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: _homeSearch,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'ابحث باسم الزبون أو رقم الهاتف',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _homeQuery.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'مسح',
+                      onPressed: () {
+                        _homeSearch.clear();
+                        setState(() => _homeQuery = '');
+                      },
+                      icon: const Icon(Icons.clear),
+                    ),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadius.md)),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          if (_loading)
+            const Padding(padding: EdgeInsets.all(24), child: CompanyLoader(label: 'جارٍ تحميل الطلبات'))
+          else if (_error != null) ...[
+            Text(_error!, style: const TextStyle(color: AppColors.danger)),
+            TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('إعادة المحاولة')),
+          ] else if (searching) ...[
+            Text(
+              matches.isEmpty ? 'لا نتائج' : 'نتائج البحث (${matches.length})',
+              style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.darkGreen),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (matches.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                child: Text('لا توجد نتائج مطابقة، جرّب اسمًا أو رقمًا آخر', style: TextStyle(color: AppColors.muted)),
+              )
+            else
+              for (final r in matches) ...[
+                _requestCard(r),
+                const SizedBox(height: AppSpacing.sm),
+              ],
+          ] else ...[
+            const Text('متابعة الطلبات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            const Text('اختر الحالة لعرض الطلبات وتفاصيلها', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+            const SizedBox(height: 16),
+            for (var i = 0; i < _bins.length; i++) _binCard(i),
+          ],
+        ],
       ),
     );
   }
@@ -285,39 +353,28 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
   Widget _binCard(int index) {
     final bin = _bins[index];
     final count = _binCount(index);
+    const colors = [AppColors.darkGreen, Color(0xFF006879), Color(0xFF6750A4),
+      Color(0xFF946200), AppColors.danger, Color(0xFF1D6B50)];
+    final color = colors[index];
     return Card(
       child: InkWell(
         onTap: () => _openBin(index),
         borderRadius: BorderRadius.circular(AppRadius.md),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.lg),
-          child: Row(
-            children: [
-              Icon(bin.icon, size: 36, color: AppColors.darkGreen),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      bin.title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 18,
-                        color: AppColors.darkGreen,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '$count',
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_left, color: AppColors.muted, size: 28),
-            ],
-          ),
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: color.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(12)),
+              child: Icon(bin.icon, color: color, size: 24),
+            ),
+            const SizedBox(width: 14),
+            Expanded(child: Text(bin.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600))),
+            const SizedBox(width: 8),
+            Text('$count', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: color)),
+            const SizedBox(width: 12),
+            const Icon(Icons.chevron_left_rounded, color: AppColors.muted, size: 22),
+          ]),
         ),
       ),
     );
@@ -326,48 +383,47 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
   Widget _shiftCard() {
     final shift = _shift;
     var stopped = false;
-    try {
-      stopped = Session.gpsStoppedByUser;
-    } catch (_) {}
+    try { stopped = Session.gpsStoppedByUser; } catch (_) {}
     final active = shift != null && shift.isActive && !stopped;
-    return Card(
-      margin: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              active ? 'حالة الدوام: أثناء الدوام' : 'حالة الدوام',
-              style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.darkGreen),
-            ),
-            if (active) ...[
-              const SizedBox(height: 4),
-              Text('وقت البدء: ${_iraqClock(shift.startedAtUtc)}'),
-              const SizedBox(height: AppSpacing.sm),
-              ElevatedButton(
-                onPressed: _shiftBusy ? null : _endShift,
-                child: Text(_shiftBusy ? '...' : 'إنهاء الدوام'),
-              ),
-            ] else ...[
-              const SizedBox(height: AppSpacing.sm),
-              ElevatedButton(
-                onPressed: _shiftBusy ? null : _startShift,
-                child: Text(_shiftBusy ? '...' : 'بدء الدوام'),
-              ),
-            ],
-            if (_shiftError != null) ...[
-              const SizedBox(height: AppSpacing.sm),
-              Text(_shiftError!, style: const TextStyle(color: AppColors.danger)),
-            ],
-          ],
-        ),
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4FBF9),
+        border: Border.all(color: const Color(0xFFCCE1E0)),
+        borderRadius: BorderRadius.circular(16),
       ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          const Icon(Icons.schedule_rounded, color: AppColors.darkGreen, size: 24),
+          const SizedBox(width: 10),
+          const Expanded(child: Text('دوام اليوم', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700))),
+          Flexible(child: Text(active ? 'أثناء الدوام' : 'غير نشط',
+              style: const TextStyle(color: AppColors.darkGreen, fontWeight: FontWeight.w600))),
+        ]),
+        const SizedBox(height: 10),
+        Text(active ? 'بدأ الدوام الساعة ${_iraqClock(shift.startedAtUtc)}' : 'ابدأ دوامك لمتابعة مهام المبيعات',
+            style: const TextStyle(color: AppColors.muted, fontSize: 13)),
+        const SizedBox(height: 14),
+        OutlinedButton(
+          onPressed: _shiftBusy ? null : (active ? _endShift : _startShift),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.darkGreen,
+            side: const BorderSide(color: Color(0xFFCCE1E0)),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: _shiftBusy ? const CompanyLoader(size: 24) : Text(active ? 'إنهاء الدوام' : 'بدء الدوام'),
+        ),
+        if (_shiftError != null) ...[
+          const SizedBox(height: 12),
+          Text(_shiftError!, style: const TextStyle(color: AppColors.danger)),
+        ],
+      ]),
     );
   }
 
   Widget _requestsList(int index, String empty) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const Center(child: CompanyLoader(label: 'جارٍ تحميل البيانات'));
     if (_error != null) {
       return Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)));
     }
@@ -706,7 +762,7 @@ class _SalesRequestDetailsScreenState extends State<SalesRequestDetailsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('طلب مبيع')),
       body: row == null
-          ? Center(child: _error == null ? const CircularProgressIndicator() : Text(_error!))
+          ? Center(child: _error == null ? const CompanyLoader(label: 'جارٍ تحميل البيانات') : Text(_error!))
           : ListView(
               padding: const EdgeInsets.all(AppSpacing.md),
               children: [

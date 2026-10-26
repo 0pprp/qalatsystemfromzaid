@@ -35,7 +35,7 @@ public sealed class StaffReviewServiceTests
     }
 
     [Fact]
-    public async Task Rejects_high_score_without_note()
+    public async Task Rejects_low_score_without_note()
     {
         var (committees, reviews) = Sut();
         var committee = await committees.CreateCommitteeAsync("dm", "DM", "لجنة", ["mf1", "mf2"], default);
@@ -43,6 +43,6 @@ public sealed class StaffReviewServiceTests
 
         await Assert.ThrowsAsync<CommitteeException>(() =>
             reviews.SubmitAsync("mf1", mission.Id, "DatabaseCompanyBasra",
-                StaffTargetTypes.SalesEmployee, 9, "صالح", null, 9, null, default));
+                StaffTargetTypes.SalesEmployee, 9, "صالح", null, 6, null, default));
     }
 }

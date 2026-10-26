@@ -30,6 +30,7 @@ import { loadCachedBlob, cachedBlobUrl } from '@/composables/useBlobUrlCache'
 import { isDemo } from '@/composables/useCities'
 import { isCentralSalesManager } from '@/composables/useSalesBranches'
 import { useUserRole } from '@/composables/useUserRole'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 import { formatIraqDate } from '@/composables/iraqDate'
 import { saleDisplayDocuments, saleDocumentTitle } from '@/composables/saleDocuments'
 import ShopLocationLink from '@/components/ShopLocationLink.vue'
@@ -39,8 +40,14 @@ import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone
 const toast = useToast()
 const route = useRoute()
 const router = useRouter()
-const { isDirector } = useUserRole()
+const { isDirector, isAdmin, isMonitor } = useUserRole()
+/** المدير عرض فقط؛ المراقب يعمل مثل مدير المبيعات */
 const readOnly = computed(() => isDirector.value)
+/** Accountant/director: hide الواصل/الباقي for legal customers (SM keeps full amounts). */
+const hideLegalPaidRemaining = computed(() =>
+  (isDirector.value || isAdmin.value)
+  && shouldHidePaidRemaining(profile.value),
+)
 const loading = ref(false)
 const profile = ref(null)
 const sharedNotes = ref([])
@@ -290,12 +297,90 @@ async function loadCustomerDocuments() {
 }
 
 function goBack() {
+  const returnTo = String(route.query.returnTo || '').trim()
+  if (returnTo === 'director-follower-work') {
+    const city = String(route.query.cityValue || pick(profile.value, 'cityValue', 'CityValue') || '').trim()
+    const followerId = String(route.query.followerId || '').trim()
+    const tab = String(route.query.tab || 'sales').trim()
+    const resumeCustomerId = String(
+      route.query.resumeCustomerId || route.query.customerId || customerId.value || '',
+    ).trim()
+    router.push({
+      path: '/director-follower-work',
+      query: {
+        ...(city ? { city } : {}),
+        ...(followerId ? { followerId } : {}),
+        ...(tab ? { tab } : {}),
+        ...(resumeCustomerId ? { resumeCustomerId } : {}),
+      },
+    })
+
+    return
+  }
+  if (returnTo === 'director-delegate-followup' || returnTo === 'director-delegate-followup-customers') {
+    const city = String(route.query.cityValue || '').trim()
+    const listId = String(route.query.listId || '').trim()
+    const path = returnTo === 'director-delegate-followup-customers'
+      ? '/director-delegate-followup-customers'
+      : '/director-delegate-followup'
+    router.push({
+      path,
+      query: {
+        ...(city ? { city } : {}),
+        ...(listId ? { listId } : {}),
+      },
+    })
+
+    return
+  }
+  if (returnTo === 'director-sales-followup') {
+    const city = String(route.query.cityValue || '').trim()
+    const employeeId = String(route.query.employeeId || '').trim()
+    router.push({
+      path: '/director-sales-followup',
+      query: {
+        ...(city ? { city } : {}),
+        ...(employeeId ? { employeeId } : {}),
+      },
+    })
+
+    return
+  }
   if (window.history.length > 1) {
     router.back()
 
     return
   }
+  if (isMonitor.value) {
+    router.push('/sales-manager-sales')
+
+    return
+  }
   router.push(isDirector.value ? '/director-ratings' : '/sales-manager-requests')
+}
+
+function shopFieldEval(source) {
+  if (source === 'follower')
+    return pick(profile.value, 'followerShopEval', 'FollowerShopEval') || null
+  if (source === 'delegate')
+    return pick(profile.value, 'delegateShopEval', 'DelegateShopEval') || null
+
+  return null
+}
+
+function evalMoney(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n === 0)
+    return '—'
+
+  return money(n)
+}
+
+function evalDate(value) {
+  if (!value)
+    return '—'
+
+  return formatIraqDate(value) || '—'
 }
 
 function docLabel(doc) {
@@ -310,6 +395,15 @@ function docLabel(doc) {
 
 function openKyc(doc) {
   const url = kycUrls.value[pick(doc, 'id', 'Id', 'documentId', 'DocumentId')]
+  if (!url)
+    return
+  kycOpenUrl.value = url
+  kycOpen.value = true
+}
+
+function openShopImage(sale) {
+  const id = pick(sale, 'saleId', 'SaleId')
+  const url = id != null ? shopUrls.value[id] : null
   if (!url)
     return
   kycOpenUrl.value = url
@@ -699,10 +793,16 @@ onUnmounted(() => {
             إجمالي المبلغ: {{ money(pick(paymentSummary, 'amountTotalSales', 'AmountTotalSales')) }}
           </VCol>
           <VCol md="4">
-            المستلم: {{ money(pick(paymentSummary, 'receiptsTotal', 'ReceiptsTotal')) }}
+            الواصل:
+            {{ hideLegalPaidRemaining
+              ? '—'
+              : money(pick(paymentSummary, 'receiptsTotal', 'ReceiptsTotal')) }}
           </VCol>
           <VCol md="4">
-            المتبقي / الرصيد: {{ money(pick(paymentSummary, 'amountRemaining', 'AmountRemaining')) }}
+            الباقي:
+            {{ hideLegalPaidRemaining
+              ? '—'
+              : money(pick(paymentSummary, 'amountRemaining', 'AmountRemaining')) }}
           </VCol>
         </VRow>
         <div
@@ -814,11 +914,15 @@ onUnmounted(() => {
         <h5 class="mb-4">
           بيانات المحل
         </h5>
+
+        <h6 class="text-subtitle-1 font-weight-bold mb-3">
+          بيانات موظف المبيعات
+        </h6>
         <div
           v-if="!saleShop(sale)"
-          class="text-medium-emphasis"
+          class="text-medium-emphasis mb-6"
         >
-          لا توجد بيانات محل.
+          لا توجد بيانات محل من موظف المبيعات.
         </div>
         <template v-else>
           <VRow>
@@ -845,12 +949,19 @@ onUnmounted(() => {
             </VCol>
           </VRow>
           <ShopLocationLink :shop="saleShop(sale)" />
-          <VImg
+          <button
             v-if="shopUrls[pick(sale, 'saleId', 'SaleId')]"
-            :src="shopUrls[pick(sale, 'saleId', 'SaleId')]"
-            max-height="280"
-            class="mt-4"
-          />
+            type="button"
+            class="shop-image-thumb mt-4"
+            title="اضغط لعرض الصورة بحجم أكبر"
+            @click="openShopImage(sale)"
+          >
+            <VImg
+              :src="shopUrls[pick(sale, 'saleId', 'SaleId')]"
+              max-height="280"
+            />
+            <span class="shop-image-thumb-hint">اضغط للتكبير</span>
+          </button>
           <div
             v-else
             class="text-medium-emphasis mt-3"
@@ -858,6 +969,74 @@ onUnmounted(() => {
             لا توجد صورة محل.
           </div>
         </template>
+
+        <VDivider class="my-4" />
+        <h6 class="text-subtitle-1 font-weight-bold mb-3">
+          تقييم المتابع
+        </h6>
+        <div
+          v-if="!shopFieldEval('follower')"
+          class="text-medium-emphasis mb-2"
+        >
+          لا يوجد تقييم متابع.
+        </div>
+        <VRow v-else>
+          <VCol md="4">
+            التقييم: {{ pick(shopFieldEval('follower'), 'rating', 'Rating') ?? '—' }}
+          </VCol>
+          <VCol md="4">
+            المقيّم: {{ pick(shopFieldEval('follower'), 'evaluatorName', 'EvaluatorName') || '—' }}
+          </VCol>
+          <VCol md="4">
+            وقت المصادقة: {{ evalDate(pick(shopFieldEval('follower'), 'evaluatedAtUtc', 'EvaluatedAtUtc')) }}
+          </VCol>
+          <VCol md="4">
+            قيمة بضاعة المحل: {{ evalMoney(pick(shopFieldEval('follower'), 'shopStockEstimatedValue', 'ShopStockEstimatedValue')) }}
+          </VCol>
+          <VCol md="4">
+            قيمة الوارد اليومي: {{ evalMoney(pick(shopFieldEval('follower'), 'estimatedDailyRevenue', 'EstimatedDailyRevenue')) }}
+          </VCol>
+          <VCol
+            cols="12"
+            class="pt-0"
+          >
+            الملاحظة: {{ pick(shopFieldEval('follower'), 'note', 'Note') || '—' }}
+          </VCol>
+        </VRow>
+
+        <VDivider class="my-4" />
+        <h6 class="text-subtitle-1 font-weight-bold mb-3">
+          تقييم المندوب
+        </h6>
+        <div
+          v-if="!shopFieldEval('delegate')"
+          class="text-medium-emphasis mb-2"
+        >
+          لا يوجد تقييم مندوب.
+        </div>
+        <VRow v-else>
+          <VCol md="4">
+            التقييم: {{ pick(shopFieldEval('delegate'), 'rating', 'Rating') ?? '—' }}
+          </VCol>
+          <VCol md="4">
+            المقيّم: {{ pick(shopFieldEval('delegate'), 'evaluatorName', 'EvaluatorName') || '—' }}
+          </VCol>
+          <VCol md="4">
+            وقت التقييم: {{ evalDate(pick(shopFieldEval('delegate'), 'evaluatedAtUtc', 'EvaluatedAtUtc')) }}
+          </VCol>
+          <VCol md="4">
+            قيمة بضاعة المحل: {{ evalMoney(pick(shopFieldEval('delegate'), 'shopStockEstimatedValue', 'ShopStockEstimatedValue')) }}
+          </VCol>
+          <VCol md="4">
+            قيمة الوارد اليومي: {{ evalMoney(pick(shopFieldEval('delegate'), 'estimatedDailyRevenue', 'EstimatedDailyRevenue')) }}
+          </VCol>
+          <VCol
+            cols="12"
+            class="pt-0"
+          >
+            الملاحظة: {{ pick(shopFieldEval('delegate'), 'note', 'Note') || '—' }}
+          </VCol>
+        </VRow>
 
         <VDivider class="my-4" />
         <h5 class="mb-4">
@@ -897,8 +1076,8 @@ onUnmounted(() => {
               <th>التاريخ</th>
               <th>المنتجات</th>
               <th>الإجمالي</th>
-              <th>المستلم</th>
-              <th>المتبقي</th>
+              <th>الواصل</th>
+              <th>الباقي</th>
             </tr>
           </thead>
           <tbody>
@@ -909,8 +1088,8 @@ onUnmounted(() => {
               <td>{{ formatIraqDate(pick(row, 'dateCreate', 'DateCreate')) || '—' }}</td>
               <td>{{ pick(row, 'itemsNames', 'ItemsNames') || '—' }}</td>
               <td>{{ money(pick(row, 'amountTotalSales', 'AmountTotalSales')) }}</td>
-              <td>{{ money(pick(row, 'receiptsTotal', 'ReceiptsTotal')) }}</td>
-              <td>{{ money(pick(row, 'amountRemaining', 'AmountRemaining')) }}</td>
+              <td>{{ hideLegalPaidRemaining ? '—' : money(pick(row, 'receiptsTotal', 'ReceiptsTotal')) }}</td>
+              <td>{{ hideLegalPaidRemaining ? '—' : money(pick(row, 'amountRemaining', 'AmountRemaining')) }}</td>
             </tr>
           </tbody>
         </VTable>
@@ -990,14 +1169,28 @@ onUnmounted(() => {
     </VDialog>
     <VDialog
       v-model="kycOpen"
-      max-width="900"
+      max-width="960"
     >
       <VCard v-if="kycOpenUrl">
-        <VImg :src="kycOpenUrl" />
+        <div class="d-flex align-center justify-space-between pa-3">
+          <span class="text-subtitle-1 font-weight-bold">صورة المحل</span>
+          <VBtn
+            icon="tabler-x"
+            variant="text"
+            aria-label="إغلاق"
+            @click="kycOpen = false"
+          />
+        </div>
+        <VImg
+          :src="kycOpenUrl"
+          max-height="80vh"
+          contain
+        />
         <VCardActions>
           <VSpacer />
           <VBtn
-            variant="text"
+            color="primary"
+            variant="tonal"
             @click="kycOpen = false"
           >
             إغلاق
@@ -1007,3 +1200,33 @@ onUnmounted(() => {
     </VDialog>
   </VContainer>
 </template>
+
+<style scoped>
+.shop-image-thumb {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  margin-inline: auto;
+  padding: 0;
+  border: 1px solid rgba(15, 118, 110, 0.35);
+  border-radius: 10px;
+  background: #fff;
+  cursor: zoom-in;
+  overflow: hidden;
+  text-align: center;
+}
+
+.shop-image-thumb:hover {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
+}
+
+.shop-image-thumb-hint {
+  display: block;
+  padding: 6px 8px;
+  background: #f0fdfa;
+  color: #0f766e;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+</style>

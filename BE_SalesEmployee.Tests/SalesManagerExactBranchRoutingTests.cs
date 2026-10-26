@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using BE_SalesEmployee.Sales.Services;
 using BE_SalesEmployee.Services;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -160,7 +161,8 @@ public sealed class SalesManagerExactBranchRoutingTests
                 ["LabCities:2:Link"] = lab[2].Link,
             }).Build();
 
-            var cities = new AdminCitiesService(new HttpClient(), config, NullLogger<AdminCitiesService>.Instance);
+            var cities = new AdminCitiesService(
+                new HttpClient(), config, NullLogger<AdminCitiesService>.Instance, new MemoryCache(new MemoryCacheOptions()));
             var proxy = new BranchProxyService(new HttpClient { Timeout = TimeSpan.FromSeconds(2) }, config);
             var aggregator = new SalesManagerBranchAggregator(cities, proxy);
 

@@ -23,6 +23,7 @@ namespace BE_Company.Sales.DTO
         public SalesRequestEvaluationCategoryDTO TripleName { get; set; } = new();
         public SalesRequestEvaluationCategoryDTO Phone { get; set; } = new();
         public SalesRequestEvaluationCategoryDTO FatherGrandfather { get; set; } = new();
+        public SalesRequestEvaluationCategoryDTO SonFather { get; set; } = new();
     }
 
     public sealed class SalesRequestEvaluationBatchRequestDTO

@@ -22,6 +22,20 @@ public sealed class ListFollowerRatingCohortTests
     }
 
     [Fact]
+    public void OpenBalanceOnly_DropsLegalEvenWithRemaining()
+    {
+        var facts = new[]
+        {
+            Fact(1, remaining: 1_000_000, isLegal: false),
+            Fact(2, remaining: 500_000, isLegal: true),
+        };
+
+        var open = ListFollowerRatingCohort.OpenBalanceOnly(facts);
+
+        Assert.Equal(new[] { 1 }, open.Select(f => f.CustomerId).ToArray());
+    }
+
+    [Fact]
     public void Snapshot_WithCohort_IgnoresFullyPaid()
     {
         var asOf = new DateTime(2026, 9, 25);
@@ -42,7 +56,7 @@ public sealed class ListFollowerRatingCohortTests
         Assert.Equal(1, openOnly.CustomerCount);
     }
 
-    private static CustomerRatingFacts Fact(int id, double remaining) =>
-        new(id, 1, false, false, new DateTime(2026, 1, 1), new DateTime(2026, 1, 10),
+    private static CustomerRatingFacts Fact(int id, double remaining, bool isLegal = false) =>
+        new(id, 1, isLegal, false, new DateTime(2026, 1, 1), new DateTime(2026, 1, 10),
             1_000_000, 1_000_000 - remaining, remaining, 1);
 }

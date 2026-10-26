@@ -59,6 +59,25 @@ public interface ISalesExceptionStore
     /// <summary>Unread WrongSale rows (ReadAtUtc IS NULL + reason heuristic).</summary>
     Task<int> CountUnreadWrongSalesAsync(string? cityValue, CancellationToken ct = default);
 
+    /// <summary>WrongSale inbox for تطبيق إدارة الفرع (pending vs BM-reviewed).</summary>
+    Task<PagedResult<SalesExceptionRequest>> QueryWrongSalesForBranchManagerAsync(
+        string? cityValue,
+        bool reviewed,
+        int page,
+        int pageSize,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Optimistic BM review: succeeds only while BranchManagerReviewedAtUtc is null and reason is WrongSale.
+    /// </summary>
+    Task<SalesExceptionRequest?> TryMarkBranchManagerReviewedAsync(
+        Guid id,
+        string reviewerUserName,
+        string reviewerDisplayName,
+        string reviewNote,
+        DateTime reviewedAtUtc,
+        CancellationToken ct = default);
+
     /// <summary>
     /// Active = Pending, or Approved and not yet assignment-consumed.
     /// </summary>

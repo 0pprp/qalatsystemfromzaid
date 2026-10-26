@@ -7,8 +7,10 @@ namespace BE_DelegateWebApplication.IRepository
         Task EnsureSchemaAsync(CancellationToken ct = default);
         Task<(int DelegateId, string? CustomerName, string? Phone, string? Address, string? CityName, int? UserId, string? SaleName)?> GetCustomerScopeAsync(int customerId, CancellationToken ct = default);
         Task<string?> GetDelegateNameAsync(int delegateId, CancellationToken ct = default);
-        /// <summary>City/province of the authenticated follower account (Delegates.CityID → Cities).</summary>
-        Task<string?> GetFollowerCityNameAsync(int followerDelegateId, CancellationToken ct = default);
+        /// <summary>City/province of the authenticated follower (UsersSelectedCities → Cities).</summary>
+        Task<string?> GetFollowerCityNameAsync(int followerUserId, CancellationToken ct = default);
+        /// <summary>City/province of an assigned list (Delegates.CityID → Cities).</summary>
+        Task<string?> GetListCityNameAsync(int listDelegateId, CancellationToken ct = default);
         Task<string?> GetCityNameByIdAsync(int cityId, CancellationToken ct = default);
         Task<IReadOnlyList<FollowerCustomerPaymentDTO>> ListCustomerPaymentsAsync(int customerId, CancellationToken ct = default);
         Task<IReadOnlyList<FollowerSalesDocumentRow>> ListCustomerSalesDocumentsAsync(int customerId, string? customerName, string? phone, CancellationToken ct = default);
@@ -39,6 +41,24 @@ namespace BE_DelegateWebApplication.IRepository
             string? shopRatingNote = null,
             decimal? shopStockEstimatedValue = null,
             decimal? estimatedDailyRevenue = null,
+            CancellationToken ct = default);
+
+        /// <summary>
+        /// Lists sales requests originated by this follower.
+        /// tab: all | inProgress | rejected | completed
+        /// </summary>
+        Task<IReadOnlyList<FollowerSalesRequestListItemDTO>> ListSalesRequestsForFollowerAsync(
+            int followerId,
+            string? tab,
+            CancellationToken ct = default);
+
+        /// <summary>
+        /// Lists sales requests originated by this delegate (CustomerSourceType = Delegate).
+        /// tab: all | inProgress | rejected | completed
+        /// </summary>
+        Task<IReadOnlyList<FollowerSalesRequestListItemDTO>> ListSalesRequestsForDelegateAsync(
+            int delegateId,
+            string? tab,
             CancellationToken ct = default);
     }
 }

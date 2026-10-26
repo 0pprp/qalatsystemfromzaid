@@ -1,8 +1,8 @@
-CREATE proc [dbo].[UpdateFollowerCollectionEnabled]
-@DelegateID int = NULL,
-@State bit,
-@UserID int = NULL
-as
+CREATE OR ALTER PROC [dbo].[UpdateFollowerCollectionEnabled]
+    @DelegateID INT = NULL,
+    @State BIT,
+    @UserID INT = NULL
+AS
 BEGIN
     SET NOCOUNT ON;
     IF @DelegateID IS NULL OR @DelegateID <= 0 RETURN;
@@ -16,14 +16,24 @@ BEGIN
     FROM dbo.Delegates
     WHERE DelegateID = @DelegateID;
 
-    INSERT INTO [dbo].[Activities]
-               ([UserID],[ActivityDescription],[ActivityDate],[AsyncState],[AsyncID])
-         VALUES
-               (@UserID
-               ,N'تم تعديل جباية المتابعين للقائمة '+ISNULL(@Name,N'')+N' من '+ISNULL(@Old,N'0')+N' الى '+CONVERT(NVARCHAR(10),@State)
-               ,GETUTCDATE()
-               ,'false'
-               ,NEWID());
+    UPDATE dbo.Delegates
+    SET FollowerCollectionEnabled = @State,
+        FollowerCollectionAssignedAtUtc = CASE
+            WHEN @State = 1 THEN SYSUTCDATETIME()
+            ELSE FollowerCollectionAssignedAtUtc END
+    WHERE DelegateID = @DelegateID;
 
-    UPDATE dbo.Delegates SET FollowerCollectionEnabled=@State WHERE DelegateID=@DelegateID;
+    IF @UserID IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.Users WHERE UserID = @UserID)
+    BEGIN
+        INSERT INTO [dbo].[Activities]
+            ([UserID], [ActivityDescription], [ActivityDate], [AsyncState], [AsyncID])
+        VALUES
+            (@UserID,
+             N'تم تعديل جباية المتابعين للقائمة ' + ISNULL(@Name, N'')
+                + N' من ' + ISNULL(@Old, N'0') + N' الى ' + CONVERT(NVARCHAR(10), @State),
+             GETUTCDATE(),
+             'false',
+             NEWID());
+    END
 END
+GO

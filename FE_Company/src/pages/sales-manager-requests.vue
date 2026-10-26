@@ -4,7 +4,8 @@ import { useDebounceFn } from '@vueuse/core'
 import { useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
-import { formatIraqDate, formatIraqTime } from '@/composables/iraqDate'
+import { formatIraqClock, formatIraqDate, formatIraqTime } from '@/composables/iraqDate'
+import { resolveLastStatusAtUtc } from '@/utils/salesRequestLastStatus'
 import {
   assignExceptionRequest,
   assignSalesRequestsBatch,
@@ -127,12 +128,14 @@ const EVAL_CRITERIA = [
   { key: 'tripleName', title: 'تشابه الاسم الثلاثي' },
   { key: 'phone', title: 'تشابه رقم الهاتف' },
   { key: 'fatherGrandfather', title: 'تشابه اسم الأب والجد' },
+  { key: 'sonFather', title: 'تطابق ابن مع أب' },
 ]
 /** Search within sales-request rows (not ERP catalog). */
 const REQ_DUP_CRITERIA = [
   { key: 'tripleName', title: 'تشابه الاسم الثلاثي' },
   { key: 'phone', title: 'تشابه رقم الهاتف' },
   { key: 'fatherGrandfather', title: 'تشابه اسم الأب والجد' },
+  { key: 'sonFather', title: 'تطابق ابن مع أب' },
 ]
 const listSearchQuery = ref('')
 /** Debounced search text — keeps typing responsive on large lists. */
@@ -173,6 +176,13 @@ const editCityChanged = computed(() =>
   && String(editForm.value.cityValue) !== String(editOriginalCity.value || ''))
 const deleteOpen = ref(false)
 const deleteBusy = ref(false)
+const cancelOpen = ref(false)
+const cancelBusy = ref(false)
+const cancelTarget = ref(null)
+const cancelReason = ref('')
+const cancelImpact = ref(null)
+const cancelImpactBusy = ref(false)
+const cancelConfirmPayments = ref(false)
 const deleteTarget = ref(null)
 const deleteReason = ref('')
 const deleteImpact = ref(null)
@@ -267,6 +277,12 @@ function isDelegateSubmitted(row) {
   return source === 'Delegate' || role === 'مندوب' || role === 'Delegate'
 }
 
+function isCrmSubmitted(row) {
+  const source = pick(row, 'customerSourceType', 'CustomerSourceType')
+  const role = pick(row, 'createdByUserType', 'CreatedByUserType')
+  return source === 'Crm' || role === 'Crm'
+}
+
 function saleRequestTypeLabel(row) {
   const t = pick(row, 'saleRequestType', 'SaleRequestType')
   if (t === 'Old')
@@ -281,6 +297,8 @@ function saleRequestTypeLabel(row) {
 
 function requestSourceLabel(row) {
   const who = (submittedBy(row) || '').trim()
+  if (isCrmSubmitted(row))
+    return 'قسم التسويق'
   if (isFollowerSubmitted(row))
     return who && who !== 'متابع' ? `المتابع ${who}` : 'المتابع'
   if (isDelegateSubmitted(row))
@@ -481,20 +499,17 @@ function lastNote(row) {
   return notes
 }
 
-function lastUpdated(row) {
-  const times = [
-    row?.completedAtUtc || row?.CompletedAtUtc,
-    row?.rejectedAtUtc || row?.RejectedAtUtc,
-    row?.processingAtUtc || row?.ProcessingAtUtc,
-    row?.viewedAtUtc || row?.ViewedAtUtc,
-    row?.assignedAtUtc || row?.AssignedAtUtc,
-    row?.createdAtUtc || row?.CreatedAtUtc,
-  ].filter(Boolean)
-  if (!times.length)
-    return ''
-  times.sort((a, b) => new Date(b) - new Date(a))
+/** Caption under «تاريخ الطلب»: status name + date + 12h clock (صباحاً/مساءً). */
+function lastStatusCaption(row) {
+  const label = statusText(row)
+  const at = resolveLastStatusAtUtc(row, requestStatus(row))
+  if (!at)
+    return label || ''
+  const date = formatIraqDate(at)
+  const clock = formatIraqClock(at)
+  const when = [date, clock].filter(Boolean).join(' ')
 
-  return formatIraqTime(times[0])
+  return when ? `${label} — ${when}` : label
 }
 
 const showingExceptions = computed(() => tab.value === 'exceptions')
@@ -883,7 +898,7 @@ function clearEvaluationCachesForRow(row) {
   delete nextPanels[key]
   evalPanels.value = nextPanels
   const nextHits = { ...hitsCache.value }
-  for (const category of ['tripleName', 'phone', 'fatherGrandfather']) {
+  for (const category of ['tripleName', 'phone', 'fatherGrandfather', 'sonFather']) {
     delete nextHits[hitCacheKey(row, category)]
   }
   hitsCache.value = nextHits
@@ -1260,7 +1275,7 @@ function isProvinceTransferBlocked(row) {
   const status = requestStatus(row)
   const converted = Number(pick(row, 'convertedToSaleId', 'ConvertedToSaleId') || 0)
   if (status === 'Completed' || converted > 0)
-    return 'لا يمكن نقل المحافظة لأن الطلب مكتمل أو مرتبط بمبيع.'
+    return 'لا يمكن نقل المحافظة لأن الطلب مكتمل أو مرتبط بمبيع. يمكنك تعديل الاسم/الهاتف/العنوان وسيُحدَّث المبيع المرتبط.'
   if (status === 'ConvertedToSale' || status === 'Inspected')
     return 'لا يمكن نقل المحافظة لأن الطلب مرتبط بمسار البيع/الكشف.'
 
@@ -1389,6 +1404,118 @@ async function confirmDelete(row) {
   }
   finally {
     deleteImpactBusy.value = false
+  }
+}
+
+function canCancelRequest(row) {
+  if (!row || readOnly.value || showingDeleted.value)
+    return false
+  const s = requestStatus(row)
+  if (s === 'Rejected')
+    return false
+  // Already unassigned and not sold — nothing to cancel
+  const converted = Number(row.convertedToSaleId || row.ConvertedToSaleId || 0)
+  if (isUnassigned(row) && s !== 'Completed' && converted <= 0)
+    return false
+  return true
+}
+
+async function confirmCancel(row) {
+  if (!canCancelRequest(row))
+    return
+  cancelTarget.value = row
+  cancelReason.value = ''
+  cancelImpact.value = null
+  cancelConfirmPayments.value = false
+  cancelOpen.value = true
+  cancelImpactBusy.value = true
+  try {
+    const city = gatewayCityKey(row)
+    const id = requestId(row)
+    const path = isDemo() || !city
+      ? `sales-requests/${id}/cancel-impact`
+      : `sales-requests/${encodeURIComponent(city)}/${id}/cancel-impact`
+    cancelImpact.value = await smGet(path)
+  }
+  catch (err) {
+    toast.error(smErrorMessage(err, 'تعذر تحميل تفاصيل الإلغاء'))
+  }
+  finally {
+    cancelImpactBusy.value = false
+  }
+}
+
+function cancelModalMessage() {
+  const impact = cancelImpact.value
+  if (!impact)
+    return 'سيتم إلغاء الطلب وإعادته إلى غير المسند وإخفاؤه من تطبيق الموظف.'
+  return impact.warningAr
+    || impact.WarningAr
+    || 'سيتم إلغاء الطلب وإعادته إلى غير المسند وإخفاؤه من تطبيق الموظف.'
+}
+
+function cancelRequiresPaymentConfirm() {
+  const impact = cancelImpact.value
+  return !!(impact?.requiresPaymentConfirm || impact?.RequiresPaymentConfirm)
+}
+
+function cancelCanSubmit() {
+  if (!(cancelReason.value || '').trim())
+    return false
+  if (cancelRequiresPaymentConfirm() && !cancelConfirmPayments.value)
+    return false
+  return true
+}
+
+async function doCancel() {
+  const row = cancelTarget.value
+  if (!row)
+    return
+  const reason = (cancelReason.value || '').trim()
+  if (!reason) {
+    toast.error('سبب الإلغاء مطلوب')
+    return
+  }
+  if (cancelRequiresPaymentConfirm() && !cancelConfirmPayments.value) {
+    toast.error('يجب تأكيد حذف التسديدات والمبيع أولاً')
+    return
+  }
+  cancelBusy.value = true
+  try {
+    const city = gatewayCityKey(row)
+    const id = requestId(row)
+    const path = isDemo() || !city
+      ? `sales-requests/${id}/cancel`
+      : `sales-requests/${encodeURIComponent(city)}/${id}/cancel`
+    await smPost(path, {
+      reason,
+      cityValue: city,
+      confirmCascadePayments: !!cancelConfirmPayments.value,
+    })
+    clearEvaluationCachesForRow(row)
+    cancelOpen.value = false
+    cancelTarget.value = null
+    cancelReason.value = ''
+    cancelImpact.value = null
+    cancelConfirmPayments.value = false
+    if (detail.value?.id === id || detail.value?.Id === id)
+      detail.value = null
+    toast.success('تم الإلغاء — الطلب في غير المسند')
+    tab.value = 'unassigned'
+    await load({ force: true })
+  }
+  catch (err) {
+    const code = err?.response?.data?.code || err?.response?.data?.Code
+    if (code === 'payments_confirm_required') {
+      cancelConfirmPayments.value = false
+      toast.error(smErrorMessage(err, 'أكد حذف التسديدات أولاً'))
+    }
+    else {
+      toast.error(smErrorMessage(err, 'تعذر إلغاء الطلب'))
+    }
+  }
+  finally {
+    cancelBusy.value = false
   }
 }
 
@@ -1531,13 +1658,15 @@ function requestCity(row = detail.value || selected.value) {
 /** Gateway routing key (DatabaseCompany*) — Arabic/legacy cityValue on rows must be resolved. */
 function gatewayCityKey(row = detail.value || selected.value) {
   const raw = requestCity(row)
-    || pick(row, 'cityName', 'CityName')
     || pick(row, 'customerProvince', 'CustomerProvince')
+    || pick(row, 'cityName', 'CityName')
     || cityValue.value
     || ''
+  // Prefer CustomerProvince over CityName: assign used to overwrite CityName with the
+  // employee's province (Basra #171 stamped كربلاء while still living in AdminBasra).
   const hit = findProvince(branches.value, raw)
-    || findProvince(branches.value, pick(row, 'cityName', 'CityName'))
     || findProvince(branches.value, pick(row, 'customerProvince', 'CustomerProvince'))
+    || findProvince(branches.value, pick(row, 'cityName', 'CityName'))
   return hit ? String(hit.value) : String(raw || '')
 }
 
@@ -1955,9 +2084,10 @@ async function addManagerNote() {
 }
 
 async function loadEmployees() {
+  // Prefer this request's gateway city only — never reuse a stale assignCityValue from
+  // a previously opened province (Basra #171 ↔ رعد كربلاء).
   const city = gatewayCityKey(detail.value || selected.value)
-    || assignCityValue.value
-    || requestCity()
+    || requestCity(detail.value || selected.value)
   assignCityValue.value = city || ''
   if (!city) {
     employees.value = []
@@ -1968,6 +2098,8 @@ async function loadEmployees() {
     employees.value = (await smGetEmployees(city)).map(row => ({
       ...row,
       employeeId: Number(row.employeeId || row.EmployeeId || 0),
+      // deploy marker (must remain a runtime string)
+      assignGuard: 'CrossBranchAssignGuard_V1',
     }))
   }
   catch {
@@ -2088,7 +2220,8 @@ async function assign() {
     employeeId,
     employeeName: employee?.employeeName,
     cityValue: city,
-    cityName: employee?.cityName || employee?.branchName || d.cityName,
+    // Keep request branch cityName — never stamp the picker's city (cross-province bug).
+    cityName: d.cityName || d.CityName || employee?.cityName || employee?.branchName,
     existingCustomerId: existingId > 0 ? existingId : null,
     customerSourceCityValue: submitted ? null : (sameBranch ? sourceCity : null),
     customerName: name,
@@ -3361,6 +3494,15 @@ async function assignBulk() {
                 >
                   رفض
                 </VBtn>
+                <VBtn
+                  v-if="canCancelRequest(row)"
+                  size="small"
+                  variant="tonal"
+                  color="warning"
+                  @click="confirmCancel(row)"
+                >
+                  إلغاء
+                </VBtn>
                 <VBtn size="small" variant="tonal" color="error" @click="confirmDelete(row)">حذف</VBtn>
               </div>
               <div
@@ -3379,7 +3521,23 @@ async function assignBulk() {
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">المحافظة</div>{{ displayCityName(row, branches) || row.customerProvince || row.CustomerProvince || '—' }}</VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">نوع المبيع</div>{{ saleRequestTypeLabel(row) }}</VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">المصدر</div>{{ requestSourceLabel(row) }}</VCol>
-              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">تاريخ الطلب</div>{{ formatIraqDate(row.createdAtUtc || row.CreatedAtUtc) }} {{ formatIraqTime(row.createdAtUtc || row.CreatedAtUtc) }}</VCol>
+              <VCol cols="12" sm="6">
+                <div class="text-medium-emphasis text-caption">تاريخ الطلب</div>
+                {{ formatIraqDate(row.createdAtUtc || row.CreatedAtUtc) }}
+                {{ formatIraqTime(row.createdAtUtc || row.CreatedAtUtc) }}
+                <div
+                  v-if="lastStatusCaption(row)"
+                  class="text-medium-emphasis text-caption mt-2"
+                >
+                  تاريخ آخر حالة
+                </div>
+                <div
+                  v-if="lastStatusCaption(row)"
+                  class="text-body-2"
+                >
+                  {{ lastStatusCaption(row) }}
+                </div>
+              </VCol>
               <VCol v-if="lastNote(row)" cols="12"><div class="text-medium-emphasis text-caption">الملاحظة / ماذا يريد</div>{{ lastNote(row) }}</VCol>
               <template v-if="showingDeleted">
                 <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">تاريخ الحذف</div>{{ formatIraqDate(row.deletedAtUtc || row.DeletedAtUtc) }} {{ formatIraqTime(row.deletedAtUtc || row.DeletedAtUtc) }}</VCol>
@@ -3721,6 +3879,12 @@ async function assignBulk() {
                       تاريخ الطلب:
                       {{ formatIraqDate(hit.createdAtUtc || hit.CreatedAtUtc) }}
                       {{ formatIraqTime(hit.createdAtUtc || hit.CreatedAtUtc) }}
+                      <div
+                        v-if="lastStatusCaption(hit)"
+                        class="text-medium-emphasis text-caption mt-1"
+                      >
+                        تاريخ آخر حالة: {{ lastStatusCaption(hit) }}
+                      </div>
                     </div>
                     <div v-if="lastNote(hit)">الملاحظة: {{ lastNote(hit) }}</div>
                     <div v-if="hit.deleteReason || hit.DeleteReason">
@@ -4109,6 +4273,15 @@ async function assignBulk() {
             >
               رفض الطلب
             </VBtn>
+            <VBtn
+              v-if="canCancelRequest(detail)"
+              class="mt-3 ms-2"
+              color="warning"
+              variant="tonal"
+              @click="confirmCancel(detail)"
+            >
+              إلغاء
+            </VBtn>
           </template>
 
           <template v-if="requestStatus(detail) === 'Rejected'">
@@ -4196,6 +4369,15 @@ async function assignBulk() {
               @click="openCustomerProfile(selected, detail)"
             >
               فتح بروفايل الزبون
+            </VBtn>
+            <VBtn
+              v-if="canCancelRequest(detail)"
+              class="ms-2"
+              color="warning"
+              variant="tonal"
+              @click="confirmCancel(detail)"
+            >
+              إلغاء
             </VBtn>
           </template>
 
@@ -4762,6 +4944,71 @@ async function assignBulk() {
     </VDialog>
 
     <VDialog
+      v-model="cancelOpen"
+      max-width="520"
+    >
+      <VCard>
+        <VCardTitle>تأكيد الإلغاء</VCardTitle>
+        <VCardText>
+          <div
+            v-if="cancelImpactBusy"
+            class="mb-3 text-medium-emphasis"
+          >
+            جاري تحميل تفاصيل الإلغاء…
+          </div>
+          <VAlert
+            v-else-if="cancelRequiresPaymentConfirm()"
+            type="warning"
+            variant="tonal"
+            class="mb-3"
+            density="compact"
+          >
+            {{ cancelModalMessage() }}
+          </VAlert>
+          <div
+            v-else
+            class="mb-3"
+          >
+            {{ cancelModalMessage() }}
+          </div>
+          <VCheckbox
+            v-if="cancelRequiresPaymentConfirm()"
+            v-model="cancelConfirmPayments"
+            class="mb-3"
+            color="warning"
+            hide-details
+            label="أؤكد حذف التسديدات والمبيع وإرجاع الكميات للمخزن"
+          />
+          <VTextarea
+            v-model="cancelReason"
+            label="سبب الإلغاء"
+            variant="outlined"
+            rows="3"
+            auto-grow
+            hide-details="auto"
+            :rules="[v => !!(v && String(v).trim()) || 'سبب الإلغاء مطلوب']"
+          />
+        </VCardText>
+        <VCardActions>
+          <VBtn
+            variant="text"
+            @click="cancelOpen = false"
+          >
+            رجوع
+          </VBtn>
+          <VBtn
+            color="warning"
+            :loading="cancelBusy"
+            :disabled="!cancelCanSubmit() || cancelImpactBusy"
+            @click="doCancel"
+          >
+            إلغاء
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+
+    <VDialog
       v-model="deleteOpen"
       max-width="520"
     >
@@ -4868,8 +5115,13 @@ async function assignBulk() {
 }
 .eval-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.5rem;
+}
+@media (min-width: 1400px) {
+  .eval-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 @media (max-width: 960px) {
   .eval-metrics {

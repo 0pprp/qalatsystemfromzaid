@@ -35,15 +35,59 @@ namespace BE_Company.Repository
 
         public async Task<IEnumerable<CustomersPaymentsGetDTO>?> CustomersPayments_GetByCustomerID(int? customerID)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            return await CustomersPayments_GetByCustomerID(customerID, null, null);
+        }
+
+        /// <summary>
+        /// Portal path: filter dates in SQL (not in-memory) when bounds are provided.
+        /// Falls back to classic SP when both dates are null.
+        /// </summary>
+        public async Task<IEnumerable<CustomersPaymentsGetDTO>?> CustomersPayments_GetByCustomerID(
+            int? customerID,
+            DateTime? fromDate,
+            DateTime? toDate)
+        {
+            using var connection = new SqlConnection(_connectionString);
+            if (fromDate == null && toDate == null)
             {
-                var result = await connection.QueryAsync<CustomersPaymentsGetDTO>("CustomersPayments_GetByCustomerID",
-                new
+                var result = await connection.QueryAsync<CustomersPaymentsGetDTO>(
+                    "CustomersPayments_GetByCustomerID",
+                    new { CustomerID = customerID },
+                    commandType: CommandType.StoredProcedure);
+                return result;
+            }
+
+            // Prefer view when present; filter PaymentDate server-side.
+            const string sql = """
+SELECT *
+FROM dbo.View_CustomersPayments
+WHERE CustomerID = @CustomerID
+  AND (@FromDate IS NULL OR PaymentDate >= @FromDate)
+  AND (@ToDate IS NULL OR PaymentDate <= @ToDate)
+ORDER BY PaymentDate DESC;
+""";
+            try
+            {
+                return await connection.QueryAsync<CustomersPaymentsGetDTO>(sql, new
                 {
                     CustomerID = customerID,
-                },
-                commandType: CommandType.StoredProcedure);
-                return result;
+                    FromDate = fromDate,
+                    ToDate = toDate
+                });
+            }
+            catch (SqlException)
+            {
+                // View missing on older branch DBs — fetch all via SP then filter (documented fallback).
+                var all = await connection.QueryAsync<CustomersPaymentsGetDTO>(
+                    "CustomersPayments_GetByCustomerID",
+                    new { CustomerID = customerID },
+                    commandType: CommandType.StoredProcedure);
+                var filtered = all.AsEnumerable();
+                if (fromDate.HasValue)
+                    filtered = filtered.Where(p => p.PaymentDate >= fromDate.Value);
+                if (toDate.HasValue)
+                    filtered = filtered.Where(p => p.PaymentDate <= toDate.Value);
+                return filtered.OrderByDescending(p => p.PaymentDate);
             }
         }
 

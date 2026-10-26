@@ -33,5 +33,13 @@ public sealed class SalesExceptionRequest
     public DateTime? AssignedAtUtc { get; set; }
     public string? AssignedByManagerUserName { get; set; }
 
+    /// <summary>Branch-manager review of WrongSale (تطبيق إدارة الفرع) — independent of DM read/decision.</summary>
+    public DateTime? BranchManagerReviewedAtUtc { get; set; }
+    public string? BranchManagerReviewerUserName { get; set; }
+    public string? BranchManagerReviewerDisplayName { get; set; }
+    public string? BranchManagerReviewNote { get; set; }
+
+    public bool IsBranchManagerReviewed => BranchManagerReviewedAtUtc != null;
+
     public SalesExceptionRequest Clone() => (SalesExceptionRequest)MemberwiseClone();
 }

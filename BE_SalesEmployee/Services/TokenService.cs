@@ -11,7 +11,20 @@ namespace BE_SalesEmployee.Services
 
         public TokenService(IConfiguration configuration)
         {
-            _key = configuration["Jwt:Key"] ?? "SalesEmployeeGwSigningKey-2026-ChangeMe!!";
+            _key = RequireJwtKey(configuration);
+        }
+
+        /// <summary>Fails closed when Jwt:Key is missing or too short.</summary>
+        public static string RequireJwtKey(IConfiguration configuration)
+        {
+            var key = configuration["Jwt:Key"];
+            if (string.IsNullOrWhiteSpace(key) || key.Trim().Length < 32)
+            {
+                throw new InvalidOperationException(
+                    "Jwt:Key must be configured (min 32 characters). Refusing insecure default signing key.");
+            }
+
+            return key.Trim();
         }
 
         public const string CentralClaim = "Central";
@@ -36,6 +49,40 @@ namespace BE_SalesEmployee.Services
         public string CreateDirectorToken(string userName, out DateTime expiration)
         {
             return CreateCentralRoleToken(userName, "المدير", "كل المحافظات", out expiration);
+        }
+
+        public string CreateMonitorToken(string userName, out DateTime expiration)
+        {
+            return CreateCentralRoleToken(userName, "المراقب", "كل المحافظات", out expiration);
+        }
+
+        /// <summary>
+        /// Gateway JWT for تطبيق إدارة الفرع. UserID = BranchManagerAppUsers.Id (assignee/holder key).
+        /// </summary>
+        public string CreateBranchManagerAppToken(
+            string userId,
+            string userName,
+            out DateTime expiration)
+        {
+            var claims = new List<Claim>
+            {
+                new("UserID", userId ?? ""),
+                new("UserName", userName ?? ""),
+                new("UserType", "مدير فرع"),
+                new("CityLink", ""),
+                new("CityName", ""),
+                new("CityValue", ""),
+                new(CentralClaim, "true")
+            };
+            var credentials = new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_key)),
+                SecurityAlgorithms.HmacSha256);
+            expiration = DateTime.UtcNow.AddHours(24);
+            var token = new JwtSecurityToken(
+                claims: claims,
+                expires: expiration,
+                signingCredentials: credentials);
+            return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
         private string CreateCentralRoleToken(

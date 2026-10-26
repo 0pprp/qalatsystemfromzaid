@@ -5,6 +5,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:delegate_application/services/business_day_collection_store.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
+import 'package:delegate_application/services/device_identity_service.dart';
 import 'package:delegate_application/services/manual_payment_sync_result.dart';
 import 'package:delegate_application/services/payment_sync_scheduler.dart';
 import 'package:delegate_application/services/payment_sync_status.dart';
@@ -107,22 +108,59 @@ WHERE PermanentFailure = 1
     return (rows.first['c'] as num?)?.toInt() ?? 0;
   }
 
+  /// True when server said the same customer+amount is already posted today.
+  /// Those rows must clear from the device queue (not stay as «مرفوض»).
+  static bool isDuplicateAlreadyOnServerError(String? error) {
+    if (error == null || error.isEmpty) return false;
+    return error.contains('تكرار') ||
+        error.contains('بنفس المبلغ') ||
+        error.contains('مسجل مسبقاً بنفس المبلغ');
+  }
+
+  /// Re-queue ghost rows that were marked PermanentFailure only because the
+  /// server already had the same-day same-amount payment (Rusafa الوزيرية etc.).
+  Future<int> requeueDuplicatePermanentFailures() async {
+    final db = await DatabaseHelper().database;
+    final rows = await db.query(
+      'CustomerPayment',
+      columns: ['id', 'SyncError'],
+      where: 'PermanentFailure = 1',
+    );
+    var n = 0;
+    for (final row in rows) {
+      if (!isDuplicateAlreadyOnServerError(row['SyncError']?.toString())) {
+        continue;
+      }
+      final id = row['id'];
+      if (id == null) continue;
+      await db.update(
+        'CustomerPayment',
+        {
+          'PermanentFailure': 0,
+          'SyncStatus': PaymentSyncStatus.pendingSync,
+          'SyncError': null,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      n++;
+    }
+    return n;
+  }
+
   /// Concurrent callers share one in-flight sync (mutex).
   ///
-  /// Before the send window [16:00→02:59] Baghdad: SKIP — no HTTP.
-  /// Inside the window: uploads all eligible pending rows (unsynced only).
+  /// Uploads all eligible pending rows when online (no clock gate).
   Future<void> syncPendingPayments({DateTime? utcNow}) async {
     await _runSync(utcNow: utcNow, bypassGate: false);
   }
 
-  /// Last-chance flush at 03:00 rollover: previous-day leftovers that were
-  /// already past their 16:00 window but stayed offline. Bypass clock gate once.
+  /// Flush at 03:00 business-day rollover for leftovers that stayed offline.
   Future<void> flushPendingForBusinessDayRollover({DateTime? utcNow}) async {
     await _runSync(utcNow: utcNow, bypassGate: true);
   }
 
-  /// Manual «إرسال التسديدات»: requires send window (after 16:00 Baghdad) +
-  /// internet; uploads only unsynced rows.
+  /// Manual «إرسال التسديدات»: requires internet; uploads only unsynced rows.
   Future<ManualPaymentSyncResult> sendPendingPaymentsNow({DateTime? utcNow}) async {
     if (!IraqDate.isPaymentSyncGateOpen(utcNow)) {
       return const ManualPaymentSyncResult(
@@ -139,6 +177,9 @@ WHERE PermanentFailure = 1
         outcome: ManualPaymentSyncOutcome.busy,
       );
     }
+
+    // Clear «مرفوض» ghosts that are only same-day duplicates already on server.
+    await requeueDuplicatePermanentFailures();
 
     final pendingBefore = await countPendingPayments();
     final permanentBefore = await countPermanentFailures();
@@ -191,10 +232,9 @@ WHERE PermanentFailure = 1
     _uploadedCountThisRun = 0;
     lastSkippedDueToGate = false;
     try {
-      // PAYMENT SYNC GATE — [16:00 → 02:59] Baghdad (03:00 UI day is separate).
+      // Legacy clock gate (always open). Kept so older caches still schedule retries.
       if (!bypassGate && !IraqDate.isPaymentSyncGateOpen(utcNow)) {
         lastSkippedDueToGate = true;
-        // Keep status pending; schedule WorkManager for next 16:00.
         try {
           await PaymentSyncScheduler.instance.ensureScheduled(utcNow: utcNow);
         } catch (_) {}
@@ -212,8 +252,9 @@ WHERE PermanentFailure = 1
       }
 
       final db = await DatabaseHelper().database;
-      // Do NOT auto-clear PermanentFailure — permanent rejections stay visible
-      // until an explicit reconciliation path. SESSION_EXPIRED stays blocked.
+      // Re-queue same-day-duplicate PermanentFailure ghosts (money already on server).
+      // Other permanent failures (OWNER_MISMATCH / bad amount) stay blocked.
+      await requeueDuplicatePermanentFailures();
 
       final pending = await db.query(
         'CustomerPayment',
@@ -279,6 +320,7 @@ WHERE PermanentFailure = 1
           whereArgs: [row['id']],
         );
 
+        final device = await DeviceIdentityService.instance.payloadFields();
         final payload = {
           'CustomerId': row['CustomerId'],
           'DelegateId': row['DelegateId'],
@@ -288,6 +330,7 @@ WHERE PermanentFailure = 1
           'CreatedAtUtc': row['CreatedAtUtc'],
           'ReceiptNumber': row['ReceiptNumber'],
           'AsyncId': asyncId,
+          ...device,
         };
 
         try {
@@ -300,7 +343,17 @@ WHERE PermanentFailure = 1
               )
               .timeout(const Duration(seconds: 45));
 
-          if (response.statusCode == 200 || response.statusCode == 201) {
+          final bodyMsg = _messageFromBody(response.body);
+          final okStatus =
+              response.statusCode == 200 || response.statusCode == 201;
+          // Legacy servers returned HTTP 400 for same-day duplicates; treat as synced.
+          final duplicateAck = !okStatus &&
+              (response.statusCode == 400 ||
+                  response.statusCode == 403 ||
+                  response.statusCode == 422) &&
+              isDuplicateAlreadyOnServerError(bodyMsg);
+
+          if (okStatus || duplicateAck) {
             _uploadedAnyThisRun = true;
             _uploadedCountThisRun++;
             final rowId = int.tryParse(row['id']?.toString() ?? '') ?? 0;
@@ -338,7 +391,7 @@ WHERE PermanentFailure = 1
               'CustomerPayment',
               {
                 'SyncStatus': PaymentSyncStatus.syncFailed,
-                'SyncError': _messageFromBody(response.body),
+                'SyncError': bodyMsg,
                 'PermanentFailure': 1,
               },
               where: 'id = ?',

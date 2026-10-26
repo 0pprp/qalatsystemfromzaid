@@ -1,4 +1,4 @@
-﻿using BE_Company.IRepository;
+using BE_Company.IRepository;
 using BE_Company.DTO;
 using BE_Company.Utilities;
 using Microsoft.AspNetCore.Authorization;
@@ -186,14 +186,27 @@ namespace BE_Company.Controllers
                 return ("رقم الهاتف غير موجود أو غير صالح.", null);
             }
 
-            // Generate encrypted token for customer portal (never expires)
-            string encryptionKey = _configuration["PortalSettings:EncryptionKey"]!;
+            // Generate authenticated portal token (AES-GCM, expiring, branch-bound)
             string portalBaseUrl = _configuration["PortalSettings:PortalBaseUrl"] ?? "http://portal.alsaaeidy.com";
             int customerId = data.CustomerID ?? 0;
-            string token = EncryptionHelper.CreateCustomerToken(customerId, encryptionKey, branchId: data.CityID);
-            string portalUrl = $"{portalBaseUrl}/?token={token}&city={data.CityID}";
+            int branchId = data.CityID ?? 0;
+            var portalAccess = HttpContext.RequestServices.GetRequiredService<BE_Company.Services.PortalAccessService>();
+            // Same path as Kut/Maysan: if Customers.CityID is missing (Manhaj Aqeel legacy rows),
+            // fall back to this host's configured portal/sales branch id.
+            if (branchId <= 0)
+            {
+                branchId = portalAccess.GetConfiguredBranchId() ?? 0;
+            }
+            if (customerId <= 0 || branchId <= 0)
+            {
+                return ("بيانات الزبون غير مكتملة لإنشاء رابط البوابة.", null);
+            }
 
-            string companyName = data.CityID == 6 || data.CityID == 18 ? "شركة المنهاج الذهبي" : "شركة قلعة الضمان";
+            string token = portalAccess.CreateCustomerPortalToken(customerId, branchId);
+            string portalUrl = $"{portalBaseUrl.TrimEnd('/')}/?city={branchId}&token={Uri.EscapeDataString(token)}";
+
+            // Manhaj Aqeel portal city ids (GetAdmin): 15 رصافة عقيل، 18 كرخ عقيل
+            string companyName = branchId is 15 or 18 ? "شركة المنهاج الذهبي" : "شركة قلعة الضمان";
 
             message = $"السلام عليكم ورحمة الله وبركاتة\nتهديكم {companyName} أطيب التحيات\nعزيزي الزبون ( {data.CustomerName} )\nنود إعلامكم بأن مشترياتكم من شركتنا بمبلغ ( {data.AmountTotalSales:#,##0} ) دينار تسدد على شكل أقساط يومية بواقع ( {data.AmountDaySales:#,##0} ) دينار.\nيمكنكم متابعة حسابكم ومبيعاتكم وتسديداتكم من خلال الرابط التالي:\n{portalUrl}\nمع التقدير";
 

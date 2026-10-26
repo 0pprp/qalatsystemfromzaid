@@ -10,6 +10,7 @@ public sealed class InMemoryMobileUpdateStore : IMobileUpdateStore
     public const string DelegateAppKey = "delegate";
     public const string FollowerAppKey = "follower";
     public const string MainFollowerAppKey = "main-follower";
+    public const string SalesEmployeeAppKey = "sales-employee";
 
     private readonly ConcurrentDictionary<string, MobileAppRelease> _rows =
         new(StringComparer.OrdinalIgnoreCase);
@@ -20,6 +21,7 @@ public sealed class InMemoryMobileUpdateStore : IMobileUpdateStore
         _rows[DelegateAppKey] = Seed(DelegateAppKey, "delegate.apk");
         _rows[FollowerAppKey] = Seed(FollowerAppKey, "follower.apk");
         _rows[MainFollowerAppKey] = Seed(MainFollowerAppKey, "main-follower.apk");
+        _rows[SalesEmployeeAppKey] = Seed(SalesEmployeeAppKey, "sales-employee.apk");
     }
 
     private static MobileAppRelease Seed(string appKey, string apkFileName) => new()

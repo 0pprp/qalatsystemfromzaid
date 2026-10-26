@@ -37,6 +37,8 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesRequestRepository, SalesRequestRepository>();
             services.AddScoped<ISalesCascadeVoidService, SalesCascadeVoidService>();
             services.AddScoped<ISalesRequestService, SalesRequestService>();
+            services.AddScoped<ICrmSalesRequestIntakeService, CrmSalesRequestIntakeService>();
+            services.AddHttpClient<ICrmSalesBoardStatusNotifier, CrmSalesBoardStatusForwarder>();
             services.AddScoped<Filtering.ISalesFilterRepository, Filtering.SalesFilterRepository>();
             services.AddScoped<Filtering.ISalesFilterService, Filtering.SalesFilterService>();
             services.AddScoped<IRatingDataSource, RatingDataSource>();
@@ -59,11 +61,23 @@ namespace BE_Company.Sales
             services.AddScoped<ILegalFollowupService, LegalFollowupService>();
             services.AddHttpClient<ISalesExceptionGatewayForwarder, SalesExceptionGatewayForwarder>();
             services.AddHttpClient<IBranchManagerComplaintForwarder, BranchManagerComplaintForwarder>();
+            services.AddHttpClient<IBranchManagerDirectorNoteForwarder, BranchManagerDirectorNoteForwarder>();
+            services.AddScoped<IPriceBoardGatewayClient, PriceBoardGatewayClient>();
             services.AddHttpClient<ICustomerWaiverGatewayForwarder, CustomerWaiverGatewayForwarder>();
+            services.AddHttpClient<IWrongSaleGatewayForwarder, WrongSaleGatewayForwarder>();
+            services.AddScoped<IPriceBoardGatewayClient, PriceBoardGatewayClient>();
             services.AddScoped<IWaiverApplyService, WaiverApplyService>();
+            services.AddScoped<IWaiverAccountantRequestService, WaiverAccountantRequestService>();
             services.AddScoped<IBranchManagerNewSalesService, BranchManagerNewSalesService>();
             services.AddScoped<IBranchManagerStatsService, BranchManagerStatsService>();
             services.AddScoped<IBranchMonthStatsService, BranchMonthStatsService>();
+            services.AddScoped<IDirectorFollowerOpsService, DirectorFollowerOpsService>();
+            services.AddScoped<IDirectorDelegateFollowupService, DirectorDelegateFollowupService>();
+            services.AddScoped<IDirectorSalesFollowupService, DirectorSalesFollowupService>();
+            services.AddScoped<ISalesEmployeeListDayRatingService, SalesEmployeeListDayRatingService>();
+            services.AddScoped<IDirectorSummaryService, DirectorSummaryService>();
+            services.AddScoped<IBmRatingDeclineAlertService, BmRatingDeclineAlertService>();
+            services.AddScoped<IBmCustomerDeclineService, BmCustomerDeclineService>();
             services.AddSingleton<IAuthorizationHandler, SalesRoleHandler>();
             services.AddSingleton<IAuthorizationMiddlewareResultHandler, SalesAuthorizationMiddlewareResultHandler>();
             services.AddAuthorization(options =>

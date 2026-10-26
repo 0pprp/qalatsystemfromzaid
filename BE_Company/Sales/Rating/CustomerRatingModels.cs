@@ -78,12 +78,12 @@ public sealed record CustomerRatingResult(
 public static class CustomerRatingCalculator
 {
     // days ≈ 1000 / rate  (constant daily payment model)
-    public const double ExcellentRate = 7.1;          // ~141 days
+    public const double ExcellentRate = 1000.0 / 150.0; // ~6.6667 → under 150 days
     public const double GoodRate = 6.25;              // 160 days
     public const double WeakRate = 1000.0 / 180.0;    // ~5.5556 → under 180 days
     public const double LaggingMinRate = 1000.0 / 200.0; // 5.0 → under 200 days
 
-    public const int ExcellentMaxDays = 140;
+    public const int ExcellentMaxDays = 150;
     public const int GoodMaxDays = 160;
     public const int WeakMaxDaysExclusive = 180;
     public const int LaggingMaxDaysExclusive = 200; // متلكئ: 180..199 ; سيء: 200+

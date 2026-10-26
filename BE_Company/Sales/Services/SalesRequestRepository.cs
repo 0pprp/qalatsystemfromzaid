@@ -51,16 +51,69 @@ INSERT INTO dbo.SalesRequests
 (CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, TargetEmployeeName, CityValue, CityName,
  CustomerSourceType, ExistingCustomerId, CustomerSourceCityValue, CustomerName, CustomerPhone, CustomerProvince,
  CustomerAddress, Notes, MaxSalePrice, Status, CreatedAtUtc, AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, ReturnNote,
- SaleRequestType, SourceListId, FilterStatus)
+ SaleRequestType, SourceListId, FilterStatus, ExternalCrmOrderUuid)
 OUTPUT INSERTED.Id
 VALUES
 (@CreatedByUserId, @CreatedByName, @CreatedByUserType, @TargetEmployeeId, @TargetEmployeeName, @CityValue, @CityName,
  @CustomerSourceType, @ExistingCustomerId, @CustomerSourceCityValue, @CustomerName, @CustomerPhone, @CustomerProvince,
  @CustomerAddress, @Notes, @MaxSalePrice, @Status, @CreatedAtUtc, @AssignedAtUtc, @AssignedByUserId, @AssignedByName, @PendingNote, @ReturnNote,
- @SaleRequestType, @SourceListId, @FilterStatus);",
+ @SaleRequestType, @SourceListId, @FilterStatus, @ExternalCrmOrderUuid);",
                 row, cancellationToken: ct));
             row.Id = id;
             return row;
+        }
+
+        public async Task<SalesRequestDTO?> GetByExternalCrmOrderUuidAsync(Guid crmOrderUuid, CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            return await connection.QueryFirstOrDefaultAsync<SalesRequestDTO>(new CommandDefinition(
+                SelectSql + " WHERE ExternalCrmOrderUuid = @CrmOrderUuid",
+                new { CrmOrderUuid = crmOrderUuid },
+                cancellationToken: ct));
+        }
+
+        public async Task<int> NextCrmRoundRobinEmployeeIdAsync(IReadOnlyList<int> employeeIds, CancellationToken ct)
+        {
+            if (employeeIds is not { Count: > 0 })
+            {
+                return 0;
+            }
+
+            var ordered = employeeIds.Where(id => id > 0).Distinct().OrderBy(id => id).ToList();
+            if (ordered.Count == 0)
+            {
+                return 0;
+            }
+
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            await connection.OpenAsync(ct);
+            await using var tx = await connection.BeginTransactionAsync(ct);
+            try
+            {
+                var last = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
+                    "SELECT LastEmployeeId FROM dbo.CrmSalesAssignCursor WITH (UPDLOCK, ROWLOCK) WHERE Id = 1",
+                    transaction: tx,
+                    cancellationToken: ct)) ?? 0;
+
+                var idx = ordered.FindIndex(id => id == last);
+                var next = ordered[(idx + 1) % ordered.Count];
+                await connection.ExecuteAsync(new CommandDefinition(
+                    @"UPDATE dbo.CrmSalesAssignCursor SET LastEmployeeId = @Next WHERE Id = 1;
+IF @@ROWCOUNT = 0
+    INSERT INTO dbo.CrmSalesAssignCursor (Id, LastEmployeeId) VALUES (1, @Next);",
+                    new { Next = next },
+                    transaction: tx,
+                    cancellationToken: ct));
+                await tx.CommitAsync(ct);
+                return next;
+            }
+            catch
+            {
+                await tx.RollbackAsync(ct);
+                throw;
+            }
         }
 
         public async Task<SalesRequestDTO?> GetByIdAsync(int id, CancellationToken ct)
@@ -91,7 +144,7 @@ SELECT {topClause}Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetE
  CustomerName, CustomerPhone, CustomerProvince, CustomerAddress, Notes, MaxSalePrice, Status,
  CreatedAtUtc, ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
  AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc,
- SaleRequestType, SourceListId,
+ SaleRequestType, SourceListId, ExternalCrmOrderUuid,
  FilterStatus, FilteredByUserId, FilterNote, FilterRejectReason, FilteredAtUtc,
  ISNULL(IsDeleted, 0) AS IsDeleted, DeletedAtUtc, DeletedByUserId, DeletedByName, DeleteReason,
  ExceptionHoldStatus, ActiveExceptionId
@@ -104,6 +157,31 @@ AND (@ToUtc IS NULL OR CreatedAtUtc <= @ToUtc)
 ORDER BY CreatedAtUtc DESC";
             var rows = await connection.QueryAsync<SalesRequestDTO>(new CommandDefinition(sql,
                 new { TargetEmployeeId = targetEmployeeId, Status = status, FilterStatus = filterStatus, FromUtc = fromUtc, ToUtc = toUtc },
+                cancellationToken: ct));
+            return rows.ToList();
+        }
+
+        public async Task<IReadOnlyList<SalesRequestDTO>> ListCreatedByEmployeeForSubmittedLogAsync(int createdByUserId, CancellationToken ct)
+        {
+            if (createdByUserId <= 0)
+            {
+                return [];
+            }
+
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            // Marker string must remain a C# literal for deploy verification.
+            const string featureMarker = "SubmittedLogIncludesRejectedDeletes_V1";
+            var sql = SelectSql + @"
+ WHERE CreatedByUserId = @CreatedByUserId
+   AND (
+     ISNULL(IsDeleted, 0) = 0
+     OR (ISNULL(IsDeleted, 0) = 1 AND Status = N'Rejected')
+   )
+ ORDER BY CreatedAtUtc DESC /* " + featureMarker + " */";
+            var rows = await connection.QueryAsync<SalesRequestDTO>(new CommandDefinition(
+                sql,
+                new { CreatedByUserId = createdByUserId },
                 cancellationToken: ct));
             return rows.ToList();
         }
@@ -261,13 +339,29 @@ OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;",
             return "%" + text.Replace("%", "").Replace("_", "") + "%";
         }
 
+        /// <summary>Status-change events used for card «تاريخ آخر حالة».</summary>
+        private const string LastStatusHistoryEventsSql = @"
+N'Created', N'EmployeeSubmitted', N'Assigned', N'Viewed', N'Pending',
+N'PreparedForSale', N'Rejected', N'Returned', N'ConvertedToSale',
+N'Inspected', N'Completed', N'LegalFollowupSent', N'LegalFollowupCancelled',
+N'CancelledToUnassigned', N'ManagerRequestReassigned'
+";
+
         private const string ManagerListSelectSql = @"
 SELECT R.Id, R.CreatedByUserId, R.CreatedByName, R.CreatedByUserType, R.TargetEmployeeId, R.TargetEmployeeName,
  R.CityValue, R.CityName, R.CustomerSourceType, R.ExistingCustomerId, R.CustomerSourceCityValue,
  R.CustomerName, R.CustomerPhone, R.CustomerProvince, R.CustomerAddress, R.Notes, R.MaxSalePrice, R.Status,
- R.CreatedAtUtc, R.ViewedAtUtc, R.ProcessingAtUtc, R.ConvertedToSaleId, R.CompletedAtUtc, R.RejectedAtUtc, R.RejectionReason,
+ R.CreatedAtUtc,
+ (
+   SELECT TOP 1 h.CreatedAtUtc
+   FROM dbo.SalesRequestHistory h
+   WHERE h.RequestId = R.Id
+     AND h.EventType IN (" + LastStatusHistoryEventsSql + @")
+   ORDER BY h.CreatedAtUtc DESC, h.Id DESC
+ ) AS LastStatusAtUtc,
+ R.ViewedAtUtc, R.ProcessingAtUtc, R.ConvertedToSaleId, R.CompletedAtUtc, R.RejectedAtUtc, R.RejectionReason,
  R.AssignedAtUtc, R.AssignedByUserId, R.AssignedByName, R.PendingNote, R.PreparedForSaleNote, R.ReturnNote, R.ManagerReadAtUtc,
- R.SaleRequestType, R.SourceListId,
+ R.SaleRequestType, R.SourceListId, R.ExternalCrmOrderUuid,
  R.FilterStatus, R.FilteredByUserId, R.FilterNote, R.FilterRejectReason, R.FilteredAtUtc,
  ISNULL(R.IsDeleted, 0) AS IsDeleted, R.DeletedAtUtc, R.DeletedByUserId, R.DeletedByName, R.DeleteReason,
  R.ExceptionHoldStatus, R.ActiveExceptionId
@@ -496,9 +590,17 @@ WHERE Id = @Id AND TargetEmployeeId = @ExpectedFromEmployeeId
 SELECT Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, TargetEmployeeName,
  CityValue, CityName, CustomerSourceType, ExistingCustomerId, CustomerSourceCityValue,
  CustomerName, CustomerPhone, CustomerProvince, CustomerAddress, Notes, MaxSalePrice, Status,
- CreatedAtUtc, ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
+ CreatedAtUtc,
+ (
+   SELECT TOP 1 h.CreatedAtUtc
+   FROM dbo.SalesRequestHistory h
+   WHERE h.RequestId = Id
+     AND h.EventType IN (" + LastStatusHistoryEventsSql + @")
+   ORDER BY h.CreatedAtUtc DESC, h.Id DESC
+ ) AS LastStatusAtUtc,
+ ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
  AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc,
- SaleRequestType, SourceListId,
+ SaleRequestType, SourceListId, ExternalCrmOrderUuid,
  FilterStatus, FilteredByUserId, FilterNote, FilterRejectReason, FilteredAtUtc,
  ISNULL(IsDeleted, 0) AS IsDeleted, DeletedAtUtc, DeletedByUserId, DeletedByName, DeleteReason,
  ExceptionHoldStatus, ActiveExceptionId
@@ -651,6 +753,35 @@ IF COL_LENGTH(N'dbo.SalesRequests', N'ActiveExceptionId') IS NULL
     ALTER TABLE dbo.SalesRequests ADD ActiveExceptionId UNIQUEIDENTIFIER NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'MaxSalePrice') IS NULL
     ALTER TABLE dbo.SalesRequests ADD MaxSalePrice DECIMAL(18,0) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'ExternalCrmOrderUuid') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD ExternalCrmOrderUuid UNIQUEIDENTIFIER NULL;
+-- Separate batch via EXEC so COL_LENGTH/CREATE INDEX see the column just added (avoid error 207).
+-- Filtered indexes also require ANSI/QUOTED_IDENTIFIER SET options (error 1934).
+EXEC(N'
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+IF COL_LENGTH(N''dbo.SalesRequests'', N''ExternalCrmOrderUuid'') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N''UX_SalesRequests_ExternalCrmOrderUuid''
+      AND object_id = OBJECT_ID(N''dbo.SalesRequests'')
+)
+    CREATE UNIQUE INDEX UX_SalesRequests_ExternalCrmOrderUuid
+        ON dbo.SalesRequests (ExternalCrmOrderUuid)
+        WHERE ExternalCrmOrderUuid IS NOT NULL;
+');
+IF OBJECT_ID(N'dbo.CrmSalesAssignCursor', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.CrmSalesAssignCursor (
+        Id INT NOT NULL CONSTRAINT PK_CrmSalesAssignCursor PRIMARY KEY,
+        LastEmployeeId INT NOT NULL CONSTRAINT DF_CrmSalesAssignCursor_Last DEFAULT (0)
+    );
+    INSERT INTO dbo.CrmSalesAssignCursor (Id, LastEmployeeId) VALUES (1, 0);
+END
 IF NOT EXISTS (
     SELECT 1 FROM sys.indexes
     WHERE name = N'IX_SalesRequests_IsDeleted' AND object_id = OBJECT_ID(N'dbo.SalesRequests')
@@ -692,6 +823,20 @@ BEGIN
     ) h
     WHERE sr.Status = N'Rejected'
       AND ISNULL(sr.IsDeleted, 0) = 0;
+END
+-- Soft-deleted non-sold requests must surface as Rejected (follower inbox «مرفوض» + note).
+IF COL_LENGTH(N'dbo.SalesRequests', N'IsDeleted') IS NOT NULL
+BEGIN
+    UPDATE dbo.SalesRequests
+    SET
+        Status = N'Rejected',
+        RejectedAtUtc = COALESCE(RejectedAtUtc, DeletedAtUtc, SYSUTCDATETIME()),
+        RejectionReason = COALESCE(
+            NULLIF(LTRIM(RTRIM(RejectionReason)), N''),
+            NULLIF(LTRIM(RTRIM(DeleteReason)), N''),
+            N'حذف من الإدارة')
+    WHERE ISNULL(IsDeleted, 0) = 1
+      AND Status NOT IN (N'Completed', N'Rejected');
 END";
     }
 }

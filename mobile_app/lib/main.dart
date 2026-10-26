@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
+import 'screens/login/login_screen.dart' show CitiesLoader;
 import 'config/theme.dart';
 import 'config/routes.dart';
 import 'utils/notification_service.dart';
@@ -28,8 +29,13 @@ Future<void> main() async {
 
 class ManagementApp extends StatelessWidget {
   final AuthProvider authProvider;
+  final CitiesLoader? loginCitiesLoader;
 
-  const ManagementApp({super.key, required this.authProvider});
+  const ManagementApp({
+    super.key,
+    required this.authProvider,
+    this.loginCitiesLoader,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +57,8 @@ class ManagementApp extends StatelessWidget {
         ],
         locale: const Locale('ar'),
         initialRoute: authProvider.isAuthenticated ? '/dashboard' : '/login',
-        onGenerateRoute: AppRoutes.generateRoute,
+        onGenerateRoute: (settings) =>
+            AppRoutes.generateRoute(settings, citiesLoader: loginCitiesLoader),
       ),
     );
   }

@@ -377,6 +377,16 @@ class ApiSalesRepository implements SalesRepository {
   }
 
   @override
+  Future<List<SalesWorkRequest>> submittedSalesRequests() async {
+    try {
+      final raw = await ApiClient.get('sales/requests/submitted');
+      return _maps(raw).map(SalesWorkRequest.fromJson).toList();
+    } on ApiException catch (e) {
+      _throw(e);
+    }
+  }
+
+  @override
   Future<SalesWorkRequest> salesRequest(int id) async {
     try {
       final raw = await ApiClient.get('sales/requests/$id');

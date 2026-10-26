@@ -1,3 +1,4 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -11,6 +12,7 @@ import 'package:sales_employee_application/services/shop_gps.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 import 'package:sales_employee_application/utils/iraq_time.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
+import 'package:sales_employee_application/ui/list_delegate_rating_gate.dart';
 import 'package:sales_employee_application/widgets/shop_location_button.dart';
 import 'package:sales_employee_application/widgets/tappable_phone.dart';
 
@@ -188,6 +190,12 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
       final result = await SalesRepositoryFactory.instance.completeSale(draft.saleId, shop);
       final download = await _downloadAll(result.documents);
       if (!mounted) return;
+      await promptListDelegateRatingAfterSale(
+        context,
+        listId: draft.customerListId,
+        listName: 'مندوب القائمة',
+      );
+      if (!mounted) return;
       await Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -289,7 +297,7 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('تفاصيل العملية')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CompanyLoader(label: 'جارٍ تحميل البيانات'))
           : _error != null && d == null
               ? Center(child: Text(_error!, style: const TextStyle(color: AppColors.danger)))
               : d == null
@@ -332,14 +340,14 @@ class _SaleDetailsScreenState extends State<SaleDetailsScreen> {
                             ElevatedButton(
                               onPressed: _previewing || _completing ? null : _startReview,
                               child: _previewing
-                                  ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                  ? const SizedBox(height: 22, width: 22, child: CompanyLoader(size: 22))
                                   : const Text('مراجعة البيع'),
                             )
                           else
                             ElevatedButton(
                               onPressed: _completing ? null : _confirmComplete,
                               child: _completing
-                                  ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                  ? const SizedBox(height: 22, width: 22, child: CompanyLoader(size: 22))
                                   : const Text('تم البيع'),
                             ),
                         ]

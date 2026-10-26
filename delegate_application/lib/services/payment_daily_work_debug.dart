@@ -4,11 +4,11 @@ import 'package:delegate_application/utils/iraq_date.dart';
 /// Pure regression guards for daily delegate work.
 ///
 /// Locks the contracts that caused past-day totals to grow days later:
-/// 1. Send window stays open after midnight until 03:00 (same business day)
+/// 1. Payment upload is always allowed when online
 /// 2. UI day zeros at 03:00 (prior CreatedAtUtc not counted)
 /// 3. Print/paid strip uses merged local memory (queue ∪ ledger)
 class PaymentDailyWorkDebug {
-  /// Send allowed in [16:00 → 02:59] Baghdad only.
+  /// Send allowed any Baghdad hour when online (clock gate removed).
   static bool isSendWindowOpen(DateTime utcNow) =>
       IraqDate.isPaymentSyncGateOpen(utcNow);
 

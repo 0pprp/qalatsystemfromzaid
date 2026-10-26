@@ -191,6 +191,109 @@ VALUES
         return SalesRequestStatuses.IsUnassigned(row.Status) && row.TargetEmployeeId <= 0;
     }
 
+    public static bool CanCancelCase(string? status) =>
+        string.Equals(status, LegalFollowupStatuses.InProgress, StringComparison.OrdinalIgnoreCase);
+
+    public async Task<LegalFollowupCaseDTO> CancelAsync(
+        int caseId,
+        string reason,
+        int actorUserId,
+        string? actorName,
+        CancellationToken ct = default)
+    {
+        await EnsureSchemaAsync(ct);
+        await _requests.EnsureSchemaAsync(ct);
+
+        var trimmed = reason?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(trimmed))
+            throw new InvalidOperationException("سبب الإلغاء مطلوب.");
+        if (caseId <= 0)
+            throw new InvalidOperationException("معرّف المتابعة غير صالح.");
+
+        var existing = await GetAsync(caseId, ct)
+                       ?? throw new InvalidOperationException("المتابعة غير موجودة.");
+        if (!CanCancelCase(existing.Status))
+            throw new InvalidOperationException("يمكن إلغاء المتابعات قيد العمل فقط.");
+
+        await using var conn = Open();
+        await using (var cmd = new SqlCommand(@"
+UPDATE dbo.LegalFollowupCases
+SET Status=@Cancelled,
+    CompletionNote=@Reason
+WHERE Id=@Id AND Status=@InProgress;", conn))
+        {
+            cmd.Parameters.AddWithValue("@Cancelled", LegalFollowupStatuses.Cancelled);
+            cmd.Parameters.AddWithValue("@Reason", trimmed);
+            cmd.Parameters.AddWithValue("@Id", caseId);
+            cmd.Parameters.AddWithValue("@InProgress", LegalFollowupStatuses.InProgress);
+            var affected = await cmd.ExecuteNonQueryAsync(ct);
+            if (affected <= 0)
+                throw new InvalidOperationException("تعذر إلغاء المتابعة أو أنها لم تعد قيد العمل.");
+        }
+
+        if (existing.SalesRequestId is > 0)
+        {
+            var row = await _requests.GetByIdAsync(existing.SalesRequestId.Value, ct);
+            if (row != null
+                && !row.IsDeleted
+                && string.Equals(row.Status, SalesRequestStatuses.LegalFollowup, StringComparison.OrdinalIgnoreCase))
+            {
+                var previous = row.Status;
+                row.Status = SalesRequestStatuses.New;
+                row.TargetEmployeeId = 0;
+                row.TargetEmployeeName = null;
+                row.AssignedAtUtc = null;
+                row.AssignedByUserId = null;
+                row.AssignedByName = null;
+                await _requests.UpdateAsync(row, ct);
+                await _requests.InsertHistoryAsync(new SalesRequestHistoryDTO
+                {
+                    RequestId = row.Id,
+                    Event = SalesRequestEvents.LegalFollowupCancelled,
+                    PreviousStatus = previous,
+                    Status = row.Status,
+                    ActorUserId = actorUserId,
+                    ActorName = actorName,
+                    ActorType = "SalesManager",
+                    Note = $"إلغاء إرسال قانونية (قضية {caseId}): {trimmed}",
+                    CreatedAtUtc = DateTime.UtcNow
+                }, ct);
+            }
+        }
+
+        return (await GetAsync(caseId, ct))!;
+    }
+
+    public async Task CancelOpenInProgressForSalesRequestAsync(
+        int salesRequestId,
+        string? reason,
+        int actorUserId,
+        string? actorName,
+        CancellationToken ct = default)
+    {
+        if (salesRequestId <= 0)
+            return;
+
+        await EnsureSchemaAsync(ct);
+        var note = string.IsNullOrWhiteSpace(reason)
+            ? "أُلغيت مع إعادة الطلب لغير مسند"
+            : reason.Trim();
+
+        await using var conn = Open();
+        await using var cmd = new SqlCommand(@"
+UPDATE dbo.LegalFollowupCases
+SET Status=@Cancelled,
+    CompletionNote=@Reason
+WHERE SalesRequestId=@SalesRequestId AND Status=@InProgress;", conn);
+        cmd.Parameters.AddWithValue("@Cancelled", LegalFollowupStatuses.Cancelled);
+        cmd.Parameters.AddWithValue("@Reason", note);
+        cmd.Parameters.AddWithValue("@SalesRequestId", salesRequestId);
+        cmd.Parameters.AddWithValue("@InProgress", LegalFollowupStatuses.InProgress);
+        await cmd.ExecuteNonQueryAsync(ct);
+        _ = actorUserId;
+        _ = actorName;
+    }
+
     public async Task<IReadOnlyList<LegalFollowupCaseDTO>> ListForFollowerAsync(
         int followerUserId,
         string? status,
@@ -417,11 +520,16 @@ FROM dbo.LegalFollowupCases WITH (NOLOCK)
 WHERE 1=1";
         if (id.HasValue) sql += " AND Id=@Id";
         if (followerUserId.HasValue) sql += " AND FollowerUserId=@FollowerUserId";
+        var excludeCancelled = !id.HasValue && string.IsNullOrWhiteSpace(statusFilter);
         if (!string.IsNullOrWhiteSpace(statusFilter))
         {
             var normalized = NormalizeStatus(statusFilter);
             if (normalized != null) sql += " AND Status=@Status";
             else statusFilter = null;
+        }
+        else if (excludeCancelled)
+        {
+            sql += " AND Status<>@ExcludeCancelled";
         }
         sql += " ORDER BY CreatedAtUtc DESC;";
 
@@ -432,6 +540,8 @@ WHERE 1=1";
         if (followerUserId.HasValue) cmd.Parameters.AddWithValue("@FollowerUserId", followerUserId.Value);
         if (!string.IsNullOrWhiteSpace(statusFilter))
             cmd.Parameters.AddWithValue("@Status", NormalizeStatus(statusFilter)!);
+        if (excludeCancelled)
+            cmd.Parameters.AddWithValue("@ExcludeCancelled", LegalFollowupStatuses.Cancelled);
 
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
@@ -458,11 +568,20 @@ WHERE 1=1";
             || s.Equals("open", StringComparison.OrdinalIgnoreCase)
             || s == "قيد العمل")
             return LegalFollowupStatuses.InProgress;
+        if (s.Equals("cancelled", StringComparison.OrdinalIgnoreCase)
+            || s.Equals("canceled", StringComparison.OrdinalIgnoreCase)
+            || s == "ملغاة")
+            return LegalFollowupStatuses.Cancelled;
         if (s.Equals(LegalFollowupStatuses.Completed, StringComparison.OrdinalIgnoreCase)
-            || s.Equals(LegalFollowupStatuses.InProgress, StringComparison.OrdinalIgnoreCase))
-            return s.Equals(LegalFollowupStatuses.Completed, StringComparison.OrdinalIgnoreCase)
-                ? LegalFollowupStatuses.Completed
-                : LegalFollowupStatuses.InProgress;
+            || s.Equals(LegalFollowupStatuses.InProgress, StringComparison.OrdinalIgnoreCase)
+            || s.Equals(LegalFollowupStatuses.Cancelled, StringComparison.OrdinalIgnoreCase))
+        {
+            if (s.Equals(LegalFollowupStatuses.Completed, StringComparison.OrdinalIgnoreCase))
+                return LegalFollowupStatuses.Completed;
+            if (s.Equals(LegalFollowupStatuses.Cancelled, StringComparison.OrdinalIgnoreCase))
+                return LegalFollowupStatuses.Cancelled;
+            return LegalFollowupStatuses.InProgress;
+        }
         return null;
     }
 

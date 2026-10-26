@@ -128,12 +128,25 @@
 
       <!-- Main Container -->
       <div class="main-container">
-        <!-- ════ المخلص المالي - Financial Summary ════ -->
+        <!-- ════ الملخص المالي - Financial Summary ════ -->
         <section class="stats-section">
           <div class="section-label">
             <v-icon icon="mdi-chart-pie" size="18" color="#64748b" />
             <span>الملخص المالي</span>
           </div>
+
+          <div class="summary-range" aria-label="فترة الملخص">
+            <div class="summary-range-item">
+              <span class="summary-range-key">من</span>
+              <span class="summary-range-val">{{ formatDate(summaryRange.from) }}</span>
+            </div>
+            <span class="summary-range-sep" aria-hidden="true">—</span>
+            <div class="summary-range-item">
+              <span class="summary-range-key">إلى</span>
+              <span class="summary-range-val">{{ formatDate(summaryRange.to) }}</span>
+            </div>
+          </div>
+
           <div class="stats-grid">
             <div class="stat-card stat-sales">
               <div class="stat-top">
@@ -178,6 +191,30 @@
               <div class="stat-value-wrap">
                 <span class="stat-value">{{ formatCurrency(customer.amountDaySales) }}</span>
               </div>
+            </div>
+          </div>
+
+          <div class="period-payments" aria-label="تسديدات الفترات">
+            <div class="period-card period-day">
+              <div class="period-top">
+                <v-icon icon="mdi-calendar-today" size="18" color="#0EA5E9" />
+                <span class="period-label">تسديدات يومية</span>
+              </div>
+              <span class="period-value">{{ formatCurrency(periodPayments.daily) }}</span>
+            </div>
+            <div class="period-card period-week">
+              <div class="period-top">
+                <v-icon icon="mdi-calendar-week" size="18" color="#8B5CF6" />
+                <span class="period-label">تسديدات أسبوعية</span>
+              </div>
+              <span class="period-value">{{ formatCurrency(periodPayments.weekly) }}</span>
+            </div>
+            <div class="period-card period-month">
+              <div class="period-top">
+                <v-icon icon="mdi-calendar-month-outline" size="18" color="#059669" />
+                <span class="period-label">تسديدات شهرية</span>
+              </div>
+              <span class="period-value">{{ formatCurrency(periodPayments.monthly) }}</span>
             </div>
           </div>
           <!-- مبيعات الزبون (بدون فلترة) -->
@@ -311,6 +348,8 @@
                   v-model="dateFilter.from"
                   type="date"
                   class="date-input"
+                  aria-label="من تاريخ"
+                  title="من تاريخ"
                   :max="dateFilter.to || todayStr"
                 />
               </div>
@@ -321,6 +360,8 @@
                   v-model="dateFilter.to"
                   type="date"
                   class="date-input"
+                  aria-label="إلى تاريخ"
+                  title="إلى تاريخ"
                   :min="dateFilter.from"
                   :max="todayStr"
                 />
@@ -475,6 +516,8 @@ const errorMessage = ref('')
 const customer = ref({})
 const sales = ref([])
 const payments = ref([])
+/** Unfiltered payments — used for day/week/month totals inside الملخص. */
+const paymentsAll = ref([])
 const tableLoading = ref(false)
 const detailsOpen = ref(false)
 
@@ -505,9 +548,41 @@ function initTheme() {
 
 initTheme()
 
-const todayStr = computed(() => new Date().toISOString().slice(0, 10))
+const todayStr = computed(() => baghdadYmd(new Date()))
 
 const dateFilter = ref({ from: '', to: '' })
+
+/** Date range shown inside الملخص: active filter, else sale date → today. */
+const summaryRange = computed(() => {
+  const from =
+    dateFilter.value.from ||
+    toYmd(customer.value.dateSaleDevice) ||
+    earliestPaymentYmd(paymentsAll.value) ||
+    todayStr.value
+  const to = dateFilter.value.to || todayStr.value
+  return { from, to }
+})
+
+/** Calendar-period payment totals (Baghdad day / Sat-start week / month). */
+const periodPayments = computed(() => {
+  const rows = paymentsAll.value.length ? paymentsAll.value : payments.value
+  const now = baghdadParts(new Date())
+  const today = `${now.y}-${pad2(now.m)}-${pad2(now.d)}`
+  const weekStart = startOfWeekSaturdayYmd(today)
+  const monthPrefix = `${now.y}-${pad2(now.m)}`
+  let daily = 0
+  let weekly = 0
+  let monthly = 0
+  for (const row of rows) {
+    const ymd = toYmd(row.paymentDate)
+    if (!ymd) continue
+    const amount = Number(row.amountDenar) || 0
+    if (ymd === today) daily += amount
+    if (ymd >= weekStart && ymd <= today) weekly += amount
+    if (ymd.startsWith(monthPrefix)) monthly += amount
+  }
+  return { daily, weekly, monthly }
+})
 
 // ── Avatar Initials ───────────────────────────────────
 const avatarInitials = computed(() => {
@@ -518,6 +593,58 @@ const avatarInitials = computed(() => {
 })
 
 // ── Helpers ───────────────────────────────────────────
+function pad2(n) {
+  return String(n).padStart(2, '0')
+}
+
+function baghdadParts(date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Baghdad',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const get = (type) => Number(parts.find((p) => p.type === type)?.value || 0)
+  return { y: get('year'), m: get('month'), d: get('day') }
+}
+
+function baghdadYmd(date) {
+  const { y, m, d } = baghdadParts(date)
+  return `${y}-${pad2(m)}-${pad2(d)}`
+}
+
+function toYmd(value) {
+  if (!value) return ''
+  if (typeof value === 'string') {
+    const m = value.match(/^(\d{4}-\d{2}-\d{2})/)
+    if (m) return m[1]
+  }
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return baghdadYmd(d)
+}
+
+function earliestPaymentYmd(rows) {
+  let min = ''
+  for (const row of rows || []) {
+    const ymd = toYmd(row.paymentDate)
+    if (!ymd) continue
+    if (!min || ymd < min) min = ymd
+  }
+  return min
+}
+
+/** Iraqi week commonly treated as Saturday → Friday. */
+function startOfWeekSaturdayYmd(ymd) {
+  const [y, m, d] = ymd.split('-').map(Number)
+  // noon UTC avoids DST edge; we only need weekday of Baghdad calendar date
+  const utc = new Date(Date.UTC(y, m - 1, d, 9, 0, 0))
+  const weekday = utc.getUTCDay() // 0 Sun … 6 Sat
+  const back = (weekday + 1) % 7
+  utc.setUTCDate(utc.getUTCDate() - back)
+  return `${utc.getUTCFullYear()}-${pad2(utc.getUTCMonth() + 1)}-${pad2(utc.getUTCDate())}`
+}
+
 function formatCurrency(value) {
   if (value == null) return '0 د.ع'
   const num = Number(value)
@@ -526,7 +653,9 @@ function formatCurrency(value) {
 
 function formatDate(dateStr) {
   if (!dateStr) return '-'
-  const date = new Date(dateStr)
+  const ymd = toYmd(dateStr) || dateStr
+  const date = new Date(`${ymd}T12:00:00`)
+  if (Number.isNaN(date.getTime())) return '-'
   return date.toLocaleDateString('ar-IQ-u-nu-latn', {
     year: 'numeric',
     month: 'short',
@@ -537,11 +666,16 @@ function formatDate(dateStr) {
 // ── API ───────────────────────────────────────────────
 async function apiCall(endpoint, params = {}) {
   const url = new URL(`${apiBase.value}/Portal/${endpoint}`, window.location.origin)
-  url.searchParams.set('token', token.value)
+  // Prefer header token — avoid putting secrets in query/logs.
   Object.entries(params).forEach(([key, value]) => {
     if (value) url.searchParams.set(key, value)
   })
-  const response = await fetch(url.toString())
+  const response = await fetch(url.toString(), {
+    headers: {
+      'X-Portal-Token': token.value,
+      Authorization: `Bearer ${token.value}`,
+    },
+  })
   if (!response.ok) {
     const err = await response.json().catch(() => ({ error: 'حدث خطأ غير متوقع' }))
     throw new Error(err.error || `خطأ ${response.status}`)
@@ -569,6 +703,10 @@ async function loadPayments(fromDate, toDate) {
   if (toDate) params.toDate = toDate
   const data = await apiCall('Payments', params)
   payments.value = data || []
+  // Keep full history for ملخص period totals when loading unfiltered.
+  if (!fromDate && !toDate) {
+    paymentsAll.value = data || []
+  }
 }
 
 // ── Date Filter ───────────────────────────────────────
@@ -1093,6 +1231,89 @@ html.portal-dark .portal-app {
   position: relative;
   z-index: 2;
 }
+
+.summary-range {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.55rem, 2vw, 1rem);
+  margin: 0 0 clamp(0.75rem, 2vw, 1rem);
+  padding: 0.65rem 0.9rem;
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.summary-range-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.summary-range-key {
+  font-family: var(--font-cairo);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.summary-range-val {
+  font-family: var(--font-cairo);
+  font-size: clamp(0.85rem, 2vw, 0.95rem);
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.summary-range-sep {
+  color: var(--text-muted);
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.period-payments {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(0.45rem, 1.4vw, 0.85rem);
+  margin-top: clamp(0.75rem, 2vw, 1rem);
+}
+
+.period-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: clamp(0.7rem, 1.6vw, 1rem) clamp(0.65rem, 1.4vw, 0.95rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.period-top {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.period-label {
+  font-family: var(--font-cairo);
+  font-size: clamp(0.7rem, 1.4vw, 0.8rem);
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.period-value {
+  font-family: var(--font-cairo);
+  font-size: clamp(0.95rem, 2.2vw, 1.15rem);
+  font-weight: 800;
+  color: var(--text-primary);
+  border-top: 1px solid var(--border-light);
+  padding-top: 0.4rem;
+}
+
+.period-day { border-top: 3px solid #0EA5E9; }
+.period-week { border-top: 3px solid #8B5CF6; }
+.period-month { border-top: 3px solid #059669; }
 
 .stats-grid {
   display: grid;
@@ -1684,6 +1905,7 @@ html.portal-dark .portal-app {
 /* Tablet & below */
 @media (max-width: 960px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 0.7rem; }
+  .period-payments { grid-template-columns: repeat(3, 1fr); }
   .hero-content { flex-direction: column; text-align: center; padding: 1.2rem 1rem 2.5rem; }
   .hero-identity { flex-direction: column; align-items: center; gap: 0.8rem; }
   .identity-meta { justify-content: center; }
@@ -1701,6 +1923,7 @@ html.portal-dark .portal-app {
 /* Mobile */
 @media (max-width: 640px) {
   .stats-grid { grid-template-columns: 1fr; gap: 0.6rem; }
+  .period-payments { grid-template-columns: 1fr; }
   .desktop-only { display: none !important; }
   .mobile-only { display: block; }
   .data-tab { font-size: 0.82rem; padding: 0.7rem 0.5rem; }
@@ -1757,5 +1980,15 @@ html.portal-dark .data-tab.active .tab-badge { background: rgba(59,130,246,0.15)
   .theme-toggle-btn { display: none !important; }
   body { background: #fff; }
   .data-table { font-size: 11px; }
+}
+
+/* F26: respect user reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 </style>

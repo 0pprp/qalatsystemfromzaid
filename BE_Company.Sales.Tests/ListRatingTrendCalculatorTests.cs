@@ -8,7 +8,7 @@ public class ListRatingTrendCalculatorTests
     private static CustomerRatingFacts Fact(int id, DateTime? sale, double total = 100, double remaining = 50) =>
         new(id, 1, false, false, sale, sale?.AddDays(1), total, total - remaining, remaining, 1);
 
-    /// <summary>Settled sale with known level via settle-day bands (Excellent≤140, Good≤160, Weak&lt;180, متلكئ 180–199, سيء≥200).</summary>
+    /// <summary>Settled sale with known level via settle-day bands (Excellent≤150, Good≤160, Weak&lt;180, متلكئ 180–199, سيء≥200).</summary>
     private static CustomerRatingFacts Settled(
         int id,
         DateTime sale,

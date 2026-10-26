@@ -1,5 +1,14 @@
+import { isSummaryReadOnly } from '@/composables/useSummaryReadOnly'
+
+const VIEW_ONLY_IDS = new Set([
+  1, 7, 13, 19, 26, 32, 38, 44, 50, 56, 62, 74, 80, 86, 92, 98, 104, 105, 110, 115,
+  6, 12, 18, 24, 31, 37, 43, 49, 55, 61, 67, 79, 85, 91, 97, 103, 109, 114, 120,
+])
 
 export const hasPermission = permissionId => {
+  if (isSummaryReadOnly)
+    return VIEW_ONLY_IDS.has(permissionId)
+
   const stored = localStorage.getItem('UserPermissionsTabs')
   if (!stored) return false
   try {

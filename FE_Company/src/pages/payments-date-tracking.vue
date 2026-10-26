@@ -19,16 +19,16 @@ const loading = ref(false)
 
 // فلاتر البحث: البحث حسب المندوب وتاريخ التسديد ونوع العرض
 const filters = ref({
-  delegateID: null,      // 0 تعني "الجميع"
-  paymentDate: '',    // تاريخ التسديد (يمكن تحديده بواسطة AppTextField من نوع date)
-  showType: 'الجميع', // الخيارات: 'الجميع'، 'المسددين'، 'المتوقفين'
+  delegateID: null, // 0 تعني "الجميع"
+  paymentDate: '', // تاريخ التسديد
+  showType: 'الجميع', // 'الجميع'، 'المسددين'، 'المتوقفين'
 })
 
 // دالة تنسيق الأرقام
 const formattedNumber = num => {
   if (num === 0) return "0"
   if (num) return num.toLocaleString() + " دع "
-  
+
   return "لا يوجد"
 }
 
@@ -56,47 +56,47 @@ const headers = [
 
 const totals = computed(() => [
   {
-    icon: 'tabler-user', // عدد العملاء
+    icon: 'tabler-user',
     value: followData.value.length,
     title: 'عدد العملاء',
-    color: "primary",
-    gradient: "linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)",
+    color: 'primary',
+    gradient: 'linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)',
   },
   {
-    icon: 'tabler-wallet', // سعر البيع
+    icon: 'tabler-wallet',
     value: formattedNumber(
       followData.value.reduce((sum, row) => sum + (row.amountTotalSales || 0), 0),
     ),
     title: 'سعر البيع',
-    color: "success",
-    gradient: "linear-gradient(135deg, #00b09b 0%, #96c93d 100%)",
+    color: 'success',
+    gradient: 'linear-gradient(135deg, #00b09b 0%, #96c93d 100%)',
   },
   {
-    icon: 'tabler-credit-card', // القسط
+    icon: 'tabler-credit-card',
     value: formattedNumber(
       followData.value.reduce((sum, row) => sum + (row.amountDaySales || 0), 0),
     ),
     title: 'القسط',
-    color: "info",
-    gradient: "linear-gradient(135deg, #36D1DC 0%, #5B86E5 100%)",
+    color: 'info',
+    gradient: 'linear-gradient(135deg, #36D1DC 0%, #5B86E5 100%)',
   },
   {
-    icon: 'tabler-currency-dollar', // الواصل
+    icon: 'tabler-currency-dollar',
     value: formattedNumber(
       followData.value.reduce((sum, row) => sum + (row.receiptsTotal || 0), 0),
     ),
     title: 'الواصل',
-    color: "success",
-    gradient: "linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)",
+    color: 'success',
+    gradient: 'linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)',
   },
   {
-    icon: 'tabler-currency-dollar', // الباقي
+    icon: 'tabler-currency-dollar',
     value: formattedNumber(
       followData.value.reduce((sum, row) => sum + (row.amountRemaining || 0), 0),
     ),
     title: 'الباقي',
-    color: "error",
-    gradient: "linear-gradient(135deg, #FF416C 0%, #FF4B2B 100%)",
+    color: 'error',
+    gradient: 'linear-gradient(135deg, #FF416C 0%, #FF4B2B 100%)',
   },
 ])
 
@@ -123,8 +123,10 @@ async function fetchFollowData() {
     const paymentDate = filters.value.paymentDate || 'null'
     const showType = filters.value.showType || 'الجميع'
 
-    // استدعاء API الخاص بالمتابعة
-    const response = await axios.get(`${apiUrl}Customers/Customers_Follow/${delegateID}&&${paymentDate}&&${showType}`, { headers: authHeader })
+    const response = await axios.get(
+      `${apiUrl}Customers/Customers_Follow/${delegateID}&&${paymentDate}&&${showType}`,
+      { headers: authHeader },
+    )
 
     followData.value = response.data
   } catch (error) {
@@ -162,6 +164,22 @@ function exportToExcel() {
 onMounted(() => {
   fetchDelegates()
 })
+
+const colSlots = {
+  customerName: 'item.customerName',
+  phoneNumber: 'item.phoneNumber',
+  delegateName: 'item.delegateName',
+  itemsNames: 'item.itemsNames',
+  dateSaleDevice: 'item.dateSaleDevice',
+  numberOfDayDevice: 'item.numberOfDayDevice',
+  amountTotalSales: 'item.amountTotalSales',
+  amountDaySales: 'item.amountDaySales',
+  receiptsTotal: 'item.receiptsTotal',
+  amountRemaining: 'item.amountRemaining',
+  countReceiptDevice: 'item.countReceiptDevice',
+  lastPaymentDate: 'item.lastPaymentDate',
+  amountReceipt: 'item.amountReceipt',
+}
 </script>
 
 <template>
@@ -260,67 +278,67 @@ onMounted(() => {
           class="text-no-wrap custom-data-table"
         >
           <!-- لكل حقل قالب بعرض 200px -->
-          <template #item.customerName="{ item }">
+          <template v-slot:[colSlots.customerName]="{ item }">
             <div>
               {{ item.customerName || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.phoneNumber="{ item }">
+          <template v-slot:[colSlots.phoneNumber]="{ item }">
             <div>
               {{ item.phoneNumber || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.delegateName="{ item }">
+          <template v-slot:[colSlots.delegateName]="{ item }">
             <div>
               {{ item.delegateName || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.itemsNames="{ item }">
+          <template v-slot:[colSlots.itemsNames]="{ item }">
             <div>
               {{ item.itemsNames || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.dateSaleDevice="{ item }">
+          <template v-slot:[colSlots.dateSaleDevice]="{ item }">
             <div>
               {{ item.dateSaleDevice ? formattedDate(item.dateSaleDevice) : 'لا يوجد' }}
             </div>
           </template>
-          <template #item.numberOfDayDevice="{ item }">
+          <template v-slot:[colSlots.numberOfDayDevice]="{ item }">
             <div>
               {{ item.numberOfDayDevice || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.amountTotalSales="{ item }">
+          <template v-slot:[colSlots.amountTotalSales]="{ item }">
             <div class="premium-amount amt-total-sales">
               {{ formattedNumber(item.amountTotalSales) }}
             </div>
           </template>
-          <template #item.amountDaySales="{ item }">
+          <template v-slot:[colSlots.amountDaySales]="{ item }">
             <div class="premium-amount amt-installment">
               {{ formattedNumber(item.amountDaySales) }}
             </div>
           </template>
-          <template #item.receiptsTotal="{ item }">
+          <template v-slot:[colSlots.receiptsTotal]="{ item }">
             <div class="premium-amount amt-total-receipts">
               {{ formattedNumber(item.receiptsTotal) }}
             </div>
           </template>
-          <template #item.amountRemaining="{ item }">
+          <template v-slot:[colSlots.amountRemaining]="{ item }">
             <div class="premium-amount amt-remaining">
               {{ formattedNumber(item.amountRemaining) }}
             </div>
           </template>
-          <template #item.countReceiptDevice="{ item }">
+          <template v-slot:[colSlots.countReceiptDevice]="{ item }">
             <div>
               {{ item.countReceiptDevice || 'لا يوجد' }}
             </div>
           </template>
-          <template #item.lastPaymentDate="{ item }">
+          <template v-slot:[colSlots.lastPaymentDate]="{ item }">
             <div>
               {{ item.lastPaymentDate ? formattedDate(item.lastPaymentDate) : 'لا يوجد' }}
             </div>
           </template>
-          <template #item.amountReceipt="{ item }">
+          <template v-slot:[colSlots.amountReceipt]="{ item }">
             <div class="premium-amount amt-total-receipts">
               {{ formattedNumber(item.amountReceipt) }}
             </div>

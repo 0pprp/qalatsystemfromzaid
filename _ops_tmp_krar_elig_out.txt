@@ -1,0 +1,36 @@
+DB DatabaseCompanyNajaf
+=== sales + drafts 53385 ===
+CustomerSaleID|DateCreate
+--------------|----------
+55213|2026-09-27 15:00:46.837
+SaleId|Status|PostingStatus|PostedAtUtc
+------|------|-------------|-----------
+69|Completed|Posted|2026-09-27 13:00:46.837
+Auth
+----
+0
+DelegateID|N
+----------|-
+1|الشمالية
+
+=== followers linked to list 1 + name احمد ===
+Msg 207, Level 16, State 1, Server vmi3533397, Line 6
+Invalid column name 'FullName'.
+Msg 207, Level 16, State 1, Server vmi3533397, Line 17
+Invalid column name 'FullName'.
+Msg 207, Level 16, State 1, Server vmi3533397, Line 17
+Invalid column name 'FullName'.
+Msg 207, Level 16, State 1, Server vmi3533397, Line 14
+Invalid column name 'FullName'.
+Msg 207, Level 16, State 1, Server vmi3533397, Line 15
+Invalid column name 'IsFollower'.
+Msg 207, Level 16, State 1, Server vmi3533397, Line 15
+Invalid column name 'IsActive'.
+
+=== pending-query match for 53385 ===
+CustomerID|HasPostedDraft|HasAuth|CustomerSaleID|SaleId
+----------|--------------|-------|--------------|------
+53385|1|0|55213|69
+
+=== scan all Delegate* DBs for auth CustomerId 53385 or recent auth ===
+DONE

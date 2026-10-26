@@ -19,10 +19,10 @@ const { canSwitchCity, userType } = useUserRole()
 
 const roleLabel = computed(() => {
   if (userType.value === 'مدير فرع') return 'مدير فرع'
-  if (userType.value === 'محاسب رئيسي') return 'ادمن'
-  if (userType.value === 'محاسب فرعي') return 'محاسب فرعي'
+  if (userType.value === 'محاسب رئيسي') return 'محاسب رئيسي (عرض فقط)'
+  if (userType.value === 'محاسب فرعي') return 'محاسب فرعي (عرض فقط)'
 
-  return userType.value || 'محاسب فرعي'
+  return `${userType.value || 'محاسب'} (عرض فقط)`
 })
 
 const changeCity = async city => {
@@ -45,20 +45,25 @@ const changeCity = async city => {
   }
 
 
-  const response = await axios.post(
-    `${selectedApi}Users/Users_LoginEmployee`,
-    {
-      userName: userName.value,
-      password: password.value,
-    },
-    {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    },
+  const body = {
+    userName: userName.value,
+    password: password.value,
+    UserName: userName.value,
+    Password: password.value,
+  }
+
+  const post = endpoint => axios.post(
+    `${selectedApi}${endpoint}`,
+    body,
+    { headers: { 'Content-Type': 'application/json' } },
   )
 
-  const resData = response.data
+  let response = await post('Users/Users_LoginAdmin')
+  let resData = response.data
+  if (resData?.message && !resData?.token)
+    response = await post('Users/Users_LoginEmployee')
+
+  resData = response.data
   const user = jwtDecode(resData.token)
   if(resData.token.length>0){
     localStorage.setItem("Token", resData.token)

@@ -153,7 +153,7 @@ class MainActivity : FlutterActivity() {
             return mapOf(
                 "ok" to false,
                 "code" to "need_permission",
-                "message" to "فعّل السماح بتثبيت التطبيقات من مصدر تطبيق المتابع ثم ارجع للتطبيق",
+                "message" to "فعّل السماح بتثبيت التطبيقات من مصدر تطبيق مسؤول اللجنة ثم ارجع للتطبيق",
             )
         }
 

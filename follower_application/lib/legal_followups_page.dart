@@ -4,6 +4,7 @@ import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/legal_followup_detail_page.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
+import 'package:follower_application/utils/display_name.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -88,20 +89,22 @@ class _LegalFollowupsPageState extends State<LegalFollowupsPage>
   @override
   Widget build(BuildContext context) {
     return AppSafeScaffold(
-      appBar: AppBar(
-        title: const Text('الزبائن القديمة', style: TextStyle(fontFamily: 'Cairo')),
-        backgroundColor: AppTheme.primaryColor,
-        bottom: TabBar(
-          controller: _tabs,
-          tabs: const [
-            Tab(child: Text('قيد العمل', style: TextStyle(fontFamily: 'Cairo'))),
-            Tab(child: Text('تمت المتابعة', style: TextStyle(fontFamily: 'Cairo'))),
+        appBar: AppBar(
+          title: const Text('الزبائن القديمة',
+              style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+          backgroundColor: AppTheme.primaryColor,
+          foregroundColor: Colors.white,
+          bottom: AppTheme.primaryAppBarTabBar(
+            controller: _tabs,
+            tabs: const [
+              Tab(text: 'قيد العمل'),
+              Tab(text: 'تمت المتابعة'),
+            ],
+          ),
+          actions: [
+            IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
           ],
         ),
-        actions: [
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
-        ],
-      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error.isNotEmpty
@@ -117,7 +120,7 @@ class _LegalFollowupsPageState extends State<LegalFollowupsPage>
                       child: ListView.separated(
                         padding: const EdgeInsets.all(12),
                         itemCount: _rows.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        separatorBuilder: (_, __) => const NameListSeparator(),
                         itemBuilder: (context, i) {
                           final row = _rows[i];
                           final name =
@@ -128,10 +131,7 @@ class _LegalFollowupsPageState extends State<LegalFollowupsPage>
                               '${row['statusLabel'] ?? row['StatusLabel'] ?? ''}';
                           return Card(
                             child: ListTile(
-                              title: Text(name,
-                                  style: const TextStyle(
-                                      fontFamily: 'Cairo',
-                                      fontWeight: FontWeight.bold)),
+                              title: PersonNameText(name),
                               subtitle: Text('$phone\n$status',
                                   style:
                                       const TextStyle(fontFamily: 'Cairo')),

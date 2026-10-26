@@ -148,9 +148,12 @@ class _SalesRequestSheetState extends State<SalesRequestSheet> {
 }
 
 class DelegatedManagerRequestSheet extends StatefulWidget {
-  const DelegatedManagerRequestSheet({super.key});
+  const DelegatedManagerRequestSheet({super.key, this.asNote = false});
 
-  static Future<void> show(BuildContext context) {
+  /// When true, copy reads as «ملاحظة» (same API path).
+  final bool asNote;
+
+  static Future<void> show(BuildContext context, {bool asNote = false}) {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -158,7 +161,7 @@ class DelegatedManagerRequestSheet extends StatefulWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      builder: (_) => const DelegatedManagerRequestSheet(),
+      builder: (_) => DelegatedManagerRequestSheet(asNote: asNote),
     );
   }
 
@@ -191,11 +194,21 @@ class _DelegatedManagerRequestSheetState
       _error = null;
     });
     try {
-      await BmApi.instance.createDelegatedManagerRequest(message: text);
+      if (widget.asNote) {
+        await BmApi.instance.createDirectorNote(message: text);
+      } else {
+        await BmApi.instance.createDelegatedManagerRequest(message: text);
+      }
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم إرسال الطلب إلى المدير المفوض')),
+        SnackBar(
+          content: Text(
+            widget.asNote
+                ? 'تم إرسال الملاحظة إلى المدير بنجاح'
+                : 'تم إرسال الطلب إلى المدير المفوض',
+          ),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -221,25 +234,32 @@ class _DelegatedManagerRequestSheetState
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'طلب من المدير المفوض',
-              style: TextStyle(
+            Text(
+              widget.asNote
+                  ? 'إرسال ملاحظة إلى المدير'
+                  : 'طلب من المدير المفوض',
+              style: const TextStyle(
                 fontFamily: 'Cairo',
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'يصل لنفس صندوق المدير المفوض (بدون تسميته شكوى).',
-              style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: BmTheme.muted),
+            Text(
+              widget.asNote
+                  ? 'اكتب ملاحظة عن البرنامج لغرض التطوير أو الإصلاح'
+                  : 'يصل لنفس صندوق المدير المفوض (بدون تسميته شكوى).',
+              style: const TextStyle(
+                  fontFamily: 'Cairo', fontSize: 12, color: BmTheme.muted),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _ctrl,
               minLines: 4,
               maxLines: 7,
-              decoration: const InputDecoration(hintText: 'اكتب طلبك هنا…'),
+              decoration: InputDecoration(
+                hintText: widget.asNote ? 'اكتب ملاحظتك…' : 'اكتب طلبك هنا…',
+              ),
             ),
             if (_error != null) ...[
               const SizedBox(height: 8),

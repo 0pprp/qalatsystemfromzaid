@@ -169,6 +169,43 @@ SET SyncStatus = 'PendingSync'
 WHERE SyncStatus IS NULL OR SyncStatus = '';
 ''');
     } catch (_) {}
+
+    // Stable backfill: never invent random UUIDs for previously unknown server rows.
+    // Use deterministic legacy-{localId} so retries stay idempotent by ClientPaymentId.
+    try {
+      final missing = await db.rawQuery('''
+SELECT id FROM CustomerPayment
+WHERE ClientPaymentId IS NULL OR TRIM(ClientPaymentId) = '';
+''');
+      for (final row in missing) {
+        final id = row['id'];
+        if (id == null) continue;
+        await db.update(
+          'CustomerPayment',
+          {
+            'ClientPaymentId': 'legacy-local-$id',
+            'SyncStatus': 'PendingSync',
+            'SyncError': null,
+            'PermanentFailure': 0,
+          },
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+      }
+    } catch (_) {}
+  }
+
+  /// After login: re-queue session-held payments owned by this AsyncId.
+  Future<int> releaseAwaitingSessionPayments({required String ownerAsyncId}) async {
+    final db = await database;
+    final owner = ownerAsyncId.trim();
+    if (owner.isEmpty) return 0;
+    return db.rawUpdate('''
+UPDATE CustomerPayment
+SET SyncStatus = 'PendingSync', SyncError = NULL, PermanentFailure = 0
+WHERE SyncStatus = 'AwaitingSession'
+  AND (OwnerAsyncId IS NULL OR OwnerAsyncId = '' OR OwnerAsyncId = ?)
+''', [owner]);
   }
 
   /// Unresolved financial rows that must not be wiped on logout.

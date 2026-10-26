@@ -16,6 +16,7 @@ describe('salesRequestEvaluationMap', () => {
       phone: { resultCount: 3, worstRatingLabel: 'متلكئ', worstScore: -5 },
       tripleName: { resultCount: 0, worstRatingLabel: 'لا توجد نتائج' },
       fatherGrandfather: { resultCount: 1, worstRatingLabel: 'ضعيف', worstScore: 0 },
+      sonFather: { resultCount: 2, worstRatingLabel: 'جيد', worstScore: 5 },
     }]
     const rows = [{ id: 42, cityValue: 'البصرة', customerName: 'وائل' }]
     const map = indexEvaluationItems(items, rows)
@@ -23,6 +24,7 @@ describe('salesRequestEvaluationMap', () => {
     expect(found).toBeTruthy()
     expect(categoryResultCount(categoryBlock(found, 'phone'))).toBe(3)
     expect(categoryResultCount(categoryBlock(found, 'fatherGrandfather'))).toBe(1)
+    expect(categoryResultCount(categoryBlock(found, 'sonFather'))).toBe(2)
   })
 
   it('patches category counts from hits total', () => {

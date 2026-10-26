@@ -10,12 +10,17 @@ namespace BE_SalesEmployee.Sales.Authorization
         public const string DelegatedManager = "DelegatedManager";
         public const string MainFollower = "MainFollower";
         public const string Director = "Director";
+        public const string Monitor = "Monitor";
+        /// <summary>Gateway JWT for تطبيق إدارة الفرع (BranchManagerAppUsers).</summary>
+        public const string BranchManager = "BranchManager";
         public const string UserTypeSalesEmployee = "موظف مبيعات";
         public const string UserTypeSalesManager = "مدير مبيعات";
         public const string UserTypeSalesFilterEmployee = "موظف فلترة المبيعات";
         public const string UserTypeDelegatedManager = "مدير مفوض";
         public const string UserTypeMainFollower = "متابع رئيسي";
         public const string UserTypeDirector = "المدير";
+        public const string UserTypeMonitor = "المراقب";
+        public const string UserTypeBranchManager = "مدير فرع";
 
         public static bool IsSalesEmployee(string? userType) =>
             string.Equals(userType, UserTypeSalesEmployee, StringComparison.Ordinal);
@@ -34,6 +39,15 @@ namespace BE_SalesEmployee.Sales.Authorization
 
         public static bool IsDirector(string? userType) =>
             string.Equals(userType, UserTypeDirector, StringComparison.Ordinal);
+
+        public static bool IsMonitor(string? userType) =>
+            string.Equals(userType, UserTypeMonitor, StringComparison.Ordinal);
+
+        public static bool IsBranchManager(string? userType) =>
+            string.Equals(userType, UserTypeBranchManager, StringComparison.Ordinal);
+
+        public static bool IsDirectorOrMonitor(string? userType) =>
+            IsDirector(userType) || IsMonitor(userType);
 
         public static bool IsAnySales(string? userType) =>
             IsSalesEmployee(userType) || IsSalesManager(userType);
@@ -64,6 +78,14 @@ namespace BE_SalesEmployee.Sales.Authorization
             {
                 return Director;
             }
+            if (IsMonitor(userType))
+            {
+                return Monitor;
+            }
+            if (IsBranchManager(userType))
+            {
+                return BranchManager;
+            }
             return null;
         }
     }
@@ -77,11 +99,16 @@ namespace BE_SalesEmployee.Sales.Authorization
         public const string DelegatedManager = "Sales.DelegatedManager";
         public const string MainFollower = "Sales.MainFollower";
         public const string Director = "Sales.Director";
+        public const string Monitor = "Sales.Monitor";
+        /// <summary>Gateway JWT for تطبيق إدارة الفرع (BranchManagerAppUsers.Id in UserID).</summary>
+        public const string BranchManager = "Sales.BranchManager";
+        /// <summary>Director or monitor — shared «عمل المتابعين» surface.</summary>
+        public const string DirectorOrMonitor = "Sales.DirectorOrMonitor";
         public const string ReadGps = "Sales.ReadGps";
         public const string ReadOtherSalesEmployees = "Sales.ReadOtherSalesEmployees";
         /// <summary>Authenticated sales manager or delegated manager (exception create/list vs decide).</summary>
         public const string SalesManagerOrDelegatedManager = "Sales.ManagerOrDelegatedManager";
-        /// <summary>Central sales manager or director (director reuses SM sales-requests UI).</summary>
+        /// <summary>Central sales manager, director, or monitor (monitor reuses SM sales UI with full write).</summary>
         public const string SalesManagerOrDirector = "Sales.ManagerOrDirector";
     }
 

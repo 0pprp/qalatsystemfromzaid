@@ -18,7 +18,8 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
         RequestingManagerUserName, RequestingManagerDisplayName, Reason, TargetApproverType, Status,
         RequestedAtUtc, ReadAtUtc, DecidedAtUtc, DecisionMakerUserName, DecisionMakerDisplayName, DecisionNote,
         BranchCustomerNotePosted, AssignmentConsumed, AssignedEmployeeId, AssignedEmployeeName,
-        AssignedAtUtc, AssignedByManagerUserName
+        AssignedAtUtc, AssignedByManagerUserName,
+        BranchManagerReviewedAtUtc, BranchManagerReviewerUserName, BranchManagerReviewerDisplayName, BranchManagerReviewNote
         """;
 
     private const string InsertAuditSql = """
@@ -48,6 +49,14 @@ public sealed class SqlSalesExceptionStore : ISalesExceptionStore
             await connection.ExecuteAsync(new CommandDefinition("""
 IF COL_LENGTH(N'dbo.SalesExceptionRequests', N'ReadAtUtc') IS NULL
     ALTER TABLE dbo.SalesExceptionRequests ADD ReadAtUtc DATETIME2(3) NULL;
+IF COL_LENGTH(N'dbo.SalesExceptionRequests', N'BranchManagerReviewedAtUtc') IS NULL
+    ALTER TABLE dbo.SalesExceptionRequests ADD BranchManagerReviewedAtUtc DATETIME2(3) NULL;
+IF COL_LENGTH(N'dbo.SalesExceptionRequests', N'BranchManagerReviewerUserName') IS NULL
+    ALTER TABLE dbo.SalesExceptionRequests ADD BranchManagerReviewerUserName NVARCHAR(100) NULL;
+IF COL_LENGTH(N'dbo.SalesExceptionRequests', N'BranchManagerReviewerDisplayName') IS NULL
+    ALTER TABLE dbo.SalesExceptionRequests ADD BranchManagerReviewerDisplayName NVARCHAR(150) NULL;
+IF COL_LENGTH(N'dbo.SalesExceptionRequests', N'BranchManagerReviewNote') IS NULL
+    ALTER TABLE dbo.SalesExceptionRequests ADD BranchManagerReviewNote NVARCHAR(2000) NULL;
 """, cancellationToken: ct));
         }
         catch
@@ -80,6 +89,10 @@ IF COL_LENGTH(N'dbo.SalesExceptionRequests', N'ReadAtUtc') IS NULL
         row.AssignedEmployeeName = null;
         row.AssignedAtUtc = null;
         row.AssignedByManagerUserName = null;
+        row.BranchManagerReviewedAtUtc = null;
+        row.BranchManagerReviewerUserName = null;
+        row.BranchManagerReviewerDisplayName = null;
+        row.BranchManagerReviewNote = null;
 
         var auditRow = audit.Clone();
         auditRow.ExceptionRequestId = row.Id;
@@ -95,7 +108,8 @@ IF COL_LENGTH(N'dbo.SalesExceptionRequests', N'ReadAtUtc') IS NULL
                     @RequestingManagerUserName, @RequestingManagerDisplayName, @Reason, @TargetApproverType, @Status,
                     @RequestedAtUtc, @ReadAtUtc, @DecidedAtUtc, @DecisionMakerUserName, @DecisionMakerDisplayName, @DecisionNote,
                     @BranchCustomerNotePosted, @AssignmentConsumed, @AssignedEmployeeId, @AssignedEmployeeName,
-                    @AssignedAtUtc, @AssignedByManagerUserName);
+                    @AssignedAtUtc, @AssignedByManagerUserName,
+                    @BranchManagerReviewedAtUtc, @BranchManagerReviewerUserName, @BranchManagerReviewerDisplayName, @BranchManagerReviewNote);
             """, row, cancellationToken: ct));
         await connection.ExecuteAsync(new CommandDefinition(InsertAuditSql, auditRow, cancellationToken: ct));
         return row;
@@ -276,6 +290,92 @@ IF COL_LENGTH(N'dbo.SalesExceptionRequests', N'ReadAtUtc') IS NULL
               AND ReadAtUtc IS NULL
               AND {WrongSaleReasonSql};
             """, new { cityValue = Trimmed(cityValue) }, cancellationToken: ct));
+    }
+
+    public async Task<PagedResult<SalesExceptionRequest>> QueryWrongSalesForBranchManagerAsync(
+        string? cityValue,
+        bool reviewed,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        await EnsureSchemaAsync(ct);
+        var (normalizedPage, normalizedSize) = PagingDefaults.Normalize(page, pageSize);
+        var parameters = new DynamicParameters();
+        parameters.Add("Offset", (normalizedPage - 1) * normalizedSize);
+        parameters.Add("PageSize", normalizedSize);
+        parameters.Add("CityValue", Trimmed(cityValue));
+        parameters.Add("Reviewed", reviewed ? 1 : 0);
+
+        var where = $"""
+            WHERE {WrongSaleReasonSql}
+              AND (@CityValue IS NULL OR CityValue = @CityValue)
+              AND (
+                    (@Reviewed = 1 AND BranchManagerReviewedAtUtc IS NOT NULL)
+                 OR (@Reviewed = 0 AND BranchManagerReviewedAtUtc IS NULL)
+                  )
+            """;
+
+        using var connection = await _factory.OpenAsync(ct);
+        using var grid = await connection.QueryMultipleAsync(new CommandDefinition($"""
+            SELECT {Columns}
+            FROM dbo.SalesExceptionRequests
+            {where}
+            ORDER BY
+                CASE WHEN @Reviewed = 1 THEN BranchManagerReviewedAtUtc ELSE RequestedAtUtc END DESC,
+                Id DESC
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+
+            SELECT COUNT(1) FROM dbo.SalesExceptionRequests {where};
+            """, parameters, cancellationToken: ct));
+
+        var items = (await grid.ReadAsync<SalesExceptionRequest>()).ToList();
+        var total = await grid.ReadSingleAsync<int>();
+        return new PagedResult<SalesExceptionRequest>
+        {
+            Items = items,
+            Page = normalizedPage,
+            PageSize = normalizedSize,
+            TotalCount = total
+        };
+    }
+
+    public async Task<SalesExceptionRequest?> TryMarkBranchManagerReviewedAsync(
+        Guid id,
+        string reviewerUserName,
+        string reviewerDisplayName,
+        string reviewNote,
+        DateTime reviewedAtUtc,
+        CancellationToken ct = default)
+    {
+        await EnsureSchemaAsync(ct);
+        using var connection = await _factory.OpenAsync(ct);
+        var affected = await connection.ExecuteAsync(new CommandDefinition($"""
+            UPDATE dbo.SalesExceptionRequests
+            SET BranchManagerReviewedAtUtc = @reviewedAtUtc,
+                BranchManagerReviewerUserName = @reviewerUserName,
+                BranchManagerReviewerDisplayName = @reviewerDisplayName,
+                BranchManagerReviewNote = @reviewNote
+            WHERE Id = @id
+              AND BranchManagerReviewedAtUtc IS NULL
+              AND {WrongSaleReasonSql};
+            """, new
+        {
+            id,
+            reviewedAtUtc,
+            reviewerUserName,
+            reviewerDisplayName,
+            reviewNote
+        }, cancellationToken: ct));
+
+        if (affected == 0)
+        {
+            return null;
+        }
+
+        return await connection.QuerySingleOrDefaultAsync<SalesExceptionRequest>(new CommandDefinition($"""
+            SELECT {Columns} FROM dbo.SalesExceptionRequests WHERE Id = @id;
+            """, new { id }, cancellationToken: ct));
     }
 
     public async Task<SalesExceptionRequest?> FindActiveBySalesRequestIdAsync(int salesRequestId, CancellationToken ct = default)

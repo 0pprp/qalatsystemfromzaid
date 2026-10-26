@@ -34,6 +34,22 @@ namespace BE_Company.Sales.Tests
         public Task<SalesRequestDTO?> GetByIdIncludingDeletedAsync(int id, CancellationToken ct) =>
             Task.FromResult(Rows.FirstOrDefault(r => r.Id == id));
 
+        public Task<SalesRequestDTO?> GetByExternalCrmOrderUuidAsync(Guid crmOrderUuid, CancellationToken ct) =>
+            Task.FromResult(Rows.FirstOrDefault(r => r.ExternalCrmOrderUuid == crmOrderUuid && !r.IsDeleted));
+
+        public int LastCrmRoundRobinEmployeeId { get; set; }
+
+        public Task<int> NextCrmRoundRobinEmployeeIdAsync(IReadOnlyList<int> employeeIds, CancellationToken ct)
+        {
+            var ordered = employeeIds.Where(id => id > 0).Distinct().OrderBy(id => id).ToList();
+            if (ordered.Count == 0)
+                return Task.FromResult(0);
+            var idx = ordered.FindIndex(id => id == LastCrmRoundRobinEmployeeId);
+            var next = ordered[(idx + 1) % ordered.Count];
+            LastCrmRoundRobinEmployeeId = next;
+            return Task.FromResult(next);
+        }
+
         public Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null, int? take = null)
         {
             IEnumerable<SalesRequestDTO> q = Rows.Where(r => !r.IsDeleted);
@@ -46,6 +62,15 @@ namespace BE_Company.Sales.Tests
             if (take is > 0)
                 q = q.Take(take.Value);
             return Task.FromResult<IReadOnlyList<SalesRequestDTO>>(q.ToList());
+        }
+
+        public Task<IReadOnlyList<SalesRequestDTO>> ListCreatedByEmployeeForSubmittedLogAsync(int createdByUserId, CancellationToken ct)
+        {
+            IEnumerable<SalesRequestDTO> q = Rows.Where(r =>
+                r.CreatedByUserId == createdByUserId
+                && (!r.IsDeleted || (r.IsDeleted && r.Status == "Rejected")));
+            return Task.FromResult<IReadOnlyList<SalesRequestDTO>>(
+                q.OrderByDescending(r => r.CreatedAtUtc).ToList());
         }
 
         public Task<IReadOnlyList<SalesRequestDTO>> ListDeletedAsync(CancellationToken ct) =>
@@ -511,6 +536,95 @@ namespace BE_Company.Sales.Tests
             Assert.Contains(rejected.History, h => h.Event == SalesRequestEvents.ManagerRequestDeleted);
             Assert.Empty(await svc.ListForManagerAsync(SalesRequestStatuses.Rejected, null, null, null, CancellationToken.None));
             Assert.Contains(await svc.ListDeletedForManagerAsync(CancellationToken.None), r => r.Id == created.Id);
+            var submitted = await svc.ListSubmittedByEmployeeAsync(3, CancellationToken.None);
+            Assert.Contains(submitted, r => r.Id == created.Id && r.Status == SalesRequestStatuses.Rejected && r.RejectionReason == "غير مكتمل");
+        }
+
+        [Fact]
+        public async Task Assign_RejectsEmployeeNotInBranchSalesStaff()
+        {
+            var repo = new FakeRequestRepository();
+            var employees = new FakeManagerRead();
+            var svc = new SalesRequestService(repo, new FakeClock(), employees);
+            var created = await svc.CreateAsync(Manager(), new() { Customer = new() { FullName = "علي", Province = "البصرة" } }, CancellationToken.None);
+            created.CityValue = "9";
+            created.CityName = "البصرة";
+            // Client tries to stamp Karbala employee id/name onto Basra request.
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+                svc.AssignAsync(Manager(), created.Id, new SalesRequestAssignDTO
+                {
+                    EmployeeId = 18,
+                    EmployeeName = "رعد جندي سلطان",
+                    CityValue = "9",
+                    CityName = "كربلاء",
+                }, CancellationToken.None));
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains("غير موجود ضمن موظفي مبيعات", ex.Message);
+            var row = await repo.GetByIdAsync(created.Id, CancellationToken.None);
+            Assert.NotNull(row);
+            Assert.Equal(0, row!.TargetEmployeeId);
+            Assert.Equal("البصرة", row.CityName);
+        }
+
+        [Fact]
+        public async Task Assign_RejectsInactiveSalesEmployeeWithClearMessage()
+        {
+            var repo = new FakeRequestRepository();
+            var employees = new FakeManagerRead();
+            employees.Employees.Clear();
+            employees.Employees.Add(new() { EmployeeId = 8, EmployeeName = "test12" });
+            employees.ActiveEmployees = [];
+            var svc = new SalesRequestService(repo, new FakeClock(), employees);
+            var created = await svc.CreateAsync(Manager(), new() { Customer = new() { FullName = "سبونج" } }, CancellationToken.None);
+            var ex = await Assert.ThrowsAsync<SalesCompleteException>(() =>
+                svc.AssignAsync(Manager(), created.Id, new SalesRequestAssignDTO
+                {
+                    EmployeeId = 8,
+                    EmployeeName = "test12",
+                }, CancellationToken.None));
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains("غير مفعّل", ex.Message);
+        }
+
+        [Fact]
+        public async Task Assign_DoesNotOverwriteCityNameFromPayload()
+        {
+            var repo = new FakeRequestRepository();
+            var employees = new FakeManagerRead();
+            var svc = new SalesRequestService(repo, new FakeClock(), employees);
+            var created = await svc.CreateAsync(Manager(), new() { Customer = new() { FullName = "علي" } }, CancellationToken.None);
+            created.CityValue = "9";
+            created.CityName = "البصرة";
+            await repo.UpdateAsync(created, CancellationToken.None);
+            var assigned = await svc.AssignAsync(Manager(), created.Id, new SalesRequestAssignDTO
+            {
+                EmployeeId = 1,
+                EmployeeName = "أحمد",
+                CityValue = "4",
+                CityName = "كربلاء",
+            }, CancellationToken.None);
+            Assert.Equal(1, assigned.TargetEmployeeId);
+            Assert.Equal("أحمد", assigned.TargetEmployeeName);
+            Assert.Equal("البصرة", assigned.CityName);
+            Assert.Equal("9", assigned.CityValue);
+        }
+
+        [Fact]
+        public async Task SoftDelete_AppearsInSubmitterSubmittedLog_WithReason()
+        {
+            var repo = new FakeRequestRepository();
+            var svc = Svc(repo);
+            var created = await svc.SubmitByEmployeeAsync(Employee(12), new SalesRequestCreateDTO
+            {
+                Customer = new() { FullName = "عنجور", Phone = "07854213256", Address = "يللللب" }
+            }, CancellationToken.None);
+            await svc.SoftDeleteAsync(Manager(), created.Id, "11", CancellationToken.None);
+            var submitted = await svc.ListSubmittedByEmployeeAsync(12, CancellationToken.None);
+            var row = Assert.Single(submitted, r => r.Id == created.Id);
+            Assert.Equal(SalesRequestStatuses.Rejected, row.Status);
+            Assert.True(row.IsDeleted);
+            Assert.Equal("11", row.RejectionReason);
+            Assert.Equal("11", row.DeleteReason);
         }
 
         [Fact]

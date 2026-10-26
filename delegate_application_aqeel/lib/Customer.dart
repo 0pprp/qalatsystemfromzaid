@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -12,9 +13,11 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'package:delegate_application/services/receipt_week_amounts.dart';
 import 'package:delegate_application/utils/Formatters.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
 
 class Customer extends StatefulWidget {
   const Customer({super.key});
@@ -300,21 +303,23 @@ class _CustomerState extends State<Customer> {
     }
   }
 
-  Future<void> _deleteDuplicatePaymentsExceptLocation() async {
+  Future<void> _deleteDuplicateClientPaymentIds() async {
     final db = await DatabaseHelper().database;
-    await db.rawQuery('''
-    DELETE FROM CustomerPayment
-    WHERE rowid NOT IN (
-      SELECT MIN(rowid)
-      FROM CustomerPayment
-      GROUP BY
-        CustomerId,
-        CustomerName,
-        DelegateId,
-        DelegateName,
-        Amount
-    )
-  ''');
+    final rows = await db.query('CustomerPayment', columns: ['id', 'ClientPaymentId']);
+    final byKey = <String, List<int>>{};
+    for (final row in rows) {
+      final key = row['ClientPaymentId']?.toString().trim() ?? '';
+      if (key.isEmpty) continue;
+      final id = row['id'] as int;
+      byKey.putIfAbsent(key, () => []).add(id);
+    }
+    for (final ids in byKey.values) {
+      if (ids.length < 2) continue;
+      ids.sort();
+      for (final id in ids.skip(1)) {
+        await db.delete('CustomerPayment', where: 'id = ?', whereArgs: [id]);
+      }
+    }
   }
 
 // دالة لإضافة التسديد
@@ -336,8 +341,8 @@ class _CustomerState extends State<Customer> {
     final db = await DatabaseHelper().database;
     final List<Map<String, dynamic>> existingPayment = await db.query(
       'CustomerPayment',
-      where: 'CustomerId = ? AND DelegateId = ?',
-      whereArgs: [client.customerId, selectedRepresentative],
+      where: 'CustomerId = ? AND DelegateId = ? AND (SyncStatus IS NULL OR SyncStatus != ?)',
+      whereArgs: [client.customerId, selectedRepresentative, 'Synced'],
     );
 
     if (!mounted) return;
@@ -348,6 +353,9 @@ class _CustomerState extends State<Customer> {
       return;
     }
     String? currentLocation = await _getCurrentLocation();
+    final clientPaymentId = const Uuid().v4();
+    final prefs = await SharedPreferences.getInstance();
+    final ownerAsyncId = prefs.getString('AsyncId') ?? '';
     // إضافة التسديد إلى جدول CustomerPayment
     await db.insert('CustomerPayment', {
       'CustomerId': client.customerId,
@@ -357,10 +365,15 @@ class _CustomerState extends State<Customer> {
           rep['DelegateId'].toString() ==
           selectedRepresentative)['DelegateName'],
       'Amount': amount,
-      'Location': currentLocation
+      'Location': currentLocation,
+      'ClientPaymentId': clientPaymentId,
+      'CreatedAtUtc': DateTime.now().toUtc().toIso8601String(),
+      'SyncStatus': 'PendingSync',
+      'PermanentFailure': 0,
+      'OwnerAsyncId': ownerAsyncId,
     });
 
-    await _deleteDuplicatePaymentsExceptLocation();
+    await _deleteDuplicateClientPaymentIds();
 
     // تحديث التسديدات بعد الإضافة
     await _calculatePayments(int.parse(selectedRepresentative!));
@@ -381,15 +394,27 @@ class _CustomerState extends State<Customer> {
     double amountRemaining = client.remaining;
     double amountPush = amount;
     String phoneNumberCompany = client.phoneNumberCompany;
-    List<double> lastSevenAmounts = [
-      client.amount1,
-      client.amount2,
-      client.amount3,
-      client.amount4,
-      client.amount5,
-      client.amount6,
-      client.amount7
-    ];
+    final weekLabels = ReceiptWeekAmounts.ensureDayLabels(lastSevenDays);
+    var lastSevenAmounts = ReceiptWeekAmounts.buildWeekForReceipt(
+      serverAmounts: [
+        client.amount1,
+        client.amount2,
+        client.amount3,
+        client.amount4,
+        client.amount5,
+        client.amount6,
+        client.amount7,
+      ],
+      dayLabels: weekLabels,
+      localPayments: await db.query('CustomerPayment'),
+      customerId: client.customerId,
+      extraPaymentJustSaved: amount,
+      assumeExtraAlreadyInLocalRows: true,
+    );
+    lastSevenAmounts = ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+      weekAmounts: lastSevenAmounts,
+      amountPush: amountPush,
+    );
 
     final report = ReportReceipt(
       customerName: customerName,
@@ -401,7 +426,7 @@ class _CustomerState extends State<Customer> {
       amountRemaining: amountRemaining,
       amountPush: amountPush,
       phoneNumberCompany: phoneNumberCompany,
-      lastSevenDays: lastSevenDays,
+      lastSevenDays: weekLabels,
       lastSevenAmounts: lastSevenAmounts,
       countReceiptDevice: countReceiptDevice,
     );
@@ -834,7 +859,7 @@ class _CustomerState extends State<Customer> {
                     amountPush = 0.0;
                   }
 
-                  List<String> lastSevenDays = [
+                  List<String> lastSevenDays = ReceiptWeekAmounts.ensureDayLabels([
                     "اليوم",
                     "أمس",
                     "قبل يومين",
@@ -842,16 +867,28 @@ class _CustomerState extends State<Customer> {
                     "قبل 4 أيام",
                     "قبل 5 أيام",
                     "قبل 6 أيام"
-                  ];
-                  List<double> lastSevenAmounts = [
-                    client.amount1,
-                    client.amount2,
-                    client.amount3,
-                    client.amount4,
-                    client.amount5,
-                    client.amount6,
-                    client.amount7
-                  ];
+                  ]);
+                  final dbLocal = await DatabaseHelper().database;
+                  var lastSevenAmounts = ReceiptWeekAmounts.buildWeekForReceipt(
+                    serverAmounts: [
+                      client.amount1,
+                      client.amount2,
+                      client.amount3,
+                      client.amount4,
+                      client.amount5,
+                      client.amount6,
+                      client.amount7
+                    ],
+                    dayLabels: lastSevenDays,
+                    localPayments: await dbLocal.query('CustomerPayment'),
+                    customerId: client.customerId,
+                    extraPaymentJustSaved: amountPush,
+                  );
+                  lastSevenAmounts =
+                      ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+                    weekAmounts: lastSevenAmounts,
+                    amountPush: amountPush,
+                  );
 
                   final report = ReportReceipt(
                     customerName: client.name,
@@ -896,57 +933,105 @@ class _CustomerState extends State<Customer> {
   Future<void> sendPaymentsToAPI(int delegateId) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String linkDelegate = prefs.getString('LinkDelegate') ?? '0';
-    bool hasError = false;
+    final db = await DatabaseHelper().database;
 
-    // تجهيز قائمة الدفع كلها دفعة واحدة
-    List<Map<String, dynamic>> paymentsData = payments.map((payment) {
-      return {
+    final pending = await db.query(
+      'CustomerPayment',
+      where:
+          'DelegateId = ? AND (SyncStatus IS NULL OR SyncStatus = ? OR SyncStatus = ?)',
+      whereArgs: [delegateId, 'PendingSync', 'SyncFailed'],
+    );
+    if (pending.isEmpty) return;
+
+    // Prefer idempotent endpoint when ClientPaymentId present; fallback to multi.
+    var allOk = true;
+    for (final payment in pending) {
+      final clientPaymentId =
+          (payment['ClientPaymentId']?.toString() ?? '').trim();
+      final body = {
         "CustomerId": payment['CustomerId'],
         "DelegateId": payment['DelegateId'],
         "Amount": payment['Amount'],
         "Location": payment['Location'],
+        if (clientPaymentId.isNotEmpty) "ClientPaymentId": clientPaymentId,
+        if (payment['CreatedAtUtc'] != null)
+          "CreatedAtUtc": payment['CreatedAtUtc'],
       };
-    }).toList();
 
-    try {
-      final response = await http.post(
-        Uri.parse(
-            '${linkDelegate}CustomersPaymentsRequests/PostSelectPaymentCustomerTemporaryMulti'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode(paymentsData),
-      );
+      try {
+        final uri = clientPaymentId.isNotEmpty
+            ? Uri.parse(
+                '${linkDelegate}CustomersPaymentsRequests/PostPaymentIdempotent')
+            : Uri.parse(
+                '${linkDelegate}CustomersPaymentsRequests/PostSelectPaymentCustomerTemporaryMulti');
+        final response = await http.post(
+          uri,
+          headers: {"Content-Type": "application/json"},
+          body: clientPaymentId.isNotEmpty
+              ? jsonEncode(body)
+              : jsonEncode([body]),
+        );
 
-      if (response.statusCode == 200) {
-        print("All payments sent successfully.");
-      } else {
-        print("Failed to send payments. Status code: ${response.statusCode}");
-        hasError = true;
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          await db.update(
+            'CustomerPayment',
+            {'SyncStatus': 'Synced', 'SyncError': null},
+            where: 'id = ?',
+            whereArgs: [payment['id']],
+          );
+        } else if (response.statusCode == 401 || response.statusCode == 403) {
+          allOk = false;
+          await db.update(
+            'CustomerPayment',
+            {
+              'SyncStatus': 'AwaitingSession',
+              'SyncError': 'SESSION_EXPIRED',
+            },
+            where: 'id = ?',
+            whereArgs: [payment['id']],
+          );
+        } else {
+          allOk = false;
+          await db.update(
+            'CustomerPayment',
+            {
+              'SyncStatus': 'SyncFailed',
+              'SyncError': 'HTTP ${response.statusCode}',
+            },
+            where: 'id = ?',
+            whereArgs: [payment['id']],
+          );
+        }
+      } catch (error) {
+        allOk = false;
+        // Network failure: keep row for retry — never delete.
+        await db.update(
+          'CustomerPayment',
+          {
+            'SyncStatus': 'SyncFailed',
+            'SyncError': 'NETWORK:$error',
+          },
+          where: 'id = ?',
+          whereArgs: [payment['id']],
+        );
       }
-    } catch (error) {
-      print('Error sending payments: $error');
-      hasError = true;
     }
 
-    if (hasError) {
-      await deletePayments(delegateId);
-      print('Error occurred, but payments deleted anyway.');
-    } else {
-      await deletePayments(delegateId);
-      print('All payments were successfully sent and deleted.');
+    if (!allOk) {
+      debugPrint('Some payments remain pending for retry — none deleted.');
     }
 
-    _loadClients(int.parse(selectedRepresentative!));
+    await _loadClients(int.parse(selectedRepresentative!));
   }
 
-  // دالة لمسح التسديدات الخاصة بالمندوب المختار
+  // Soft-delete only Synced rows — never wipe pending financial data.
   Future<void> deletePayments(int delegateId) async {
     final db = await DatabaseHelper().database;
     await db.delete(
       'CustomerPayment',
-      where: 'DelegateId = ?',
-      whereArgs: [delegateId],
+      where: 'DelegateId = ? AND SyncStatus = ?',
+      whereArgs: [delegateId, 'Synced'],
     );
-    print('Deleted all payments for DelegateId: $delegateId');
   }
 
   Future<void> _sendPayments(BuildContext context) async {
@@ -973,10 +1058,20 @@ class _CustomerState extends State<Customer> {
         setState(() {
           isButtonDisabled = false;
         });
+        final unresolved = await DatabaseHelper().countUnresolvedPayments();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إرسال جميع التسديدات بنجاح')),
+          SnackBar(
+            content: Text(
+              unresolved == 0
+                  ? 'تم إرسال جميع التسديدات بنجاح'
+                  : 'أُرسل جزء من التسديدات؛ بقي $unresolved بانتظار إعادة المحاولة',
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+          ),
         );
-        Navigator.pop(context);
+        if (unresolved == 0) {
+          Navigator.pop(context);
+        }
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1306,7 +1401,7 @@ class _CustomerState extends State<Customer> {
                         child: ElevatedButton.icon(
                           onPressed: () async {
                             if (selectedRepresentative != null) {
-                              await _deleteDuplicatePaymentsExceptLocation();
+                              await _deleteDuplicateClientPaymentIds();
                               if (!mounted) return;
                               searchQueryReceipt = '';
                               _loadPayments(int.parse(selectedRepresentative!));
@@ -2125,7 +2220,7 @@ class _PaymentsListState extends State<PaymentsList> {
           amountPush = 0.0;
         }
 
-        List<String> lastSevenDays = [
+        List<String> lastSevenDays = ReceiptWeekAmounts.ensureDayLabels([
           "اليوم",
           "أمس",
           "قبل يومين",
@@ -2133,16 +2228,27 @@ class _PaymentsListState extends State<PaymentsList> {
           "قبل 4 أيام",
           "قبل 5 أيام",
           "قبل 6 أيام"
-        ];
-        List<double> lastSevenAmounts = [
-          client.amount1,
-          client.amount2,
-          client.amount3,
-          client.amount4,
-          client.amount5,
-          client.amount6,
-          client.amount7
-        ];
+        ]);
+        final dbLocal = await DatabaseHelper().database;
+        var lastSevenAmounts = ReceiptWeekAmounts.buildWeekForReceipt(
+          serverAmounts: [
+            client.amount1,
+            client.amount2,
+            client.amount3,
+            client.amount4,
+            client.amount5,
+            client.amount6,
+            client.amount7
+          ],
+          dayLabels: lastSevenDays,
+          localPayments: await dbLocal.query('CustomerPayment'),
+          customerId: client.customerId,
+          extraPaymentJustSaved: amountPush,
+        );
+        lastSevenAmounts = ReceiptWeekAmounts.guaranteeTodayShowsPayment(
+          weekAmounts: lastSevenAmounts,
+          amountPush: amountPush,
+        );
 
         final report = ReportReceipt(
           customerName: client.name,

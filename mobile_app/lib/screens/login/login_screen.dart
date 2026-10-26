@@ -6,8 +6,13 @@ import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../animations/widget_animations.dart';
 
+typedef CitiesLoader = Future<List<Map<String, String>>> Function();
+
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.citiesLoader});
+
+  /// When set (e.g. widget tests), skips live Dio HTTP to defaultdata.alsaaeidy.com.
+  final CitiesLoader? citiesLoader;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -47,6 +52,25 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   }
 
   Future<void> _fetchCities() async {
+    if (widget.citiesLoader != null) {
+      try {
+        final loaded = await widget.citiesLoader!();
+        if (!mounted) return;
+        setState(() {
+          _cities = loaded;
+          _isLoadingCities = false;
+          _citiesError = loaded.isEmpty ? 'لا توجد محافظات' : null;
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _citiesError = 'فشل تحميل المحافظات - تحقق من الاتصال بالإنترنت';
+          _isLoadingCities = false;
+        });
+      }
+      return;
+    }
+
     try {
       final dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 10),

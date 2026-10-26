@@ -312,9 +312,10 @@ public sealed class SalesExceptionServiceTests
         var (service, _) = CreateService();
         var id = await CreatePendingAsync(service);
         var (outcome, detail, error) = await service.GetEnrichedDetailAsync(id);
-        Assert.Equal(SalesExceptionOutcome.Invalid, outcome);
+        // Missing SalesRequestId opens the exception anyway (GetEnrichedDetailAsync WrongSale / no-id path).
+        Assert.Equal(SalesExceptionOutcome.Success, outcome);
         Assert.NotNull(detail);
-        Assert.Contains("طلب البيع الأصلي", error);
+        Assert.Null(error);
         Assert.Null(detail!.Review);
     }
 
@@ -330,6 +331,46 @@ public sealed class SalesExceptionServiceTests
         Assert.NotNull(second.Request);
         Assert.Equal(first.Request!.Id, second.Request!.Id);
         Assert.Contains("نشط", second.Error);
+    }
+
+    [Fact]
+    public async Task BranchManagerReview_WrongSale_RequiresNote_AndMovesToReviewedList()
+    {
+        var (service, _) = CreateService();
+        var created = await service.CreateAsync(
+            Manager(),
+            new CreateSalesExceptionInput
+            {
+                Reason = "مبيعات خاطئة — تقييم المتجر منخفض",
+                CustomerId = 880,
+                CustomerName = "زبون خاطئ",
+                CityValue = "najaf-demo",
+                CityName = "النجف"
+            });
+        Assert.True(created.Ok);
+        var id = created.Request!.Id;
+
+        var pending = await service.ListWrongSalesForBranchManagerAsync("najaf-demo", reviewed: false, 1, 20);
+        Assert.Contains(pending.Items, r => r.Id == id);
+
+        var missingNote = await service.MarkBranchManagerReviewedAsync(id, "bm1", "مدير فرع", " ");
+        Assert.Equal(SalesExceptionOutcome.Invalid, missingNote.Outcome);
+
+        var reviewed = await service.MarkBranchManagerReviewedAsync(
+            id, "bm1", "مدير فرع النجف", "راجعت الملف واتصلت بالزبون");
+        Assert.True(reviewed.Ok);
+        Assert.NotNull(reviewed.Request!.BranchManagerReviewedAtUtc);
+        Assert.Equal("مدير فرع النجف", reviewed.Request.BranchManagerReviewerDisplayName);
+        Assert.Equal("راجعت الملف واتصلت بالزبون", reviewed.Request.BranchManagerReviewNote);
+
+        var pendingAfter = await service.ListWrongSalesForBranchManagerAsync("najaf-demo", reviewed: false, 1, 20);
+        Assert.DoesNotContain(pendingAfter.Items, r => r.Id == id);
+
+        var done = await service.ListWrongSalesForBranchManagerAsync("najaf-demo", reviewed: true, 1, 20);
+        Assert.Contains(done.Items, r => r.Id == id);
+
+        var again = await service.MarkBranchManagerReviewedAsync(id, "bm1", "مدير فرع", "ملاحظة أخرى");
+        Assert.Equal(SalesExceptionOutcome.Conflict, again.Outcome);
     }
 
     [Fact]
@@ -366,9 +407,10 @@ public sealed class SalesExceptionServiceTests
         var aggregator = new FakeReviewAggregator { Status = 404 };
         var service = new SalesExceptionService(new InMemorySalesExceptionStore(), notes, aggregator: aggregator);
         var created = await service.CreateAsync(Manager(), Input(salesRequestId: 99));
-        var (outcome, _, error) = await service.GetEnrichedDetailAsync(created.Request!.Id);
-        Assert.Equal(SalesExceptionOutcome.Invalid, outcome);
-        Assert.Contains("طلب البيع الأصلي", error);
+        var (outcome, detail, error) = await service.GetEnrichedDetailAsync(created.Request!.Id);
+        Assert.Equal(SalesExceptionOutcome.Success, outcome);
+        Assert.Null(error);
+        Assert.Contains("طلب البيع الأصلي", detail!.ReviewError);
     }
 
     private sealed class FakeReviewAggregator : ISalesManagerBranchAggregator
@@ -410,7 +452,7 @@ public sealed class SalesExceptionServiceTests
             Task.FromResult<(int, object?)>((501, null));
         public Task<(int Status, object? Body)> PostAsync(GatewayUser user, string cityValue, string companyPath, string jsonBody, CancellationToken ct) =>
             Task.FromResult<(int, object?)>((501, null));
-        public Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct) =>
+        public Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct, string? actorRole = null) =>
             Task.FromResult<(int, object?)>((501, null));
         public Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, string? cityValue, CancellationToken ct) =>
             Task.FromResult<(int, object?)>((501, null));

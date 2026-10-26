@@ -7,12 +7,19 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterActivityLaunchConfigs
+import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 class MainActivity : FlutterActivity() {
     private var pendingApkPath: String? = null
+
+    override fun getRenderMode(): RenderMode = RenderMode.texture
+
+    override fun getBackgroundMode(): FlutterActivityLaunchConfigs.BackgroundMode =
+        FlutterActivityLaunchConfigs.BackgroundMode.opaque
 
     override fun onResume() {
         super.onResume()
@@ -96,7 +103,7 @@ class MainActivity : FlutterActivity() {
             return mapOf(
                 "ok" to false,
                 "code" to "need_permission",
-                "message" to "فعّل السماح بتثبيت التطبيقات من مصدر مدير الفرع ثم ارجع للتطبيق",
+                "message" to "فعّل السماح بتثبيت التطبيقات من مصدر تطبيق إدارة الفرع ثم ارجع للتطبيق",
             )
         }
 

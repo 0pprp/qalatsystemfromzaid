@@ -19,6 +19,9 @@ namespace BE_Company.Sales.Authorization
         public const string FilterUserNameB64Header = "X-Sales-Filter-User-Name-B64";
         public const string FilterExternalUserIdHeader = "X-Sales-Filter-External-User-Id";
         public const string FilterRoleHeader = "X-Sales-Filter-Role";
+        /// <summary>Optional actor role for trusted gateway calls (e.g. Monitor for legal conversion review).</summary>
+        public const string ActorRoleHeader = "X-Sales-Actor-Role";
+        public const string ActorRoleMonitor = "Monitor";
         public const string AuthSourceClaim = "AuthSource";
         public const string AuthSourceGateway = "Gateway";
         public const string ExternalUserIdClaim = "ExternalUserId";
@@ -52,18 +55,23 @@ namespace BE_Company.Sales.Authorization
             }
 
             var isFilter = IsFilterRequest(Request.Headers);
+            var isMonitorActor = IsMonitorActor(Request.Headers);
             var name = isFilter
                 ? ResolveFilterName(Request.Headers)
                 : ResolveManagerName(Request.Headers);
             var externalId = isFilter ? ResolveExternalUserId(Request.Headers) : "";
 
+            var userType = isFilter
+                ? SalesRoles.UserTypeSalesFilterEmployee
+                : isMonitorActor
+                    ? "المراقب"
+                    : SalesRoles.UserTypeSalesManager;
+
             var claims = new List<Claim>
             {
                 new("UserID", "0"),
                 new("UserName", name),
-                new("UserType", isFilter
-                    ? SalesRoles.UserTypeSalesFilterEmployee
-                    : SalesRoles.UserTypeSalesManager),
+                new("UserType", userType),
                 new(AuthSourceClaim, AuthSourceGateway)
             };
             if (!string.IsNullOrWhiteSpace(externalId))
@@ -80,6 +88,10 @@ namespace BE_Company.Sales.Authorization
             headers.ContainsKey(FilterUserNameB64Header)
             || headers.ContainsKey(FilterRoleHeader)
             || headers.ContainsKey(FilterExternalUserIdHeader);
+
+        private static bool IsMonitorActor(IHeaderDictionary headers) =>
+            headers.TryGetValue(ActorRoleHeader, out var role)
+            && string.Equals(role.ToString().Trim(), ActorRoleMonitor, StringComparison.OrdinalIgnoreCase);
 
         private static string ResolveExternalUserId(IHeaderDictionary headers)
         {

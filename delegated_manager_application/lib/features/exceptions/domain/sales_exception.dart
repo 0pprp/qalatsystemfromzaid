@@ -19,6 +19,10 @@ class ExceptionSummary {
     this.requestKind,
     this.readAtUtc,
     this.isUnread = false,
+    this.isBranchManagerReviewed = false,
+    this.branchManagerReviewedAtUtc,
+    this.branchManagerReviewerDisplayName,
+    this.branchManagerReviewNote,
   });
 
   final String id;
@@ -36,6 +40,10 @@ class ExceptionSummary {
   final String? requestKind;
   final DateTime? readAtUtc;
   final bool isUnread;
+  final bool isBranchManagerReviewed;
+  final DateTime? branchManagerReviewedAtUtc;
+  final String? branchManagerReviewerDisplayName;
+  final String? branchManagerReviewNote;
 
   factory ExceptionSummary.fromJson(Map<String, dynamic> json) {
     final wrong = JsonRead.flag(json['isWrongSale']) ||
@@ -44,6 +52,10 @@ class ExceptionSummary {
     final unreadFlag = json.containsKey('isUnread')
         ? JsonRead.flag(json['isUnread'])
         : readAt == null;
+    final reviewedAt = AppDate.parseUtc(json['branchManagerReviewedAtUtc']);
+    final reviewedFlag = json.containsKey('isBranchManagerReviewed')
+        ? JsonRead.flag(json['isBranchManagerReviewed'])
+        : reviewedAt != null;
     return ExceptionSummary(
       id: JsonRead.text(json['id']),
       status: JsonRead.text(json['status']),
@@ -63,6 +75,13 @@ class ExceptionSummary {
       readAtUtc: readAt,
       // WrongSale defaults to unread until opened; Hold keeps visual calm.
       isUnread: wrong ? unreadFlag : false,
+      isBranchManagerReviewed: wrong && reviewedFlag,
+      branchManagerReviewedAtUtc: reviewedAt,
+      branchManagerReviewerDisplayName: JsonRead.optionalText(
+          json['branchManagerReviewerDisplayName'] ??
+              json['branchManagerReviewerUserName']),
+      branchManagerReviewNote:
+          JsonRead.optionalText(json['branchManagerReviewNote']),
     );
   }
 }
@@ -77,6 +96,10 @@ class ExceptionRequest {
     this.decisionMakerDisplayName,
     this.decisionNote,
     this.branchCustomerNotePosted = false,
+    this.branchManagerReviewerDisplayName,
+    this.branchManagerReviewNote,
+    this.branchManagerReviewedAtUtc,
+    this.isBranchManagerReviewed = false,
   });
 
   final ExceptionSummary summary;
@@ -87,6 +110,10 @@ class ExceptionRequest {
   final String? decisionMakerDisplayName;
   final String? decisionNote;
   final bool branchCustomerNotePosted;
+  final String? branchManagerReviewerDisplayName;
+  final String? branchManagerReviewNote;
+  final DateTime? branchManagerReviewedAtUtc;
+  final bool isBranchManagerReviewed;
 
   String get id => summary.id;
   String get status => summary.status;
@@ -95,21 +122,37 @@ class ExceptionRequest {
       (reason ?? '').contains('مبيعات خاطئة') ||
       (reason ?? '').contains('تقييم المتجر');
 
-  factory ExceptionRequest.fromJson(Map<String, dynamic> json) =>
-      ExceptionRequest(
-        summary: ExceptionSummary.fromJson(json),
-        customerPhone: JsonRead.optionalText(json['customerPhone']),
-        requestingManagerUserName:
-            JsonRead.optionalText(json['requestingManagerUserName']),
-        reason: JsonRead.optionalText(json['reason']),
-        decisionMakerUserName:
-            JsonRead.optionalText(json['decisionMakerUserName']),
-        decisionMakerDisplayName:
-            JsonRead.optionalText(json['decisionMakerDisplayName']),
-        decisionNote: JsonRead.optionalText(json['decisionNote']),
-        branchCustomerNotePosted:
-            JsonRead.flag(json['branchCustomerNotePosted']),
-      );
+  factory ExceptionRequest.fromJson(Map<String, dynamic> json) {
+    final summary = ExceptionSummary.fromJson(json);
+    final reviewedAt = AppDate.parseUtc(json['branchManagerReviewedAtUtc']);
+    final reviewedFlag = json.containsKey('isBranchManagerReviewed')
+        ? JsonRead.flag(json['isBranchManagerReviewed'])
+        : reviewedAt != null || summary.isBranchManagerReviewed;
+    return ExceptionRequest(
+      summary: summary,
+      customerPhone: JsonRead.optionalText(json['customerPhone']),
+      requestingManagerUserName:
+          JsonRead.optionalText(json['requestingManagerUserName']),
+      reason: JsonRead.optionalText(json['reason']),
+      decisionMakerUserName:
+          JsonRead.optionalText(json['decisionMakerUserName']),
+      decisionMakerDisplayName:
+          JsonRead.optionalText(json['decisionMakerDisplayName']),
+      decisionNote: JsonRead.optionalText(json['decisionNote']),
+      branchCustomerNotePosted:
+          JsonRead.flag(json['branchCustomerNotePosted']),
+      branchManagerReviewerDisplayName: JsonRead.optionalText(
+          json['branchManagerReviewerDisplayName'] ??
+              json['branchManagerReviewerUserName'] ??
+              summary.branchManagerReviewerDisplayName),
+      branchManagerReviewNote: JsonRead.optionalText(
+              json['branchManagerReviewNote']) ??
+          summary.branchManagerReviewNote,
+      branchManagerReviewedAtUtc:
+          reviewedAt ?? summary.branchManagerReviewedAtUtc,
+      isBranchManagerReviewed: reviewedFlag,
+    );
+  }
 
   bool get isUnread => summary.isUnread;
 }

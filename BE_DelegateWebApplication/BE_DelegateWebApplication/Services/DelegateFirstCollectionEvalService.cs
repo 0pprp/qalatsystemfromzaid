@@ -41,6 +41,7 @@ public sealed class DelegateFirstCollectionEvalService : IDelegateFirstCollectio
 {
     private readonly string _cs;
     private static int _schemaReady;
+    private static readonly SemaphoreSlim SchemaGate = new(1, 1);
 
     public DelegateFirstCollectionEvalService(IConfiguration configuration)
     {
@@ -51,7 +52,25 @@ public sealed class DelegateFirstCollectionEvalService : IDelegateFirstCollectio
     public async Task EnsureSchemaAsync(CancellationToken ct = default)
     {
         if (Volatile.Read(ref _schemaReady) == 1) return;
+        await SchemaGate.WaitAsync(ct);
+        try
+        {
+            if (Volatile.Read(ref _schemaReady) == 1) return;
+            await EnsureSchemaCoreAsync(ct);
+            Volatile.Write(ref _schemaReady, 1);
+        }
+        finally
+        {
+            SchemaGate.Release();
+        }
+    }
+
+    private async Task EnsureSchemaCoreAsync(CancellationToken ct)
+    {
         await using var c = new SqlConnection(_cs);
+        // ALTER TABLE must run via dynamic SQL: SQL Server compiles static ALTER in the
+        // same batch even when IF COL_LENGTH is false, which throws when columns already exist
+        // and leaves _schemaReady=0 so every APK submit retries DDL under lock pressure.
         await c.ExecuteAsync(new CommandDefinition(@"
 IF OBJECT_ID(N'dbo.DelegateFirstCollectionEvaluations', N'U') IS NULL
 BEGIN
@@ -68,11 +87,46 @@ BEGIN
         SaleAmount DECIMAL(18,0) NULL,
         CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_DFCE_At DEFAULT (SYSUTCDATETIME())
     );
-    CREATE UNIQUE INDEX UX_DFCE_Customer ON dbo.DelegateFirstCollectionEvaluations (CustomerId);
-    CREATE INDEX IX_DFCE_Delegate ON dbo.DelegateFirstCollectionEvaluations (DelegateId, CreatedAtUtc DESC);
 END
-", cancellationToken: ct));
-        Volatile.Write(ref _schemaReady, 1);
+
+IF OBJECT_ID(N'dbo.DelegateFirstCollectionEvaluations', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.DelegateFirstCollectionEvaluations', N'ListId') IS NULL
+        EXEC(N'ALTER TABLE dbo.DelegateFirstCollectionEvaluations ADD ListId INT NOT NULL CONSTRAINT DF_DFCE_ListId DEFAULT (0)');
+    IF COL_LENGTH(N'dbo.DelegateFirstCollectionEvaluations', N'DelegateId') IS NULL
+        EXEC(N'ALTER TABLE dbo.DelegateFirstCollectionEvaluations ADD DelegateId INT NOT NULL CONSTRAINT DF_DFCE_DelegateId DEFAULT (0)');
+    IF COL_LENGTH(N'dbo.DelegateFirstCollectionEvaluations', N'DelegateName') IS NULL
+        EXEC(N'ALTER TABLE dbo.DelegateFirstCollectionEvaluations ADD DelegateName NVARCHAR(200) NULL');
+    IF COL_LENGTH(N'dbo.DelegateFirstCollectionEvaluations', N'Rating') IS NULL
+        EXEC(N'ALTER TABLE dbo.DelegateFirstCollectionEvaluations ADD Rating INT NOT NULL CONSTRAINT DF_DFCE_Rating DEFAULT (1)');
+    IF COL_LENGTH(N'dbo.DelegateFirstCollectionEvaluations', N'Note') IS NULL
+        EXEC(N'ALTER TABLE dbo.DelegateFirstCollectionEvaluations ADD Note NVARCHAR(1000) NULL');
+    IF COL_LENGTH(N'dbo.DelegateFirstCollectionEvaluations', N'ShopStockEstimatedValue') IS NULL
+        EXEC(N'ALTER TABLE dbo.DelegateFirstCollectionEvaluations ADD ShopStockEstimatedValue DECIMAL(18,0) NOT NULL CONSTRAINT DF_DFCE_Stock DEFAULT (0)');
+    IF COL_LENGTH(N'dbo.DelegateFirstCollectionEvaluations', N'EstimatedDailyRevenue') IS NULL
+        EXEC(N'ALTER TABLE dbo.DelegateFirstCollectionEvaluations ADD EstimatedDailyRevenue DECIMAL(18,0) NOT NULL CONSTRAINT DF_DFCE_Daily DEFAULT (0)');
+    IF COL_LENGTH(N'dbo.DelegateFirstCollectionEvaluations', N'SaleAmount') IS NULL
+        EXEC(N'ALTER TABLE dbo.DelegateFirstCollectionEvaluations ADD SaleAmount DECIMAL(18,0) NULL');
+    IF COL_LENGTH(N'dbo.DelegateFirstCollectionEvaluations', N'CreatedAtUtc') IS NULL
+        EXEC(N'ALTER TABLE dbo.DelegateFirstCollectionEvaluations ADD CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_DFCE_At2 DEFAULT (SYSUTCDATETIME())');
+
+    IF NOT EXISTS (
+        SELECT 1 FROM sys.indexes
+        WHERE name = N'UX_DFCE_Customer'
+          AND object_id = OBJECT_ID(N'dbo.DelegateFirstCollectionEvaluations'))
+    BEGIN
+        EXEC(N'CREATE UNIQUE INDEX UX_DFCE_Customer ON dbo.DelegateFirstCollectionEvaluations (CustomerId)');
+    END
+
+    IF NOT EXISTS (
+        SELECT 1 FROM sys.indexes
+        WHERE name = N'IX_DFCE_Delegate'
+          AND object_id = OBJECT_ID(N'dbo.DelegateFirstCollectionEvaluations'))
+    BEGIN
+        EXEC(N'CREATE INDEX IX_DFCE_Delegate ON dbo.DelegateFirstCollectionEvaluations (DelegateId, CreatedAtUtc DESC)');
+    END
+END
+", cancellationToken: ct, commandTimeout: 30));
     }
 
     /// <summary>

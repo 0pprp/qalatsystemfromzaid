@@ -23,9 +23,10 @@ public sealed class StaffReviewRulesTests
     [Fact]
     public void Score_rules_match_sale_reviews()
     {
-        Assert.NotNull(StaffReviewRules.ValidateScoreAndNote(9, null));
+        // SaleReviewRules: note optional when score >= OptionalNoteMinScore (7).
+        Assert.Null(StaffReviewRules.ValidateScoreAndNote(9, null));
         Assert.Null(StaffReviewRules.ValidateScoreAndNote(9, "ممتاز"));
-        Assert.Null(StaffReviewRules.ValidateScoreAndNote(4, null));
+        Assert.NotNull(StaffReviewRules.ValidateScoreAndNote(4, null));
     }
 
     [Fact]

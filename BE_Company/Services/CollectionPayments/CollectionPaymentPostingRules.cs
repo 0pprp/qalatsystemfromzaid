@@ -3,25 +3,20 @@ using BE_Company.Sales.Services;
 namespace BE_Company.Services.CollectionPayments
 {
     /// <summary>
-    /// 16:00 Asia/Baghdad posting gate for collection payments (mirrors DelegateWeb rules).
-    /// Eligibility is based on CreatedAtUtc, never ReceivedAtUtc.
+    /// Collection payment posting eligibility (mirrors DelegateWeb).
+    /// Immediate at CreatedAtUtc — 16:00 Baghdad gate removed.
     /// </summary>
     public static class CollectionPaymentPostingRules
     {
+        /// <summary>Legacy constant — gate removed.</summary>
         public static readonly TimeSpan PostingTimeBaghdad = TimeSpan.FromHours(16);
+        /// <summary>Deploy verify marker — posting eligibility is immediate at create.</summary>
+        public const string EligibilityMode = "ImmediateAtCreatedUtc";
         public const double MinAmountIqd = 2000d;
 
         public static DateTime ComputeEligibleForPostingAtUtc(DateTime createdAtUtc)
         {
-            var utc = DateTime.SpecifyKind(createdAtUtc.ToUniversalTime(), DateTimeKind.Utc);
-            var baghdad = IraqTimeService.ToIraq(utc);
-            if (baghdad.TimeOfDay < PostingTimeBaghdad)
-            {
-                var gate = baghdad.Date.Add(PostingTimeBaghdad);
-                return IraqTimeService.ToUtcFromIraq(gate);
-            }
-
-            return utc;
+            return DateTime.SpecifyKind(createdAtUtc.ToUniversalTime(), DateTimeKind.Utc);
         }
 
         public static bool IsEligible(DateTime eligibleForPostingAtUtc, DateTime utcNow) =>

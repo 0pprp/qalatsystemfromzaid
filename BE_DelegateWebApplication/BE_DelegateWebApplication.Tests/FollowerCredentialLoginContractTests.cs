@@ -179,6 +179,19 @@ namespace BE_DelegateWebApplication.Tests
             Assert.DoesNotContain("غير مفعّل كمتابع", FollowerAuthMessages.Inactive);
         }
 
+        [Fact]
+        public void PasswordHasher_AcceptsPbkdf2AndPlaintext()
+        {
+            const string plain = "secret123";
+            Assert.True(Utilities.PasswordHasher.Verify(plain, plain, out var upgradePlain));
+            Assert.True(upgradePlain);
+            var hashed = Utilities.PasswordHasher.Hash(plain);
+            Assert.True(Utilities.PasswordHasher.IsHashed(hashed));
+            Assert.True(Utilities.PasswordHasher.Verify(plain, hashed, out var upgradeHash));
+            Assert.False(upgradeHash);
+            Assert.False(Utilities.PasswordHasher.Verify("wrong", hashed, out _));
+        }
+
         /// <summary>Mirrors FollowerIdentityService.EvaluateRow without DB.</summary>
         private static FollowerAuthOutcome Evaluate(FollowerUserIdentity? row)
         {

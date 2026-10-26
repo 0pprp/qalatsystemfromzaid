@@ -2,7 +2,7 @@ name: delegated_manager_application
 description: تطبيق المدير المفوض — الرسائل والشكاوى وطلبات الاستثناء.
 
 publish_to: "none"
-version: 1.0.15+19
+version: 1.0.19+23
 
 environment:
   sdk: ^3.5.0

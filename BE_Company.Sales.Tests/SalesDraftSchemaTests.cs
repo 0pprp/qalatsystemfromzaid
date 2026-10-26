@@ -16,11 +16,13 @@ namespace BE_Company.Sales.Tests
                     SalesDraftSchema.AddPostingColumnsSql,
                     SalesDraftSchema.BackfillPostingSql,
                     SalesDraftSchema.PostingIndexesSql,
-                    SalesDraftSchema.AddWizardStepSql
+                    SalesDraftSchema.AddWizardStepSql,
+                    SalesDraftSchema.AddCustomerSaleIdSql
                 },
                 SalesDraftSchema.Commands);
 
-            Assert.Equal(5, SalesDraftSchema.Commands.Count);
+            // SalesDraftSchema.Commands includes AddCustomerSaleIdSql as its own batch (see SalesDraftSchema.cs).
+            Assert.Equal(6, SalesDraftSchema.Commands.Count);
         }
 
         [Fact]
@@ -116,6 +118,8 @@ namespace BE_Company.Sales.Tests
                         commands.IndexOf(SalesDraftSchema.PostingIndexesSql));
             Assert.True(commands.IndexOf(SalesDraftSchema.PostingIndexesSql) <
                         commands.IndexOf(SalesDraftSchema.AddWizardStepSql));
+            Assert.True(commands.IndexOf(SalesDraftSchema.AddWizardStepSql) <
+                        commands.IndexOf(SalesDraftSchema.AddCustomerSaleIdSql));
         }
 
         private static bool AddsPostingColumn(string sql) =>

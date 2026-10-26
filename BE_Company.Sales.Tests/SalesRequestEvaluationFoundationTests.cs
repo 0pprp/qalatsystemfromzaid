@@ -95,6 +95,29 @@ public class SalesRequestNameSimilarityTests
             "تطابق اسم الأب والجد",
             SalesRequestNameSimilarity.FatherGrandfatherMatchReason("صادق جعفر حنيو", "علي جعفر حنيو"));
     }
+
+    [Theory]
+    [InlineData("حسين أحمد محمد", "أحمد محمد علي")] // son → father
+    [InlineData("أحمد محمد علي", "حسين أحمد محمد")] // father → son (reverse)
+    [InlineData("حسين أحمد محمد علي", "أحمد محمد")] // son 4 tokens, father 2
+    [InlineData("حسين أحمد محمّد", "احمد محمد علي")] // normalization
+    public void SonFather_Matches_SecondThird_To_FirstSecond(string query, string candidate)
+    {
+        Assert.True(SalesRequestNameSimilarity.IsSonFatherMatch(query, candidate));
+        Assert.Equal(
+            "تطابق ابن مع أب",
+            SalesRequestNameSimilarity.SonFatherMatchReason(query, candidate));
+    }
+
+    [Theory]
+    [InlineData("حسين أحمد محمد", "أحمد علي محمد")] // wrong middle
+    [InlineData("حسين أحمد", "أحمد محمد علي")] // query needs 3 for son side
+    [InlineData("حسين أحمد محمد", "أحمد")] // candidate too short
+    [InlineData("سارة حسن محمد", "أحمد حسن محمد")] // kinship not son-father
+    public void SonFather_Rejects_NonMatching(string query, string candidate)
+    {
+        Assert.False(SalesRequestNameSimilarity.IsSonFatherMatch(query, candidate));
+    }
 }
 
 public class SalesRequestEvaluationRatingAggregateTests
@@ -133,6 +156,18 @@ public class SalesRequestEvaluationRatingAggregateTests
             kinship: (CustomerRatingLevel.Rejected, -5));
         Assert.Equal(CustomerRatingLevel.Rejected, overall!.Value.Level);
         Assert.Equal(-5, overall.Value.Score);
+    }
+
+    [Fact]
+    public void Overall_Includes_SonFather_In_Worst()
+    {
+        var overall = SalesRequestEvaluationAggregator.Overall(
+            triple: (CustomerRatingLevel.Excellent, 10),
+            phone: null,
+            kinship: null,
+            sonFather: (CustomerRatingLevel.Bad, -10));
+        Assert.Equal(CustomerRatingLevel.Bad, overall!.Value.Level);
+        Assert.Equal(-10, overall.Value.Score);
     }
 
     [Fact]

@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  push:
+    branches: [main, demo, 'security/**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Restore & test Company
+        run: |
+          dotnet restore BE_Company/BE_Company.csproj
+          dotnet test BE_Company.Tests/BE_Company.Tests.csproj --no-restore --logger "trx;LogFileName=company.trx"
+          dotnet test BE_Company.Sales.Tests/BE_Company.Sales.Tests.csproj --logger "trx;LogFileName=company-sales.trx"
+      - name: Restore & test SalesEmployee
+        run: |
+          dotnet restore BE_SalesEmployee/BE_SalesEmployee.csproj
+          dotnet test BE_SalesEmployee.Tests/BE_SalesEmployee.Tests.csproj --logger "trx;LogFileName=salesemployee.trx"
+      - name: Restore & test Delegate
+        run: |
+          dotnet restore BE_DelegateWebApplication/BE_DelegateWebApplication/BE_DelegateWebApplication.csproj
+          dotnet test BE_DelegateWebApplication/BE_DelegateWebApplication.Tests/BE_DelegateWebApplication.Tests.csproj --logger "trx;LogFileName=delegate.trx"
+      - name: Secret scan
+        shell: pwsh
+        run: |
+          if (Test-Path tools/secret-scan.ps1) { ./tools/secret-scan.ps1 } else { Write-Host "secret-scan.ps1 missing — skip" }
+
+  flutter-delegate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.1'
+      - name: Delegate tests
+        working-directory: delegate_application
+        run: |
+          flutter pub get
+          flutter analyze --no-fatal-infos
+          flutter test --no-pub
+      - name: Note
+        run: echo "flutter test success != release APK build. Release requires key.properties (F14)."
+
+  migrations-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Migration files present
+        run: |
+          test -f DatabaseScripts/Migrations/20261005_SchemaMigrations_Ledger.sql
+          test -f DatabaseScripts/Migrations/20261005_CustomersSales_Create_ScopeIdentity_Txn.sql
+          test -f DatabaseScripts/Migrations/20261005_GetCustomersDelegateAll_ExplicitColumns.sql
+          echo "Migration scripts present (apply only on isolated DBs — not executed here)."

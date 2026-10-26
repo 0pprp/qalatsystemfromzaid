@@ -16,9 +16,12 @@ export const getComputedNavLinkToProp = computed(() => link => {
 
 
   // If route is string => it assumes string is route name => Create route object from route name
-  // If route is not string => It assumes it's route object => returns passed route object
-  if (link.to)
-    props.to = typeof link.to === 'string' ? { name: link.to } : link.to
+  // If route is function => call it (e.g. preserve city query)
+  // If route is object => returns passed route object
+  if (link.to) {
+    const raw = typeof link.to === 'function' ? link.to() : link.to
+    props.to = typeof raw === 'string' ? { name: raw } : raw
+  }
   else
     props.href = link.href
   
@@ -34,10 +37,11 @@ export const getComputedNavLinkToProp = computed(() => link => {
 export const resolveNavLinkRouteName = (link, router) => {
   if (!link.to)
     return null
-  if (typeof link.to === 'string')
-    return link.to
+  const raw = typeof link.to === 'function' ? link.to() : link.to
+  if (typeof raw === 'string')
+    return raw
   
-  return router.resolve(link.to).name
+  return router.resolve(raw).name
 }
 
 /**

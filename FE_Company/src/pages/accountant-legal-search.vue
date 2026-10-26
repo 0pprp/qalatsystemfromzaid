@@ -3,6 +3,11 @@ import { computed, ref } from 'vue'
 import axios from 'axios'
 import * as XLSX from 'xlsx'
 import { useToast } from '@/composables/useToast'
+import {
+  formatHiddenFinancial,
+  shouldHidePaidRemaining,
+  visibleAmountRemaining,
+} from '@/composables/legalFinancialVisibility'
 
 const toast = useToast()
 const apiUrl = localStorage.getItem('LinkCity') || ''
@@ -144,8 +149,12 @@ function mapCustomerToExcelRow(customer, meta = {}) {
     'سعر البيع': customerField(c, 'amountTotalSales', 'AmountTotalSales') ?? 'لا يوجد',
     'سعر الشراء': customerField(c, 'costTotalSales', 'CostTotalSales') ?? 'لا يوجد',
     'القسط': customerField(c, 'amountDaySales', 'AmountDaySales') ?? 'لا يوجد',
-    'الواصل': customerField(c, 'receiptsTotal', 'ReceiptsTotal') ?? 'لا يوجد',
-    'الباقي': customerField(c, 'amountRemaining', 'AmountRemaining') ?? 'لا يوجد',
+    'الواصل': shouldHidePaidRemaining(c)
+      ? '—'
+      : (customerField(c, 'receiptsTotal', 'ReceiptsTotal') ?? 'لا يوجد'),
+    'الباقي': shouldHidePaidRemaining(c)
+      ? '—'
+      : (customerField(c, 'amountRemaining', 'AmountRemaining') ?? 'لا يوجد'),
     'نسبة التسديد': rate !== undefined && rate !== null ? `${rate}%` : '0%',
     'عدد التسديدات': customerField(c, 'countReceiptDevice', 'CountReceiptDevice') ?? 'لا يوجد',
     'عدد الأيام': customerField(c, 'numberOfDayDevice', 'NumberOfDayDevice') ?? 'لا يوجد',
@@ -312,7 +321,7 @@ function phoneMatches(q) {
                 >
                   <td>{{ customerField(c, 'customerName', 'CustomerName') }}</td>
                   <td>{{ customerField(c, 'phoneNumber', 'PhoneNumber') }}</td>
-                  <td>{{ customerField(c, 'amountRemaining', 'AmountRemaining') }}</td>
+                  <td>{{ formatHiddenFinancial(visibleAmountRemaining(c)) }}</td>
                   <td>{{ customerField(c, 'receiptRateDevice', 'ReceiptRateDevice') }}%</td>
                 </tr>
               </tbody>
@@ -346,7 +355,7 @@ function phoneMatches(q) {
                 >
                   <td>{{ customerField(c, 'customerName', 'CustomerName') }}</td>
                   <td>{{ customerField(c, 'phoneNumber', 'PhoneNumber') }}</td>
-                  <td>{{ customerField(c, 'amountRemaining', 'AmountRemaining') }}</td>
+                  <td>{{ formatHiddenFinancial(visibleAmountRemaining(c)) }}</td>
                   <td>{{ customerField(c, 'receiptRateDevice', 'ReceiptRateDevice') }}%</td>
                 </tr>
               </tbody>

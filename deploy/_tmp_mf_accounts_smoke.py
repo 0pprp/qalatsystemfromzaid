@@ -1,4 +1,4 @@
-﻿import os, paramiko
+import os, paramiko
 c=paramiko.SSHClient(); c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 c.connect("169.58.236.52",username="root",password=os.environ["SSH_PASS"],timeout=60,allow_agent=False,look_for_keys=False)
 cmd=r'''
@@ -11,11 +11,11 @@ def ensure_accounts(path):
     lines=[ln for ln in lines if not ln.startswith('MainFollowerAccounts__')]
     block=[
         'MainFollowerAccounts__0__UserName=mf1',
-        'MainFollowerAccounts__0__Password=Mf@12345',
-        'MainFollowerAccounts__0__DisplayName=متابع رئيسي 1',
+        'MainFollowerAccounts__0__Password=${MF_PASSWORD}',
+        'MainFollowerAccounts__0__DisplayName=????? ????? 1',
         'MainFollowerAccounts__1__UserName=mf2',
-        'MainFollowerAccounts__1__Password=Mf@12345',
-        'MainFollowerAccounts__1__DisplayName=متابع رئيسي 2',
+        'MainFollowerAccounts__1__Password=${MF_PASSWORD}',
+        'MainFollowerAccounts__1__DisplayName=????? ????? 2',
     ]
     if lines and lines[-1].strip():
         lines.append('')
@@ -34,11 +34,11 @@ else:
     os.makedirs('/etc/qalaa-production', exist_ok=True)
     open('/etc/qalaa-production/main-follower.env','w',encoding='utf-8').write(
         'MainFollowerAccounts__0__UserName=mf1\n'
-        'MainFollowerAccounts__0__Password=Mf@12345\n'
-        'MainFollowerAccounts__0__DisplayName=متابع رئيسي 1\n'
+        'MainFollowerAccounts__0__Password=${MF_PASSWORD}\n'
+        'MainFollowerAccounts__0__DisplayName=????? ????? 1\n'
         'MainFollowerAccounts__1__UserName=mf2\n'
-        'MainFollowerAccounts__1__Password=Mf@12345\n'
-        'MainFollowerAccounts__1__DisplayName=متابع رئيسي 2\n'
+        'MainFollowerAccounts__1__Password=${MF_PASSWORD}\n'
+        'MainFollowerAccounts__1__DisplayName=????? ????? 2\n'
     )
     drop='/etc/systemd/system/qalaa-sales-gateway.service.d/zz-main-follower.conf'
     open(drop,'w').write('[Service]\nEnvironmentFile=/etc/qalaa-production/main-follower.env\n')
@@ -49,7 +49,7 @@ subprocess.check_call(['systemctl','restart','qalaa-demo-sales-gateway','qalaa-s
 time.sleep(3)
 
 def login(base):
-    body=json.dumps({'userName':'mf1','password':'Mf@12345'}).encode()
+    body=json.dumps({'userName':'mf1','password':os.environ.get('MF_PASSWORD','')}).encode()
     req=urllib.request.Request(base+'/Auth/LoginMainFollower', data=body, headers={'Content-Type':'application/json'})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode())
@@ -65,12 +65,12 @@ for base in ['http://127.0.0.1:5403/api','http://127.0.0.1:5280/api']:
         with urllib.request.urlopen(req, timeout=20) as r:
             dm=json.loads(r.read().decode())
         dmt=dm['token']
-        cb=json.dumps({'name':'لجنة اختبار','memberUserNames':['mf1','mf2']}).encode()
+        cb=json.dumps({'name':'???? ??????','memberUserNames':['mf1','mf2']}).encode()
         req=urllib.request.Request(base+'/delegated-manager/committees', data=cb, headers={'Content-Type':'application/json','Authorization':'Bearer '+dmt})
         with urllib.request.urlopen(req, timeout=20) as r:
             committee=json.loads(r.read().decode())
         print('COMMITTEE', committee.get('id'))
-        mb=json.dumps({'committeeId':committee['id'],'cityValues':['DatabaseCompanyBasra','DatabaseCompanyNajaf'],'note':'مرحلة 1'}).encode()
+        mb=json.dumps({'committeeId':committee['id'],'cityValues':['DatabaseCompanyBasra','DatabaseCompanyNajaf'],'note':'????? 1'}).encode()
         req=urllib.request.Request(base+'/delegated-manager/committees/missions', data=mb, headers={'Content-Type':'application/json','Authorization':'Bearer '+dmt})
         with urllib.request.urlopen(req, timeout=20) as r:
             mission=json.loads(r.read().decode())

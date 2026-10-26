@@ -2,6 +2,8 @@ using BE_Company.Sales.Authorization;
 using BE_Company.Sales.DTO;
 using BE_Company.Sales.Filtering;
 using BE_Company.Sales.Models;
+using Dapper;
+using Microsoft.Data.SqlClient;
 
 namespace BE_Company.Sales.Services
 {
@@ -11,17 +13,54 @@ namespace BE_Company.Sales.Services
         private readonly IIraqClock _clock;
         private readonly ISalesManagerReadRepository? _employees;
         private readonly ISalesCascadeVoidService? _cascadeVoid;
+        private readonly SalesDevelopmentGuard? _guard;
+        private readonly ICrmSalesBoardStatusNotifier? _crmStatus;
+        private readonly ILegalFollowupService? _legalFollowups;
 
         public SalesRequestService(
             ISalesRequestRepository repo,
             IIraqClock clock,
             ISalesManagerReadRepository? employees = null,
-            ISalesCascadeVoidService? cascadeVoid = null)
+            ISalesCascadeVoidService? cascadeVoid = null,
+            SalesDevelopmentGuard? guard = null,
+            ICrmSalesBoardStatusNotifier? crmStatus = null,
+            ILegalFollowupService? legalFollowups = null)
         {
             _repo = repo;
             _clock = clock;
             _employees = employees;
             _cascadeVoid = cascadeVoid;
+            _guard = guard;
+            _crmStatus = crmStatus;
+            _legalFollowups = legalFollowups;
+        }
+
+        private Task NotifyCrmIfLinkedAsync(
+            SalesRequestDTO row,
+            string boardStatus,
+            string? rejectReason,
+            CancellationToken ct)
+        {
+            if (_crmStatus == null || row.ExternalCrmOrderUuid is not Guid uuid || uuid == Guid.Empty)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (!SalesRequestSources.IsCrm(row.CustomerSourceType))
+            {
+                return Task.CompletedTask;
+            }
+
+            return _crmStatus.NotifyAsync(
+                new CrmSalesBoardStatusNotification
+                {
+                    CrmOrderUuid = uuid,
+                    SalesRequestId = row.Id,
+                    CityValue = row.CityValue,
+                    BoardStatus = boardStatus,
+                    RejectReason = rejectReason
+                },
+                ct);
         }
 
         public async Task<SalesRequestDTO> CreateAsync(SalesIdentity actor, SalesRequestCreateDTO request, CancellationToken ct, bool validateIraqPhone = true)
@@ -440,6 +479,7 @@ namespace BE_Company.Sales.Services
             await AppendHistoryAsync(row, SalesRequestEvents.Rejected, manager, trimmed, ct, previous);
             await AppendHistoryAsync(row, SalesRequestEvents.RejectionReason, manager, trimmed, ct, previous);
             await AppendHistoryAsync(row, SalesRequestEvents.ManagerRequestDeleted, manager, trimmed, ct, previous);
+            await NotifyCrmIfLinkedAsync(row, "Cancelled", trimmed, ct);
             return await HydrateAsync(row, ct);
         }
 
@@ -616,17 +656,47 @@ namespace BE_Company.Sales.Services
             var result = new List<SalesRequestDTO>();
             foreach (var row in rows.Where(r => r.TargetEmployeeId == employeeId && r.TargetEmployeeId > 0))
             {
-                result.Add(await HydrateAsync(row, ct));
+                result.Add(SanitizeForSalesEmployee(await HydrateAsync(row, ct)));
             }
 
             return result;
+        }
+
+        public async Task<IReadOnlyList<SalesRequestDTO>> ListSubmittedByEmployeeAsync(int employeeId, CancellationToken ct)
+        {
+            await _repo.EnsureSchemaAsync(ct);
+            if (employeeId <= 0)
+            {
+                return [];
+            }
+
+            // Include soft-deleted Rejected (manager/monitor) so submitter sees سبب الرفض.
+            // SubmittedLogIncludesRejectedDeletes_V1
+            var rows = await _repo.ListCreatedByEmployeeForSubmittedLogAsync(employeeId, ct);
+            var result = new List<SalesRequestDTO>();
+            foreach (var row in rows.Where(r =>
+                         r.CreatedByUserId == employeeId
+                         && SalesRequestSources.IsEmployeeSubmitted(r.CustomerSourceType)))
+            {
+                // Prefer RejectionReason; fall back to DeleteReason for older soft-deletes.
+                if (string.IsNullOrWhiteSpace(row.RejectionReason) && !string.IsNullOrWhiteSpace(row.DeleteReason))
+                {
+                    row.RejectionReason = row.DeleteReason;
+                }
+
+                result.Add(SanitizeForSalesEmployee(await HydrateAsync(row, ct)));
+            }
+
+            return result
+                .OrderByDescending(r => r.CreatedAtUtc)
+                .ToList();
         }
 
         public async Task<SalesRequestDTO> GetForEmployeeAsync(int id, int employeeId, CancellationToken ct)
         {
             await _repo.EnsureSchemaAsync(ct);
             var row = await RequireOwned(id, employeeId, ct);
-            return await HydrateAsync(row, ct);
+            return SanitizeForSalesEmployee(await HydrateAsync(row, ct));
         }
 
         public async Task<SalesRequestDTO> ViewAsync(int id, int employeeId, CancellationToken ct)
@@ -645,7 +715,7 @@ namespace BE_Company.Sales.Services
                 await AppendHistoryAsync(row, SalesRequestEvents.Viewed, EmployeeActor(employeeId, row), null, ct);
             }
 
-            return await HydrateAsync(row, ct);
+            return SanitizeForSalesEmployee(await HydrateAsync(row, ct));
         }
 
         public Task<SalesRequestDTO> StartProcessingAsync(int id, int employeeId, string note, CancellationToken ct) =>
@@ -686,7 +756,7 @@ namespace BE_Company.Sales.Services
                 await AppendHistoryAsync(row, SalesRequestEvents.PreparedForSaleNote, EmployeeActor(employeeId, row), trimmed, ct, row.Status);
             }
 
-            return await HydrateAsync(row, ct);
+            return SanitizeForSalesEmployee(await HydrateAsync(row, ct));
         }
 
         public async Task<SalesRequestDTO> PendAsync(int id, int employeeId, string note, CancellationToken ct)
@@ -713,7 +783,7 @@ namespace BE_Company.Sales.Services
             var actor = EmployeeActor(employeeId, row);
             await AppendHistoryAsync(row, SalesRequestEvents.Pending, actor, trimmed, ct, previous);
             await AppendHistoryAsync(row, SalesRequestEvents.PendingNote, actor, trimmed, ct, previous);
-            return await HydrateAsync(row, ct);
+            return SanitizeForSalesEmployee(await HydrateAsync(row, ct));
         }
 
         public async Task<SalesRequestDTO> RejectAsync(int id, int employeeId, string reason, CancellationToken ct)
@@ -728,7 +798,7 @@ namespace BE_Company.Sales.Services
             EnsureNotSold(row);
             if (row.Status == SalesRequestStatuses.Rejected)
             {
-                return await HydrateAsync(row, ct);
+                return SanitizeForSalesEmployee(await HydrateAsync(row, ct));
             }
 
             if (!SalesRequestStatuses.CanReject(row.Status))
@@ -745,7 +815,8 @@ namespace BE_Company.Sales.Services
             var actor = EmployeeActor(employeeId, row);
             await AppendHistoryAsync(row, SalesRequestEvents.Rejected, actor, trimmed, ct, previous);
             await AppendHistoryAsync(row, SalesRequestEvents.RejectionReason, actor, trimmed, ct, previous);
-            return await HydrateAsync(row, ct);
+            await NotifyCrmIfLinkedAsync(row, "Cancelled", trimmed, ct);
+            return SanitizeForSalesEmployee(await HydrateAsync(row, ct));
         }
 
         public async Task<SalesRequestDTO> AssignAsync(
@@ -794,25 +865,42 @@ namespace BE_Company.Sales.Services
                 throw new SalesCompleteException(StatusCodes.Status409Conflict, "الطلب مسند مسبقاً.");
             }
 
+            // EmployeeId is per-branch. Never accept another city's id/name.
+            // (Basra UserID 18 = متابع; Karbala UserID 18 = رعد جندي سلطان — same number, different people.)
+            const string crossBranchAssignGuard = "CrossBranchAssignGuard_V1";
             var employeeName = request.EmployeeName;
-            if (_employees != null && string.IsNullOrWhiteSpace(employeeName))
+            if (_employees != null)
             {
-                var match = (await _employees.ListEmployeesAsync(ct))
+                // Same universe as the assign dropdown (ListEmployees), then require active.
+                var inBranch = (await _employees.ListEmployeesAsync(ct))
                     .FirstOrDefault(e => e.EmployeeId == request.EmployeeId);
-                employeeName = match?.EmployeeName;
+                if (inBranch is null)
+                {
+                    throw new SalesCompleteException(
+                        StatusCodes.Status400BadRequest,
+                        "الموظف غير موجود ضمن موظفي مبيعات هذا الفرع. لا يمكن الإسناد عبر المحافظات. (" + crossBranchAssignGuard + ")");
+                }
+
+                var active = (await _employees.ListActiveSalesEmployeesAsync(ct))
+                    .Any(e => e.EmployeeId == request.EmployeeId);
+                if (!active)
+                {
+                    throw new SalesCompleteException(
+                        StatusCodes.Status400BadRequest,
+                        "حساب موظف المبيعات غير مفعّل (UserState). فعّله ثم أعد الإسناد. (" + crossBranchAssignGuard + ")");
+                }
+
+                employeeName = inBranch.EmployeeName;
+            }
+            else if (string.IsNullOrWhiteSpace(employeeName))
+            {
+                employeeName = $"موظف #{request.EmployeeId}";
             }
 
             row.TargetEmployeeId = request.EmployeeId;
             row.TargetEmployeeName = employeeName;
-            if (!string.IsNullOrWhiteSpace(request.CityValue))
-            {
-                row.CityValue = request.CityValue.Trim();
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.CityName))
-            {
-                row.CityName = request.CityName.Trim();
-            }
+            // Do not rewrite CityValue/CityName from assign payload — FE used to stamp the
+            // selected employee's cityName onto the request (e.g. Basra row → كربلاء).
 
             if (request.KeepNewCustomer)
             {
@@ -1126,7 +1214,7 @@ namespace BE_Company.Sales.Services
             if (row.Status == SalesRequestStatuses.Inspected)
             {
                 await _repo.UpdateAsync(row, ct);
-                return await HydrateAsync(row, ct);
+                return SanitizeForSalesEmployee(await HydrateAsync(row, ct));
             }
 
             var previous = row.Status;
@@ -1135,7 +1223,7 @@ namespace BE_Company.Sales.Services
             row.ProcessingAtUtc ??= _clock.UtcNow;
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(row, SalesRequestEvents.Inspected, EmployeeActor(employeeId, row), null, ct, previous);
-            return await HydrateAsync(row, ct);
+            return SanitizeForSalesEmployee(await HydrateAsync(row, ct));
         }
 
         public async Task MarkCompletedBySaleIdAsync(int saleId, DateTime utcNow, CancellationToken ct)
@@ -1158,6 +1246,7 @@ namespace BE_Company.Sales.Services
             row.CompletedAtUtc = utcNow;
             await _repo.UpdateAsync(row, ct);
             await AppendHistoryAsync(row, SalesRequestEvents.Completed, EmployeeActor(row.TargetEmployeeId, row), null, ct, previous);
+            await NotifyCrmIfLinkedAsync(row, "Completed", null, ct);
         }
 
         public async Task<IReadOnlyList<SalesTransferPeerDTO>> ListTransferPeersAsync(SalesIdentity actor, CancellationToken ct)
@@ -1276,7 +1365,7 @@ namespace BE_Company.Sales.Services
                 $"من {fromName} إلى {peer.EmployeeName}: {reason}",
                 ct,
                 previous);
-            return await HydrateAsync(row, ct);
+            return SanitizeForSalesEmployee(await HydrateAsync(row, ct));
         }
 
         public async Task<SalesRequestDTO> ManagerUpdateAsync(
@@ -1289,10 +1378,15 @@ namespace BE_Company.Sales.Services
             await _repo.EnsureSchemaAsync(ct);
             var row = await _repo.GetByIdAsync(id, ct)
                       ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "الطلب غير موجود.");
-            EnsureNotSold(row);
 
+            // Completed/sold requests may still receive identity corrections (name/phone/address/notes).
+            // Province transfer and CityValue moves stay blocked elsewhere.
             var previousProvince = row.CustomerProvince;
+            var originalName = row.CustomerName;
+            var originalPhone = row.CustomerPhone;
+            var originalAddress = row.CustomerAddress;
             var notes = new List<string>();
+            var identityChanged = false;
 
             if (body.CustomerName is not null)
             {
@@ -1306,6 +1400,7 @@ namespace BE_Company.Sales.Services
                 {
                     notes.Add($"الاسم: {row.CustomerName} ← {name}");
                     row.CustomerName = name;
+                    identityChanged = true;
                 }
             }
 
@@ -1313,6 +1408,12 @@ namespace BE_Company.Sales.Services
             {
                 if (string.IsNullOrWhiteSpace(body.Phone))
                 {
+                    if (!string.IsNullOrWhiteSpace(row.CustomerPhone))
+                    {
+                        notes.Add($"الهاتف: {row.CustomerPhone} ← (فارغ)");
+                        identityChanged = true;
+                    }
+
                     row.CustomerPhone = null;
                 }
                 else
@@ -1323,13 +1424,20 @@ namespace BE_Company.Sales.Services
                     {
                         notes.Add($"الهاتف: {row.CustomerPhone} ← {phone}");
                         row.CustomerPhone = phone;
+                        identityChanged = true;
                     }
                 }
             }
 
             if (body.Address is not null)
             {
-                row.CustomerAddress = string.IsNullOrWhiteSpace(body.Address) ? null : body.Address.Trim();
+                var address = string.IsNullOrWhiteSpace(body.Address) ? null : body.Address.Trim();
+                if (!string.Equals(row.CustomerAddress, address, StringComparison.Ordinal))
+                {
+                    notes.Add("تعديل العنوان");
+                    row.CustomerAddress = address;
+                    identityChanged = true;
+                }
             }
 
             if (body.Notes is not null)
@@ -1370,6 +1478,17 @@ namespace BE_Company.Sales.Services
             }
 
             await _repo.UpdateAsync(row, ct);
+
+            if (identityChanged)
+            {
+                await PropagateCustomerIdentityAsync(
+                    row,
+                    originalName,
+                    originalPhone,
+                    originalAddress,
+                    ct);
+            }
+
             var provinceLabelChanged = !string.Equals(previousProvince, row.CustomerProvince, StringComparison.OrdinalIgnoreCase);
             var eventType = provinceLabelChanged
                 ? SalesRequestEvents.ManagerProvinceChanged
@@ -1387,6 +1506,208 @@ namespace BE_Company.Sales.Services
                 row.Status);
 
             return await HydrateAsync(row, ct);
+        }
+
+        /// <summary>
+        /// Push identity corrections from a sales-request edit onto Customers / drafts / sibling requests
+        /// so a completed sale shows the same name everywhere in the branch.
+        /// </summary>
+        private async Task PropagateCustomerIdentityAsync(
+            SalesRequestDTO row,
+            string? originalName,
+            string? originalPhone,
+            string? originalAddress,
+            CancellationToken ct)
+        {
+            var cs = _guard?.GetSalesConnectionString();
+            if (string.IsNullOrWhiteSpace(cs))
+            {
+                // Unit tests / environments without a live branch DB — request row already updated.
+                return;
+            }
+
+            var name = (row.CustomerName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return;
+            }
+
+            var phone = string.IsNullOrWhiteSpace(row.CustomerPhone) ? null : row.CustomerPhone.Trim();
+            var address = string.IsNullOrWhiteSpace(row.CustomerAddress) ? null : row.CustomerAddress.Trim();
+
+            try
+            {
+                await using var connection = new SqlConnection(cs);
+                await connection.OpenAsync(ct);
+
+                var customerId = row.ExistingCustomerId is > 0 ? row.ExistingCustomerId : null;
+                if (customerId is null && row.ConvertedToSaleId is > 0)
+                {
+                    customerId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(@"
+-- SM_COMPLETED_IDENTITY_PROPAGATE_V1
+IF OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NULL SELECT CAST(NULL AS INT);
+ELSE SELECT TOP 1 NULLIF(CustomerId, 0) FROM dbo.SalesDrafts WHERE SaleId = @SaleId;",
+                        new { SaleId = row.ConvertedToSaleId.Value }, cancellationToken: ct));
+                }
+
+                if (customerId is > 0)
+                {
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+UPDATE dbo.Customers SET
+  CustomerName = @CustomerName,
+  PhoneNumber = COALESCE(@PhoneNumber, PhoneNumber),
+  Address = COALESCE(@Address, Address)
+WHERE CustomerID = @CustomerID;",
+                        new
+                        {
+                            CustomerID = customerId.Value,
+                            CustomerName = Trunc(name, 255),
+                            PhoneNumber = Trunc(phone, 255),
+                            Address = Trunc(address, 255)
+                        },
+                        cancellationToken: ct));
+
+                    // Keep sibling requests (open + completed) aligned for the same customer.
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.SalesRequests', N'U') IS NOT NULL
+UPDATE dbo.SalesRequests SET
+  CustomerName = @CustomerName,
+  CustomerPhone = COALESCE(@CustomerPhone, CustomerPhone),
+  CustomerAddress = COALESCE(@CustomerAddress, CustomerAddress)
+WHERE ExistingCustomerId = @CustomerId
+   OR (ConvertedToSaleId IS NOT NULL AND ConvertedToSaleId IN (
+        SELECT SaleId FROM dbo.SalesDrafts WHERE CustomerId = @CustomerId));",
+                        new
+                        {
+                            CustomerId = customerId.Value,
+                            CustomerName = Trunc(name, 200),
+                            CustomerPhone = Trunc(phone, 50),
+                            CustomerAddress = Trunc(address, 255)
+                        },
+                        cancellationToken: ct));
+                }
+
+                if (row.ConvertedToSaleId is > 0)
+                {
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NOT NULL
+UPDATE dbo.SalesDrafts SET
+  FullName = @FullName,
+  Phone = COALESCE(@Phone, Phone),
+  Address = COALESCE(@Address, Address)
+WHERE SaleId = @SaleId;",
+                        new
+                        {
+                            SaleId = row.ConvertedToSaleId.Value,
+                            FullName = Trunc(name, 100),
+                            Phone = Trunc(phone, 50),
+                            Address = Trunc(address, 255)
+                        },
+                        cancellationToken: ct));
+
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.SalesShopProfiles', N'U') IS NOT NULL
+UPDATE dbo.SalesShopProfiles SET
+  CustomerName = @CustomerName,
+  CustomerPhone = COALESCE(@CustomerPhone, CustomerPhone)
+WHERE SaleId = @SaleId;",
+                        new
+                        {
+                            SaleId = row.ConvertedToSaleId.Value,
+                            CustomerName = Trunc(name, 200),
+                            CustomerPhone = Trunc(phone, 50)
+                        },
+                        cancellationToken: ct));
+                }
+
+                if (customerId is > 0)
+                {
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NOT NULL
+UPDATE dbo.SalesDrafts SET
+  FullName = @FullName,
+  Phone = COALESCE(@Phone, Phone),
+  Address = COALESCE(@Address, Address)
+WHERE CustomerId = @CustomerId;",
+                        new
+                        {
+                            CustomerId = customerId.Value,
+                            FullName = Trunc(name, 100),
+                            Phone = Trunc(phone, 50),
+                            Address = Trunc(address, 255)
+                        },
+                        cancellationToken: ct));
+
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.SalesShopProfiles', N'U') IS NOT NULL
+UPDATE dbo.SalesShopProfiles SET
+  CustomerName = @CustomerName,
+  CustomerPhone = COALESCE(@CustomerPhone, CustomerPhone)
+WHERE CustomerId = @CustomerId;",
+                        new
+                        {
+                            CustomerId = customerId.Value,
+                            CustomerName = Trunc(name, 200),
+                            CustomerPhone = Trunc(phone, 50)
+                        },
+                        cancellationToken: ct));
+
+                    // Official posted sale header when present.
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.CustomersSales', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.CustomersSales', N'CustomerName') IS NOT NULL
+UPDATE dbo.CustomersSales SET CustomerName = @CustomerName
+WHERE CustomerID = @CustomerId;",
+                        new
+                        {
+                            CustomerId = customerId.Value,
+                            CustomerName = Trunc(name, 100)
+                        },
+                        cancellationToken: ct));
+                }
+
+                // Fallback: no customer id — still sync drafts matched by previous identity keys.
+                if (customerId is null or <= 0
+                    && (!string.IsNullOrWhiteSpace(originalName) || !string.IsNullOrWhiteSpace(originalPhone)))
+                {
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NOT NULL
+UPDATE dbo.SalesDrafts SET
+  FullName = @FullName,
+  Phone = COALESCE(@Phone, Phone),
+  Address = COALESCE(@Address, Address)
+WHERE (@OriginalPhone IS NOT NULL AND LTRIM(RTRIM(ISNULL(Phone, N''))) = @OriginalPhone)
+   OR (@OriginalName IS NOT NULL AND LTRIM(RTRIM(ISNULL(FullName, N''))) = @OriginalName
+       AND (@OriginalPhone IS NULL OR LTRIM(RTRIM(ISNULL(Phone, N''))) = @OriginalPhone));",
+                        new
+                        {
+                            FullName = Trunc(name, 100),
+                            Phone = Trunc(phone, 50),
+                            Address = Trunc(address, 255),
+                            OriginalName = string.IsNullOrWhiteSpace(originalName) ? null : originalName.Trim(),
+                            OriginalPhone = string.IsNullOrWhiteSpace(originalPhone) ? null : originalPhone.Trim()
+                        },
+                        cancellationToken: ct));
+                }
+
+                _ = originalAddress; // reserved for future address-keyed matching
+            }
+            catch
+            {
+                // Identity sync must not fail the manager edit of the request itself.
+            }
+        }
+
+        private static string Trunc(string? value, int max)
+        {
+            var text = value?.Trim() ?? string.Empty;
+            if (text.Length <= max)
+            {
+                return text;
+            }
+
+            return text[..max];
         }
 
         public async Task<SalesRequestDTO> AcceptProvinceTransferAsync(
@@ -1580,19 +1901,35 @@ namespace BE_Company.Sales.Services
                 await _cascadeVoid.VoidLinkedAsync(manager, row, confirmCascadePayments, trimmed, ct);
             }
 
+            var previous = row.Status;
             row.IsDeleted = true;
             row.DeletedAtUtc = _clock.UtcNow;
             row.DeletedByUserId = manager.EmployeeId;
             row.DeletedByName = manager.EmployeeName;
             row.DeleteReason = trimmed;
+            // Follower inbox: soft-delete must surface under «مرفوض» with the note (not stay «قيد العمل»).
+            if (!SalesRequestStatuses.IsSold(row.Status) && row.Status != SalesRequestStatuses.Completed)
+            {
+                row.Status = SalesRequestStatuses.Rejected;
+                row.RejectedAtUtc = _clock.UtcNow;
+                row.RejectionReason = trimmed;
+            }
+
             await _repo.UpdateAsync(row, ct);
+            if (previous != row.Status && row.Status == SalesRequestStatuses.Rejected)
+            {
+                await AppendHistoryAsync(row, SalesRequestEvents.Rejected, manager, trimmed, ct, previous);
+                await AppendHistoryAsync(row, SalesRequestEvents.RejectionReason, manager, trimmed, ct, previous);
+            }
+
             await AppendHistoryAsync(
                 row,
                 SalesRequestEvents.ManagerRequestDeleted,
                 manager,
                 trimmed,
                 ct,
-                row.Status);
+                previous);
+            await NotifyCrmIfLinkedAsync(row, "Cancelled", trimmed, ct);
         }
 
         public async Task<SalesRequestSoftDeleteImpactDTO> GetSoftDeleteImpactAsync(
@@ -1615,6 +1952,147 @@ namespace BE_Company.Sales.Services
             }
 
             return await _cascadeVoid.GetImpactAsync(row, ct);
+        }
+
+        public async Task<SalesRequestSoftDeleteImpactDTO> GetCancelImpactAsync(
+            SalesIdentity manager,
+            int id,
+            CancellationToken ct)
+        {
+            EnsureManager(manager);
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "الطلب غير موجود.");
+
+            if (row.IsDeleted)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "الطلب محذوف ولا يمكن إلغاؤه.");
+            }
+
+            if (!SalesRequestStatuses.CanCancelToUnassigned(row.Status))
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status400BadRequest,
+                    "لا يمكن إلغاء طلب مرفوض. استخدم الإرجاع أو الحذف حسب الحاجة.");
+            }
+
+            if (_cascadeVoid == null || (row.ConvertedToSaleId is not > 0 && !SalesRequestStatuses.IsSold(row.Status)))
+            {
+                return new SalesRequestSoftDeleteImpactDTO
+                {
+                    RequestId = row.Id,
+                    WarningAr = "سيتم إلغاء الطلب وإعادته إلى غير المسند وإخفاؤه من تطبيق موظف المبيعات."
+                };
+            }
+
+            var impact = await _cascadeVoid.GetImpactAsync(row, ct);
+            impact.WarningAr = (impact.WarningAr ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(impact.WarningAr))
+            {
+                impact.WarningAr = "سيتم إلغاء المبيع وإرجاع الكميات ثم إعادة الطلب إلى غير المسند.";
+            }
+            else
+            {
+                impact.WarningAr += " ثم يُعاد الطلب إلى غير المسند (وليس المحذوفين).";
+            }
+
+            return impact;
+        }
+
+        public async Task<SalesRequestDTO> CancelAndUnassignAsync(
+            SalesIdentity manager,
+            int id,
+            string reason,
+            bool confirmCascadePayments,
+            CancellationToken ct)
+        {
+            EnsureManager(manager);
+            var trimmed = reason?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "سبب الإلغاء مطلوب.");
+            }
+
+            await _repo.EnsureSchemaAsync(ct);
+            var row = await _repo.GetByIdAsync(id, ct)
+                      ?? throw new SalesCompleteException(StatusCodes.Status404NotFound, "الطلب غير موجود.");
+
+            if (row.IsDeleted)
+            {
+                throw new SalesCompleteException(StatusCodes.Status400BadRequest, "الطلب محذوف ولا يمكن إلغاؤه.");
+            }
+
+            if (!SalesRequestStatuses.CanCancelToUnassigned(row.Status))
+            {
+                throw new SalesCompleteException(
+                    StatusCodes.Status400BadRequest,
+                    "لا يمكن إلغاء طلب مرفوض.");
+            }
+
+            var previous = row.Status;
+            var previousAssignee = row.TargetEmployeeId;
+            var previousAssigneeName = row.TargetEmployeeName;
+            var linked = SalesRequestStatuses.IsSold(row.Status) || row.ConvertedToSaleId is > 0;
+            if (linked)
+            {
+                if (_cascadeVoid == null)
+                {
+                    throw new SalesCompleteException(
+                        StatusCodes.Status500InternalServerError,
+                        "خدمة التعويض المالي غير مهيأة. تعذر إلغاء طلب مرتبط بمبيع.");
+                }
+
+                await _cascadeVoid.VoidLinkedAsync(manager, row, confirmCascadePayments, trimmed, ct);
+            }
+
+            // Reset to غير مسند — keep customer fields; clear assignee + workflow terminal fields.
+            row.Status = SalesRequestStatuses.New;
+            row.TargetEmployeeId = 0;
+            row.TargetEmployeeName = null;
+            row.AssignedAtUtc = null;
+            row.AssignedByUserId = null;
+            row.AssignedByName = null;
+            row.ViewedAtUtc = null;
+            row.ProcessingAtUtc = null;
+            row.ConvertedToSaleId = null;
+            row.CompletedAtUtc = null;
+            row.RejectedAtUtc = null;
+            row.RejectionReason = null;
+            row.PendingNote = null;
+            row.PreparedForSaleNote = null;
+            row.ReturnNote = null;
+            row.FilterStatus = null;
+            row.FilteredByUserId = null;
+            row.FilteredByUserName = null;
+            row.FilterNote = null;
+            row.FilterRejectReason = null;
+            row.FilteredAtUtc = null;
+            row.ExceptionHoldStatus = null;
+            row.ActiveExceptionId = null;
+            row.IsDeleted = false;
+            row.DeletedAtUtc = null;
+            row.DeletedByUserId = null;
+            row.DeletedByName = null;
+            row.DeleteReason = null;
+
+            await _repo.UpdateAsync(row, ct);
+            await AppendHistoryAsync(
+                row,
+                SalesRequestEvents.CancelledToUnassigned,
+                manager,
+                $"سبب={trimmed}; PreviousStatus={previous}; ClearedAssignee={previousAssignee}:{previousAssigneeName}",
+                ct,
+                previous);
+
+            // Close open legal cases so الزبائن القديمة / follower app do not keep orphans.
+            if (_legalFollowups != null
+                && string.Equals(previous, SalesRequestStatuses.LegalFollowup, StringComparison.OrdinalIgnoreCase))
+            {
+                await _legalFollowups.CancelOpenInProgressForSalesRequestAsync(
+                    id, trimmed, manager.EmployeeId, manager.EmployeeName, ct);
+            }
+
+            return (await _repo.GetByIdAsync(id, ct))!;
         }
 
         public async Task<IReadOnlyList<SalesRequestDTO>> ListDeletedForManagerAsync(CancellationToken ct)
@@ -1704,6 +2182,53 @@ namespace BE_Company.Sales.Services
                 ? null
                 : row.NameTransfers[^1];
             return WithTimeline(row);
+        }
+
+        /// <summary>
+        /// Hide WrongSale scare lines from notes the sales employee APK already displays as plain text.
+        /// Does not mutate stored DB rows — response-only.
+        /// </summary>
+        public static SalesRequestDTO SanitizeForSalesEmployee(SalesRequestDTO row)
+        {
+            row.Notes = SanitizeEmployeeFacingNotes(row.Notes);
+            return row;
+        }
+
+        public static string? SanitizeEmployeeFacingNotes(string? notes)
+        {
+            if (string.IsNullOrWhiteSpace(notes))
+            {
+                return notes;
+            }
+
+            var kept = notes
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Split('\n')
+                .Select(static l => l.TrimEnd())
+                .Where(static l =>
+                {
+                    var t = l.Trim();
+                    if (t.Length == 0)
+                    {
+                        return true;
+                    }
+
+                    if (t.Contains("تقييم المتجر", StringComparison.Ordinal)
+                        && t.Contains("مبيعات خاطئة", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    if (string.Equals(t, "مبيعات خاطئة", StringComparison.Ordinal)
+                        || string.Equals(t, "تقييم المتجر", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    return true;
+                });
+            var joined = string.Join("\n", kept).Trim();
+            return joined.Length == 0 ? null : joined;
         }
 
         internal static SalesRequestDTO WithTimeline(SalesRequestDTO row)

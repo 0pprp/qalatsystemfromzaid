@@ -42,6 +42,13 @@ void main() {
     expect(PhantomCustomerRating.scoreFromAverage(-9), -10);
   });
 
+  test('fiveDayTrendBucket up flat down', () {
+    expect(PhantomCustomerRating.fiveDayTrendBucket(10, 5), 'up');
+    expect(PhantomCustomerRating.fiveDayTrendBucket(5, 5), 'flat');
+    expect(PhantomCustomerRating.fiveDayTrendBucket(0, 5), 'down');
+    expect(PhantomCustomerRating.fiveDayTrendBucket(5, null), 'flat');
+  });
+
   test('scoreForClient null without sale date', () {
     final c = Client(
       name: 'x',

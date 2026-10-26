@@ -11,7 +11,33 @@ class AppEnv {
       String.fromEnvironment('DIRECTORY_SEARCH_KEY');
 
   static const String demoHostFallback = 'http://169.58.236.52:8080/api/';
+  static const String demoGatewayApiBaseUrl =
+      'http://169.58.236.52:8080/sales-gw/api/';
+  static const String productionGatewayApiBaseUrl =
+      'http://admincompany.alsaaeidy.com/sales-gw/api/';
   static const String localApiBaseUrl = 'http://127.0.0.1:5280/api/';
+
+  /// Central gateway for anonymous `mobile-updates` (not branch CityLink).
+  /// Keep `/sales-gw/` — stripping it breaks production update checks.
+  static String gatewayApiBase() {
+    if (isDemo) return normalizeGatewayBase(demoGatewayApiBaseUrl);
+    if (isLocal) return normalizeGatewayBase(localApiBaseUrl);
+    final explicit = _apiBaseDefine.isNotEmpty ? _apiBaseDefine : _apiBaseUrlDefine;
+    if (explicit.isNotEmpty && !_isDemoHost(explicit)) {
+      return normalizeGatewayBase(explicit);
+    }
+    return normalizeGatewayBase(productionGatewayApiBaseUrl);
+  }
+
+  static String normalizeGatewayBase(String url) {
+    var value = url.trim().replaceAll('\\', '/');
+    if (value.isEmpty) return value;
+    while (value.contains('/api/api')) {
+      value = value.replaceAll('/api/api', '/api');
+    }
+    if (!value.endsWith('/')) value = '$value/';
+    return value;
+  }
 
   static String get demoApiBaseUrl =>
       _apiBaseUrlDefine.isNotEmpty ? _apiBaseUrlDefine : demoHostFallback;

@@ -1,19 +1,21 @@
 import 'package:delegated_manager_application/core/auth/session.dart';
 import 'package:delegated_manager_application/core/config/app_env.dart';
 import 'package:delegated_manager_application/core/theme/app_theme.dart';
+import 'package:delegated_manager_application/features/assigned_tasks/presentation/assigned_tasks_inbox_screen.dart';
 import 'package:delegated_manager_application/features/authentication/data/auth_repository.dart';
 import 'package:delegated_manager_application/features/authentication/presentation/login_screen.dart';
-import 'package:delegated_manager_application/features/committees/presentation/committees_screen.dart';
 import 'package:delegated_manager_application/features/complaints/presentation/complaints_screen.dart';
 import 'package:delegated_manager_application/features/dashboard/presentation/dashboard_screen.dart';
 import 'package:delegated_manager_application/features/exceptions/presentation/exceptions_screen.dart';
 import 'package:delegated_manager_application/features/settings/presentation/settings_screen.dart';
 import 'package:delegated_manager_application/features/shell/presentation/home_tabs.dart';
 import 'package:delegated_manager_application/features/stats/presentation/stats_page.dart';
+import 'package:delegated_manager_application/features/branch_visits/presentation/branch_visits_screen.dart';
+import 'package:delegated_manager_application/features/users/presentation/branch_manager_users_screen.dart';
 import 'package:delegated_manager_application/features/waivers/presentation/waivers_screen.dart';
 import 'package:flutter/material.dart';
 
-/// Drawer: الرئيسية | التقييمات | الرسائل | الاستثناء | المبيعات الخاطئة | التنازل | اللجان | الإعدادات
+/// Drawer: الرئيسية | مهامي | … | حسابات إدارة الفرع | أعمال إدارة الفرع | الإعدادات
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -21,56 +23,45 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell>
-    with SingleTickerProviderStateMixin {
+class _HomeShellState extends State<HomeShell> {
   final _dashboardKey = GlobalKey<DashboardScreenState>();
+  final _assignedTasksKey = GlobalKey<AssignedTasksInboxScreenState>();
   final _statsKey = GlobalKey<StatsPageState>();
   final _complaintsKey = GlobalKey<ComplaintsScreenState>();
   final _exceptionsKey = GlobalKey<ExceptionsScreenState>();
   final _wrongSalesKey = GlobalKey<ExceptionsScreenState>();
   final _waiversKey = GlobalKey<WaiversScreenState>();
-  final _committeesKey = GlobalKey<CommitteesScreenState>();
+  final _usersKey = GlobalKey<BranchManagerUsersScreenState>();
+  final _branchVisitsKey = GlobalKey<BranchVisitsScreenState>();
 
-  late final TabController _committeeTabs;
   int _index = 0;
 
   static const _titles = [
     'الرئيسية',
+    'مهامي',
     'التقييمات',
     'الرسائل والشكاوى',
     'طلبات الاستثناء',
     'المبيعات الخاطئة',
     'طلبات التنازل',
-    'اللجان',
+    'حسابات إدارة الفرع',
+    'أعمال إدارة الفرع',
     'الإعدادات',
   ];
 
   static const _menu = [
     (Icons.dashboard_outlined, Icons.dashboard, 'الرئيسية'),
+    (Icons.task_alt_outlined, Icons.task_alt, 'مهامي'),
     (Icons.bar_chart_outlined, Icons.bar_chart, 'التقييمات'),
     (Icons.mail_outline, Icons.mail, 'الرسائل والشكاوى'),
     (Icons.rule_outlined, Icons.rule, 'طلبات الاستثناء'),
     (Icons.report_gmailerrorred_outlined, Icons.report_gmailerrorred,
         'المبيعات الخاطئة'),
     (Icons.handshake_outlined, Icons.handshake, 'طلبات التنازل'),
-    (Icons.groups_outlined, Icons.groups, 'اللجان'),
+    (Icons.manage_accounts_outlined, Icons.manage_accounts, 'حسابات إدارة الفرع'),
+    (Icons.apartment_outlined, Icons.apartment, 'أعمال إدارة الفرع'),
     (Icons.settings_outlined, Icons.settings, 'الإعدادات'),
   ];
-
-  @override
-  void initState() {
-    super.initState();
-    _committeeTabs = TabController(length: 2, vsync: this);
-    _committeeTabs.addListener(() {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _committeeTabs.dispose();
-    super.dispose();
-  }
 
   void _select(int index, {bool wrongSalesUnread = false}) {
     if (_index == index && !wrongSalesUnread) {
@@ -82,6 +73,9 @@ class _HomeShellState extends State<HomeShell>
     switch (index) {
       case HomeShellTabs.dashboard:
         _dashboardKey.currentState?.reload();
+        break;
+      case HomeShellTabs.assignedTasks:
+        _assignedTasksKey.currentState?.reload();
         break;
       case HomeShellTabs.stats:
         _statsKey.currentState?.reload();
@@ -102,8 +96,11 @@ class _HomeShellState extends State<HomeShell>
       case HomeShellTabs.waivers:
         _waiversKey.currentState?.reload();
         break;
-      case HomeShellTabs.committees:
-        _committeesKey.currentState?.reload();
+      case HomeShellTabs.users:
+        _usersKey.currentState?.reload();
+        break;
+      case HomeShellTabs.branchVisits:
+        _branchVisitsKey.currentState?.reload();
         break;
     }
   }
@@ -152,6 +149,14 @@ class _HomeShellState extends State<HomeShell>
             icon: const Icon(Icons.refresh),
           ),
         ];
+      case HomeShellTabs.assignedTasks:
+        return [
+          IconButton(
+            tooltip: 'تحديث',
+            onPressed: () => _assignedTasksKey.currentState?.reload(),
+            icon: const Icon(Icons.refresh),
+          ),
+        ];
       case HomeShellTabs.complaints:
         final unreadOnly = _complaintsKey.currentState?.unreadOnly ?? false;
         return [
@@ -194,11 +199,24 @@ class _HomeShellState extends State<HomeShell>
             icon: const Icon(Icons.refresh),
           ),
         ];
-      case HomeShellTabs.committees:
+      case HomeShellTabs.users:
         return [
           IconButton(
             tooltip: 'تحديث',
-            onPressed: () => _committeesKey.currentState?.reload(),
+            onPressed: () => _usersKey.currentState?.reload(),
+            icon: const Icon(Icons.refresh),
+          ),
+          IconButton(
+            tooltip: 'إنشاء مستخدم إدارة الفرع',
+            onPressed: () => _usersKey.currentState?.openCreate(),
+            icon: const Icon(Icons.person_add_alt_1),
+          ),
+        ];
+      case HomeShellTabs.branchVisits:
+        return [
+          IconButton(
+            tooltip: 'تحديث',
+            onPressed: () => _branchVisitsKey.currentState?.reload(),
             icon: const Icon(Icons.refresh),
           ),
         ];
@@ -209,41 +227,10 @@ class _HomeShellState extends State<HomeShell>
 
   @override
   Widget build(BuildContext context) {
-    final onCommittees = _index == HomeShellTabs.committees;
     return Scaffold(
       appBar: AppBar(
-        title: Text(onCommittees
-            ? (_committeeTabs.index == 1 ? 'خريطة المتابعين' : 'التكليف')
-            : _titles[_index]),
+        title: Text(_titles[_index]),
         actions: _actions(),
-        bottom: onCommittees
-            ? TabBar(
-                controller: _committeeTabs,
-                indicatorColor: Colors.white,
-                indicatorWeight: 3,
-                labelColor: Colors.white,
-                unselectedLabelColor: Colors.white70,
-                labelStyle: const TextStyle(
-                  fontFamily: 'Cairo',
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-                unselectedLabelStyle: const TextStyle(
-                  fontFamily: 'Cairo',
-                  fontSize: 13,
-                ),
-                tabs: const [
-                  Tab(
-                    icon: Icon(Icons.assignment_outlined),
-                    text: 'التكليف',
-                  ),
-                  Tab(
-                    icon: Icon(Icons.map_outlined),
-                    text: 'خريطة المتابعين',
-                  ),
-                ],
-              )
-            : null,
       ),
       drawer: Drawer(
         child: SafeArea(
@@ -321,6 +308,7 @@ class _HomeShellState extends State<HomeShell>
             onOpenTab: _openTab,
             onOpenWrongSalesUnread: _openWrongSalesUnread,
           ),
+          AssignedTasksInboxScreen(key: _assignedTasksKey),
           StatsPage(key: _statsKey),
           ComplaintsScreen(key: _complaintsKey, onChanged: _refreshDashboard),
           ExceptionsScreen(
@@ -334,10 +322,8 @@ class _HomeShellState extends State<HomeShell>
             onChanged: _refreshDashboard,
           ),
           WaiversScreen(key: _waiversKey, onChanged: _refreshDashboard),
-          CommitteesScreen(
-            key: _committeesKey,
-            tabController: _committeeTabs,
-          ),
+          BranchManagerUsersScreen(key: _usersKey),
+          BranchVisitsScreen(key: _branchVisitsKey),
           const SettingsScreen(),
         ],
       ),

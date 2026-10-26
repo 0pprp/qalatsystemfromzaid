@@ -129,7 +129,8 @@ namespace BE_SalesEmployee.Services
             HttpMethod method,
             HttpContent? content,
             string? managerName,
-            CancellationToken ct)
+            CancellationToken ct,
+            string? actorRole = null)
         {
             var url = $"{AdminCitiesService.NormalizeLink(cityLink)}{relativePath.TrimStart('/')}";
             var request = new HttpRequestMessage(method, url);
@@ -142,6 +143,10 @@ namespace BE_SalesEmployee.Services
             {
                 var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(managerName));
                 request.Headers.TryAddWithoutValidation("X-Sales-Manager-Name-B64", b64);
+            }
+            if (!string.IsNullOrWhiteSpace(actorRole))
+            {
+                request.Headers.TryAddWithoutValidation("X-Sales-Actor-Role", actorRole.Trim());
             }
             if (content != null)
             {

@@ -1,0 +1,150 @@
+﻿1231|    payments = await _loadLocalDayPaidPayments(delegateId);
+1232|    setState(() {});
+1233|  }
+1234|
+1235|  double roundToNearestThousand(double value) {
+1236|    return (value / 1000).round() * 1000;
+1237|  }
+1238|
+1239|  // ╪Ñ╪╕┘ç╪º╪▒ ╪º┘ä┘ÇDialog ΓÇö ┘ä┘ä┘à╪¿┘è╪╣╪º╪¬ ╪º┘ä╪¼╪»┘è╪»╪⌐: ╪¬┘é┘è┘è┘à ╪º┘ä┘à╪¡┘ä ╪ú┘ê┘ä╪º┘ï ╪½┘à ┘à╪¿┘ä╪║ ╪º┘ä╪¬╪│╪»┘è╪»
+1240|  Future<void> _showPaymentDialog(Client client, BuildContext context) async {
+1241|    ShopEvaluationResult? pendingShopEval;
+1242|    final needsShopEval = NewSaleListLogic.isNewSaleAwaitingFirstCollection(
+1243|      client,
+1244|      locallyCollectedCustomerIds: _locallyCollectedCustomerIds,
+1245|    );
+1246|    if (needsShopEval) {
+1247|      pendingShopEval = await showShopEvaluationDialog(context);
+1248|      if (pendingShopEval == null || !mounted) return;
+1249|    }
+1250|
+1251|    final amountController =
+1252|        TextEditingController(text: client.dailyInstallment.toInt().toString());
+1253|
+1254|    if (!mounted) return;
+1255|    await showDialog(
+1256|      context: context,
+1257|      builder: (dialogContext) {
+1258|        return Directionality(
+1259|          textDirection: TextDirection.rtl,
+1260|          child: Dialog(
+1261|            shape:
+1262|                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+1263|            backgroundColor: Theme.of(dialogContext).dialogTheme.backgroundColor ??
+1264|                Theme.of(dialogContext).cardColor,
+1265|            child: Padding(
+1266|              padding: const EdgeInsets.all(20.0),
+1267|              child: Column(
+1268|                mainAxisSize: MainAxisSize.min,
+1269|                crossAxisAlignment: CrossAxisAlignment.stretch,
+1270|                children: [
+1271|                  Text(
+1272|                    '╪Ñ╪╢╪º┘ü╪⌐ ╪¬╪│╪»┘è╪»',
+1273|                    textAlign: TextAlign.center,
+1274|                    style: TextStyle(
+1275|                      fontFamily: 'Cairo',
+1276|                      fontSize: 20,
+1277|                      fontWeight: FontWeight.bold,
+1278|                      color: Theme.of(dialogContext).textTheme.bodyLarge?.color,
+1279|                    ),
+1280|                  ),
+1281|                  const SizedBox(height: 20),
+1282|                  Text(
+1283|                    '╪ú╪»╪«┘ä ┘à╪¿┘ä╪║ ╪º┘ä╪¬╪│╪»┘è╪»:',
+1284|                    style: TextStyle(
+1285|                      fontFamily: 'Cairo',
+1286|                      fontSize: 14,
+1287|                      color: Theme.of(dialogContext).hintColor,
+1288|                    ),
+1289|                  ),
+1290|                  const SizedBox(height: 10),
+1291|                  TextField(
+1292|                    controller: amountController,
+1293|                    keyboardType: TextInputType.number,
+1294|                    inputFormatters: [ThousandsSeparatorInputFormatter()],
+1295|                    style: const TextStyle(fontFamily: 'Cairo'),
+1296|                    decoration: InputDecoration(
+1297|                      filled: true,
+1298|                      fillColor: Theme.of(dialogContext).cardColor,
+1299|                      hintText: '╪º┘ä┘à╪¿┘ä╪║',
+1300|                      border: OutlineInputBorder(
+1301|                        borderRadius: BorderRadius.circular(12),
+1302|                        borderSide: BorderSide.none,
+1303|                      ),
+1304|                      prefixIcon: const Icon(Icons.attach_money,
+1305|                          color: AppTheme.primaryColor),
+1306|                    ),
+1307|                  ),
+1308|                  const SizedBox(height: 25),
+1309|                  Row(
+1310|                    children: [
+1311|                      Expanded(
+1312|                        child: ElevatedButton.icon(
+1313|                          onPressed: _paymentSubmitting
+1314|                              ? null
+1315|                              : () async {
+1316|                            final amount =
+1317|                                ThousandsSeparatorInputFormatter.parseMoney(
+1318|                                      amountController.text,
+1319|                                    ) ??
+1320|                                    0.0;
+1321|                            final err = PaymentValidation.validateAmount(amount);
+1322|                            if (err != null) {
+1323|                              _showMessage(err, dialogContext);
+1324|                              return;
+1325|                            }
+1326|                            if (pendingShopEval != null) {
+1327|                              final listId = int.tryParse(
+1328|                                      selectedRepresentative?.toString() ??
+1329|                                          '') ??
+1330|                                  0;
+1331|                              final evalErr =
+1332|                                  await FirstCollectionEvalService.submit(
+1333|                                customerId: client.customerId,
+1334|                                listId: listId,
+1335|                                eval: pendingShopEval!,
+1336|                                saleAmount: client.salePrice,
+1337|                              );
+1338|                              if (evalErr != null) {
+1339|                                if (dialogContext.mounted) {
+1340|                                  _showMessage(evalErr, dialogContext);
+1341|                                }
+1342|                                return;
+1343|                              }
+1344|                            }
+1345|                            await _addPayment(client, amount, dialogContext);
+1346|                            if (mounted && dialogContext.mounted) {
+1347|                              Navigator.pop(dialogContext);
+1348|                            }
+1349|                          },
+1350|                          icon: const Icon(Icons.check_circle_outline,
+1351|                              color: Colors.white),
+1352|                          label: const Text('╪¬╪│╪»┘è╪»',
+1353|                              style: TextStyle(
+1354|                                  fontFamily: 'Cairo', color: Colors.white)),
+1355|                          style: ElevatedButton.styleFrom(
+1356|                            backgroundColor: AppTheme.primaryColor,
+1357|                            padding: const EdgeInsets.symmetric(vertical: 12),
+1358|                            shape: RoundedRectangleBorder(
+1359|                                borderRadius: BorderRadius.circular(10)),
+1360|                          ),
+1361|                        ),
+1362|                      ),
+1363|                      const SizedBox(width: 10),
+1364|                      Expanded(
+1365|                        child: OutlinedButton.icon(
+1366|                          onPressed: () {
+1367|                            Navigator.pop(dialogContext);
+1368|                          },
+1369|                          icon: Icon(Icons.cancel_outlined,
+1370|                              color: Theme.of(dialogContext).colorScheme.error),
+1371|                          label: Text('╪Ñ┘ä╪║╪º╪í',
+1372|                              style: TextStyle(
+1373|                                  fontFamily: 'Cairo',
+1374|                                  color: Theme.of(dialogContext)
+1375|                                      .colorScheme
+1376|                                      .error)),
+1377|                          style: OutlinedButton.styleFrom(
+1378|                            padding: const EdgeInsets.symmetric(vertical: 12),
+1379|                            side: BorderSide(
+1380|                                color:

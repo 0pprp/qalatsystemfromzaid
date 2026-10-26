@@ -17,6 +17,12 @@ public static class DelegatedManagerStatsPaths
             + $"&toDate={Uri.EscapeDataString(to.ToString("yyyy-MM-dd"))}";
     }
 
+    public static string CompanyListPaymentsSum(int listId, DateTime from, DateTime to) =>
+        "sales-manager/stats/list-payments-sum"
+        + $"?listId={listId}"
+        + $"&fromDate={Uri.EscapeDataString(from.ToString("yyyy-MM-dd"))}"
+        + $"&toDate={Uri.EscapeDataString(to.ToString("yyyy-MM-dd"))}";
+
     public static string CompanyRatingCustomers(
         string? scope,
         int id,

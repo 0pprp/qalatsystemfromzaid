@@ -27,6 +27,7 @@ namespace BE_Company.Sales.Controllers
         private readonly IConfiguration _configuration;
         private readonly ISalesShopProfileService _shops;
         private readonly ISalesCustomerDocumentService _customerDocs;
+        private readonly ISalesEmployeeListDayRatingService _listDayRatings;
 
         public SalesController(
             SalesDevelopmentGuard guard,
@@ -43,7 +44,8 @@ namespace BE_Company.Sales.Controllers
             CustomerDirectoryService directory,
             IConfiguration configuration,
             ISalesShopProfileService shops,
-            ISalesCustomerDocumentService customerDocs)
+            ISalesCustomerDocumentService customerDocs,
+            ISalesEmployeeListDayRatingService listDayRatings)
         {
             _guard = guard;
             _identity = identity;
@@ -60,6 +62,7 @@ namespace BE_Company.Sales.Controllers
             _configuration = configuration;
             _shops = shops;
             _customerDocs = customerDocs;
+            _listDayRatings = listDayRatings;
         }
 
         [Authorize(Policy = SalesPolicies.AnySales)]
@@ -533,6 +536,55 @@ namespace BE_Company.Sales.Controllers
             }
         }
 
+        /// <summary>Once-per-list-per-Iraq-day rating of مندوب القائمة (0–10). SalesEmployeeListDayRating_V1</summary>
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("list-delegate-ratings/status")]
+        public async Task<ActionResult<SalesEmployeeListDayRatingStatusDto>> ListDelegateRatingStatus(
+            [FromQuery] int listId,
+            CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null) return blocked;
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null) return Unauthorized();
+            if (listId <= 0) return BadRequest(new { message = "listId مطلوب" });
+
+            var status = await _listDayRatings.GetTodayStatusAsync(identity.EmployeeId, listId, ct);
+            return Ok(status);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("list-delegate-ratings")]
+        public async Task<IActionResult> SubmitListDelegateRating(
+            [FromBody] SalesEmployeeListDayRatingBody? body,
+            CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null) return blocked;
+
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null) return Unauthorized();
+
+            body ??= new SalesEmployeeListDayRatingBody();
+            var (ok, error, row) = await _listDayRatings.SubmitAsync(
+                identity.EmployeeId,
+                body.ListId,
+                body.Score,
+                body.Note,
+                ct);
+            if (!ok)
+                return BadRequest(new { message = error ?? "تعذر حفظ التقييم" });
+            return Ok(row);
+        }
+
+        public sealed class SalesEmployeeListDayRatingBody
+        {
+            public int ListId { get; set; }
+            public int Score { get; set; }
+            public string? Note { get; set; }
+        }
+
         [Authorize(Policy = SalesPolicies.SalesEmployee)]
         [HttpPost("{id:int}/complete")]
         public async Task<ActionResult<SalesCompleteResponseDTO>> Complete(int id, [FromBody] SalesShopCompleteDTO? shop, CancellationToken ct)
@@ -874,6 +926,18 @@ namespace BE_Company.Sales.Controllers
             var identity = _identity.FromAuthenticatedUser();
             if (identity == null) return Unauthorized();
             return Ok(await _requests.ListForEmployeeAsync(identity.EmployeeId, ct));
+        }
+
+        /// <summary>Sales requests this employee submitted (not inbox assignments).</summary>
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("requests/submitted")]
+        public async Task<IActionResult> MySubmittedRequests(CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null) return blocked;
+            var identity = _identity.FromAuthenticatedUser();
+            if (identity == null) return Unauthorized();
+            return Ok(await _requests.ListSubmittedByEmployeeAsync(identity.EmployeeId, ct));
         }
 
         [Authorize(Policy = SalesPolicies.SalesEmployee)]

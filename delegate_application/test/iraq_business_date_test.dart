@@ -27,11 +27,11 @@ void main() {
     });
   });
 
-  group('IraqDate payment sync gate 16:00 (independent of 03:00)', () {
-    test('15:59:59 Baghdad — gate CLOSED (no upload)', () {
+  group('IraqDate payment sync gate always open (online upload)', () {
+    test('15:59:59 Baghdad — gate OPEN', () {
       // 15:59:59 Baghdad = 12:59:59 UTC
       final utc = DateTime.utc(2026, 9, 14, 12, 59, 59);
-      expect(IraqDate.isPaymentSyncGateOpen(utc), isFalse);
+      expect(IraqDate.isPaymentSyncGateOpen(utc), isTrue);
     });
 
     test('16:00:00 Baghdad — gate OPEN', () {
@@ -40,28 +40,26 @@ void main() {
       expect(IraqDate.isPaymentSyncGateOpen(utc), isTrue);
     });
 
-    test('10:00 Baghdad — gate CLOSED', () {
+    test('10:00 Baghdad — gate OPEN', () {
       final utc = DateTime.utc(2026, 9, 14, 7, 0);
-      expect(IraqDate.isPaymentSyncGateOpen(utc), isFalse);
+      expect(IraqDate.isPaymentSyncGateOpen(utc), isTrue);
     });
 
-    test('02:30 Baghdad — gate OPEN (still previous business day after 16:00)', () {
-      // 02:30 Baghdad next calendar = previous biz day; send window still open
-      // until 03:00 so leftovers do not wait until next afternoon.
+    test('02:30 Baghdad — gate OPEN + business day unchanged', () {
       final utc = DateTime.utc(2026, 9, 14, 23, 30); // Sep 15 02:30 Baghdad
       expect(IraqDate.isPaymentSyncGateOpen(utc), isTrue);
       expect(IraqDate.businessDateKey(utc), '2026-09-14');
     });
 
-    test('delayUntilPaymentSyncGate is zero when open', () {
+    test('delayUntilPaymentSyncGate is always zero', () {
       final utc = DateTime.utc(2026, 9, 14, 14, 0); // 17:00 Baghdad
       expect(IraqDate.delayUntilPaymentSyncGate(utc), Duration.zero);
     });
 
-    test('delayUntilPaymentSyncGate positive before 16:00', () {
+    test('delayUntilPaymentSyncGate zero before former 16:00', () {
       final utc = DateTime.utc(2026, 9, 14, 10, 0); // 13:00 Baghdad
       final d = IraqDate.delayUntilPaymentSyncGate(utc);
-      expect(d.inHours, 3);
+      expect(d, Duration.zero);
     });
   });
 

@@ -1,3 +1,4 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -88,7 +89,7 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             ),
           ),
-          if (_loading) const LinearProgressIndicator(minHeight: 2),
+          if (_loading) const CompanyLoader(size: 32),
           Expanded(child: _body()),
         ],
       ),

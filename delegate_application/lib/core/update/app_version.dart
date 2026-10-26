@@ -3,8 +3,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 /// Installed build identity. Keep constants in sync with `pubspec.yaml`.
 /// Prefer [resolvedCode] after [ensureLoaded] so update gate matches the APK.
 class AppVersion {
-  static const String name = '1.0.9';
-  static const int code = 28;
+  static const String name = '1.0.41';
+  static const int code = 71;
 
   static const String appKey = 'delegate';
 

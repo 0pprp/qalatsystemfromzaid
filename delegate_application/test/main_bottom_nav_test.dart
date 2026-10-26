@@ -7,71 +7,34 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('MainBottomNavBar', () {
-    testWidgets('home is a normal tab (no FAB gap); RTL order', (tester) async {
+    testWidgets('four tabs RTL: الرئيسية التسديدات العملاء التقييم',
+        (tester) async {
       int? tapped;
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: const SizedBox.shrink(),
             bottomNavigationBar: MainBottomNavBar(
-              selectedIndex: 2,
+              selectedIndex: 0,
               onTap: (i) => tapped = i,
             ),
           ),
         ),
       );
 
-      expect(find.text('المبيعات'), findsOneWidget);
-      expect(find.text('العملاء'), findsOneWidget);
       expect(find.text('الرئيسية'), findsOneWidget);
       expect(find.text('التسديدات'), findsOneWidget);
-      expect(find.byType(FloatingActionButton), findsNothing);
-
-      final sales = tester.getCenter(find.text('المبيعات'));
-      final customers = tester.getCenter(find.text('العملاء'));
-      final home = tester.getCenter(find.text('الرئيسية'));
-      final payments = tester.getCenter(find.text('التسديدات'));
-
-      expect(sales.dx, greaterThan(customers.dx));
-      expect(customers.dx, greaterThan(home.dx));
-      expect(home.dx, greaterThan(payments.dx));
-
-      await tester.tap(find.text('المبيعات'));
-      expect(tapped, 0);
-      await tester.tap(find.text('العملاء'));
-      expect(tapped, 1);
-      await tester.tap(find.text('الرئيسية'));
-      expect(tapped, 2);
-      await tester.tap(find.text('التسديدات'));
-      expect(tapped, 3);
-    });
-
-    testWidgets('selected indicator moves with tab', (tester) async {
-      var index = 2;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: StatefulBuilder(
-            builder: (context, setState) {
-              return Scaffold(
-                body: const SizedBox.shrink(),
-                bottomNavigationBar: MainBottomNavBar(
-                  selectedIndex: index,
-                  onTap: (i) => setState(() => index = i),
-                ),
-              );
-            },
-          ),
-        ),
-      );
-
-      await tester.tap(find.text('العملاء'));
-      await tester.pumpAndSettle();
-      // Rebuild with new index via StatefulBuilder — tap updates state.
       expect(find.text('العملاء'), findsOneWidget);
+      expect(find.text('التقييم'), findsOneWidget);
 
-      await tester.tap(find.text('المبيعات'));
-      await tester.pumpAndSettle();
-      expect(find.text('المبيعات'), findsOneWidget);
+      await tester.tap(find.text('التسديدات'));
+      expect(tapped, 1);
+      await tester.tap(find.text('العملاء'));
+      expect(tapped, 2);
+      await tester.tap(find.text('التقييم'));
+      expect(tapped, 3);
+      await tester.tap(find.text('الرئيسية'));
+      expect(tapped, 0);
     });
 
     testWidgets('SafeArea wraps bottom nav without overflow at 360x800',
@@ -109,12 +72,12 @@ void main() {
           {
             'CustomerId': 1,
             'Amount': 5000,
-            'CreatedAtUtc': '2026-09-10T22:30:00.000Z', // Iraq Sep 11
+            'CreatedAtUtc': '2026-09-10T22:30:00.000Z',
           },
           {
             'CustomerId': 1,
             'Amount': 1000,
-            'CreatedAtUtc': '2026-09-09T10:00:00.000Z', // yesterday Iraq
+            'CreatedAtUtc': '2026-09-09T10:00:00.000Z',
           },
         ],
         utcNow: utcNow,

@@ -22,8 +22,8 @@ public class CustomerRatingCalculatorTests
 
     [Theory]
     [InlineData(100, CustomerRatingLevel.Excellent, 10)]
-    [InlineData(140, CustomerRatingLevel.Excellent, 10)]
-    [InlineData(141, CustomerRatingLevel.Good, 5)]
+    [InlineData(150, CustomerRatingLevel.Excellent, 10)]
+    [InlineData(151, CustomerRatingLevel.Good, 5)]
     [InlineData(160, CustomerRatingLevel.Good, 5)]
     [InlineData(161, CustomerRatingLevel.Weak, 0)]
     [InlineData(179, CustomerRatingLevel.Weak, 0)]
@@ -41,8 +41,8 @@ public class CustomerRatingCalculatorTests
     }
 
     [Theory]
-    [InlineData(7.1, CustomerRatingLevel.Excellent, 10)]
-    [InlineData(7.11, CustomerRatingLevel.Excellent, 10)]
+    [InlineData(6.6667, CustomerRatingLevel.Excellent, 10)] // 1000/150
+    [InlineData(6.7, CustomerRatingLevel.Excellent, 10)]
     [InlineData(6.25, CustomerRatingLevel.Good, 5)]
     [InlineData(6.26, CustomerRatingLevel.Good, 5)]
     [InlineData(5.56, CustomerRatingLevel.Weak, 0)]
@@ -188,13 +188,13 @@ public class CustomerRatingCalculatorTests
     [Fact]
     public void RatingEquation_2_Compresses_Settled_Days_For_Classification()
     {
-        // 280 calendar days → with ×2 effective 140 → ممتاز
+        // 300 calendar days → with ×2 effective 150 → ممتاز (حد الممتاز 150)
         var result = CustomerRatingCalculator.Evaluate(
-            Settled(280) with { RatingEquationFactor = 2 }, AsOf);
+            Settled(300) with { RatingEquationFactor = 2 }, AsOf);
         Assert.Equal(CustomerRatingLevel.Excellent, result.Level);
         Assert.Equal(10, result.Score);
-        Assert.Equal(280, result.DaysToSettle);
-        Assert.Contains("فعلي للتقييم 140", result.Reason);
+        Assert.Equal(300, result.DaysToSettle);
+        Assert.Contains("فعلي للتقييم 150", result.Reason);
     }
 
     [Theory]

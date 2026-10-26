@@ -22,23 +22,22 @@ namespace BE_DelegateWebApplication.Tests
         }
 
         [Fact]
-        public void BeforeFour_EligibleAtSixteenSameDay()
+        public void BeforeFour_EligibleImmediatelyAtCreated()
         {
-            // 15:30 Baghdad = 12:30 UTC
+            // 15:30 Baghdad = 12:30 UTC — gate removed, eligible at create time.
             var created = new DateTime(2026, 3, 26, 12, 30, 0, DateTimeKind.Utc);
             var eligible = CollectionPaymentRules.ComputeEligibleForPostingAtUtc(created);
-            // 16:00 Baghdad = 13:00 UTC
-            Assert.Equal(new DateTime(2026, 3, 26, 13, 0, 0, DateTimeKind.Utc), eligible);
-            Assert.False(CollectionPaymentRules.IsEligibleForPosting(eligible, created));
-            Assert.True(CollectionPaymentRules.IsEligibleForPosting(eligible, new DateTime(2026, 3, 26, 13, 0, 0, DateTimeKind.Utc)));
+            Assert.Equal(created, eligible);
+            Assert.True(CollectionPaymentRules.IsEligibleForPosting(eligible, created));
         }
 
         [Fact]
-        public void OfflineCreated1530_Received1700_EligibleAlreadyPassed()
+        public void OfflineCreated1530_Received1700_EligibleAtCreated()
         {
             var created = new DateTime(2026, 3, 26, 12, 30, 0, DateTimeKind.Utc); // 15:30 Baghdad
             var received = new DateTime(2026, 3, 26, 14, 0, 0, DateTimeKind.Utc); // 17:00 Baghdad
             var eligible = CollectionPaymentRules.ComputeEligibleForPostingAtUtc(created);
+            Assert.Equal(created, eligible);
             Assert.True(CollectionPaymentRules.IsEligibleForPosting(eligible, received));
         }
 

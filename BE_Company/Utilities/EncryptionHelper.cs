@@ -1,23 +1,161 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace BE_Company.Utilities
 {
     /// <summary>
-    /// Helper for encrypting/decrypting customer portal access tokens.
-    /// Token format (plaintext): customerID|expiryTimestamp (Unix seconds)
-    /// The encrypted + Base64 token is safe to include in URLs.
+    /// Authenticated portal tokens (AES-256-GCM). Legacy CBC tokens are rejected with no fallback.
+    /// Payload: customerId, branchId, purpose, exp (unix), jti.
+    /// </summary>
+    public static class PortalTokenCrypto
+    {
+        public const string PurposeCustomerPortal = "customer-portal";
+        private const byte Version = 1;
+        private const int NonceSize = 12;
+        private const int TagSize = 16;
+
+        public sealed record PortalTokenPayload(
+            int CustomerId,
+            int BranchId,
+            string Purpose,
+            long ExpUnix,
+            string Jti);
+
+        public static string Create(
+            int customerId,
+            int branchId,
+            string purpose,
+            TimeSpan lifetime,
+            string base64Key,
+            Func<string>? jtiFactory = null)
+        {
+            if (customerId <= 0) throw new ArgumentOutOfRangeException(nameof(customerId));
+            if (branchId <= 0) throw new ArgumentOutOfRangeException(nameof(branchId));
+            if (string.IsNullOrWhiteSpace(purpose)) throw new ArgumentException("purpose required", nameof(purpose));
+            if (lifetime <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(lifetime));
+
+            var payload = new PortalTokenPayload(
+                customerId,
+                branchId,
+                purpose.Trim(),
+                DateTimeOffset.UtcNow.Add(lifetime).ToUnixTimeSeconds(),
+                jtiFactory?.Invoke() ?? Guid.NewGuid().ToString("N"));
+
+            var plain = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload));
+            var key = DecodeKey(base64Key);
+            var nonce = RandomNumberGenerator.GetBytes(NonceSize);
+            var cipher = new byte[plain.Length];
+            var tag = new byte[TagSize];
+
+            using (var gcm = new AesGcm(key, TagSize))
+            {
+                gcm.Encrypt(nonce, plain, cipher, tag);
+            }
+
+            // v | nonce | tag | cipher
+            var packed = new byte[1 + NonceSize + TagSize + cipher.Length];
+            packed[0] = Version;
+            Buffer.BlockCopy(nonce, 0, packed, 1, NonceSize);
+            Buffer.BlockCopy(tag, 0, packed, 1 + NonceSize, TagSize);
+            Buffer.BlockCopy(cipher, 0, packed, 1 + NonceSize + TagSize, cipher.Length);
+            return ToUrlSafeBase64(packed);
+        }
+
+        public static PortalTokenPayload? TryValidate(string token, string base64Key, DateTimeOffset? nowUtc = null)
+        {
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(base64Key))
+            {
+                return null;
+            }
+
+            try
+            {
+                var packed = FromUrlSafeBase64(token);
+                if (packed.Length < 1 + NonceSize + TagSize + 1 || packed[0] != Version)
+                {
+                    return null;
+                }
+
+                var key = DecodeKey(base64Key);
+                var nonce = packed.AsSpan(1, NonceSize);
+                var tag = packed.AsSpan(1 + NonceSize, TagSize);
+                var cipher = packed.AsSpan(1 + NonceSize + TagSize);
+                var plain = new byte[cipher.Length];
+
+                using (var gcm = new AesGcm(key, TagSize))
+                {
+                    gcm.Decrypt(nonce, cipher, tag, plain);
+                }
+
+                var payload = JsonSerializer.Deserialize<PortalTokenPayload>(Encoding.UTF8.GetString(plain));
+                if (payload is null || payload.CustomerId <= 0 || payload.BranchId <= 0)
+                {
+                    return null;
+                }
+
+                if (!string.Equals(payload.Purpose, PurposeCustomerPortal, StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds();
+                if (payload.ExpUnix < now)
+                {
+                    return null;
+                }
+
+                if (string.IsNullOrWhiteSpace(payload.Jti))
+                {
+                    return null;
+                }
+
+                return payload;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static byte[] DecodeKey(string base64Key)
+        {
+            var key = Convert.FromBase64String(base64Key);
+            if (key.Length != 32)
+            {
+                throw new ArgumentException("Portal encryption key must be 32 bytes (Base64).", nameof(base64Key));
+            }
+
+            return key;
+        }
+
+        private static string ToUrlSafeBase64(byte[] data) =>
+            Convert.ToBase64String(data).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+
+        private static byte[] FromUrlSafeBase64(string text)
+        {
+            var base64 = text.Replace('-', '+').Replace('_', '/');
+            switch (base64.Length % 4)
+            {
+                case 2: base64 += "=="; break;
+                case 3: base64 += "="; break;
+            }
+
+            return Convert.FromBase64String(base64);
+        }
+    }
+
+    /// <summary>
+    /// Legacy CBC helper kept only for generating/detecting old tokens during migration docs/tests.
+    /// Production portal validation must not call Decrypt for authorization.
     /// </summary>
     public static class EncryptionHelper
     {
         private const int KeySize = 256;
         private const int BlockSize = 128;
-        private const int IvSize = 16; // AES block size
+        private const int IvSize = 16;
 
-        /// <summary>
-        /// Encrypts a plaintext string using AES-256-CBC with a random IV prepended.
-        /// Returns Base64-encoded ciphertext suitable for URLs.
-        /// </summary>
+        [Obsolete("Legacy CBC portal tokens are rejected. Use PortalTokenCrypto (AES-GCM).")]
         public static string Encrypt(string plainText, string base64Key)
         {
             if (string.IsNullOrEmpty(plainText))
@@ -26,7 +164,7 @@ namespace BE_Company.Utilities
                 throw new ArgumentNullException(nameof(base64Key));
 
             byte[] key = Convert.FromBase64String(base64Key);
-            byte[] iv = GenerateRandomIv();
+            byte[] iv = RandomNumberGenerator.GetBytes(IvSize);
 
             using var aes = Aes.Create();
             aes.KeySize = KeySize;
@@ -40,7 +178,6 @@ namespace BE_Company.Utilities
             byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
             byte[] cipherBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
 
-            // Prepend IV to ciphertext for later decryption
             byte[] result = new byte[iv.Length + cipherBytes.Length];
             Buffer.BlockCopy(iv, 0, result, 0, iv.Length);
             Buffer.BlockCopy(cipherBytes, 0, result, iv.Length, cipherBytes.Length);
@@ -51,25 +188,15 @@ namespace BE_Company.Utilities
                 .TrimEnd('=');
         }
 
-        /// <summary>
-        /// Decrypts a Base64-encoded ciphertext (with prepended IV).
-        /// Returns the original plaintext, or null if decryption fails.
-        /// </summary>
+        [Obsolete("Do not authorize with CBC decrypt. Use PortalTokenCrypto.TryValidate.")]
         public static string? Decrypt(string cipherText, string base64Key)
         {
-            if (string.IsNullOrEmpty(cipherText))
-                return null;
-            if (string.IsNullOrEmpty(base64Key))
+            if (string.IsNullOrEmpty(cipherText) || string.IsNullOrEmpty(base64Key))
                 return null;
 
             try
             {
-                // Restore Base64 padding and characters
-                string base64 = cipherText
-                    .Replace('-', '+')
-                    .Replace('_', '/');
-
-                // Add padding if needed
+                string base64 = cipherText.Replace('-', '+').Replace('_', '/');
                 switch (base64.Length % 4)
                 {
                     case 2: base64 += "=="; break;
@@ -78,7 +205,6 @@ namespace BE_Company.Utilities
 
                 byte[] fullCipher = Convert.FromBase64String(base64);
                 byte[] key = Convert.FromBase64String(base64Key);
-
                 if (fullCipher.Length < IvSize)
                     return null;
 
@@ -101,74 +227,25 @@ namespace BE_Company.Utilities
             }
             catch
             {
-                return null; // Tampered or invalid token
+                return null;
             }
         }
 
-        /// <summary>
-        /// Creates an encrypted token for a customer ID with optional branch ID.
-        /// Token format: customerId  or  customerId|branchId
-        /// Tokens never expire.
-        /// </summary>
+        [Obsolete("Use PortalTokenCrypto.Create.")]
         public static string CreateCustomerToken(int customerId, string base64Key, int? branchId = null)
         {
             string plainText = branchId.HasValue
                 ? $"{customerId}|{branchId.Value}"
                 : $"{customerId}";
+#pragma warning disable CS0618
             return Encrypt(plainText, base64Key);
+#pragma warning restore CS0618
         }
 
-        /// <summary>
-        /// Validates and extracts customer ID from an encrypted token.
-        /// Supports formats: "customerId" or "customerId|branchId".
-        /// Tokens never expire.
-        /// </summary>
-        public static int? ValidateAndGetCustomerId(string token, string base64Key)
-        {
-            string? plainText = Decrypt(token, base64Key);
-            if (string.IsNullOrEmpty(plainText))
-                return null;
+        [Obsolete("Legacy tokens are not accepted by PortalController.")]
+        public static int? ValidateAndGetCustomerId(string token, string base64Key) => null;
 
-            string[] parts = plainText.Split('|');
-            if (parts.Length < 1 || parts.Length > 2)
-                return null;
-
-            if (!int.TryParse(parts[0], out int customerId))
-                return null;
-
-            return customerId;
-        }
-
-        /// <summary>
-        /// Validates token and returns both customer ID and branch ID (if present).
-        /// Supports formats: "customerId" or "customerId|branchId".
-        /// </summary>
-        public static (int customerId, int? branchId)? ValidateAndGetCustomerIdWithBranch(string token, string base64Key)
-        {
-            string? plainText = Decrypt(token, base64Key);
-            if (string.IsNullOrEmpty(plainText))
-                return null;
-
-            string[] parts = plainText.Split('|');
-            if (parts.Length < 1 || parts.Length > 2)
-                return null;
-
-            if (!int.TryParse(parts[0], out int customerId))
-                return null;
-
-            int? branchId = null;
-            if (parts.Length == 2 && int.TryParse(parts[1], out int bid))
-                branchId = bid;
-
-            return (customerId, branchId);
-        }
-
-        private static byte[] GenerateRandomIv()
-        {
-            byte[] iv = new byte[IvSize];
-            using var rng = RandomNumberGenerator.Create();
-            rng.GetBytes(iv);
-            return iv;
-        }
+        [Obsolete("Legacy tokens are not accepted by PortalController.")]
+        public static (int customerId, int? branchId)? ValidateAndGetCustomerIdWithBranch(string token, string base64Key) => null;
     }
 }

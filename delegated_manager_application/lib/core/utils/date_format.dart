@@ -30,6 +30,18 @@ class AppDate {
     return '${day(value)} ${two(value.hour)}:${two(value.minute)}';
   }
 
+  /// Iraq (+03) 12-hour clock with صباح/مساء.
+  static String iraqDateTime12h(DateTime? value) {
+    if (value == null) return '-';
+    final utc = value.isUtc ? value : value.toUtc();
+    final iraq = utc.add(const Duration(hours: 3));
+    final h24 = iraq.hour;
+    final period = h24 >= 12 ? 'مساء' : 'صباح';
+    var h12 = h24 % 12;
+    if (h12 == 0) h12 = 12;
+    return '${day(iraq)} ${two(h12)}:${two(iraq.minute)} $period';
+  }
+
   static String relative(DateTime? value, {DateTime? now}) {
     if (value == null) return '-';
     final reference = now ?? DateTime.now();

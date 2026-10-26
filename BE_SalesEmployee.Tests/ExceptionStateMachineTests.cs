@@ -9,9 +9,21 @@ public sealed class ExceptionStateMachineTests
     [InlineData(ExceptionStatuses.Approved)]
     [InlineData(ExceptionStatuses.Rejected)]
     [InlineData(ExceptionStatuses.Cancelled)]
+    [InlineData(ExceptionStatuses.AwaitingAccountant)]
     public void Pending_CanMoveToAnyTerminalStatus(string target)
     {
         Assert.True(ExceptionStateMachine.CanTransition(ExceptionStatuses.Pending, target));
+    }
+
+    [Fact]
+    public void AwaitingAccountant_CanMoveToApprovedOnly()
+    {
+        Assert.True(ExceptionStateMachine.CanTransition(
+            ExceptionStatuses.AwaitingAccountant, ExceptionStatuses.Approved));
+        Assert.False(ExceptionStateMachine.CanTransition(
+            ExceptionStatuses.AwaitingAccountant, ExceptionStatuses.Rejected));
+        Assert.False(ExceptionStateMachine.CanTransition(
+            ExceptionStatuses.AwaitingAccountant, ExceptionStatuses.Pending));
     }
 
     [Theory]
@@ -22,6 +34,7 @@ public sealed class ExceptionStateMachineTests
     [InlineData(ExceptionStatuses.Approved, ExceptionStatuses.Pending)]
     [InlineData(ExceptionStatuses.Rejected, ExceptionStatuses.Pending)]
     [InlineData(ExceptionStatuses.Cancelled, ExceptionStatuses.Pending)]
+    [InlineData(ExceptionStatuses.Approved, ExceptionStatuses.AwaitingAccountant)]
     public void TerminalStatuses_AreFinal(string from, string to)
     {
         Assert.False(ExceptionStateMachine.CanTransition(from, to));

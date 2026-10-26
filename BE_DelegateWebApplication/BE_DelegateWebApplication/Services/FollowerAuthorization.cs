@@ -63,9 +63,29 @@ namespace BE_DelegateWebApplication.Services
             return true;
         }
 
-        /// Province always comes from authenticated follower city — client value ignored.
+        /// Province always comes from authenticated follower / assigned list — client value ignored.
         public static string? ResolveProvinceFromFollower(string? followerCityName, string? clientProvince) =>
             string.IsNullOrWhiteSpace(followerCityName) ? null : followerCityName.Trim();
+
+        /// Prefer follower city; if missing use assigned list city (Delegates.CityID).
+        public static string? ResolveProvinceWithListFallback(
+            string? followerCityName,
+            string? listCityName,
+            string? clientProvinceIgnored = null)
+        {
+            _ = clientProvinceIgnored;
+            if (!string.IsNullOrWhiteSpace(followerCityName))
+            {
+                return followerCityName.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(listCityName))
+            {
+                return listCityName.Trim();
+            }
+
+            return null;
+        }
 
         public static string? BuildImageUrl(string? imagesBaseUrl, string? fileName)
         {

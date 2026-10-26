@@ -1,3 +1,4 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/app_state.dart';
@@ -142,7 +143,7 @@ class _RatingScreenState extends State<RatingScreen> {
         ElevatedButton(
           onPressed: _saving ? null : _save,
           child: _saving
-              ? const CircularProgressIndicator(color: Colors.white)
+              ? const CompanyLoader(size: 30)
               : const Text('حفظ التقييم'),
         ),
       ],

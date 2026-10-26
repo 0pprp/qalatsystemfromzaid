@@ -39,6 +39,14 @@ SET CustomerPaymentID = @CustomerPaymentID,
 WHERE WaiverId = @WaiverId;
 """;
 
+        /// <summary>Discount path: no customer payment row.</summary>
+        public static string CompleteDiscountClaimSql => """
+UPDATE dbo.SalesWaiverApplications
+SET CustomerPaymentID = NULL,
+    DecisionId = @DecisionId
+WHERE WaiverId = @WaiverId;
+""";
+
         public static string ExistsSql => """
 SELECT CASE WHEN EXISTS (
     SELECT 1 FROM dbo.SalesWaiverApplications WITH (UPDLOCK, HOLDLOCK)

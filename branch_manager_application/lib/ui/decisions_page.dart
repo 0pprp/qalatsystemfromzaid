@@ -32,10 +32,11 @@ class _DecisionsPageState extends State<DecisionsPage> {
     try {
       final rows = await BmApi.instance.weakWeekPayers();
       if (!mounted) return;
-      // مصفرون (الباقي ≤ 0) لا يحتاجون قراراً
+      // مصفرون (الباقي ≤ 0) لا يحتاجون قراراً؛ أسماء قانونية تتطلب ≥40 يوماً منذ آخر تسديد
       final open = rows.where((r) {
         final remain = _d(r, ['amountRemaining', 'AmountRemaining']);
-        return remain > 0;
+        if (remain <= 0) return false;
+        return _daysSinceLastPayment(r) >= 40;
       }).toList();
       setState(() {
         _items = open;
@@ -51,6 +52,18 @@ class _DecisionsPageState extends State<DecisionsPage> {
         _error = '$e';
       });
     }
+  }
+
+  /// أيام منذ آخر تسديد. بلا تسديد أصلاً يُعدّ متوقفاً (قيمة كبيرة).
+  int _daysSinceLastPayment(Map r) {
+    final raw = _s(r, ['lastPaymentDate', 'LastPaymentDate']);
+    if (raw.isEmpty) return 9999;
+    final dt = DateTime.tryParse(raw);
+    if (dt == null) return 9999;
+    final today = DateTime.now();
+    final a = DateTime(today.year, today.month, today.day);
+    final b = DateTime(dt.year, dt.month, dt.day);
+    return a.difference(b).inDays;
   }
 
   String _s(Map m, List<String> keys) {
@@ -157,7 +170,7 @@ class _DecisionsPageState extends State<DecisionsPage> {
                       subtitle: 'إرسال طلب تنازل للمدير المفوض — ملاحظة إجبارية',
                       onTap: () => setLocal(() => type = 'تنازل'),
                     ),
-                    if (type == 'متواصل' || type == 'تنازل') ...[
+                    if (type != null) ...[
                       const SizedBox(height: 12),
                       TextField(
                         controller: noteCtrl,
@@ -165,7 +178,7 @@ class _DecisionsPageState extends State<DecisionsPage> {
                         decoration: InputDecoration(
                           labelText: type == 'تنازل'
                               ? 'ملاحظة إجبارية للمدير المفوض'
-                              : 'ماذا اتفقت معه؟ (إجباري)',
+                              : 'ملاحظة إجبارية',
                         ),
                         style: const TextStyle(fontFamily: 'Cairo'),
                       ),
@@ -174,17 +187,30 @@ class _DecisionsPageState extends State<DecisionsPage> {
                     FilledButton(
                       onPressed: type == null
                           ? null
-                          : () {
-                              final needsNote =
-                                  type == 'متواصل' || type == 'تنازل';
-                              if (needsNote && noteCtrl.text.trim().isEmpty) {
-                                ScaffoldMessenger.of(ctx).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      type == 'تنازل'
-                                          ? 'الملاحظة إجبارية لطلب التنازل'
-                                          : 'الملاحظة إجبارية لقرار متواصل',
-                                      style: const TextStyle(fontFamily: 'Cairo'),
+                          : () async {
+                              if (noteCtrl.text.trim().isEmpty) {
+                                await showDialog<void>(
+                                  context: ctx,
+                                  builder: (dCtx) => Directionality(
+                                    textDirection: TextDirection.rtl,
+                                    child: AlertDialog(
+                                      title: const Text(
+                                        'الملاحظة إلزامية',
+                                        style: TextStyle(fontFamily: 'Cairo'),
+                                      ),
+                                      content: const Text(
+                                        'يجب كتابة ملاحظة قبل اعتماد القرار.',
+                                        style: TextStyle(fontFamily: 'Cairo'),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(dCtx),
+                                          child: const Text(
+                                            'حسناً',
+                                            style: TextStyle(fontFamily: 'Cairo'),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 );
@@ -327,7 +353,7 @@ class _DecisionsPageState extends State<DecisionsPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'قرارات الضعفاء',
+                      'أسماء قانونية',
                       style: TextStyle(
                         fontFamily: 'Cairo',
                         color: Colors.white,
@@ -337,7 +363,7 @@ class _DecisionsPageState extends State<DecisionsPage> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'تسديد آخر 7 أيام ≤ 3.8% من مبلغ البيع — يومياً. '
+                      'تسديد آخر 7 أيام ≤ 3.8% من مبلغ البيع، وآخر تسديد منذ ≥ 40 يوماً. '
                       '«متواصل» لا يتكرر قبل انتهاء الأسبوع.',
                       style: TextStyle(
                         fontFamily: 'Cairo',
@@ -390,7 +416,7 @@ class _DecisionsPageState extends State<DecisionsPage> {
             const SliverFillRemaining(
               child: Center(
                 child: Text(
-                  'لا يوجد زبائن ضمن شرط النسبة حالياً',
+                  'لا يوجد زبائن ضمن شرط النسبة وآخر تسديد ≥40 يوماً حالياً',
                   style: TextStyle(fontFamily: 'Cairo', color: BmTheme.muted),
                 ),
               ),

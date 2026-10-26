@@ -60,6 +60,11 @@ namespace BE_Company.Sales.Services
             !string.IsNullOrWhiteSpace(status)
             && !IsSold(status)
             && !string.Equals(status, Rejected, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Manager cancel → غير مسند: any status except Rejected.</summary>
+        public static bool CanCancelToUnassigned(string? status) =>
+            !string.IsNullOrWhiteSpace(status)
+            && !string.Equals(status, Rejected, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Denormalized exception hold on branch SalesRequests (Pending/Approved/Rejected).</summary>
@@ -105,6 +110,10 @@ namespace BE_Company.Sales.Services
         public const string ManagerProvinceChanged = "ManagerProvinceChanged";
         public const string ProvinceTransferred = "ProvinceTransferred";
         public const string LegalFollowupSent = "LegalFollowupSent";
+        /// <summary>Legal followup case cancelled → sales request returned to غير مسند.</summary>
+        public const string LegalFollowupCancelled = "LegalFollowupCancelled";
+        /// <summary>Manager cancelled workflow → غير مسند (not soft-delete archive).</summary>
+        public const string CancelledToUnassigned = "CancelledToUnassigned";
     }
 
     public static class SalesRequestSources
@@ -114,6 +123,7 @@ namespace BE_Company.Sales.Services
         public const string EmployeeSubmitted = "EmployeeSubmitted";
         public const string Follower = "Follower";
         public const string Delegate = "Delegate";
+        public const string Crm = "Crm";
 
         public static bool IsEmployeeSubmitted(string? source) =>
             string.Equals(source, EmployeeSubmitted, StringComparison.OrdinalIgnoreCase);
@@ -123,6 +133,9 @@ namespace BE_Company.Sales.Services
 
         public static bool IsDelegate(string? source) =>
             string.Equals(source, Delegate, StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsCrm(string? source) =>
+            string.Equals(source, Crm, StringComparison.OrdinalIgnoreCase);
     }
 
     public static class SaleRequestTypes
@@ -213,7 +226,15 @@ namespace BE_Company.Sales.Services
         Task<SalesRequestDTO> InsertAsync(SalesRequestDTO row, CancellationToken ct);
         Task<SalesRequestDTO?> GetByIdAsync(int id, CancellationToken ct);
         Task<SalesRequestDTO?> GetByIdIncludingDeletedAsync(int id, CancellationToken ct);
+        Task<SalesRequestDTO?> GetByExternalCrmOrderUuidAsync(Guid crmOrderUuid, CancellationToken ct);
+        Task<int> NextCrmRoundRobinEmployeeIdAsync(IReadOnlyList<int> employeeIds, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListAsync(int? targetEmployeeId, string? status, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct, string? filterStatus = null, int? take = null);
+        /// <summary>
+        /// Rows created by this employee: active + soft-deleted Rejected (manager/monitor reject)
+        /// so the submitter sees rejection reason in their submitted log.
+        /// Marker: SubmittedLogIncludesRejectedDeletes_V1
+        /// </summary>
+        Task<IReadOnlyList<SalesRequestDTO>> ListCreatedByEmployeeForSubmittedLogAsync(int createdByUserId, CancellationToken ct);
         Task<(IReadOnlyList<SalesRequestDTO> Items, int Total)> ListManagerPageAsync(
             string? tab,
             int? targetEmployeeId,
@@ -274,6 +295,8 @@ namespace BE_Company.Sales.Services
         Task<SalesRequestDTO> ManagerPendAsync(SalesIdentity manager, int id, string note, CancellationToken ct);
         Task<SalesRequestDTO?> GetForManagerAsync(int id, CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListForEmployeeAsync(int employeeId, CancellationToken ct);
+        /// <summary>Requests this sales employee submitted (EmployeeSubmitted), not their inbox.</summary>
+        Task<IReadOnlyList<SalesRequestDTO>> ListSubmittedByEmployeeAsync(int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> GetForEmployeeAsync(int id, int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> ViewAsync(int id, int employeeId, CancellationToken ct);
         Task<SalesRequestDTO> StartProcessingAsync(int id, int employeeId, string note, CancellationToken ct);
@@ -303,6 +326,13 @@ namespace BE_Company.Sales.Services
         Task SoftDeleteAsync(SalesIdentity manager, int id, string reason, CancellationToken ct);
         Task SoftDeleteAsync(SalesIdentity manager, int id, string reason, bool confirmCascadePayments, CancellationToken ct);
         Task<SalesRequestSoftDeleteImpactDTO> GetSoftDeleteImpactAsync(SalesIdentity manager, int id, CancellationToken ct);
+        Task<SalesRequestSoftDeleteImpactDTO> GetCancelImpactAsync(SalesIdentity manager, int id, CancellationToken ct);
+        Task<SalesRequestDTO> CancelAndUnassignAsync(
+            SalesIdentity manager,
+            int id,
+            string reason,
+            bool confirmCascadePayments,
+            CancellationToken ct);
         Task<IReadOnlyList<SalesRequestDTO>> ListDeletedForManagerAsync(CancellationToken ct);
         Task<SalesRequestDTO> AcceptProvinceTransferAsync(SalesIdentity manager, SalesRequestAcceptTransferDTO body, CancellationToken ct);
         Task MarkProvinceTransferredOutAsync(SalesIdentity manager, int id, SalesRequestMarkTransferredOutDTO body, CancellationToken ct);

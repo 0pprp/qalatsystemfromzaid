@@ -28,13 +28,42 @@ namespace BE_SalesEmployee.Services
             _configuration["SalesManagerAccount:DisplayName"] ?? "مدير المبيعات";
 
         /// <summary>
-        /// Authenticates against primary SalesManagerAccount, then SalesManagerAccounts:N, then amar1 (temporary).
-        /// Returns matched identity (UserName/DisplayName) without password.
+        /// True when at least one sales-manager password is configured.
+        /// Missing config must fail closed — no bootstrap credentials.
+        /// </summary>
+        public bool HasConfiguredAccounts()
+        {
+            if (!string.IsNullOrWhiteSpace(UserName) &&
+                !string.IsNullOrWhiteSpace(_configuration["SalesManagerAccount:Password"]))
+            {
+                return true;
+            }
+
+            foreach (var account in ReadAdditionalAccounts())
+            {
+                if (!string.IsNullOrWhiteSpace(account.UserName) &&
+                    !string.IsNullOrWhiteSpace(account.Password))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Authenticates against primary SalesManagerAccount, then SalesManagerAccounts:N.
+        /// Returns matched identity (UserName/DisplayName) without password. No hardcoded fallbacks.
         /// </summary>
         public bool TryAuthenticate(string? userName, string? password, out CentralSalesManagerIdentity? identity)
         {
             identity = null;
             if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrWhiteSpace(password))
+            {
+                return false;
+            }
+
+            if (!HasConfiguredAccounts())
             {
                 return false;
             }
@@ -82,19 +111,6 @@ namespace BE_SalesEmployee.Services
                 {
                     UserName = account.UserName.Trim(),
                     DisplayName = display,
-                };
-                return true;
-            }
-
-            // 3) Temporary hard-coded account (keep working for now)
-            if (string.Equals(normalizedUserName, "amar1", StringComparison.OrdinalIgnoreCase) &&
-                PasswordEquals(password, "amar1"))
-            {
-                // Backward compatible: same DisplayName as primary config (previous behavior).
-                identity = new CentralSalesManagerIdentity
-                {
-                    UserName = "amar1",
-                    DisplayName = string.IsNullOrWhiteSpace(DisplayName) ? "amar1" : DisplayName.Trim(),
                 };
                 return true;
             }

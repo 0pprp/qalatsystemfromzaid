@@ -446,6 +446,7 @@ VALUES
                 CustomerListName = listName,
                 CityValue = sample.CityValue ?? firstRequest?.CityValue,
                 CityName = account?.CityName ?? sample.CityName ?? firstRequest?.CityName,
+                IsLegal = account?.IsLegal == true,
                 PaymentSummary = paymentSummary,
                 Payments = payments
                     .OrderByDescending(p => p.PaymentDate)
@@ -609,11 +610,13 @@ ORDER BY CreatedAtUtc DESC;
             }
 
             var requests = await _requests.ListForManagerAsync(null, null, null, null, ct);
-            var matchedOpen = requests
+            // With a known CustomerId, update open + completed requests so the sale name stays consistent.
+            // Without CustomerId, keep freezing completed/rejected rows to avoid rewriting history by name match alone.
+            var matched = requests
                 .Where(r => MatchesForUpdate(r.ExistingCustomerId, r.CustomerName, r.CustomerPhone, customerId, originalName, originalPhone)
-                            && !IsFrozenRequest(r.Status))
+                            && (customerId is > 0 || !IsFrozenRequest(r.Status)))
                 .ToList();
-            foreach (var row in matchedOpen)
+            foreach (var row in matched)
             {
                 row.CustomerName = name;
                 row.CustomerPhone = phone;
@@ -630,7 +633,7 @@ ORDER BY CreatedAtUtc DESC;
                 await _requestRows.UpdateAsync(row, ct);
             }
 
-            if (customerId is null or <= 0 && matchedOpen.Count == 0)
+            if (customerId is null or <= 0 && matched.Count == 0)
             {
                 throw new SalesCompleteException(
                     StatusCodes.Status409Conflict,
@@ -1056,14 +1059,15 @@ WHERE SaleId = @SaleId AND Status = N'Pending'",
             sale.CustomerId,
             CustomerName = sale.FullName,
             CustomerPhone = sale.Phone,
-            ShopName = shop.ShopName!.Trim(),
-            ShopBusinessType = shop.ShopBusinessType!.Trim(),
+            // Progress saves may send partial shop rows before complete — never null into NOT NULL cols.
+            ShopName = (shop.ShopName ?? string.Empty).Trim(),
+            ShopBusinessType = (shop.ShopBusinessType ?? string.Empty).Trim(),
             shop.ShopStockEstimatedValue,
             shop.EstimatedDailyRevenue,
             shop.ShopLength,
             shop.ShopWidth,
             ShopArea = area,
-            ShopImageKey = shop.ShopImageKey!.Trim(),
+            ShopImageKey = (shop.ShopImageKey ?? string.Empty).Trim(),
             shop.Latitude,
             shop.Longitude
         };

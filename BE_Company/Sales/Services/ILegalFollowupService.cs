@@ -6,12 +6,17 @@ public static class LegalFollowupStatuses
 {
     public const string InProgress = "InProgress";
     public const string Completed = "Completed";
+    public const string Cancelled = "Cancelled";
 
     public static string Arabic(string? status) => status switch
     {
         Completed => "تمت المتابعة",
+        Cancelled => "ملغاة",
         _ => "قيد العمل"
     };
+
+    public static bool IsCancelled(string? status) =>
+        string.Equals(status, Cancelled, StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class LegalFollowupCaseDTO
@@ -71,8 +76,16 @@ public interface ILegalFollowupService
     Task<IReadOnlyList<LegalFollowupCaseDTO>> ListAsync(string? status, CancellationToken ct = default);
     Task<LegalFollowupCaseDTO?> GetAsync(int id, CancellationToken ct = default);
     Task<LegalFollowupCaseDTO> CreateAsync(LegalFollowupCreateRequest request, int actorUserId, string? actorName, CancellationToken ct = default);
+    Task<LegalFollowupCaseDTO> CancelAsync(int caseId, string reason, int actorUserId, string? actorName, CancellationToken ct = default);
+    /// <summary>Mark open InProgress cases for a sales request as Cancelled (no request reset).</summary>
+    Task CancelOpenInProgressForSalesRequestAsync(int salesRequestId, string? reason, int actorUserId, string? actorName, CancellationToken ct = default);
     Task<IReadOnlyList<LegalFollowupCaseDTO>> ListForFollowerAsync(int followerUserId, string? status, CancellationToken ct = default);
     Task<LegalFollowupCaseDTO?> GetForFollowerAsync(int id, int followerUserId, CancellationToken ct = default);
     Task<LegalFollowupCaseDTO> CompleteForFollowerAsync(int id, int followerUserId, string? note, CancellationToken ct = default);
     Task<(string FileName, byte[] Bytes, string ContentType)?> ReadCaseDocumentAsync(int caseId, int documentId, CancellationToken ct = default);
+}
+
+public sealed class LegalFollowupCancelRequest
+{
+    public string? Reason { get; set; }
 }

@@ -62,12 +62,14 @@ public sealed class CustomerWaiverDetail
 
 public interface IBranchWaiverApplyPoster
 {
-    Task<(bool Ok, string? Error)> ApplyAsync(CustomerWaiverRequest request, double amount, CancellationToken ct = default);
+    /// <summary>Queue pending accountant discount request on the branch (no payment).</summary>
+    Task<(bool Ok, string? Error)> QueueAccountantAsync(
+        CustomerWaiverRequest request, double amount, CancellationToken ct = default);
 }
 
 public sealed class IntentRecordingBranchWaiverApplyPoster : IBranchWaiverApplyPoster
 {
-    public Task<(bool Ok, string? Error)> ApplyAsync(
+    public Task<(bool Ok, string? Error)> QueueAccountantAsync(
         CustomerWaiverRequest request,
         double amount,
         CancellationToken ct = default) =>
@@ -83,7 +85,7 @@ public sealed class GatewayWaiverApplyPoster : IBranchWaiverApplyPoster
         _aggregator = aggregator;
     }
 
-    public async Task<(bool Ok, string? Error)> ApplyAsync(
+    public async Task<(bool Ok, string? Error)> QueueAccountantAsync(
         CustomerWaiverRequest request,
         double amount,
         CancellationToken ct = default)
@@ -108,7 +110,7 @@ public sealed class GatewayWaiverApplyPoster : IBranchWaiverApplyPoster
 
         var customerName = (request.CustomerName ?? "").Trim();
         var amountText = amount.ToString("#,##0.##", CultureInfo.InvariantCulture);
-        var note = $"تم التنازل عن المبلغ {amountText} من حساب الزبون {customerName}";
+        var note = $"طلب تنازل بمبلغ {amountText} بانتظار المحاسب الرئيسي";
 
         var json = JsonSerializer.Serialize(new
         {
@@ -124,17 +126,17 @@ public sealed class GatewayWaiverApplyPoster : IBranchWaiverApplyPoster
         try
         {
             var (status, body) = await _aggregator.PostAsync(
-                user, request.CityValue, "sales-manager/waivers/apply", json, ct);
+                user, request.CityValue, "sales-manager/waivers/accountant-queue", json, ct);
             if (status is >= 200 and < 300)
             {
                 return (true, null);
             }
 
-            return (false, ExtractMessage(body) ?? "تعذر تسجيل التسديد في الفرع");
+            return (false, ExtractMessage(body) ?? "تعذر إرسال طلب التنازل للمحاسب في الفرع");
         }
         catch
         {
-            return (false, "تعذر الاتصال بفرع الزبون لتسجيل التسديد");
+            return (false, "تعذر الاتصال بفرع الزبون لتسجيل طلب التنازل");
         }
     }
 
@@ -326,7 +328,13 @@ public sealed class CustomerWaiverService
             return CustomerWaiverResult.Invalid("القرار غير صحيح");
         }
 
+        // DM "approve" → AwaitingAccountant (accountant applies discount later).
         if (string.Equals(newStatus, ExceptionStatuses.Approved, StringComparison.Ordinal))
+        {
+            newStatus = ExceptionStatuses.AwaitingAccountant;
+        }
+
+        if (string.Equals(newStatus, ExceptionStatuses.AwaitingAccountant, StringComparison.Ordinal))
         {
             if (approvedAmount is null or <= 0)
             {
@@ -345,18 +353,18 @@ public sealed class CustomerWaiverService
             return CustomerWaiverResult.Conflict($"لا يمكن تغيير الحالة من {existing.Status} إلى {newStatus}");
         }
 
-        // Approve: post payment + notify first, then lock the decision row.
-        if (string.Equals(newStatus, ExceptionStatuses.Approved, StringComparison.Ordinal)
+        // Queue branch accountant request before locking gateway row.
+        if (string.Equals(newStatus, ExceptionStatuses.AwaitingAccountant, StringComparison.Ordinal)
             && approvedAmount is > 0)
         {
             var preview = existing.Clone();
             preview.DecisionMakerUserName = Trimmed(actor.UserName) ?? "المدير المفوض";
             preview.DecisionMakerDisplayName = Trimmed(actor.UserName) ?? "المدير المفوض";
             preview.ApprovedAmount = approvedAmount;
-            var (ok, error) = await _applyPoster.ApplyAsync(preview, approvedAmount.Value, ct);
+            var (ok, error) = await _applyPoster.QueueAccountantAsync(preview, approvedAmount.Value, ct);
             if (!ok)
             {
-                return CustomerWaiverResult.Invalid(error ?? "تعذر تسجيل التسديد بعد الموافقة");
+                return CustomerWaiverResult.Invalid(error ?? "تعذر إرسال طلب التنازل للمحاسب");
             }
         }
 
@@ -369,7 +377,7 @@ public sealed class CustomerWaiverService
                 DecisionMakerUserName = Trimmed(actor.UserName) ?? "المدير المفوض",
                 DecisionMakerDisplayName = Trimmed(actor.UserName) ?? "المدير المفوض",
                 DecisionNote = Trimmed(note),
-                ApprovedAmount = string.Equals(newStatus, ExceptionStatuses.Approved, StringComparison.Ordinal)
+                ApprovedAmount = string.Equals(newStatus, ExceptionStatuses.AwaitingAccountant, StringComparison.Ordinal)
                     ? approvedAmount
                     : null,
                 DecidedAtUtc = DateTime.UtcNow
@@ -388,14 +396,64 @@ public sealed class CustomerWaiverService
             return CustomerWaiverResult.Conflict("تم اتخاذ قرار مسبقاً على هذا الطلب");
         }
 
-        if (string.Equals(newStatus, ExceptionStatuses.Approved, StringComparison.Ordinal))
+        if (string.Equals(newStatus, ExceptionStatuses.AwaitingAccountant, StringComparison.Ordinal))
         {
-            await _store.MarkPaymentPostedAsync(decided.Id, ct);
             await _store.MarkAccountantNotifiedAsync(decided.Id, ct);
-            decided.PaymentPosted = true;
             decided.AccountantNotified = true;
+            decided.PaymentPosted = false;
         }
 
+        return CustomerWaiverResult.Success(decided);
+    }
+
+    /// <summary>Called after branch accountant applies discount — finalize gateway waiver.</summary>
+    public async Task<CustomerWaiverResult> MarkAccountantAppliedAsync(Guid id, CancellationToken ct = default)
+    {
+        var existing = await _store.GetAsync(id, ct);
+        if (existing is null)
+        {
+            return CustomerWaiverResult.NotFound();
+        }
+
+        if (string.Equals(existing.Status, ExceptionStatuses.Approved, StringComparison.Ordinal)
+            && existing.PaymentPosted)
+        {
+            return CustomerWaiverResult.Success(existing);
+        }
+
+        if (!string.Equals(existing.Status, ExceptionStatuses.AwaitingAccountant, StringComparison.Ordinal))
+        {
+            return CustomerWaiverResult.Conflict($"لا يمكن إنهاء التنازل من الحالة {existing.Status}");
+        }
+
+        var decided = await _store.TryDecideAsync(
+            id,
+            ExceptionStatuses.AwaitingAccountant,
+            new CustomerWaiverDecision
+            {
+                NewStatus = ExceptionStatuses.Approved,
+                DecisionMakerUserName = existing.DecisionMakerUserName ?? "المحاسب الرئيسي",
+                DecisionMakerDisplayName = existing.DecisionMakerDisplayName ?? "المحاسب الرئيسي",
+                DecisionNote = existing.DecisionNote,
+                ApprovedAmount = existing.ApprovedAmount,
+                DecidedAtUtc = DateTime.UtcNow
+            },
+            new CustomerWaiverAuditEntry
+            {
+                Action = ExceptionStatuses.Approved,
+                ActorUserName = "accountant",
+                ActorDisplayName = "محاسب رئيسي",
+                DetailJson = JsonSerializer.Serialize(new { existing.ApprovedAmount, discountApplied = true })
+            },
+            ct);
+
+        if (decided is null)
+        {
+            return CustomerWaiverResult.Conflict("تم إنهاء الطلب مسبقاً");
+        }
+
+        await _store.MarkPaymentPostedAsync(decided.Id, ct);
+        decided.PaymentPosted = true;
         return CustomerWaiverResult.Success(decided);
     }
 

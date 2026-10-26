@@ -23,37 +23,22 @@ void main() {
     expect(find.byIcon(Icons.menu), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.menu));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    expect(find.text('الإحصائيات'), findsWidgets);
-    expect(find.text('اللجان'), findsWidgets);
+    expect(find.text('مهامي'), findsWidgets);
+    expect(find.text('التقييمات'), findsWidgets);
+    expect(find.text('اللجان'), findsNothing);
+    expect(find.text('مستخدمو إدارة الفرع'), findsNothing);
     expect(find.text('الرسائل والشكاوى'), findsWidgets);
     expect(find.text('طلبات الاستثناء'), findsWidgets);
     expect(find.text('المبيعات الخاطئة'), findsWidgets);
+
+    // Drawer list grew after «مهامي»; scroll to reach lower items.
+    await tester.drag(find.byType(Drawer), const Offset(0, -400));
+    await tester.pumpAndSettle();
+
+    expect(find.text('حسابات إدارة الفرع'), findsWidgets);
     expect(find.text('الإعدادات'), findsWidgets);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-  });
-
-  testWidgets('committees top bar shows assignment and map titles', (tester) async {
-    await tester.pumpWidget(_wrap(const HomeShell()));
-    await tester.pump();
-
-    final scaffoldState = tester.state<ScaffoldState>(find.byType(Scaffold).first);
-    scaffoldState.openDrawer();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
-
-    final committees = find.widgetWithText(ListTile, 'اللجان');
-    expect(committees, findsOneWidget);
-    await tester.tap(committees);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
-
-    expect(find.text('التكليف'), findsWidgets);
-    expect(find.text('خريطة المتابعين'), findsWidgets);
-    expect(find.byType(TabBar), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

@@ -174,7 +174,7 @@ class TodayPaymentsPageState extends State<TodayPaymentsPage>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text(
-            'تسديدات اليوم',
+            'التسديدات',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontFamily: 'Cairo',
@@ -297,8 +297,8 @@ class TodayPaymentsPageState extends State<TodayPaymentsPage>
       child: Row(
         children: [
           chip('الكل', TodayPaymentFilter.all),
-          chip('سدد', TodayPaymentFilter.paid),
-          chip('لم يسدد', TodayPaymentFilter.unpaid),
+          chip('المسددين', TodayPaymentFilter.paid),
+          chip('الغير مسددين', TodayPaymentFilter.unpaid),
         ],
       ),
     );

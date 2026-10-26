@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
+import 'package:follower_application/utils/display_name.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -247,21 +248,14 @@ class _FieldFollowupsPageState extends State<FieldFollowupsPage> {
                                             ),
                                           ),
                                           const SizedBox(height: 10),
-                                          ...rows.map((item) {
+                                          ...withNameSeparators(rows.map((item) {
                                             final name =
                                                 '${item['customerName'] ?? item['CustomerName'] ?? ''}';
                                             final phone =
                                                 '${item['phoneNumber'] ?? item['PhoneNumber'] ?? ''}';
-                                            return Container(
-                                              margin: const EdgeInsets.only(
-                                                  bottom: 8),
-                                              padding: const EdgeInsets.all(10),
-                                              decoration: BoxDecoration(
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                                color: Colors.black
-                                                    .withValues(alpha: 0.03),
-                                              ),
+                                            return Padding(
+                                              padding: const EdgeInsets.symmetric(
+                                                  vertical: 4),
                                               child: Row(
                                                 children: [
                                                   Expanded(
@@ -270,14 +264,7 @@ class _FieldFollowupsPageState extends State<FieldFollowupsPage> {
                                                           CrossAxisAlignment
                                                               .start,
                                                       children: [
-                                                        Text(
-                                                          name,
-                                                          style: const TextStyle(
-                                                            fontFamily: 'Cairo',
-                                                            fontWeight:
-                                                                FontWeight.bold,
-                                                          ),
-                                                        ),
+                                                        PersonNameText(name),
                                                         if (phone.isNotEmpty)
                                                           Text(
                                                             phone,
@@ -313,7 +300,7 @@ class _FieldFollowupsPageState extends State<FieldFollowupsPage> {
                                                 ],
                                               ),
                                             );
-                                          }),
+                                          })),
                                         ],
                                       ),
                                     );

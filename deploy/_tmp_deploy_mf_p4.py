@@ -97,7 +97,7 @@ try:
 except Exception as e:
     print('UPDATE_FAIL', e)
 
-mf=post('/Auth/LoginMainFollower', {{'userName':'mf1','password':'Mf@12345'}})
+mf=post('/Auth/LoginMainFollower', {{'userName':'mf1','password':os.environ.get('MF_PASSWORD','')}})
 dm=post('/Auth/LoginDelegatedManager', {{'userName':'dm','password':'dm'}})
 committee=post('/delegated-manager/committees', {{'name':'لجنة مرحلة4','memberUserNames':['mf1','mf2']}}, dm['token'])
 mission=post('/delegated-manager/committees/missions', {{

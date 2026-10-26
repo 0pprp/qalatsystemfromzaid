@@ -38,8 +38,9 @@ BE_SERVICES = [
     "qalaa-company-sharenewrkarak", "qalaa-company-sharenewrkarkok", "qalaa-company-sharenewrosafa",
     "qalaa-company-shortnewkarakaqeel", "qalaa-company-shortnewrosafaaqeel",
 ]
-BE_MARKER = b"WaiverApplyService"
-GW_MARKER = b"CustomerWaiverService"
+# .NET embeds string literals as UTF-16LE in managed DLLs
+BE_MARKER = "View_CustomerWeekPaymentDevice".encode("utf-16le")
+GW_MARKER = "Waiver".encode("utf-16le")  # BE-only fix; GW redeploy optional
 
 REMOTE = r'''
 import hashlib, os, shutil, subprocess, tarfile, time

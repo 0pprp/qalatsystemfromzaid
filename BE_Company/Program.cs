@@ -14,6 +14,8 @@ builder.Services.AddScoped<ICollectionPaymentPostingService, CollectionPaymentPo
 builder.Services.AddHostedService<CollectionPaymentPostingHostedService>();
 builder.Services.ConfigureJwt(builder.Configuration);
 builder.Services.AddCustomCors(builder.Configuration);
+builder.Services.AddSingleton<IPortalTokenRevocationStore, MemoryPortalTokenRevocationStore>();
+builder.Services.AddSingleton<PortalAccessService>();
 builder.Services.AddControllers()
     .AddJsonOptions(o =>
     {
@@ -30,6 +32,8 @@ if (app.Environment.IsDevelopment())
     using var scope = app.Services.CreateScope();
     var salesGuard = scope.ServiceProvider.GetRequiredService<BE_Company.Sales.Services.SalesDevelopmentGuard>();
     salesGuard.LogDevelopmentCatalog();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
 // Configure the HTTP request pipeline.
@@ -49,12 +53,6 @@ app.Use(async (context, next) =>
     await next();
 });
 
-// Swagger should be available in all environments for now to help debug
-app.UseSwagger();
-app.UseSwaggerUI();
-
-// app.UseHttpsRedirection(); // Commented out to allow HTTP access as requested
-
 app.UseRouting();
 
 // UseCors MUST be called after UseRouting and before UseAuthentication/UseAuthorization
@@ -63,7 +61,7 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Middleware to extract user info from JWT
+// Middleware to extract user info from validated ClaimsPrincipal only
 app.UseMiddleware<UserLevelMiddleware>();
 app.UseMiddleware<SalesEmployeeSessionMiddleware>();
 

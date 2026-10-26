@@ -82,7 +82,7 @@ for label, base, env_path in targets:
     dm_user=env.get('DelegatedManagerAccounts__0__UserName') or 'dm'
     dm_pass=env.get('DelegatedManagerAccounts__0__Password') or 'dm'
     mf0=mf_names[0] if mf_names else 'mf1'
-    mf0_pass=env.get('MainFollowerAccounts__0__Password') or 'Mf@12345'
+    mf0_pass=env.get('MainFollowerAccounts__0__Password') or os.environ.get('MF_PASSWORD','')
     print('===', label, base, 'mf=', mf_names, 'dm=', dm_user, 'env=', env_path if os.path.isfile(env_path) else 'MISSING')
 
     if len(mf_names) < 2:
@@ -151,7 +151,7 @@ for label, base, env_path in targets:
     if not env.get('MainFollowerAccounts__0__UserName'):
         continue
     mf0=env['MainFollowerAccounts__0__UserName']
-    mf0_pass=env.get('MainFollowerAccounts__0__Password') or 'Mf@12345'
+    mf0_pass=env.get('MainFollowerAccounts__0__Password') or os.environ.get('MF_PASSWORD','')
     st, mf = post(pub, '/Auth/LoginMainFollower', {'userName': mf0, 'password': mf0_pass})
     print('PUBLIC_LOGIN', pub, st)
     if st==200 and isinstance(mf, dict) and mf.get('token'):

@@ -85,6 +85,7 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await tester.scrollUntilVisible(find.text('تم الكشف'), 200, scrollable: find.byType(Scrollable).first);
     expect(find.text('تم الكشف'), findsOneWidget);
     await tester.tap(find.text('تم الكشف'));
     await tester.pump();

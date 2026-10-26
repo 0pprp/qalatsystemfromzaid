@@ -1,4 +1,4 @@
-﻿using BE_DelegateWebApplication.DTO;
+using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
 using BE_DelegateWebApplication.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -40,6 +40,10 @@ namespace BE_DelegateWebApplication.Controllers
                 var result = await _delegateRepository.GetDelegateLogin(asyncID?.Trim().TrimEnd('/'));
                 if (result != null)
                 {
+                    if (result.FollowerCollectionEnabled == true)
+                    {
+                        return Unauthorized(new { message = FollowerCollectionLoginGate.LockedMessage });
+                    }
                     return Ok(result);
                 }
                 return Unauthorized("Invalid delegate login.");
@@ -58,6 +62,12 @@ namespace BE_DelegateWebApplication.Controllers
                 var result = await _delegateRepository.GetDelegateCheckLogout(asyncID);
                 if (result != null)
                 {
+                    // Session heartbeat: kick when accountant switched collection to follower.
+                    var login = await _delegateRepository.GetDelegateLogin(asyncID?.Trim().TrimEnd('/'));
+                    if (login?.FollowerCollectionEnabled == true)
+                    {
+                        return Unauthorized(new { message = FollowerCollectionLoginGate.LockedMessage });
+                    }
                     return Ok(result);
                 }
                 return Unauthorized("Delegate already logged out.");
@@ -97,6 +107,38 @@ namespace BE_DelegateWebApplication.Controllers
             catch (Exception ex)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Delegate inbox of sales requests they originated.
+        /// tab: all | inProgress | rejected | completed
+        /// </summary>
+        [HttpGet("SalesRequests")]
+        public async Task<IActionResult> ListSalesRequests(
+            [FromQuery] string? asyncId,
+            [FromQuery] string? tab,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(asyncId))
+            {
+                return BadRequest(new { message = "رمز المندوب مطلوب" });
+            }
+
+            var auth = await _delegateRepository.GetDelegateLogin(asyncId.Trim().TrimEnd('/'));
+            if (auth == null || auth.DelegateId <= 0)
+            {
+                return Unauthorized(new { message = "رمز المندوب غير صحيح" });
+            }
+
+            try
+            {
+                var items = await _followerActions.ListSalesRequestsForDelegateAsync(auth.DelegateId, tab, ct);
+                return Ok(items);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
             }
         }
 
@@ -307,6 +349,9 @@ namespace BE_DelegateWebApplication.Controllers
             // Best-effort: push WrongSale into DM exception inbox (لا يفشل طلب المبيع إن تعطّلت البوابة).
             if (saved.IsWrongSale && notes != null)
             {
+                var exceptionReason = notes.Contains("مبيعات خاطئة", StringComparison.Ordinal)
+                    ? notes
+                    : $"مبيعات خاطئة\n{notes}";
                 _ = await _wrongSaleForwarder.ForwardAsync(new WrongSaleExceptionForwardRequest
                 {
                     CityValue = province,
@@ -315,7 +360,7 @@ namespace BE_DelegateWebApplication.Controllers
                     CustomerName = name,
                     CustomerPhone = phone,
                     SalesRequestId = saved.Id,
-                    Reason = notes,
+                    Reason = exceptionReason,
                     RequesterUserId = auth.DelegateId.ToString(),
                     RequesterUserName = auth.DelegateName,
                     RequesterDisplayName = string.IsNullOrWhiteSpace(auth.DelegateName)
@@ -336,127 +381,156 @@ namespace BE_DelegateWebApplication.Controllers
             [FromBody] DelegateFirstCollectionEvalCreateDTO? body,
             CancellationToken ct)
         {
-            if (body == null || string.IsNullOrWhiteSpace(body.AsyncId))
-            {
-                return BadRequest(new { message = "رمز المندوب مطلوب" });
-            }
-
-            if (body.CustomerId <= 0)
-            {
-                return BadRequest(new { message = "معرف الزبون مطلوب" });
-            }
-
-            var auth = await _delegateRepository.GetDelegateLogin(body.AsyncId.Trim().TrimEnd('/'));
-            if (auth == null || auth.DelegateId <= 0)
-            {
-                return Unauthorized(new { message = "رمز المندوب غير صحيح" });
-            }
-
-            var listId = body.ListId > 0 ? body.ListId : auth.DelegateId;
-            if (listId != auth.DelegateId)
-            {
-                var linked = await _delegateRepository.IsFollowerListLinked(auth.DelegateId, listId);
-                if (!linked)
-                {
-                    var children = await _delegateRepository.GetDelegateSelect(auth.DelegateId) ?? [];
-                    if (!children.Any(c => c.DelegateChildId == listId || c.DelegateId == listId))
-                    {
-                        return StatusCode(StatusCodes.Status403Forbidden, new { message = "القائمة غير مرتبطة بحسابك" });
-                    }
-                }
-            }
-
-            var scope = await _followerActions.GetCustomerScopeAsync(body.CustomerId, ct);
-            if (scope == null)
-            {
-                return NotFound(new { message = "الزبون غير موجود" });
-            }
-
-            if (scope.Value.DelegateId != auth.DelegateId && scope.Value.DelegateId != listId)
-            {
-                var children = await _delegateRepository.GetDelegateSelect(auth.DelegateId) ?? [];
-                var allowed = children.Any(c =>
-                    c.DelegateChildId == scope.Value.DelegateId || c.DelegateId == scope.Value.DelegateId);
-                if (!allowed)
-                {
-                    return StatusCode(StatusCodes.Status403Forbidden,
-                        new { message = "الزبون خارج قوائم المندوب" });
-                }
-            }
-
-            DelegateFirstCollectionEvalRow row;
-            bool created;
             try
             {
-                (row, created) = await _firstCollectionEval.SubmitAsync(
-                    auth.DelegateId,
-                    auth.DelegateName,
-                    body.CustomerId,
-                    listId,
-                    body.Rating,
-                    body.Note,
-                    body.ShopStockEstimatedValue,
-                    body.EstimatedDailyRevenue,
-                    body.SaleAmount,
-                    ct);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-
-            var isWrong = FollowerSaleAuthRules.IsWrongSaleRating(row.Rating);
-            // Never block the delegate APK on gateway latency — forward in a fresh DI scope.
-            // Gateway dedupes pending WrongSale for the same customer (safe to re-queue).
-            if (isWrong)
-            {
-                string? province = scope.Value.CityName;
-                if (string.IsNullOrWhiteSpace(province) && auth.CityId is > 0)
+                if (body == null || string.IsNullOrWhiteSpace(body.AsyncId))
                 {
-                    province = await _followerActions.GetCityNameByIdAsync(auth.CityId.Value, ct);
+                    return BadRequest(new { message = "رمز المندوب مطلوب" });
                 }
 
-                var reason = FollowerSaleAuthRules.FormatShopEvaluationBlock(
-                    row.Rating,
-                    row.Note,
-                    row.ShopStockEstimatedValue,
-                    row.EstimatedDailyRevenue,
-                    scope.Value.CustomerName,
-                    scope.Value.Phone,
-                    row.SaleAmount,
-                    evaluatorRole: "مندوب الجباية");
-
-                var forwardRequest = new WrongSaleExceptionForwardRequest
+                if (body.CustomerId <= 0)
                 {
-                    CityValue = province,
-                    CityName = province,
-                    CustomerId = body.CustomerId,
-                    CustomerName = scope.Value.CustomerName,
-                    CustomerPhone = scope.Value.Phone,
-                    Reason = reason,
-                    RequesterUserId = auth.DelegateId.ToString(),
-                    RequesterUserName = auth.DelegateName,
-                    RequesterDisplayName = string.IsNullOrWhiteSpace(auth.DelegateName)
-                        ? "مندوب الجباية"
-                        : auth.DelegateName.Trim()
-                };
+                    return BadRequest(new { message = "معرف الزبون مطلوب" });
+                }
 
-                _ = ForwardWrongSaleInBackgroundAsync(forwardRequest);
+                var auth = await _delegateRepository.GetDelegateLogin(body.AsyncId.Trim().TrimEnd('/'));
+                if (auth == null || auth.DelegateId <= 0)
+                {
+                    return Unauthorized(new { message = "رمز المندوب غير صحيح" });
+                }
+
+                var listId = body.ListId > 0 ? body.ListId : auth.DelegateId;
+                if (listId != auth.DelegateId)
+                {
+                    bool linked;
+                    try
+                    {
+                        linked = await _delegateRepository.IsFollowerListLinked(auth.DelegateId, listId);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Missing Followers_IsLinked SP (or similar) must not block shop eval —
+                        // fall through to SelectDelegate ownership check below.
+                        _logger.LogWarning(ex,
+                            "IsFollowerListLinked failed for delegate {DelegateId} list {ListId}; using GetDelegateSelect",
+                            auth.DelegateId, listId);
+                        linked = false;
+                    }
+
+                    if (!linked)
+                    {
+                        var children = await _delegateRepository.GetDelegateSelect(auth.DelegateId) ?? [];
+                        if (!children.Any(c => c.DelegateChildId == listId || c.DelegateId == listId))
+                        {
+                            return StatusCode(StatusCodes.Status403Forbidden, new { message = "القائمة غير مرتبطة بحسابك" });
+                        }
+                    }
+                }
+
+                var scope = await _followerActions.GetCustomerScopeAsync(body.CustomerId, ct);
+                if (scope == null)
+                {
+                    return NotFound(new { message = "الزبون غير موجود" });
+                }
+
+                if (scope.Value.DelegateId != auth.DelegateId && scope.Value.DelegateId != listId)
+                {
+                    var children = await _delegateRepository.GetDelegateSelect(auth.DelegateId) ?? [];
+                    var allowed = children.Any(c =>
+                        c.DelegateChildId == scope.Value.DelegateId || c.DelegateId == scope.Value.DelegateId);
+                    if (!allowed)
+                    {
+                        return StatusCode(StatusCodes.Status403Forbidden,
+                            new { message = "الزبون خارج قوائم المندوب" });
+                    }
+                }
+
+                DelegateFirstCollectionEvalRow row;
+                bool created;
+                try
+                {
+                    (row, created) = await _firstCollectionEval.SubmitAsync(
+                        auth.DelegateId,
+                        auth.DelegateName,
+                        body.CustomerId,
+                        listId,
+                        body.Rating,
+                        body.Note,
+                        body.ShopStockEstimatedValue,
+                        body.EstimatedDailyRevenue,
+                        body.SaleAmount,
+                        ct);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return BadRequest(new { message = ex.Message });
+                }
+
+                var isWrong = FollowerSaleAuthRules.IsWrongSaleRating(row.Rating);
+                // Never block the delegate APK on gateway latency — forward in a fresh DI scope.
+                // Gateway dedupes pending WrongSale for the same customer (safe to re-queue).
+                if (isWrong)
+                {
+                    string? province = scope.Value.CityName;
+                    if (string.IsNullOrWhiteSpace(province) && auth.CityId is > 0)
+                    {
+                        province = await _followerActions.GetCityNameByIdAsync(auth.CityId.Value, ct);
+                    }
+
+                    var reason = FollowerSaleAuthRules.FormatShopEvaluationBlock(
+                        row.Rating,
+                        row.Note,
+                        row.ShopStockEstimatedValue,
+                        row.EstimatedDailyRevenue,
+                        scope.Value.CustomerName,
+                        scope.Value.Phone,
+                        row.SaleAmount,
+                        evaluatorRole: "مندوب الجباية",
+                        includeWrongSaleTag: true);
+
+                    var forwardRequest = new WrongSaleExceptionForwardRequest
+                    {
+                        CityValue = province,
+                        CityName = province,
+                        CustomerId = body.CustomerId,
+                        CustomerName = scope.Value.CustomerName,
+                        CustomerPhone = scope.Value.Phone,
+                        Reason = reason,
+                        RequesterUserId = auth.DelegateId.ToString(),
+                        RequesterUserName = auth.DelegateName,
+                        RequesterDisplayName = string.IsNullOrWhiteSpace(auth.DelegateName)
+                            ? "مندوب الجباية"
+                            : auth.DelegateName.Trim()
+                    };
+
+                    _ = ForwardWrongSaleInBackgroundAsync(forwardRequest);
+                }
+
+                return Ok(new DelegateFirstCollectionEvalResultDTO
+                {
+                    Id = row.Id,
+                    CustomerId = row.CustomerId,
+                    Rating = row.Rating,
+                    Note = row.Note,
+                    ShopStockEstimatedValue = row.ShopStockEstimatedValue,
+                    EstimatedDailyRevenue = row.EstimatedDailyRevenue,
+                    SaleAmount = row.SaleAmount,
+                    IsWrongSale = isWrong,
+                    Created = created,
+                    CreatedAtUtc = row.CreatedAtUtc
+                });
             }
-
-            return Ok(new DelegateFirstCollectionEvalResultDTO
+            catch (Exception ex)
             {
-                Id = row.Id,
-                CustomerId = row.CustomerId,
-                Rating = row.Rating,
-                Note = row.Note,
-                ShopStockEstimatedValue = row.ShopStockEstimatedValue,
-                EstimatedDailyRevenue = row.EstimatedDailyRevenue,
-                SaleAmount = row.SaleAmount,
-                IsWrongSale = isWrong,
-                Created = created,
-                CreatedAtUtc = row.CreatedAtUtc
-            });
+                _logger.LogError(ex,
+                    "FirstCollectionEvaluation failed customer={CustomerId} list={ListId}",
+                    body?.CustomerId, body?.ListId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "تعذر حفظ تقييم المحل على السيرفر. أعد المحاولة أو راجع إدارة النظام.",
+                    detail = ex.Message
+                });
+            }
         }
 
         private async Task ForwardWrongSaleInBackgroundAsync(WrongSaleExceptionForwardRequest request)

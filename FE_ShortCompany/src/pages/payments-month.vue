@@ -130,7 +130,11 @@ async function fetchMonthPayments() {
     const authHeader = getAuthHeaders()
     const delegateID = filters.value.delegateID || 0
     const showType = filters.value.showType || 'الجميع'
-    const response = await axios.get(`${apiUrl}Customers/Customers_GetMonthReceipt/${delegateID}&&${showType}`, { headers: authHeader })
+
+    const response = await axios.get(
+      `${apiUrl}Customers/Customers_GetMonthReceipt/${delegateID}&&${showType}`,
+      { headers: authHeader },
+    )
 
     monthPaymentsData.value = response.data
   } catch (error) {

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'company_loader.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 
 class CustomerDocumentSlot extends StatelessWidget {
@@ -50,7 +51,7 @@ class CustomerDocumentSlot extends StatelessWidget {
           if (busy)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
-              child: Center(child: SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2))),
+              child: Center(child: SizedBox(height: 22, width: 22, child: CompanyLoader(size: 22))),
             )
           else
             Wrap(

@@ -169,3 +169,12 @@ export function useAccountantRatingsCache() {
     },
   }
 }
+
+/** Clears session accountant ratings cache on logout / identity switch. */
+export function clearAccountantRatingsCache() {
+  try {
+    sessionStorage.removeItem(CACHE_KEY)
+  } catch {
+    // ignore
+  }
+}

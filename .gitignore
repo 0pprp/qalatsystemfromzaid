@@ -18,17 +18,22 @@ obj/
 .flutter-plugins-dependencies
 .pub-cache/
 build/
+.gradle-home/
 
 # Environment / Secrets
 .env
 .env.*
 !.env.example
 !.env.demo.example
+!.env.production.example
 appsettings.json
 appsettings.*.json
 !appsettings.example.json
 !appsettings.demo.template.json
 secrets.json
+**/android/key.properties
+**/*.jks
+**/*.keystore
 
 # Database / backups
 *.bak
@@ -36,36 +41,42 @@ secrets.json
 *.ldf
 *.sql.bak
 
-# Logs
+# Logs / local archives
 *.log
 logs/
+*.tgz
+*.tar
+*.tar.gz
+*.zip
+_tmp_*.tar
 
-# IDE
+# IDE / agent tooling (not for collaborators)
 .vscode/
 .idea/
+.cursor/
+.agents/
+skills-lock.json
 
 # OS
 Thumbs.db
 .DS_Store
 
-# Local publish output — keep docs/sql only
-deploy/sales-demo/backend/
-deploy/sales-demo/gateway/
-deploy/sales-demo/frontend/
-deploy/sales-demo/flutter/
+# Ops / publish scratch — not needed for app development
+deploy/
+scripts/
+tools/
+_publish_*/
+_probe_*/
+_pub_*/
 
+# Python and shell ops scripts
+*.py
+*.ps1
+*.bat
+*.cmd
+*.sh
+
+# Mobile binaries
 *.apk
-
-.cursor/
-
-.cursor/
-
-.cursor/
-
-.cursor/
-
-# deploy scratch / secrets
-_tmp_*.tar
-*.apk
-deploy/_xlsx_extract/
-
+*.aab
+*.ipa

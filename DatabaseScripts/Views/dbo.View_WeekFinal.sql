@@ -1,7 +1,8 @@
-﻿CREATE OR ALTER VIEW [dbo].[View_WeekFinal]
-AS
 -- Amount1 = today, Amount2 = yesterday, … Amount7 = 6 days ago
--- Matches delegate receipt labels («اليوم» / «أمس») and GetDateWeek Date1..Date7.
+-- Buckets use Asia/Baghdad business day (03:00). PaymentDate is CreatedAtUtc (UTC).
+-- Matches GetDateWeek Date1..Date7.
+CREATE OR ALTER VIEW [dbo].[View_WeekFinal]
+AS
 SELECT
     C.CustomerID,
     ISNULL(P.Amount1, 0) AS Amount1,
@@ -24,13 +25,39 @@ LEFT JOIN (
         [6] AS Amount7
     FROM (
         SELECT
-            CustomerID,
-            AmountDenar,
-            DATEDIFF(DAY, CONVERT(date, PaymentDate), CONVERT(date, GETDATE())) AS DaysAgo
-        FROM dbo.View_ReceiptCustomerDate
-        WHERE CONVERT(date, PaymentDate) >= CONVERT(date, DATEADD(day, -6, GETDATE()))
+            r.CustomerID,
+            r.AmountDenar,
+            DATEDIFF(
+                DAY,
+                CASE
+                    WHEN DATEPART(HOUR, DATEADD(HOUR, 3, r.PaymentDate)) < 3
+                        THEN DATEADD(DAY, -1, CONVERT(date, DATEADD(HOUR, 3, r.PaymentDate)))
+                    ELSE CONVERT(date, DATEADD(HOUR, 3, r.PaymentDate))
+                END,
+                CASE
+                    WHEN DATEPART(HOUR, DATEADD(HOUR, 3, SYSUTCDATETIME())) < 3
+                        THEN DATEADD(DAY, -1, CONVERT(date, DATEADD(HOUR, 3, SYSUTCDATETIME())))
+                    ELSE CONVERT(date, DATEADD(HOUR, 3, SYSUTCDATETIME()))
+                END
+            ) AS DaysAgo
+        FROM dbo.View_ReceiptCustomerDate r
+        WHERE CASE
+                  WHEN DATEPART(HOUR, DATEADD(HOUR, 3, r.PaymentDate)) < 3
+                      THEN DATEADD(DAY, -1, CONVERT(date, DATEADD(HOUR, 3, r.PaymentDate)))
+                  ELSE CONVERT(date, DATEADD(HOUR, 3, r.PaymentDate))
+              END
+              >=
+              DATEADD(
+                  DAY,
+                  -6,
+                  CASE
+                      WHEN DATEPART(HOUR, DATEADD(HOUR, 3, SYSUTCDATETIME())) < 3
+                          THEN DATEADD(DAY, -1, CONVERT(date, DATEADD(HOUR, 3, SYSUTCDATETIME())))
+                      ELSE CONVERT(date, DATEADD(HOUR, 3, SYSUTCDATETIME()))
+                  END
+              )
     ) AS SourceData
     PIVOT (
-        MAX(AmountDenar) FOR DaysAgo IN ([0], [1], [2], [3], [4], [5], [6])
+        SUM(AmountDenar) FOR DaysAgo IN ([0], [1], [2], [3], [4], [5], [6])
     ) AS PivotTable
 ) P ON C.CustomerID = P.CustomerID;

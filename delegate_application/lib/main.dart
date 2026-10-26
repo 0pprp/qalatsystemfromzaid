@@ -9,6 +9,7 @@ import 'package:delegate_application/WelcomePage.dart';
 import 'package:delegate_application/TrustReceiptsListPage.dart';
 import 'package:delegate_application/TrustReceiptFormPage.dart';
 import 'package:delegate_application/delegate_sales_request_page.dart';
+import 'package:delegate_application/delegate_sales_requests_page.dart';
 import 'package:delegate_application/today_payments_page.dart';
 import 'package:delegate_application/config/app_env.dart';
 import 'package:delegate_application/core/update/app_version.dart';
@@ -59,6 +60,8 @@ class MyApp extends StatelessWidget {
             '/TrustReceiptForm': (context) => const TrustReceiptFormPage(),
             '/DelegateSalesRequest': (context) =>
                 const DelegateSalesRequestPage(),
+            '/DelegateSalesRequests': (context) =>
+                const DelegateSalesRequestsPage(),
             '/AllReceiptSearch': (context) => const AllReceipt(),
           },
           theme: ThemeData(fontFamily: 'Cairo', brightness: Brightness.light),

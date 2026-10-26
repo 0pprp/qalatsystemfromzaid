@@ -1,0 +1,35 @@
+DB DatabaseCompanyNasria
+==== STORES_SNAPSHOT ====
+StoreID|StoreName|CostBuyItemsCurrent|NumberOfTypes|NumberOfItems|AmountItemBuy|SalesTotalCost
+-------|---------|-------------------|-------------|-------------|-------------|--------------
+1|مخزن الناصرية|28123000|1786|46|3332009166|4254686916
+2|مخزن الاجهزة الكهربائية الصينية|21159000|66|160|26248000|31068000
+==== ACTIVITIES_OCT3_ITEM_EDIT ====
+ActivityID|UserID|UserName|UserType|IraqAt|ActivityDescription
+----------|------|--------|--------|------|-------------------
+233062|18|hadi|محاسب رئيسي|2026-10-03 09:39:06|تم سحب المبلغ 3.85e+006 من الخزينة خزينة الناصرية لغرض شراء ( A12 ( 5 ) ) ( Y9a ( 3 ) ) ( هوت 10 بلي 64 ( 5 ) ) ( هوت T10 ذ128 ( 5 ) ) ( هوت 11بلي 128 ( 2 ) ) ( انفنكس نوت 11sذ128 ( 3 ) ) ( انفنكس نوت 10 128/6 ( 3 ) ) ( هوت 11s ذ128/6 ( 5 ) ) ( انفنكس نوت 
+233067|18|hadi|محاسب رئيسي|2026-10-03 09:39:07|تم شراء العناصر ( هونر 600 ( 1 ) ) ( تجهيز محل  ( 1 ) ) ( تجهيز محل ( 1 ) ) من المورد مورد الناصرية الى المخزن مخزن الناصرية 
+==== ACTIVITIES_OCT3_COST_CHANGE_ONLY ====
+ActivityID|UserID|UserName|IraqAt|ActivityDescription
+----------|------|--------|------|-------------------
+==== BUYS_OCT3 ====
+BuyID|StoreName|SupplierName|ItemsNames|AmountSpentDenar|IraqAt|UserName
+-----|---------|------------|----------|----------------|------|--------
+==== ITEMS_WITH_COST ====
+T|Cnt|SumCostTotal|SumQty|DistinctNames
+-|---|------------|------|-------------
+COUNT|1850|43182000|199|1640
+==== OCT3_ALL_USERS_ACTIVITY_COUNTS ====
+UserName|UserType|ActCount
+--------|--------|--------
+hadi|محاسب رئيسي|337
+amaar|محاسب رئيسي|19
+ahmed|محاسب رئيسي|2
+
+RC 0
+==== PARSED_COST_DELTAS ====
+changes=0 unit_drop_sum=0 unit_rise_sum=0
+==== TARGET_DIFF 1336000 ====
+est_inventory_impact_delta_x_current_qty=0
+unit_drop_equals_target=False
+inv_impact_equals_target=False

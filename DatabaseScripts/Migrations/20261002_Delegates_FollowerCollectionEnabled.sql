@@ -30,18 +30,25 @@ BEGIN
     FROM dbo.Delegates
     WHERE DelegateID = @DelegateID;
 
-    INSERT INTO dbo.Activities
-        (UserID, ActivityDescription, ActivityDate, AsyncState, AsyncID)
-    VALUES
-        (@UserID,
-         N'تم تعديل جباية المتابعين للقائمة ' + ISNULL(@Name, N'')
-            + N' من ' + ISNULL(@Old, N'0') + N' الى ' + CONVERT(NVARCHAR(10), @State),
-         GETUTCDATE(),
-         'false',
-         NEWID());
-
+    -- Update first so a bad gateway UserID never blocks the toggle (Activities FK).
     UPDATE dbo.Delegates
-    SET FollowerCollectionEnabled = @State
+    SET FollowerCollectionEnabled = @State,
+        FollowerCollectionAssignedAtUtc = CASE
+            WHEN @State = 1 THEN SYSUTCDATETIME()
+            ELSE FollowerCollectionAssignedAtUtc END
     WHERE DelegateID = @DelegateID;
+
+    IF @UserID IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.Users WHERE UserID = @UserID)
+    BEGIN
+        INSERT INTO dbo.Activities
+            (UserID, ActivityDescription, ActivityDate, AsyncState, AsyncID)
+        VALUES
+            (@UserID,
+             N'تم تعديل جباية المتابعين للقائمة ' + ISNULL(@Name, N'')
+                + N' من ' + ISNULL(@Old, N'0') + N' الى ' + CONVERT(NVARCHAR(10), @State),
+             GETUTCDATE(),
+             'false',
+             NEWID());
+    END
 END
 GO

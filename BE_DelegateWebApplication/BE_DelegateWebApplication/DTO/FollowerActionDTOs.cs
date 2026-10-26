@@ -67,6 +67,24 @@ namespace BE_DelegateWebApplication.DTO
         public int? ShopRating { get; set; }
     }
 
+    /// <summary>Inbox row for follower-originated sales requests.</summary>
+    public sealed class FollowerSalesRequestListItemDTO
+    {
+        public int Id { get; set; }
+        public string? CustomerName { get; set; }
+        public string? CustomerPhone { get; set; }
+        public string Status { get; set; } = "New";
+        public string? StatusLabel { get; set; }
+        public string? TargetEmployeeName { get; set; }
+        public DateTime CreatedAtUtc { get; set; }
+        public DateTime? CompletedAtUtc { get; set; }
+        public DateTime? RejectedAtUtc { get; set; }
+        public string? RejectionReason { get; set; }
+        public string? PendingNote { get; set; }
+        public string? SaleRequestType { get; set; }
+        public int? SourceListId { get; set; }
+    }
+
     /// <summary>Same payload shape as follower; SaleRequestType required for delegates (New|Old).</summary>
     public sealed class DelegateSalesRequestCreateDTO
     {

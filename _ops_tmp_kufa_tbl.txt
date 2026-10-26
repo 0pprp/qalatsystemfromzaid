@@ -1,0 +1,6 @@
+
+Traceback (most recent call last):
+  File "/tmp/_remote_kufa_tbl.py", line 3, in <module>
+    sqlcmd = "/opt/mssql-tools18/bin/sqlcmd" if os.path.isfile("/opt/mssql-tools18/bin/sqlcmd") else "sqlcmd"
+                                                ^^
+NameError: name 'os' is not defined. Did you forget to import 'os'?

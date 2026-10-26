@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../screens/login/login_screen.dart';
+import '../screens/login/login_screen.dart' show CitiesLoader, LoginScreen;
 import '../screens/home_shell.dart';
 import '../screens/customers/customers_list_screen.dart';
 import '../screens/customers/customers_archived_screen.dart';
@@ -30,10 +30,16 @@ import '../screens/daily_followup/daily_followup_screen.dart';
 import '../screens/daily_followup/daily_followup_print_screen.dart';
 
 class AppRoutes {
-  static Route<dynamic> generateRoute(RouteSettings settings) {
+  static Route<dynamic> generateRoute(
+    RouteSettings settings, {
+    CitiesLoader? citiesLoader,
+  }) {
     switch (settings.name) {
       case '/login':
-        return _buildRoute(const LoginScreen(), settings);
+        return _buildRoute(
+          LoginScreen(citiesLoader: citiesLoader),
+          settings,
+        );
       case '/dashboard':
         return _buildRoute(const HomeShell(), settings);
       case '/customers-list':

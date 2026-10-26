@@ -1,0 +1,15 @@
+=== Delegate appsettings SalesGateway scan ===
+DelegateHaiderNajafLast BaseUrl= None Key= False BranchCity= None BranchName= None
+=== NajafLast keys ===
+AllowedHosts *
+allowedOrigins *
+=== Tables like %Eval% / %First% / %Wrong% ===
+name
+----
+SalesShopProfiles
+
+=== Kufa delegates ===
+DelegateID|DelegateName|CityID
+----------|------------|------
+7|الكوفة|1
+

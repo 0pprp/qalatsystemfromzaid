@@ -33,6 +33,7 @@ namespace BE_Company.Sales.Controllers
         private readonly IBranchManagerStatsService _stats;
         private readonly IBranchMonthStatsService _monthStats;
         private readonly ISalesManagerFollowerQueryService _followerQuery;
+        private readonly IDirectorSummaryService _directorSummary;
 
         public SalesManagerController(
             SalesDevelopmentGuard guard,
@@ -54,7 +55,8 @@ namespace BE_Company.Sales.Controllers
             IDelegatesRepository delegates,
             IBranchManagerStatsService stats,
             IBranchMonthStatsService monthStats,
-            ISalesManagerFollowerQueryService followerQuery)
+            ISalesManagerFollowerQueryService followerQuery,
+            IDirectorSummaryService directorSummary)
         {
             _guard = guard;
             _identity = identity;
@@ -76,6 +78,7 @@ namespace BE_Company.Sales.Controllers
             _stats = stats;
             _monthStats = monthStats;
             _followerQuery = followerQuery;
+            _directorSummary = directorSummary;
         }
 
         [HttpGet("dashboard")]
@@ -1024,6 +1027,44 @@ namespace BE_Company.Sales.Controllers
             }
         }
 
+        [HttpGet("sales-requests/{id:int}/cancel-impact")]
+        public async Task<IActionResult> CancelImpact(int id, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                return Ok(await _requests.GetCancelImpactAsync(identity!, id, ct));
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message, code = ex.Code });
+            }
+        }
+
+        [HttpPost("sales-requests/{id:int}/cancel")]
+        public async Task<IActionResult> CancelRequest(int id, [FromBody] SalesRequestSoftDeleteDTO? body, CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                var row = await _requests.CancelAndUnassignAsync(
+                    identity!,
+                    id,
+                    body?.Reason ?? "",
+                    body?.ConfirmCascadePayments ?? false,
+                    ct);
+                return Ok(new { message = "تم إلغاء الطلب وإعادته إلى غير المسند.", request = row });
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message, code = ex.Code });
+            }
+        }
+
         [HttpGet("purchases")]
         public async Task<IActionResult> Purchases(
             [FromQuery] DateTime? fromDate,
@@ -1160,6 +1201,32 @@ namespace BE_Company.Sales.Controllers
             }
         }
 
+        /// <summary>إلغاء إرسال قانونية بالغلط → قضية Cancelled وطلب البيع غير مسند.</summary>
+        [HttpPost("legal-followups/{id:int}/cancel")]
+        public async Task<IActionResult> CancelLegalFollowup(
+            int id,
+            [FromBody] LegalFollowupCancelRequest? body,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var identity = _identity.FromAuthenticatedUser();
+            try
+            {
+                var cancelled = await _legalFollowups.CancelAsync(
+                    id,
+                    body?.Reason ?? "",
+                    identity!.EmployeeId,
+                    identity.EmployeeName,
+                    ct);
+                return Ok(cancelled);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
         /// <summary>
         /// Same ratings catalog as branch-manager/stats/catalog.
         /// Gateway (مدير مفوض / مدير مبيعات) uses this so city BM role is not required.
@@ -1181,6 +1248,46 @@ namespace BE_Company.Sales.Controllers
             return Ok(await _monthStats.GetAsync(ct));
         }
 
+        /// <summary>
+        /// Director ملخص: day totals for one metric in a calendar month + primary box balance.
+        /// Gateway fans out across قلعة الضمان branches.
+        /// </summary>
+        [HttpGet("director-summary/matrix")]
+        public async Task<IActionResult> DirectorSummaryMatrix(
+            [FromQuery] int year,
+            [FromQuery] int month,
+            [FromQuery] string? metric,
+            [FromQuery] string? branchName,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            return Ok(await _directorSummary.GetMatrixAsync(year, month, metric ?? "receipts", branchName, ct));
+        }
+
+        /// <summary>Director ملخص drill-down for one calendar day.</summary>
+        [HttpGet("director-summary/drilldown")]
+        public async Task<IActionResult> DirectorSummaryDrilldown(
+            [FromQuery] int year,
+            [FromQuery] int month,
+            [FromQuery] int day,
+            [FromQuery] string? metric,
+            [FromQuery] string? branchName,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            try
+            {
+                return Ok(await _directorSummary.GetDrilldownAsync(
+                    year, month, day, metric ?? "receipts", branchName, ct));
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return BadRequest(new { message = "يوم غير صالح." });
+            }
+        }
+
         [HttpGet("stats/trend")]
         public async Task<IActionResult> StatsTrend(
             [FromQuery] string? scope,
@@ -1197,6 +1304,24 @@ namespace BE_Company.Sales.Controllers
             var from = (fromDate ?? new DateTime(today.Year, today.Month, 1)).Date;
             var to = (toDate ?? today).Date;
             return Ok(await _stats.GetTrendAsync(scope ?? "branch", id, from, to, ct, fullHistory));
+        }
+
+        /// <summary>مجموع تسديدات قائمة ضمن فترة — للمراقب/المدير على كروت القوائم.</summary>
+        [HttpGet("stats/list-payments-sum")]
+        public async Task<IActionResult> StatsListPaymentsSum(
+            [FromQuery] int listId,
+            [FromQuery] DateTime? fromDate,
+            [FromQuery] DateTime? toDate,
+            CancellationToken ct = default)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+
+            var today = DateTime.UtcNow.AddHours(3).Date;
+            var yesterday = today.AddDays(-1);
+            var from = (fromDate ?? yesterday).Date;
+            var to = (toDate ?? yesterday).Date;
+            return Ok(await _stats.GetListPaymentsSumAsync(listId, from, to, ct));
         }
 
         /// <summary>

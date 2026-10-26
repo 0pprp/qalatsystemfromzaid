@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import json, os, shutil, subprocess, tarfile, time
 from pathlib import Path
 import paramiko
@@ -30,8 +30,8 @@ extract=f'/tmp/gw_mf_{{stamp}}'
 shutil.rmtree(extract, ignore_errors=True); os.makedirs(extract, exist_ok=True)
 tarfile.open(f'/tmp/gw_mf_{{stamp}}.tgz').extractall(extract)
 accounts=[
-  {{"UserName":"mf1","DisplayName":"متابع رئيسي 1","Password":"Mf@12345"}},
-  {{"UserName":"mf2","DisplayName":"متابع رئيسي 2","Password":"Mf@12345"}},
+  {{"UserName":"mf1","DisplayName":"????? ????? 1","Password":os.environ.get('MF_PASSWORD','')}},
+  {{"UserName":"mf2","DisplayName":"????? ????? 2","Password":os.environ.get('MF_PASSWORD','')}},
 ]
 for dest in ['/opt/qalaa-runtime/SalesGateway','/opt/qalaa-demo/sales-gateway']:
     if not os.path.isfile(os.path.join(dest,'BE_SalesEmployee.dll')): continue

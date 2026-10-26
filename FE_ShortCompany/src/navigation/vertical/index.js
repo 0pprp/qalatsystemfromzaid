@@ -5,6 +5,23 @@ export default [
     icon: { icon: 'tabler-home', size: '25' },
   },
   {
+    title: 'المستخدمين',
+    icon: { icon: 'tabler-users', size: '25' },
+    meta: { adminOnly: true },
+    children: [
+      {
+        title: 'جميع المستخدمين',
+        to: { name: 'users-list' },
+        icon: { icon: 'tabler-user', size: '25' },
+      },
+      {
+        title: 'نشاطات المستخدمين',
+        to: { name: 'user-active' },
+        icon: { icon: 'tabler-activity', size: '25' },
+      },
+    ],
+  },
+  {
     title: 'المخازن',
     to: { name: 'warehouses-list' },
     icon: { icon: 'tabler-building-warehouse', size: '25' },
@@ -83,11 +100,6 @@ export default [
         title: 'متابعة حسب التاريخ',
         to: { name: 'payments-date-tracking' },
         icon: { icon: 'tabler-calendar-search', size: '25' },
-      },
-      {
-        title: 'طلبات التسديدات',
-        to: { name: 'request-receipt' },
-        icon: { icon: 'tabler-currency-dollar', size: '25' },
       },
     ],
   },

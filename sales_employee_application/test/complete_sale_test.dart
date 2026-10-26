@@ -1,3 +1,4 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,9 @@ import 'package:sales_employee_application/tracking/work_shift.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 
 class _MemRepo implements SalesRepository {
+  @override
+  Future<List<SalesWorkRequest>> submittedSalesRequests() async => [];
+
   _MemRepo(this.draft);
   SalesDraft draft;
   int completeCalls = 0;
@@ -223,11 +227,11 @@ void main() {
     await tester.tap(find.text('تم البيع'));
     await tester.pump();
     expect(repo.completeCalls, 1);
-    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(find.byType(CompanyLoader), findsWidgets);
     await tester.tap(find.byType(ElevatedButton).last, warnIfMissed: false);
     await tester.pump();
     expect(repo.completeCalls, 1);
-    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(find.byType(CompanyLoader), findsWidgets);
     repo.hold!.complete(SalesCompleteResult(saleId: 1, status: 'Completed', finalSalePrice: 2000000));
     await tester.pumpAndSettle();
   });
@@ -269,3 +273,4 @@ void main() {
     expect(find.text('إعادة تنزيل المستندات'), findsOneWidget);
   });
 }
+

@@ -50,14 +50,18 @@ android {
 
     buildTypes {
         release {
-            // Prefer release keystore when android/key.properties is present.
-            // Fall back to debug to preserve continuity with previously shipped APKs
-            // that were already signed with the debug key on this machine.
-            signingConfig = if (keystorePropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            // F14: no silent debug fallback. Release requires android/key.properties.
+            // Continuity: if field APKs were previously debug-signed, ops must either
+            // (a) keep using that same keystore via key.properties, or
+            // (b) publish a new applicationId (users reinstall — local SQLite lost).
+            // Documented in docs/release-signing.md — do not flip certificate casually.
+            if (!keystorePropertiesFile.exists()) {
+                throw GradleException(
+                    "Release signing blocked: android/key.properties missing. " +
+                        "Silent debug fallback removed (audit F14). See docs/release-signing.md"
+                )
             }
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

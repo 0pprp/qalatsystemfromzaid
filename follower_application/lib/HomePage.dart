@@ -5,10 +5,12 @@ import 'package:follower_application/tracking/shift_gate_coordinator.dart';
 import 'package:follower_application/tracking/shift_tracking_controller.dart';
 import 'package:follower_application/tracking/work_shift.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
+import 'package:follower_application/ui/day_rating_gate.dart';
 import 'package:follower_application/ui/follower_complaint_sheet.dart';
 import 'package:follower_application/core/update/app_update_gate.dart';
 import 'package:follower_application/utils/AppTheme.dart';
 import 'package:follower_application/utils/Formatters.dart';
+import 'package:follower_application/utils/display_name.dart';
 import 'package:follower_application/utils/iraq_datetime.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -17,8 +19,7 @@ import 'package:follower_application/AsyncIdChecker.dart';
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/main.dart';
 import 'package:follower_application/services/follower_tracking_repository.dart';
-import 'package:follower_application/services/tutorial_video_service.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:follower_application/tutorial_questions_page.dart';
 import 'dart:convert';
 
 
@@ -116,6 +117,16 @@ class _HomePageState extends State<HomePage> {
       _shiftError = '';
     });
     try {
+      final rated = await ensureDayRatingsBeforeEndShift(context);
+      if (!rated) {
+        if (mounted) {
+          setState(() {
+            _shiftBusy = false;
+            _shiftError = 'يجب تقييم مناديب الجباية قبل إنهاء الدوام';
+          });
+        }
+        return;
+      }
       await _tracking.endShiftFlow();
       if (!mounted) return;
       setState(() {
@@ -411,59 +422,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openTutorialVideo() async {
-    final nav = Navigator.of(context, rootNavigator: true);
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const PopScope(
-        canPop: false,
-        child: Center(
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: CircularProgressIndicator(),
-            ),
-          ),
-        ),
-      ),
-    );
-    Uri? uri;
-    try {
-      uri = await TutorialVideoService.resolveLaunchUri();
-    } finally {
-      if (nav.canPop()) nav.pop();
-    }
     if (!mounted) return;
-    if (uri == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'لم يُحدَّد رابط الفيديو بعد. عدّله من لوحة مدير المبيعات.',
-            style: TextStyle(fontFamily: 'Cairo'),
-          ),
-        ),
-      );
-      return;
-    }
-    try {
-      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!ok && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تعذر فتح الفيديو التعليمي',
-                style: TextStyle(fontFamily: 'Cairo')),
-          ),
-        );
-      }
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تعذر فتح الفيديو التعليمي',
-              style: TextStyle(fontFamily: 'Cairo')),
-        ),
-      );
-    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const TutorialQuestionsPage()),
+    );
   }
 
   Future<void> _logout() async {
@@ -540,7 +502,7 @@ class _HomePageState extends State<HomePage> {
           children: [
             Text(
               '${item['customerName'] ?? ''}',
-              style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+              style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -701,14 +663,6 @@ class _HomePageState extends State<HomePage> {
                   },
                 ),
                 ListTile(
-                  leading: const Icon(Icons.directions_walk),
-                  title: const Text('المتابعة الميدانية', style: TextStyle(fontFamily: 'Cairo')),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.pushNamed(context, '/FieldFollowups');
-                  },
-                ),
-                ListTile(
                   leading: const Icon(Icons.gavel),
                   title: const Text('الزبائن القديمة', style: TextStyle(fontFamily: 'Cairo')),
                   onTap: () {
@@ -716,21 +670,17 @@ class _HomePageState extends State<HomePage> {
                     Navigator.pushNamed(context, '/LegalFollowups');
                   },
                 ),
+                ListTile(
+                  leading: const Icon(Icons.report_gmailerrorred_outlined),
+                  title: const Text('إرسال شكوى', style: TextStyle(fontFamily: 'Cairo')),
+                  onTap: () {
+                    Navigator.pop(context);
+                    FollowerComplaintSheet.show(context);
+                  },
+                ),
               ],
             ),
           ),
-        ),
-        floatingActionButton: FloatingActionButton.extended(
-          heroTag: 'follower_complaint_fab',
-          tooltip: 'شكوى إلى المدير المفوض',
-          backgroundColor: AppTheme.primaryColor,
-          foregroundColor: Colors.white,
-          icon: const Icon(Icons.report_gmailerrorred_outlined),
-          label: const Text(
-            'شكوى',
-            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
-          ),
-          onPressed: () => FollowerComplaintSheet.show(context),
         ),
         body: RefreshIndicator(
             onRefresh: _loadFollow,
@@ -764,21 +714,22 @@ class _HomePageState extends State<HomePage> {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         const Text(
-                          'تطبيق المتابع',
+                          'تطبيق مسؤول اللجنة',
                           style: TextStyle(
                             fontFamily: 'Cairo',
                             fontWeight: FontWeight.bold,
                             fontSize: 16,
                           ),
                         ),
-                        Text(
-                          _delegateName.isEmpty ? '—' : _delegateName,
-                          style: const TextStyle(
-                            fontFamily: 'Cairo',
-                            fontSize: 12,
-                            color: Colors.grey,
-                          ),
-                        ),
+                  Text(
+                    _delegateName.isEmpty ? '—' : _delegateName,
+                    style: const TextStyle(
+                      fontFamily: 'Cairo',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey,
+                    ),
+                  ),
                       ],
                     ),
                     const SizedBox(width: 10),
@@ -1136,7 +1087,8 @@ class _HomePageState extends State<HomePage> {
                       rows: _unpaidDays15Plus,
                     ),
                   ] else
-                    ..._visibleCustomers.map(_customerCard),
+                    ...withNameSeparators(
+                        _visibleCustomers.map(_customerCard)),
                   ],
                   const SizedBox(height: 20),
                   TextButton.icon(
@@ -1280,7 +1232,7 @@ class _HomePageState extends State<HomePage> {
               ),
             )
           else
-            ...rows.map(_customerCard),
+            ...withNameSeparators(rows.map(_customerCard)),
         ],
       ),
     );
@@ -1294,7 +1246,6 @@ class _HomePageState extends State<HomePage> {
     final unpaidDays = FollowerUnpaidDaysSplit.daysSincePayment(item);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(16),
@@ -1313,22 +1264,11 @@ class _HomePageState extends State<HomePage> {
           );
         },
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      item['customerName'].toString(),
-                      style: const TextStyle(
-                          fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                  ),
-                ],
-              ),
+              PersonNameText(item['customerName'].toString()),
               const SizedBox(height: 4),
               Text(
                 item['phoneNumber'].toString().isEmpty

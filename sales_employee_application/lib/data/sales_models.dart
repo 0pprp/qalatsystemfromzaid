@@ -803,7 +803,11 @@ class SalesWorkRequest {
       createdAtUtc: DateTime.tryParse('${json['createdAtUtc'] ?? json['CreatedAtUtc'] ?? ''}')?.toUtc() ??
           DateTime.now().toUtc(),
       convertedToSaleId: int.tryParse('${json['convertedToSaleId'] ?? json['ConvertedToSaleId'] ?? ''}'),
-      rejectionReason: json['rejectionReason']?.toString() ?? json['RejectionReason']?.toString(),
+      rejectionReason: (() {
+        final rejection = json['rejectionReason']?.toString() ?? json['RejectionReason']?.toString();
+        if (rejection != null && rejection.trim().isNotEmpty) return rejection;
+        return json['deleteReason']?.toString() ?? json['DeleteReason']?.toString();
+      })(),
       pendingNote: json['pendingNote']?.toString() ?? json['PendingNote']?.toString(),
       preparedForSaleNote:
           json['preparedForSaleNote']?.toString() ?? json['PreparedForSaleNote']?.toString(),

@@ -6,11 +6,14 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Confidential complaint sheet — write-only to branch API.
+/// Confidential complaint / note sheet — write-only to branch API → central DM inbox.
 class DelegateComplaintSheet extends StatefulWidget {
-  const DelegateComplaintSheet({super.key});
+  const DelegateComplaintSheet({super.key, this.asNote = false});
 
-  static Future<void> show(BuildContext context) {
+  /// When true, copy reads as «ملاحظة» (same API path as complaint).
+  final bool asNote;
+
+  static Future<void> show(BuildContext context, {bool asNote = false}) {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -19,7 +22,7 @@ class DelegateComplaintSheet extends StatefulWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (ctx) => const DelegateComplaintSheet(),
+      builder: (ctx) => DelegateComplaintSheet(asNote: asNote),
     );
   }
 
@@ -61,9 +64,12 @@ class _DelegateComplaintSheetState extends State<DelegateComplaintSheet> {
         return;
       }
 
+      final path = widget.asNote
+          ? '${link}delegate/director-notes'
+          : '${link}delegate/complaints';
       final response = await http
           .post(
-            Uri.parse('${link}delegate/complaints'),
+            Uri.parse(path),
             headers: DelegateComplaintRequestContract.headers(
               asyncId: asyncId,
               delegateId: delegateId,
@@ -78,17 +84,21 @@ class _DelegateComplaintSheetState extends State<DelegateComplaintSheet> {
       if (response.statusCode == 200 || response.statusCode == 201) {
         Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'تم إرسال الشكوى بنجاح',
-              style: TextStyle(fontFamily: 'Cairo'),
+              widget.asNote
+                  ? 'تم إرسال الملاحظة إلى المدير بنجاح'
+                  : 'تم إرسال الشكوى بنجاح',
+              style: const TextStyle(fontFamily: 'Cairo'),
             ),
             backgroundColor: Colors.green,
           ),
         );
       } else {
         setState(() => _error = _messageFromBody(response.body) ??
-            'تعذر إرسال الشكوى (${response.statusCode})');
+            (widget.asNote
+                ? 'تعذر إرسال الملاحظة (${response.statusCode})'
+                : 'تعذر إرسال الشكوى (${response.statusCode})'));
       }
     } catch (_) {
       if (mounted) {
@@ -135,10 +145,12 @@ class _DelegateComplaintSheetState extends State<DelegateComplaintSheet> {
                   ),
                 ),
               ),
-              const Text(
-                'إرسال شكوى إلى المدير المفوض',
+              Text(
+                widget.asNote
+                    ? 'إرسال ملاحظة إلى المدير'
+                    : 'إرسال شكوى إلى المدير المفوض',
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontFamily: 'Cairo',
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -146,23 +158,27 @@ class _DelegateComplaintSheetState extends State<DelegateComplaintSheet> {
               ),
               const SizedBox(height: 8),
               Text(
-                'الشكوى سرية وتصل مباشرة إلى المدير المفوض.',
+                widget.asNote
+                    ? 'اكتب ملاحظة عن البرنامج لغرض التطوير أو الإصلاح'
+                    : 'الشكوى سرية وتصل مباشرة إلى المدير المفوض.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontFamily: 'Cairo',
                   color: Colors.grey.shade800,
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                'تُحفظ معلومات الحساب داخلياً لأغراض المتابعة من قبل المدير المفوض.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontFamily: 'Cairo',
-                  fontSize: 12,
-                  color: Colors.grey.shade600,
+              if (!widget.asNote) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'تُحفظ معلومات الحساب داخلياً لأغراض المتابعة من قبل المدير المفوض.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: 16),
               TextFormField(
                 controller: _controller,
@@ -171,7 +187,9 @@ class _DelegateComplaintSheetState extends State<DelegateComplaintSheet> {
                 enabled: !_submitting,
                 style: const TextStyle(fontFamily: 'Cairo'),
                 decoration: InputDecoration(
-                  hintText: 'اكتب نص الشكوى...',
+                  hintText: widget.asNote
+                      ? 'اكتب ملاحظتك...'
+                      : 'اكتب نص الشكوى...',
                   hintStyle: const TextStyle(fontFamily: 'Cairo'),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),

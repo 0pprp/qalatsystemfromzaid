@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import json, os, shutil, subprocess, tarfile, time
 from pathlib import Path
 import paramiko
@@ -53,9 +53,9 @@ def get(path, token):
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read().decode())
 
-mf=post('/Auth/LoginMainFollower', {{'userName':'mf1','password':'Mf@12345'}})
+mf=post('/Auth/LoginMainFollower', {{'userName':'mf1','password':os.environ.get('MF_PASSWORD','')}})
 dm=post('/Auth/LoginDelegatedManager', {{'userName':'dm','password':'dm'}})
-committee=post('/delegated-manager/committees', {{'name':'لجنة مرحلة2','memberUserNames':['mf1','mf2']}}, dm['token'])
+committee=post('/delegated-manager/committees', {{'name':'???? ?????2','memberUserNames':['mf1','mf2']}}, dm['token'])
 # use Najaf DEMO city value from lab cities if possible
 city='1'  # LabCities demo value
 try:
@@ -73,16 +73,16 @@ for cval in mission['cityValues']:
             city=cval
             sale=sales[0]
             sale_id=sale.get('saleId') or sale.get('SaleId') or sale.get('id') or sale.get('Id')
-            name=sale.get('customerName') or sale.get('CustomerName') or 'زبون'
+            name=sale.get('customerName') or sale.get('CustomerName') or '????'
             break
     except Exception as ex:
         print('SALES_FAIL', cval, ex)
         sale_id=101
-        name='اختبار'
+        name='??????'
 # submit review score 8 with note
 rev=post('/main-follower/sale-reviews', {{
   'missionId': mission['id'], 'cityValue': city, 'saleId': int(sale_id or 101),
-  'customerName': name, 'score': 8, 'note': 'مراقبة لجنة جيدة'
+  'customerName': name, 'score': 8, 'note': '?????? ???? ????'
 }}, mf['token'])
 print('REVIEW', rev.get('id'), rev.get('score'))
 # reject without note

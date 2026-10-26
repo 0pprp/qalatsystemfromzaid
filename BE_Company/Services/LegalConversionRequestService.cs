@@ -23,6 +23,27 @@ public sealed class LegalConversionRequestDto
     public DateTime? ReviewedAt { get; set; }
     public double? WeekPaid { get; set; }
     public double? PaidPercent { get; set; }
+
+    // Customer detail (same family as متابعة المندوبين / View_Customers)
+    public int? DelegateId { get; set; }
+    public string? DelegateName { get; set; }
+    public string? Address { get; set; }
+    public string? Notes { get; set; }
+    public string? ShopName { get; set; }
+    public string? SaleName { get; set; }
+    public string? ReceiptName { get; set; }
+    public DateTime? DateSaleDevice { get; set; }
+    public double? AmountTotalSales { get; set; }
+    public double? AmountDaySales { get; set; }
+    public double? ReceiptsTotal { get; set; }
+    public double? AmountRemaining { get; set; }
+    public string? ItemsNames { get; set; }
+    public DateTime? LastPaymentDate { get; set; }
+    public double? LastPaymentAmount { get; set; }
+    public int? CountReceiptDevice { get; set; }
+    public int? NumberOfDayDevice { get; set; }
+    public int? ReceiptRateDevice { get; set; }
+    public bool IsLegal { get; set; }
 }
 
 public interface ILegalConversionRequestService
@@ -46,6 +67,8 @@ public sealed class LegalConversionRequestService : ILegalConversionRequestServi
     public const string RejectedStatus = "Rejected";
     public const string RequestDecisionType = "طلب قانونية";
     public const string FinalDecisionType = "قانونية";
+    /// <summary>Deploy marker — list enrich + gateway UserID=0 Activities FK fix.</summary>
+    public const string DeployMarker = "LegalConversionListEnrich_V1";
 
     private static readonly object SchemaGate = new();
     private static bool _schemaReady;
@@ -262,12 +285,13 @@ VALUES (@UserId, @Desc, GETUTCDATE(), 'false', NEWID());
         skip = Math.Max(0, skip);
 
         await using var connection = new SqlConnection(_cs);
+        _ = DeployMarker;
         var rows = await connection.QueryAsync<LegalConversionRequestDto>(new CommandDefinition("""
 SELECT
     r.RequestId,
     r.CustomerID AS CustomerId,
-    c.CustomerName,
-    c.PhoneNumber,
+    ISNULL(vc.CustomerName, c.CustomerName) AS CustomerName,
+    ISNULL(vc.PhoneNumber, c.PhoneNumber) AS PhoneNumber,
     r.RequestedByUserID AS RequestedByUserId,
     u1.UserName AS RequestedByName,
     r.Status,
@@ -280,9 +304,35 @@ SELECT
     r.RequestedAt,
     r.ReviewedAt,
     r.WeekPaid,
-    r.PaidPercent
+    r.PaidPercent,
+    c.DelegateID AS DelegateId,
+    d.DelegateName AS DelegateName,
+    ISNULL(c.Address, N'') AS Address,
+    ISNULL(c.Notes, N'') AS Notes,
+    ISNULL(c.ShopName, N'') AS ShopName,
+    CAST(NULL AS NVARCHAR(200)) AS SaleName,
+    CAST(NULL AS NVARCHAR(200)) AS ReceiptName,
+    vc.DateSaleDevice AS DateSaleDevice,
+    CAST(ISNULL(vc.AmountTotalSales, 0) AS FLOAT) AS AmountTotalSales,
+    CAST(ISNULL(vc.AmountDaySales, 0) AS FLOAT) AS AmountDaySales,
+    CAST(ISNULL(vc.ReceiptsTotal, 0) AS FLOAT) AS ReceiptsTotal,
+    CAST(ISNULL(vc.AmountRemaining, 0) AS FLOAT) AS AmountRemaining,
+    ISNULL(vc.ItemsNames, N'') AS ItemsNames,
+    vc.LastPaymentDate AS LastPaymentDate,
+    CAST((
+        SELECT TOP 1 ROUND(ISNULL(pay.AmountDenar, 0), -3)
+        FROM dbo.View_ReceiptCustomerDate pay
+        WHERE pay.CustomerID = c.CustomerID
+        ORDER BY pay.PaymentDate DESC
+    ) AS FLOAT) AS LastPaymentAmount,
+    CAST(TRY_CONVERT(INT, vc.CountReceiptDevice) AS INT) AS CountReceiptDevice,
+    CAST(ISNULL(vc.NumberOfDayPayment, 0) AS INT) AS NumberOfDayDevice,
+    CAST(ISNULL(vc.ReceiptRateDevice, 0) AS INT) AS ReceiptRateDevice,
+    CAST(ISNULL(c.IsLegal, 0) AS BIT) AS IsLegal
 FROM dbo.LegalConversionRequests r
 INNER JOIN dbo.Customers c ON c.CustomerID = r.CustomerID
+LEFT JOIN dbo.View_Customers vc ON vc.CustomerID = c.CustomerID
+LEFT JOIN dbo.Delegates d ON d.DelegateID = c.DelegateID
 LEFT JOIN dbo.Users u1 ON u1.UserID = r.RequestedByUserID
 LEFT JOIN dbo.Users u2 ON u2.UserID = r.ReviewedByUserID
 WHERE (@Status IS NULL OR @Status = N'' OR r.Status = @Status)
@@ -329,6 +379,12 @@ WHERE RequestId = @RequestId;
             throw new InvalidOperationException("الطلب ليس بانتظار الموافقة.");
 
         int customerId = (int)req.CustomerID;
+        int requestedBy = (int)req.RequestedByUserID;
+        // Gateway monitor auth uses UserID=0 — Activities has FK to Users; resolve a real user.
+        var effectiveReviewerId = await ResolveReviewerUserIdAsync(
+            connection, tx, reviewerUserId, requestedBy, ct);
+        _ = DeployMarker;
+
         var customerName = await connection.ExecuteScalarAsync<string?>(new CommandDefinition(
             "SELECT ISNULL(CustomerName,N'') FROM dbo.Customers WHERE CustomerID=@Id",
             new { Id = customerId }, tx, cancellationToken: ct)) ?? "";
@@ -336,6 +392,7 @@ WHERE RequestId = @RequestId;
         await connection.ExecuteAsync(new CommandDefinition("""
 UPDATE dbo.Customers SET IsLegal = 1, UpdatedDate = GETDATE() WHERE CustomerID = @CustomerId;
 IF OBJECT_ID(N'dbo.CustomerWeekPaymentSnapshot', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.CustomerWeekPaymentSnapshot', N'IsLegal') IS NOT NULL
     UPDATE dbo.CustomerWeekPaymentSnapshot SET IsLegal = 1 WHERE CustomerID = @CustomerId;
 """, new { CustomerId = customerId }, tx, cancellationToken: ct));
 
@@ -352,7 +409,7 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);
 """, new
         {
             CustomerId = customerId,
-            ReviewerId = reviewerUserId,
+            ReviewerId = effectiveReviewerId,
             WeekPaid = (double?)req.WeekPaid ?? 0,
             PaidPercent = (double?)req.PaidPercent ?? 0,
             WeekStart = weekStart,
@@ -378,22 +435,14 @@ WHERE RequestId = @RequestId;
 """, new
         {
             RequestId = requestId,
-            ReviewerId = reviewerUserId,
+            ReviewerId = effectiveReviewerId,
             ReviewNote = string.IsNullOrWhiteSpace(reviewNote) ? null : reviewNote.Trim(),
             ApprovedDecisionId = approvedDecisionId,
         }, tx, cancellationToken: ct));
 
-        if (await TableExistsAsync(connection, tx, "Activities", ct))
-        {
-            await connection.ExecuteAsync(new CommandDefinition("""
-INSERT INTO dbo.Activities (UserID, ActivityDescription, ActivityDate, AsyncState, AsyncID)
-VALUES (@UserId, @Desc, GETUTCDATE(), 'false', NEWID());
-""", new
-            {
-                UserId = reviewerUserId,
-                Desc = $"موافقة تحويل قانونية للزبون {customerName} (طلب #{requestId})",
-            }, tx, cancellationToken: ct));
-        }
+        await TryInsertActivityAsync(
+            connection, tx, effectiveReviewerId,
+            $"موافقة تحويل قانونية للزبون {customerName} (طلب #{requestId})", ct);
 
         tx.Commit();
         return await ListByIdAsync(requestId, ct);
@@ -411,7 +460,7 @@ VALUES (@UserId, @Desc, GETUTCDATE(), 'false', NEWID());
         await using var tx = connection.BeginTransaction();
 
         var req = await connection.QueryFirstOrDefaultAsync<dynamic>(new CommandDefinition("""
-SELECT TOP 1 RequestId, CustomerID, Status
+SELECT TOP 1 RequestId, CustomerID, Status, RequestedByUserID
 FROM dbo.LegalConversionRequests WITH (UPDLOCK, ROWLOCK)
 WHERE RequestId = @RequestId;
 """, new { RequestId = requestId }, tx, cancellationToken: ct));
@@ -422,6 +471,10 @@ WHERE RequestId = @RequestId;
             throw new InvalidOperationException("الطلب ليس بانتظار الموافقة.");
 
         int customerId = (int)req.CustomerID;
+        int requestedBy = (int)req.RequestedByUserID;
+        var effectiveReviewerId = await ResolveReviewerUserIdAsync(
+            connection, tx, reviewerUserId, requestedBy, ct);
+
         var customerName = await connection.ExecuteScalarAsync<string?>(new CommandDefinition(
             "SELECT ISNULL(CustomerName,N'') FROM dbo.Customers WHERE CustomerID=@Id",
             new { Id = customerId }, tx, cancellationToken: ct)) ?? "";
@@ -436,21 +489,13 @@ WHERE RequestId = @RequestId;
 """, new
         {
             RequestId = requestId,
-            ReviewerId = reviewerUserId,
+            ReviewerId = effectiveReviewerId,
             ReviewNote = string.IsNullOrWhiteSpace(reviewNote) ? null : reviewNote.Trim(),
         }, tx, cancellationToken: ct));
 
-        if (await TableExistsAsync(connection, tx, "Activities", ct))
-        {
-            await connection.ExecuteAsync(new CommandDefinition("""
-INSERT INTO dbo.Activities (UserID, ActivityDescription, ActivityDate, AsyncState, AsyncID)
-VALUES (@UserId, @Desc, GETUTCDATE(), 'false', NEWID());
-""", new
-            {
-                UserId = reviewerUserId,
-                Desc = $"رفض طلب قانونية للزبون {customerName} (طلب #{requestId})",
-            }, tx, cancellationToken: ct));
-        }
+        await TryInsertActivityAsync(
+            connection, tx, effectiveReviewerId,
+            $"رفض طلب قانونية للزبون {customerName} (طلب #{requestId})", ct);
 
         tx.Commit();
         return await ListByIdAsync(requestId, ct);
@@ -463,8 +508,8 @@ VALUES (@UserId, @Desc, GETUTCDATE(), 'false', NEWID());
 SELECT
     r.RequestId,
     r.CustomerID AS CustomerId,
-    c.CustomerName,
-    c.PhoneNumber,
+    ISNULL(vc.CustomerName, c.CustomerName) AS CustomerName,
+    ISNULL(vc.PhoneNumber, c.PhoneNumber) AS PhoneNumber,
     r.RequestedByUserID AS RequestedByUserId,
     u1.UserName AS RequestedByName,
     r.Status,
@@ -477,9 +522,35 @@ SELECT
     r.RequestedAt,
     r.ReviewedAt,
     r.WeekPaid,
-    r.PaidPercent
+    r.PaidPercent,
+    c.DelegateID AS DelegateId,
+    d.DelegateName AS DelegateName,
+    ISNULL(c.Address, N'') AS Address,
+    ISNULL(c.Notes, N'') AS Notes,
+    ISNULL(c.ShopName, N'') AS ShopName,
+    CAST(NULL AS NVARCHAR(200)) AS SaleName,
+    CAST(NULL AS NVARCHAR(200)) AS ReceiptName,
+    vc.DateSaleDevice AS DateSaleDevice,
+    CAST(ISNULL(vc.AmountTotalSales, 0) AS FLOAT) AS AmountTotalSales,
+    CAST(ISNULL(vc.AmountDaySales, 0) AS FLOAT) AS AmountDaySales,
+    CAST(ISNULL(vc.ReceiptsTotal, 0) AS FLOAT) AS ReceiptsTotal,
+    CAST(ISNULL(vc.AmountRemaining, 0) AS FLOAT) AS AmountRemaining,
+    ISNULL(vc.ItemsNames, N'') AS ItemsNames,
+    vc.LastPaymentDate AS LastPaymentDate,
+    CAST((
+        SELECT TOP 1 ROUND(ISNULL(pay.AmountDenar, 0), -3)
+        FROM dbo.View_ReceiptCustomerDate pay
+        WHERE pay.CustomerID = c.CustomerID
+        ORDER BY pay.PaymentDate DESC
+    ) AS FLOAT) AS LastPaymentAmount,
+    CAST(TRY_CONVERT(INT, vc.CountReceiptDevice) AS INT) AS CountReceiptDevice,
+    CAST(ISNULL(vc.NumberOfDayPayment, 0) AS INT) AS NumberOfDayDevice,
+    CAST(ISNULL(vc.ReceiptRateDevice, 0) AS INT) AS ReceiptRateDevice,
+    CAST(ISNULL(c.IsLegal, 0) AS BIT) AS IsLegal
 FROM dbo.LegalConversionRequests r
 INNER JOIN dbo.Customers c ON c.CustomerID = r.CustomerID
+LEFT JOIN dbo.View_Customers vc ON vc.CustomerID = c.CustomerID
+LEFT JOIN dbo.Delegates d ON d.DelegateID = c.DelegateID
 LEFT JOIN dbo.Users u1 ON u1.UserID = r.RequestedByUserID
 LEFT JOIN dbo.Users u2 ON u2.UserID = r.ReviewedByUserID
 WHERE r.RequestId = @RequestId;
@@ -529,4 +600,67 @@ WHERE D.DecisionID = @DecisionId;
         await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             "SELECT CASE WHEN OBJECT_ID(@Name, N'U') IS NULL THEN 0 ELSE 1 END",
             new { Name = $"dbo.{name}" }, tx, cancellationToken: ct)) == 1;
+
+    /// <summary>
+    /// Monitor via SalesGateway authenticates as UserID=0. Prefer a real Users row
+    /// so Activities FK and CustomerWeekDecisions stay valid.
+    /// </summary>
+    private static async Task<int> ResolveReviewerUserIdAsync(
+        SqlConnection connection,
+        SqlTransaction tx,
+        int reviewerUserId,
+        int requestedByUserId,
+        CancellationToken ct)
+    {
+        if (reviewerUserId > 0 && await UserExistsAsync(connection, tx, reviewerUserId, ct))
+            return reviewerUserId;
+
+        if (requestedByUserId > 0 && await UserExistsAsync(connection, tx, requestedByUserId, ct))
+            return requestedByUserId;
+
+        var monitorId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition("""
+SELECT TOP 1 UserID FROM dbo.Users
+WHERE UserType IN (N'المراقب', N'Monitor')
+ORDER BY UserID;
+""", transaction: tx, cancellationToken: ct));
+        if (monitorId is > 0)
+            return monitorId.Value;
+
+        var anyId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
+            "SELECT TOP 1 UserID FROM dbo.Users ORDER BY UserID;",
+            transaction: tx, cancellationToken: ct));
+        if (anyId is > 0)
+            return anyId.Value;
+
+        throw new InvalidOperationException("لا يوجد مستخدم صالح لتسجيل موافقة التحويل القانونية.");
+    }
+
+    private static async Task<bool> UserExistsAsync(
+        SqlConnection connection,
+        SqlTransaction tx,
+        int userId,
+        CancellationToken ct) =>
+        await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+            "SELECT CASE WHEN EXISTS(SELECT 1 FROM dbo.Users WHERE UserID=@Id) THEN 1 ELSE 0 END",
+            new { Id = userId }, tx, cancellationToken: ct)) == 1;
+
+    private static async Task TryInsertActivityAsync(
+        SqlConnection connection,
+        SqlTransaction tx,
+        int userId,
+        string description,
+        CancellationToken ct)
+    {
+        if (userId <= 0)
+            return;
+        if (!await TableExistsAsync(connection, tx, "Activities", ct))
+            return;
+        if (!await UserExistsAsync(connection, tx, userId, ct))
+            return;
+
+        await connection.ExecuteAsync(new CommandDefinition("""
+INSERT INTO dbo.Activities (UserID, ActivityDescription, ActivityDate, AsyncState, AsyncID)
+VALUES (@UserId, @Desc, GETUTCDATE(), 'false', NEWID());
+""", new { UserId = userId, Desc = description }, tx, cancellationToken: ct));
+    }
 }

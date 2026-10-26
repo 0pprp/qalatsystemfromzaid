@@ -44,7 +44,7 @@ BEGIN
     Blocked AS (
         SELECT DISTINCT D.CustomerID
         FROM dbo.CustomerWeekDecisions AS D WITH (NOLOCK)
-        WHERE D.DecisionType IN (N'قانونية', N'وهمي')
+        WHERE D.DecisionType IN (N'قانونية', N'وهمي', N'تنازل', N'طلب تنازل')
            OR (
                 D.DecisionType = N'متواصل'
                 AND D.SnoozeUntil IS NOT NULL
@@ -125,6 +125,11 @@ BEGIN
                 ELSE (ISNULL(W.WeekPaid, 0) * 100.0) / S.AmountTotalSales
             END
           ) <= 3.8
+      -- نفس فلتر تطبيق إدارة الفرع: آخر تسديد ≥ 40 يوماً (أو بلا تسديد أصلاً)
+      AND (
+            P.LastPaymentDate IS NULL
+            OR CONVERT(DATE, P.LastPaymentDate) <= DATEADD(DAY, -40, CONVERT(DATE, GETDATE()))
+          )
       AND NOT EXISTS (SELECT 1 FROM Blocked B WHERE B.CustomerID = C.CustomerID)
     ORDER BY PaidPercent ASC, C.CustomerName;
 END

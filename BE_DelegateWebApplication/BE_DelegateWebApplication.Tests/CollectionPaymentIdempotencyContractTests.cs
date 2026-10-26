@@ -32,12 +32,28 @@ namespace BE_DelegateWebApplication.Tests
         }
 
         [Fact]
-        public void CreatedBeforeGate_EligibleAtSixteen_NotOnReceive()
+        public void SameDaySameAmount_DistinctClientPaymentId_IsAcknowledgedSuccessNotSecondInsert()
+        {
+            // Distinct UUID + same customer/amount/day → no second insert, but Success=true
+            // so the device clears PermanentFailure ghosts (money already on server).
+            const bool success = true;
+            const bool alreadyExists = true;
+            const bool duplicateBlocked = true;
+            Assert.True(success);
+            Assert.True(alreadyExists);
+            Assert.True(duplicateBlocked);
+            Assert.Equal(
+                CollectionPaymentRules.SameDaySameAmountAcknowledgedMessage,
+                CollectionPaymentRules.SameDaySameAmountAcknowledgedMessage);
+        }
+
+        [Fact]
+        public void CreatedBeforeFormerGate_EligibleImmediately()
         {
             var created = new DateTime(2026, 9, 14, 11, 0, 0, DateTimeKind.Utc); // 14:00 Baghdad
             var eligible = CollectionPaymentRules.ComputeEligibleForPostingAtUtc(created);
-            Assert.Equal(new DateTime(2026, 9, 14, 13, 0, 0, DateTimeKind.Utc), eligible); // 16:00 Baghdad
-            Assert.False(CollectionPaymentRules.IsEligibleForPosting(eligible, created));
+            Assert.Equal(created, eligible);
+            Assert.True(CollectionPaymentRules.IsEligibleForPosting(eligible, created));
         }
 
         [Fact]

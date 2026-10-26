@@ -1,6 +1,8 @@
+import 'package:sales_employee_application/widgets/company_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:sales_employee_application/app_nav.dart';
 import 'package:sales_employee_application/config/app_env.dart';
+import 'package:sales_employee_application/core/update/app_update_gate.dart';
 import 'package:sales_employee_application/screens/home_screen.dart';
 import 'package:sales_employee_application/screens/login_screen.dart';
 import 'package:sales_employee_application/screens/pending_sales_screen.dart';
@@ -10,6 +12,7 @@ import 'package:sales_employee_application/screens/search_screen.dart';
 import 'package:sales_employee_application/screens/shift_screen.dart';
 import 'package:sales_employee_application/screens/submit_sales_request_screen.dart';
 import 'package:sales_employee_application/data/sales_repository_factory.dart';
+import 'package:sales_employee_application/screens/price_board_screen.dart';
 import 'package:sales_employee_application/screens/warehouse_screen.dart';
 import 'package:sales_employee_application/services/api_client.dart';
 import 'package:sales_employee_application/services/session.dart';
@@ -50,6 +53,7 @@ class SalesEmployeeApp extends StatelessWidget {
         '/search': (_) => const SearchScreen(),
         '/sale': (_) => const SaleScreen(),
         '/warehouse': (_) => const WarehouseScreen(),
+        '/price-board': (_) => const PriceBoardScreen(),
         '/submit-request': (_) => const SubmitSalesRequestScreen(),
         '/sales': (_) => const PendingSalesScreen(),
         '/sale-details': (context) {
@@ -78,6 +82,8 @@ class _SplashScreenState extends State<_SplashScreen> {
   Future<void> _go() async {
     await Future.delayed(const Duration(milliseconds: 500));
     if (!mounted) return;
+    final canContinue = await AppUpdateGate.checkAndPrompt(context);
+    if (!canContinue || !mounted) return;
     if (!Session.isLoggedIn) {
       Navigator.pushReplacementNamed(context, '/login');
       return;
@@ -127,7 +133,7 @@ class _SplashScreenState extends State<_SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image(image: AssetImage('assets/icons/LogoCompany.png'), width: 160),
+            CompanyLoader(size: 128, label: 'جارٍ تجهيز التطبيق'),
             SizedBox(height: 16),
             Text(
               'شركة قلعة الضمان',

@@ -4,8 +4,11 @@ import { createApp } from 'vue'
 
 // Styles
 import '@/plugins/axios'
+import { installSummaryReadOnlyGuard } from '@/plugins/summaryReadOnlyGuard'
 import '@core/scss/template/index.scss'
 import '@styles/styles.scss'
+
+installSummaryReadOnlyGuard()
 
 // Create vue app
 const app = createApp(App)

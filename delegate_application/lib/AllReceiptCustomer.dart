@@ -28,9 +28,17 @@ class _AllReceiptCustomerState extends State<AllReceiptCustomer> {
   Future<void> fetchCustomers() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String linkDelegate = prefs.getString('LinkDelegate') ?? '0';
+    final asyncId = prefs.getString('AsyncId') ?? '';
+    final delegateId = prefs.getString('DelegateID') ?? '';
 
-    final response = await http.get(Uri.parse(
-        '${linkDelegate}CustomersPayments/GetCustomersPaymentsCustomer/${widget.customerId}'));
+    final response = await http.get(
+      Uri.parse(
+          '${linkDelegate}CustomersPayments/GetCustomersPaymentsCustomer/${widget.customerId}'),
+      headers: {
+        if (asyncId.isNotEmpty) 'X-Async-Id': asyncId,
+        if (delegateId.isNotEmpty) 'X-Delegate-Id': delegateId,
+      },
+    );
 
     if (response.statusCode == 200) {
       List<dynamic> data = jsonDecode(response.body);

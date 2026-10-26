@@ -6,6 +6,7 @@ import {
   directorCities,
   directorStatsBranchMonth,
   directorStatsCatalog,
+  directorStatsListPaymentsSum,
   directorStatsRatingCustomers,
   directorStatsTrend,
 } from '@/composables/directorApi'
@@ -18,6 +19,7 @@ import { trendMatchesRequest } from '@/composables/directorTrendIdentity'
 import { warmDirectorCacheInBackground } from '@/composables/warmDirectorCache'
 import { useToast } from '@/composables/useToast'
 import { createRequestGeneration } from '@/utils/provinceCatalog'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 
 defineOptions({ name: 'DirectorRatings' })
 definePage({ meta: { layout: 'default', keepAlive: true } })
@@ -74,6 +76,62 @@ const scopes = [
 const drilledListId = ref(0)
 const followerListCards = ref([])
 const listCardsBusy = ref(false)
+
+/** Per-list card display: rating | installment | payments */
+const cardViewById = ref({})
+const yesterdayIso = (() => {
+  const d = new Date()
+  d.setDate(d.getDate() - 1)
+
+  return iso(d)
+})()
+
+const paymentsDialog = ref(false)
+const paymentsBusy = ref(false)
+const paymentsListId = ref(0)
+const paymentsListName = ref('')
+const paymentsFrom = ref(yesterdayIso)
+const paymentsTo = ref(yesterdayIso)
+const paymentsTotal = ref(null)
+const paymentsCount = ref(null)
+
+const cardPickDialog = ref(false)
+const cardPickListId = ref(0)
+const cardPickName = ref('')
+const cardPickMode = ref('rating')
+const cardPickDay = ref(yesterdayIso)
+const cardPickPaymentsBusy = ref(false)
+
+function cardPref(listId) {
+  return cardViewById.value[listId] || { mode: 'rating', day: yesterdayIso, paymentsTotal: null }
+}
+
+function setCardPref(listId, patch) {
+  cardViewById.value = {
+    ...cardViewById.value,
+    [listId]: { ...cardPref(listId), ...patch },
+  }
+}
+
+function cardPrimaryText(card) {
+  const pref = cardPref(card.id)
+  if (pref.mode === 'installment')
+    return card.installmentSum == null ? '—' : money(card.installmentSum)
+  if (pref.mode === 'payments')
+    return pref.paymentsTotal == null ? '…' : money(pref.paymentsTotal)
+
+  return card.score == null ? '—' : card.score.toFixed(2)
+}
+
+function cardPrimaryLabel(card) {
+  const pref = cardPref(card.id)
+  if (pref.mode === 'installment')
+    return 'مجموع القسط'
+  if (pref.mode === 'payments')
+    return `تسديدات ${pref.day || yesterdayIso}`
+
+  return card.ratingLabel
+}
 
 const ratingBuckets = [
   { key: 'excellent', label: 'ممتاز', countKey: 'excellent' },
@@ -633,6 +691,7 @@ async function loadFollowerListCards() {
         }
         const end = data?.endValue ?? data?.EndValue
         const n = data?.customerCount ?? data?.CustomerCount
+        const inst = data?.installmentSum ?? data?.InstallmentSum
 
         return {
           id: l.id,
@@ -640,6 +699,7 @@ async function loadFollowerListCards() {
           score: end == null || Number.isNaN(Number(end)) ? null : Number(end),
           ratingLabel: data?.ratingLabel || data?.RatingLabel || '—',
           customerCount: n == null ? null : Number(n),
+          installmentSum: inst == null || Number.isNaN(Number(inst)) ? null : Number(inst),
           direction: String(data?.direction || data?.Direction || 'flat').toLowerCase(),
         }
       }
@@ -650,6 +710,7 @@ async function loadFollowerListCards() {
           score: null,
           ratingLabel: '—',
           customerCount: null,
+          installmentSum: null,
           direction: 'flat',
         }
       }
@@ -664,6 +725,109 @@ async function loadFollowerListCards() {
   finally {
     if (listCardsGen.isCurrent(token))
       listCardsBusy.value = false
+  }
+}
+
+function openCardPicker(card) {
+  cardPickListId.value = card.id
+  cardPickName.value = card.name
+  const pref = cardPref(card.id)
+  cardPickMode.value = pref.mode || 'rating'
+  cardPickDay.value = pref.day || yesterdayIso
+  cardPickDialog.value = true
+}
+
+async function applyCardPicker() {
+  const id = cardPickListId.value
+  if (!(id > 0))
+    return
+  if (cardPickMode.value === 'rating') {
+    setCardPref(id, { mode: 'rating' })
+    cardPickDialog.value = false
+    openFollowerListCard(id)
+
+    return
+  }
+  if (cardPickMode.value === 'installment') {
+    setCardPref(id, { mode: 'installment' })
+    cardPickDialog.value = false
+
+    return
+  }
+  // payments for chosen day
+  cardPickPaymentsBusy.value = true
+  try {
+    const day = cardPickDay.value || yesterdayIso
+    const data = await directorStatsListPaymentsSum({
+      cityValue: selected.value?.value,
+      listId: id,
+      fromDate: day,
+      toDate: day,
+    })
+    const total = data?.totalAmount ?? data?.TotalAmount ?? 0
+    setCardPref(id, {
+      mode: 'payments',
+      day,
+      paymentsTotal: Number(total) || 0,
+    })
+    cardPickDialog.value = false
+  }
+  catch {
+    toast.error('تعذر جلب تسديدات اليوم')
+  }
+  finally {
+    cardPickPaymentsBusy.value = false
+  }
+}
+
+function openPaymentsDialog(card, ev) {
+  ev?.stopPropagation?.()
+  paymentsListId.value = card.id
+  paymentsListName.value = card.name
+  paymentsFrom.value = yesterdayIso
+  paymentsTo.value = yesterdayIso
+  paymentsTotal.value = null
+  paymentsCount.value = null
+  paymentsDialog.value = true
+  void loadPaymentsSum()
+}
+
+/** حقل «إلى» لا يقبل أقدم من «من» — نفس اليوم أو بعده فقط. */
+function onPaymentsFromChange(value) {
+  const from = String(value || paymentsFrom.value || '').slice(0, 10)
+  const to = String(paymentsTo.value || '').slice(0, 10)
+  if (from && to && to < from)
+    paymentsTo.value = from
+}
+
+async function loadPaymentsSum() {
+  if (!(paymentsListId.value > 0) || !selected.value?.value)
+    return
+  const from = String(paymentsFrom.value || yesterdayIso).slice(0, 10)
+  let to = String(paymentsTo.value || yesterdayIso).slice(0, 10)
+  if (to < from) {
+    to = from
+    paymentsTo.value = from
+    toast.warning('تاريخ «إلى» يجب أن يكون نفس «من» أو بعده')
+  }
+  paymentsBusy.value = true
+  try {
+    const data = await directorStatsListPaymentsSum({
+      cityValue: selected.value.value,
+      listId: paymentsListId.value,
+      fromDate: from,
+      toDate: to,
+    })
+    paymentsTotal.value = Number(data?.totalAmount ?? data?.TotalAmount ?? 0)
+    paymentsCount.value = Number(data?.paymentCount ?? data?.PaymentCount ?? 0)
+  }
+  catch {
+    paymentsTotal.value = null
+    paymentsCount.value = null
+    toast.error('تعذر جلب مجموع التسديدات')
+  }
+  finally {
+    paymentsBusy.value = false
   }
 }
 
@@ -784,18 +948,24 @@ async function refreshTrend(key = currentTrendKey(), request = null) {
 }
 
 function mapCustomerRows(list, fallbackLabel) {
-  return list.map(c => ({
-    customerId: c.customerId ?? c.CustomerId,
-    customerName: c.customerName || c.CustomerName || `زبون ${c.customerId ?? c.CustomerId}`,
-    phone: c.phone || c.Phone || '',
-    dateSale: c.dateSale ?? c.DateSale,
-    lastPaymentDate: c.lastPaymentDate ?? c.LastPaymentDate,
-    amountPaid: c.amountPaid ?? c.AmountPaid ?? 0,
-    amountRemaining: c.amountRemaining ?? c.AmountRemaining ?? 0,
-    amountTotal: c.amountTotal ?? c.AmountTotal ?? 0,
-    ratingLabel: c.ratingLabel || c.RatingLabel || fallbackLabel,
-    score: c.score ?? c.Score,
-  }))
+  return list.map(c => {
+    const hide = shouldHidePaidRemaining(c)
+
+    return {
+      customerId: c.customerId ?? c.CustomerId,
+      customerName: c.customerName || c.CustomerName || `زبون ${c.customerId ?? c.CustomerId}`,
+      phone: c.phone || c.Phone || '',
+      dateSale: c.dateSale ?? c.DateSale,
+      lastPaymentDate: c.lastPaymentDate ?? c.LastPaymentDate,
+      amountPaid: hide ? null : (c.amountPaid ?? c.AmountPaid ?? 0),
+      amountRemaining: hide ? null : (c.amountRemaining ?? c.AmountRemaining ?? 0),
+      amountTotal: c.amountTotal ?? c.AmountTotal ?? 0,
+      ratingLabel: c.ratingLabel || c.RatingLabel || fallbackLabel,
+      score: c.score ?? c.Score,
+      hidePaidRemaining: hide,
+      isLegal: c.isLegal ?? c.IsLegal ?? hide,
+    }
+  })
 }
 
 function unwrapCustomerList(data) {
@@ -1140,13 +1310,33 @@ watch(() => route.query.city, () => {
 
 let mountedOnce = false
 
-onMounted(async () => {
-  mountedOnce = true
+function clearStaleReturnToken() {
+  try {
+    sessionStorage.removeItem(RETURN_KEY)
+  }
+  catch { /* ignore */ }
+}
+
+/** Hub (كروت المحافظات) unless URL has ?city= — never auto-dive into a leftover province. */
+async function enterRatingsLanding() {
   cache.reloadFromSession()
-  await loadCities()
+  const qCity = String(route.query.city || '').trim()
+  if (!qCity) {
+    clearStaleReturnToken()
+    if (selected.value)
+      backToHub({ pushHistory: false })
+
+    return
+  }
   const restored = await restoreDirectorReturnState()
   if (!restored)
     applyRouteCity()
+}
+
+onMounted(async () => {
+  mountedOnce = true
+  await loadCities()
+  await enterRatingsLanding()
   void warmMonthStats()
   void warmDirectorCacheInBackground()
 })
@@ -1156,15 +1346,11 @@ onActivated(async () => {
     return
   // Keep-alive return from profile: page state already visible — drop stale return token.
   if (bucketDialog.value) {
-    try {
-      sessionStorage.removeItem(RETURN_KEY)
-    }
-    catch { /* ignore */ }
+    clearStaleReturnToken()
 
     return
   }
-  cache.reloadFromSession()
-  await restoreDirectorReturnState()
+  await enterRatingsLanding()
 })
 
 onBeforeUnmount(() => {})
@@ -1175,7 +1361,7 @@ onBeforeUnmount(() => {})
     <header class="director-hero">
       <div>
         <p class="eyebrow">
-          لوحة المدير
+          لوحة التقييمات
         </p>
         <h1 :class="selected ? 'province-title' : 'hub-title'">
           {{ selected ? selected.name : 'التقييمات' }}
@@ -1314,7 +1500,7 @@ onBeforeUnmount(() => {})
         <div class="follower-lists__head">
           <h3>قوائم {{ selectedFollowerName }}</h3>
           <p class="muted">
-            تقييم الزبائن المسددين لكل قائمة مربوطة (آخر تسديد خلال 30 يوماً) — اضغط الكارت للتفاصيل
+            بجانب كل كارت: مجموع القسط. اضغط الكارت لاختيار ماذا تعرض (تقييم / قسط / تسديدات يوم). زر التسديدات لفترة من–إلى (افتراضي أمس).
           </p>
         </div>
         <div
@@ -1333,28 +1519,154 @@ onBeforeUnmount(() => {})
           v-else
           class="list-cards"
         >
-          <button
+          <div
             v-for="card in followerListCards"
             :key="card.id"
-            type="button"
             class="list-card"
-            @click="openFollowerListCard(card.id)"
+            role="button"
+            tabindex="0"
+            @click="openCardPicker(card)"
+            @keydown.enter="openCardPicker(card)"
           >
             <strong class="list-card__name">{{ card.name }}</strong>
             <span
               class="list-card__score"
-              :data-dir="card.direction"
+              :data-dir="cardPref(card.id).mode === 'rating' ? card.direction : 'flat'"
             >
-              {{ card.score == null ? '—' : card.score.toFixed(2) }}
+              {{ cardPrimaryText(card) }}
             </span>
-            <span class="list-card__label">{{ card.ratingLabel }}</span>
+            <span class="list-card__label">{{ cardPrimaryLabel(card) }}</span>
             <span class="list-card__count">
               الزبائن المسددين:
               <b>{{ card.customerCount == null ? '—' : card.customerCount }}</b>
             </span>
-          </button>
+            <span class="list-card__installment">
+              مجموع القسط:
+              <b>{{ card.installmentSum == null ? '—' : money(card.installmentSum) }}</b>
+            </span>
+            <VBtn
+              size="small"
+              color="success"
+              variant="tonal"
+              class="mt-2"
+              prepend-icon="tabler-cash"
+              @click="openPaymentsDialog(card, $event)"
+            >
+              التسديدات
+            </VBtn>
+          </div>
         </div>
       </div>
+
+      <VDialog
+        v-model="cardPickDialog"
+        max-width="420"
+      >
+        <VCard>
+          <VCardTitle>عرض كارت «{{ cardPickName }}»</VCardTitle>
+          <VCardText class="d-flex flex-column gap-3">
+            <VRadioGroup v-model="cardPickMode">
+              <VRadio
+                label="التقييم (وفتح التفاصيل)"
+                value="rating"
+              />
+              <VRadio
+                label="مجموع القسط على الكارت"
+                value="installment"
+              />
+              <VRadio
+                label="مبلغ تسديدات يوم محدد على الكارت"
+                value="payments"
+              />
+            </VRadioGroup>
+            <VTextField
+              v-if="cardPickMode === 'payments'"
+              v-model="cardPickDay"
+              type="date"
+              label="اليوم"
+              density="compact"
+              hide-details
+            />
+          </VCardText>
+          <VCardActions>
+            <VSpacer />
+            <VBtn
+              variant="text"
+              @click="cardPickDialog = false"
+            >
+              إلغاء
+            </VBtn>
+            <VBtn
+              color="primary"
+              :loading="cardPickPaymentsBusy"
+              @click="applyCardPicker"
+            >
+              تطبيق
+            </VBtn>
+          </VCardActions>
+        </VCard>
+      </VDialog>
+
+      <VDialog
+        v-model="paymentsDialog"
+        max-width="440"
+      >
+        <VCard>
+          <VCardTitle>تسديدات «{{ paymentsListName }}»</VCardTitle>
+          <VCardText class="d-flex flex-column gap-3">
+            <div class="d-flex flex-wrap gap-2">
+              <VTextField
+                v-model="paymentsFrom"
+                type="date"
+                label="من تاريخ"
+                density="compact"
+                hide-details
+                style="min-width: 140px"
+                @update:model-value="onPaymentsFromChange"
+              />
+              <VTextField
+                v-model="paymentsTo"
+                type="date"
+                label="إلى تاريخ"
+                density="compact"
+                hide-details
+                style="min-width: 140px"
+                :min="paymentsFrom || undefined"
+              />
+            </div>
+            <VBtn
+              color="primary"
+              :loading="paymentsBusy"
+              @click="loadPaymentsSum"
+            >
+              عرض المجموع
+            </VBtn>
+            <div
+              v-if="paymentsTotal != null"
+              class="payments-sum-box"
+            >
+              <div class="text-medium-emphasis">
+                مبلغ التسديدات
+              </div>
+              <div class="text-h5 font-weight-bold">
+                {{ money(paymentsTotal) }} دع
+              </div>
+              <div class="text-caption">
+                عدد الحركات: {{ paymentsCount ?? 0 }}
+              </div>
+            </div>
+          </VCardText>
+          <VCardActions>
+            <VSpacer />
+            <VBtn
+              variant="text"
+              @click="paymentsDialog = false"
+            >
+              إغلاق
+            </VBtn>
+          </VCardActions>
+        </VCard>
+      </VDialog>
 
       <div
         v-if="showTrendDetail && drilledListId > 0"
@@ -1719,7 +2031,7 @@ onBeforeUnmount(() => {})
               <div class="customer-meta">
                 <span v-if="c.phone">{{ c.phone }}</span>
                 <span>{{ c.ratingLabel }}</span>
-                <span v-if="c.amountRemaining != null">متبقي: {{ money(c.amountRemaining) }}</span>
+                <span v-if="!c.hidePaidRemaining && c.amountRemaining != null">متبقي: {{ money(c.amountRemaining) }}</span>
               </div>
             </button>
           </div>
@@ -2097,6 +2409,19 @@ onBeforeUnmount(() => {})
 .list-card__count {
   font-size: 0.8rem;
   opacity: 0.75;
+}
+
+.list-card__installment {
+  font-size: 0.8rem;
+  opacity: 0.85;
+  color: #0f766e;
+}
+
+.payments-sum-box {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
 .drill-bar {

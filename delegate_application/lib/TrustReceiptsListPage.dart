@@ -62,11 +62,16 @@ class _TrustReceiptsListPageState extends State<TrustReceiptsListPage> {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String linkDelegate = prefs.getString('LinkDelegate') ?? '0';
       int delegateId = int.parse(prefs.getString('DelegateID') ?? '0');
+      final asyncId = prefs.getString('AsyncId') ?? '';
 
       var url = Uri.parse(
-          '${linkDelegate}TrustReceipts/paged?pageNumber=$_pageNumber&pageSize=$_pageSize&searchTerm=${_searchController.text}&delegateId=$delegateId');
+          '${linkDelegate}TrustReceipts/paged?pageNumber=$_pageNumber&pageSize=$_pageSize&searchTerm=${_searchController.text}');
       
-      var response = await http.get(url, headers: {"Content-Type": "application/json"});
+      var response = await http.get(url, headers: {
+        "Content-Type": "application/json",
+        if (asyncId.isNotEmpty) "X-Async-Id": asyncId,
+        if (delegateId > 0) "X-Delegate-Id": '$delegateId',
+      });
 
       if (response.statusCode == 200) {
         var data = json.decode(response.body);

@@ -1,11 +1,14 @@
 import 'package:follower_application/HomePage.dart';
 import 'package:follower_application/Login.dart';
 import 'package:follower_application/WelcomePage.dart';
+import 'package:follower_application/committee_tasks_page.dart';
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/core/update/app_version.dart';
 import 'package:follower_application/customer_profile_page.dart';
 import 'package:follower_application/field_followups_page.dart';
+import 'package:follower_application/follower_home_shell.dart';
 import 'package:follower_application/follower_sales_request_page.dart';
+import 'package:follower_application/follower_sales_requests_page.dart';
 import 'package:follower_application/legal_followups_page.dart';
 import 'package:follower_application/list_stats_page.dart';
 import 'package:follower_application/pending_sales_page.dart';
@@ -13,6 +16,7 @@ import 'package:follower_application/services/follower_tracking_repository.dart'
 import 'package:follower_application/start_shift_page.dart';
 import 'package:follower_application/tracking/shift_gate_observer.dart';
 import 'package:follower_application/tracking/shift_tracking_controller.dart';
+import 'package:follower_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -55,7 +59,8 @@ class MyApp extends StatelessWidget {
             '/': (context) => const WelcomePage(),
             '/Login': (context) => const Login(),
             '/StartShift': (context) => const StartShiftPage(),
-            '/HomePage': (context) => const HomePage(),
+            '/HomePage': (context) => const FollowerHomeShell(),
+            '/HomePageLegacy': (context) => const HomePage(),
             '/CustomerProfile': (context) {
               final args = ModalRoute.of(context)!.settings.arguments as Map;
               return CustomerProfilePage(
@@ -68,14 +73,24 @@ class MyApp extends StatelessWidget {
             },
             '/FollowerSalesRequest': (context) =>
                 const FollowerSalesRequestPage(),
+            '/FollowerSalesRequests': (context) =>
+                const FollowerSalesRequestsPage(),
             '/LegalFollowups': (context) => const LegalFollowupsPage(),
             '/FieldFollowups': (context) => const FieldFollowupsPage(),
             '/PendingSales': (context) => const PendingSalesPage(),
             '/ListStats': (context) => const ListStatsPage(),
+            '/CommitteeTasks': (context) => const CommitteeTasksPage(),
           },
-          theme: ThemeData(fontFamily: 'Cairo', brightness: Brightness.light),
-          darkTheme:
-              ThemeData(fontFamily: 'Cairo', brightness: Brightness.dark),
+          theme: AppTheme.themeData,
+          darkTheme: AppTheme.themeData.copyWith(
+            brightness: Brightness.dark,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: AppTheme.primaryColor,
+              primary: AppTheme.primaryColor,
+              secondary: AppTheme.secondaryColor,
+              brightness: Brightness.dark,
+            ),
+          ),
           themeMode: currentMode,
         );
       },

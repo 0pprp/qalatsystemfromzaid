@@ -4,11 +4,11 @@ import 'package:delegate_application/utils/iraq_date.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('send window [16:00 → 02:59] Baghdad — prevents past-day inflation', () {
-    test('before 16:00 — CLOSED', () {
+  group('send window always open — online upload any hour', () {
+    test('before former 16:00 — OPEN', () {
       expect(
         IraqDate.isPaymentSyncGateOpen(DateTime.utc(2026, 9, 14, 12, 59, 59)),
-        isFalse,
+        isTrue,
       );
     });
 
@@ -19,7 +19,7 @@ void main() {
       );
     });
 
-    test('01:00 next calendar (still previous biz day) — OPEN (was the bug)', () {
+    test('01:00 next calendar (still previous biz day) — OPEN', () {
       // Sep 15 01:00 Baghdad = Sep 14 22:00 UTC → business day still Sep 14
       final at0100 = DateTime.utc(2026, 9, 14, 22, 0);
       expect(IraqDate.businessDateKey(at0100), '2026-09-14');
@@ -33,10 +33,10 @@ void main() {
       expect(IraqDate.isPaymentSyncGateOpen(at0259), isTrue);
     });
 
-    test('03:00 new day — CLOSED until 16:00', () {
+    test('03:00 new day — OPEN (clock gate removed)', () {
       final at0300 = DateTime.utc(2026, 9, 15, 0, 0);
       expect(IraqDate.businessDateKey(at0300), '2026-09-15');
-      expect(IraqDate.isPaymentSyncGateOpen(at0300), isFalse);
+      expect(IraqDate.isPaymentSyncGateOpen(at0300), isTrue);
     });
   });
 

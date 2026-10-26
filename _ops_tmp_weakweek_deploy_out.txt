@@ -1,0 +1,24 @@
+﻿DBS 22
+OK AdminBaghdadKarkh DatabaseCompanyBaghdadKarak deploy=0.2s 226 4 1 2 07711637851 ╪╣┘ä┘è ┘ü╪▒╪º╪│ ╪¼╪¿╪º╪▒ ┘ä╪º┘è┘ê╪¼╪» NULL NULL NULL ┘ä╪º┘è┘ê╪¼╪» 07711637851 1 ┘é┘ç┘ê╪⌐ NULL NULL NULL NULL NULL 1 WPEZqmFhK
+OK AdminBaghdadRusafa DatabaseCompanyBaghdadRosafa deploy=0.3s 134039 18 3 2 ╪¡╪│┘è┘å ┘é╪º╪│┘à ╪¡╪│┘å ╪º┘ä╪┤┘ê╪▒╪¼╪⌐ - ╪¬┘à╪½╪º┘ä ╪╣╪¿╪» ╪º┘ä┘â╪▒┘è┘à NULL NULL NULL ╪¬┘à ╪¬╪║┘è╪▒ ╪º╪│┘à ╪º┘ä╪▓╪¿┘ê┘å ┘à┘å ╪╡╪¿╪º╪¡ ┘å┘ê╪▒┘è ┘à╪¡┘à╪» ╪º┘ä┘ë ╪¡╪│┘è┘å ┘é╪º╪│┘à
+OK AdminBasra DatabaseCompanyBasra deploy=0.2s 19132 18 4 8 ╪¿╪º╪▒┘é ┘å╪¿┘è┘ä ╪╖╪º╪▒┘é 1 ╪¿╪▒┘è┘ç┘ç ╪┤╪º╪▒╪╣ ╪º┘ä╪»┘è┘â┘ê╪▒╪º╪¬ ┘é╪▒╪¿ ╪┤╪▒┘â╪⌐ ╪º┘ä╪º┘ê╪º╪ª┘ä NULL NULL NULL ┘ä╪º ┘è┘ê╪¼╪» 07807779995 1 ┘à╪¡┘ä ╪»┘è┘â┘ê╪▒╪º╪¬ NUL
+OK AdminBasraAlanwar DatabaseCompanyBasraAlanwar deploy=0.2s 25180 1 1 8 ╪º╪¿╪▒╪º┘ç┘è┘à ┘ü╪╢┘ä ╪╣╪¿╪» ╪º┘ä┘ä┘ç 2 ╪º┘ä╪¬┘à╪º╪▒ \ ┘é╪▒╪¿ ┘à╪»╪▒╪│╪⌐ ╪º┘ä╪¬╪╢╪º┘à┘å 0.0 0.0 NULL NULL 07716407318 1 ╪º╪│┘ê╪º┘é NULL NULL NULL NULL 
+OK AdminDiwaniyah DatabaseCompanyDewania deploy=0.2s 126817 4032 1 5 ╪Ñ╪¿╪▒╪º┘ç┘è┘à ╪¡╪º╪▓┘à ╪¡╪│┘è┘å ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL NULL 07813710633 1 ┘ä╪º ┘è┘ê╪¼╪» NULL ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL NULL NUL
+OK AdminDiyala DatabaseCompanyDeiala deploy=0.2s 762 20 1 10 ╪ú┘å┘ê╪▒ ╪╣╪¿╪»╪º┘ä╪╣╪▓┘è╪▓ ╪╣┘ä┘è ┘ä╪º┘è┘ê╪¼╪» NULL NULL NULL ┘ä╪º┘è┘ê╪¼╪» 07713459661 1 ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL NULL NULL 1 TcY5SPu8prN
+OK AdminHilla DatabaseCompanyBabil deploy=0.2s 661 3031 1 4 ╪ú┘å┘ê╪▒ ┘à┘è╪½┘à ┘ç╪º╪»┘è-╪º┘å┘ü┘å┘â╪│ ┘ç┘ê╪¬ 10 ╪º┘ä┘à╪¡╪º┘ê┘è┘ä NULL NULL NULL ┘ä╪º┘è┘ê╪¼╪» 07700531406 1 ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL NULL NULL 
+OK AdminKarakAqeel DatabaseCompanyKarakAqeel deploy=0.2s 100 4 2 NULL ╪¡┘è╪»╪▒ ╪╣╪¿╪» ╪º┘ä╪▓┘ç╪▒┘ç ┘â╪º╪╕┘à ╪┤╪º╪▒╪╣ ╪º┘ä┘à╪╣┘à┘ä\╪¿╪º┘å╪▓┘è┘å ╪«╪º┘å┘ç ╪º╪¿┘å ┘ê╪¡┘è╪» NULL NULL NULL 07748135942 1 ┘à┘ê╪╕┘ü ┘ü┘è ╪º┘ä╪┤╪▒┘â┘ç NULL ┘ä╪º ┘è
+OK AdminKarbala DatabaseCompanyKarbala deploy=0.3s 87838 5 1 3 ╪¬┘â┘ä┘è┘ü ╪╣╪¿╪»╪º┘ä┘ç╪º╪»┘è ┘ç┘ê┘è╪┤. ╪¡┘è ╪º┘ä╪º┘à╪º┘à ╪╣┘ä┘è /╪º╪│┘ê╪º┘é ╪¿╪▒╪¬┘é╪º┘ä╪⌐ 0.0 0.0 ┘ä╪º ┘è┘ê╪¼╪» 07762950534 1 ┘â╪¿╪º╪¿ ┘à╪¡┘à┘ê╪» ┘ä╪º ┘è┘ê╪¼╪» ┘ä╪º ┘è┘ê╪¼╪» 
+OK AdminKirkuk DatabaseCompanyKarkok deploy=0.3s 924 6 10 15 ╪º╪¿╪▒╪º┘ç┘è┘à ╪╣╪½┘à╪º┘å ╪º╪¡┘à╪» 1 ╪º┘ä┘é┘ê╪▒┘è╪⌐ - ╪¡┘ä┘ê┘è╪º╪¬ ╪¼┘å╪⌐ NULL NULL NULL ┘ä╪º ┘è┘ê╪¼╪» 07709837694 1 ╪º╪│┘ê╪º┘é ╪╣╪½┘à╪º┘å NULL ┘ä╪º ┘è┘ê╪¼╪» NULL
+OK AdminKot DatabaseCompanyKot deploy=0.2s 251 6 1 6 ╪Ñ╪¿╪▒╪º┘ç┘è┘à ╪¼┘ä┘è┘ä ┘ç╪º╪»┘è ┘å┘ê╪º╪¿ ╪º┘ä╪╢╪¿╪º╪╖ ┘à╪¡┘ä ╪«┘è╪º╪╖╪⌐ ╪»┘ê╪▒ ┘ä┘ê╪º╪í ╪¡┘å┘è┘å NULL NULL NULL ┘ä╪º┘è┘ê╪¼╪» 07739601203 1 ┘å┘ê╪º╪¿ ╪º┘ä╪╢╪¿╪º╪╖ ┘à╪¡┘ä ╪«┘è╪º╪╖
+OK AdminMaysan DatabaseCompanyMaysan deploy=0.2s 16 2 3 18 ╪º╪¡┘à╪» ╪¡┘å┘ê ╪¼╪¿╪▒ ╪º┘ä╪¼┘ê╪º╪»┘è┘å -╪¿╪º┘å╪▓┘è┘å ╪«╪º┘å┘ç ╪º┘ä ┘à╪║╪▒╪¿┘ç NULL NULL NULL 07716291598 1 ╪º╪¡┘à╪» ┘ä┘ä┘â┘è╪▒ NULL ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NUL
+OK AdminMonthMenu DatabaseCompanyMonth deploy=0.2s 4 1 2 NULL ╪▓┘è┘å╪¿ ╪╣╪¿╪» ╪º┘ä┘ê╪º╪¡╪» ╪╣╪¿╪º╪│ ╪¡┘è ╪º┘ä┘å╪»╪º╪í 2 NULL NULL NULL 07866912949 1 ┘ä╪º ┘è┘ê╪¼╪» NULL ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL 0 5A2F63D9-
+OK AdminMosul DatabaseCompanyMusol deploy=0.3s 506 8 1 12 ╪º╪¿╪▒╪º┘ç┘è┘à ╪╣╪¿╪» ╪º┘ä╪¼╪¿╪º╪▒ ┘à╪¡┘à╪» ╪¿╪º╪¿ ╪│┘å╪¼╪º╪▒\┘à╪╣┘à┘ä ╪½┘ä╪¼ ╪º┘ä┘é╪▓╪º╪▓ NULL NULL NULL NULL 07508843887 1 ┘à╪╣┘à┘ä ╪º┘ä┘é╪»╪│ NULL ┘ä╪º ┘è┘ê╪¼╪» N
+OK AdminMuthanna DatabaseCompanyMothana deploy=0.2s 27859 1 3 9 ╪º╪¡┘à╪» ╪¡╪º╪▓┘à ┘ç╪º╪»┘è ╪º┘ä╪│┘ê┘é - ┘à╪╡╪▒┘ü ╪º┘ä╪▒╪┤┘è╪» NULL NULL NULL ┘ä╪º ┘è┘ê╪¼╪» 07852673519 1 ╪¿┘é╪º┘ä╪⌐ ╪º╪¡┘à╪» NULL ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NU
+OK AdminNajaf DatabaseCompanyNajaf deploy=0.2s 52670 1053 1 1 ╪ú╪¡╪│╪º┘å ┘è╪º╪│┘è┘å ╪¼╪º╪│┘à ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL NULL 0 1 ┘ä╪º ┘è┘ê╪¼╪» NULL ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL NULL NULL 0 NULL NUL
+OK AdminNajaf-old DatabaseCompanyNajaf deploy=0.1s 52670 1053 1 1 ╪ú╪¡╪│╪º┘å ┘è╪º╪│┘è┘å ╪¼╪º╪│┘à ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL NULL 0 1 ┘ä╪º ┘è┘ê╪¼╪» NULL ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL NULL NULL 0 NULL NUL
+OK AdminNasiriyah DatabaseCompanyNasria deploy=0.2s 730 12 1 7 ╪º╪¡┘à╪» ╪¼┘à╪╣┘ç ┘é╪▒╪¿ ┘ê┘ä╪º╪í NULL NULL NULL ┘ä╪º┘è┘ê╪¼╪» 0782742264 1 ┘ä╪º┘è┘ê╪¼╪» NULL NULL NULL NULL NULL 1 q6lwU4eIKER 0 NULL NU
+OK AdminRusafaAqeel DatabaseCompanyRusafaAqeel deploy=0.6s 3166 9 5 NULL ╪º╪¿╪▒╪º┘ç┘è┘à ╪º┘à╪¼╪» ┘à╪¡┘à╪» ╪º┘ä╪¿┘å┘ê┘â\┘å╪º╪»┘è ╪º┘ä┘à╪¼╪» NULL NULL NULL 07705357491 1 ╪│┘à┘â╪▒┘è ╪│┘è╪º╪▒╪º╪¬ NULL ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL 
+OK AdminStop DatabaseCompanyStop deploy=0.2s 12281 9 1 2 07711637851 ╪╣┘ä┘è ┘ü╪▒╪º╪│ ╪¼╪¿╪º╪▒ ┘ä╪º┘è┘ê╪¼╪» NULL NULL NULL NULL 07711637851 1 ┘é┘ç┘ê╪⌐ NULL ┘ä╪º ┘è┘ê╪¼╪» NULL NULL NULL NULL NUL
+OK AdminTest DatabaseCompanyMusolTest deploy=0.4s 1555 5 8 12 ╪º╪¿╪▒╪º┘ç┘è┘à ╪½┘à┘ê╪» ╪┤╪▒┘è┘ü 4 ╪¡┘è ╪º┘ä┘à┘è╪½╪º┘é - ╪╖╪▒╪┤┘è ╪º╪│╪º┘à╪⌐ NULL NULL NULL ┘ä╪º ┘è┘ê╪¼╪» 07501774614 1 ┘à┘ä╪º╪¿╪│ ╪▒╪¼╪º┘ä┘è╪⌐ NULL ┘ä╪º ┘è┘ê╪¼╪» N
+OK backend DatabaseCompanyNajaf_DEMO deploy=0.3s 53288 1 11 NULL ah bd NULL NULL NULL h 646 1 djs NULL dhd NULL NULL NULL 0 B633C6A2-025B-42E8-BE84-7A83D5856D9F 0 ahmed5
+SUMMARY ok 22 fail 0

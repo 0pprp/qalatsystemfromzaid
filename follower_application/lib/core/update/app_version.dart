@@ -2,8 +2,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 /// Installed build identity. Constants must match `pubspec.yaml` version.
 class AppVersion {
-  static const String name = '1.0.16';
-  static const int code = 17;
+  static const String name = '1.0.32';
+  static const int code = 36;
 
   static const String appKey = 'follower';
 

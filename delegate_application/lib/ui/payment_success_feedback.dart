@@ -108,15 +108,15 @@ class PaymentSuccessFeedback {
   static Future<void> playServerSuccess(BuildContext context) =>
       playLocalSaveSuccess(context);
 
-  /// Informational only — no sound (gate closed / offline queue).
+  /// Informational only — no sound (offline queue).
   static void showQueued(BuildContext context, {bool beforeSyncGate = false}) {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           beforeSyncGate
-              ? 'تم حفظ التسديد وسيُرفع تلقائياً بعد الساعة 4 مساءً'
-              : 'تم حفظ التسديد وسيتم رفعه عند توفر الإنترنت',
+              ? 'تم حفظ التسديد وسيُرفع أونلاين فوراً عند توفر الإنترنت'
+              : 'تم حفظ التسديد وسيتم رفعه أونلاين عند توفر الإنترنت',
           style: const TextStyle(fontFamily: 'Cairo'),
         ),
         behavior: SnackBarBehavior.floating,

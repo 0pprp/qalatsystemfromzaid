@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:delegate_application/config/app_env.dart';
 import 'package:delegate_application/services/DatabaseHelper.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,6 +26,13 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
   DateTime? _lastSuccessAt;
   String? _lastError;
 
+  /// Soft TTL: skip network refresh if a successful snapshot is still fresh.
+  /// Does not affect payment queue sync.
+  static const Duration cacheTtl = Duration(minutes: 4);
+
+  /// Cap parallel GetCustomersDelegateAll calls (preserve order by joining results).
+  static const int maxConcurrentCustomerFetches = 3;
+
   final ValueNotifier<String?> statusMessage = ValueNotifier<String?>(null);
 
   /// Bumps after a successful SQLite replace so tabs (e.g. Customer) can reload.
@@ -33,6 +41,26 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
   DateTime? get lastSuccessAt => _lastSuccessAt;
   String? get lastError => _lastError;
   bool get isRefreshing => _refreshLock != null;
+
+  @visibleForTesting
+  int refreshBodyEnterCount = 0;
+
+  @visibleForTesting
+  Future<bool> Function()? isOnlineOverride;
+
+  @visibleForTesting
+  Future<http.Response> Function(Uri uri, {Map<String, String>? headers})?
+      httpGetOverride;
+
+  @visibleForTesting
+  void resetRefreshTestHooks() {
+    _refreshLock = null;
+    _lastSuccessAt = null;
+    _lastError = null;
+    refreshBodyEnterCount = 0;
+    isOnlineOverride = null;
+    httpGetOverride = null;
+  }
 
   Future<void> start() async {
     if (_started) return;
@@ -75,12 +103,22 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
   }
 
   Future<bool> get isOnline async {
+    if (isOnlineOverride != null) {
+      return isOnlineOverride!();
+    }
     final results = await _connectivity.checkConnectivity();
     return results.any((r) => r != ConnectivityResult.none);
   }
 
   /// Mutex: concurrent callers await the same in-flight refresh.
-  Future<bool> refreshIfPossible() async {
+  /// [force] bypasses soft TTL (pull-to-refresh / login).
+  Future<bool> refreshIfPossible({bool force = false}) async {
+    if (!force &&
+        _lastSuccessAt != null &&
+        DateTime.now().toUtc().difference(_lastSuccessAt!) < cacheTtl &&
+        _lastError == null) {
+      return true;
+    }
     if (_refreshLock != null) {
       return _refreshLock!.future;
     }
@@ -97,6 +135,7 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
   }
 
   Future<bool> _refreshUnlocked() async {
+    refreshBodyEnterCount++;
     if (!await isOnline) {
       return false;
     }
@@ -145,14 +184,32 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
   bool _isDemoLink(String link) =>
       link.contains('169.58.236.52') || link.contains('8081');
 
+  Future<http.Response> _httpGet(
+    Uri uri, {
+    Map<String, String>? headers,
+    Duration timeout = const Duration(seconds: 30),
+  }) {
+    if (httpGetOverride != null) {
+      return httpGetOverride!(uri, headers: headers);
+    }
+    return http.get(uri, headers: headers).timeout(timeout);
+  }
+
   Future<_RefreshSnapshot?> _fetchSnapshot(
       String linkDelegate, int delegateId) async {
-    final selectRes = await http
-        .get(
-          Uri.parse('${linkDelegate}Delegates/GetDelegateSelect/$delegateId'),
-          headers: {'Content-Type': 'application/json'},
-        )
-        .timeout(const Duration(seconds: 30));
+    final prefs = await SharedPreferences.getInstance();
+    final asyncId = prefs.getString('AsyncId') ?? '';
+    final authHeaders = <String, String>{
+      'Content-Type': 'application/json',
+      if (asyncId.isNotEmpty) 'X-Async-Id': asyncId,
+      if (delegateId > 0) 'X-Delegate-Id': '$delegateId',
+    };
+
+    final selectRes = await _httpGet(
+      Uri.parse('${linkDelegate}Delegates/GetDelegateSelect/$delegateId'),
+      headers: authHeaders,
+      timeout: const Duration(seconds: 30),
+    );
     assert(() {
       debugPrint(
           'GetDelegateSelect status=${selectRes.statusCode} path=Delegates/GetDelegateSelect/$delegateId');
@@ -167,23 +224,35 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
     }());
     if (delegates.isEmpty) return null;
 
-    final weekRes = await http
-        .get(Uri.parse('${linkDelegate}Customers/GetDateWeek'))
-        .timeout(const Duration(seconds: 20));
+    final weekRes = await _httpGet(
+      Uri.parse('${linkDelegate}Customers/GetDateWeek'),
+      headers: authHeaders,
+      timeout: const Duration(seconds: 20),
+    );
     if (weekRes.statusCode != 200) return null;
     final week = jsonDecode(weekRes.body) as Map<String, dynamic>;
 
     final customers = <Map<String, dynamic>>[];
-    for (final d in delegates) {
-      final id = d['delegateId'];
-      final custRes = await http
-          .get(Uri.parse(
-              '${linkDelegate}Customers/GetCustomersDelegateAll/$id'))
-          .timeout(const Duration(seconds: 60));
-      if (custRes.statusCode != 200) return null;
-      final List<dynamic> rows = jsonDecode(custRes.body) as List<dynamic>;
-      for (final c in rows) {
-        customers.add(_mapCustomer(c));
+    // Bounded concurrency — never drop a failed branch silently.
+    for (var i = 0; i < delegates.length; i += maxConcurrentCustomerFetches) {
+      final chunk = delegates.skip(i).take(maxConcurrentCustomerFetches).toList();
+      final futures = chunk.map((d) async {
+        final id = d['delegateId'];
+      final custRes = await _httpGet(
+        Uri.parse('${linkDelegate}Customers/GetCustomersDelegateAll/$id'),
+        headers: authHeaders,
+        timeout: const Duration(seconds: 60),
+      );
+        if (custRes.statusCode != 200) {
+          throw StateError(
+              'GetCustomersDelegateAll failed for $id HTTP ${custRes.statusCode}');
+        }
+        final List<dynamic> rows = jsonDecode(custRes.body) as List<dynamic>;
+        return rows.map(_mapCustomer).toList();
+      });
+      final parts = await Future.wait(futures);
+      for (final part in parts) {
+        customers.addAll(part);
       }
     }
 
@@ -281,9 +350,18 @@ class DelegateDataRefreshService with WidgetsBindingObserver {
           conflictAlgorithm: ConflictAlgorithm.replace);
 
       await txn.delete('Customer');
-      for (final row in snapshot.customers) {
-        await txn.insert('Customer', row,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+      // Batch inserts (same transaction) — CustomerPayment queue untouched.
+      const batchSize = 200;
+      for (var i = 0; i < snapshot.customers.length; i += batchSize) {
+        final end = (i + batchSize < snapshot.customers.length)
+            ? i + batchSize
+            : snapshot.customers.length;
+        final batch = txn.batch();
+        for (var j = i; j < end; j++) {
+          batch.insert('Customer', snapshot.customers[j],
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+        await batch.commit(noResult: true);
       }
       // CustomerPayment queue is intentionally preserved.
     });

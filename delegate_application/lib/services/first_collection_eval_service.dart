@@ -40,7 +40,8 @@ class FirstCollectionEvalService {
               if (saleAmount != null && saleAmount > 0) 'saleAmount': saleAmount,
             }),
           )
-          .timeout(const Duration(seconds: 30));
+          // Keep first-collection payment UI snappy; 30s hung «جاري حفظ…» on slow Rusafa.
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) return null;
 

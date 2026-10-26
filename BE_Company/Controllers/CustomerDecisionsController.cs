@@ -1,5 +1,7 @@
 using BE_Company.DTO;
 using BE_Company.IRepository;
+using BE_Company.Sales.Authorization;
+using BE_Company.Sales.Services;
 using BE_Company.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -17,15 +19,18 @@ namespace BE_Company.Controllers
         private readonly ICustomerDecisionsRepository _repository;
         private readonly ISharedCustomerNotesService _notes;
         private readonly ILegalConversionRequestService _legalConversion;
+        private readonly IWaiverAccountantRequestService _waiverAccountant;
 
         public CustomerDecisionsController(
             ICustomerDecisionsRepository repository,
             ISharedCustomerNotesService notes,
-            ILegalConversionRequestService legalConversion)
+            ILegalConversionRequestService legalConversion,
+            IWaiverAccountantRequestService waiverAccountant)
         {
             _repository = repository;
             _notes = notes;
             _legalConversion = legalConversion;
+            _waiverAccountant = waiverAccountant;
         }
 
         private int? GetAuthenticatedUserId()
@@ -37,15 +42,16 @@ namespace BE_Company.Controllers
             return null;
         }
 
-        private bool CanDecide()
-        {
-            return GetUserType() == "مدير فرع";
-        }
+        private bool CanDecide() => CustomerDecisionsAccess.CanDecide(GetUserType());
 
-        private bool CanReviewLegalConversion()
-        {
-            return GetUserType() == "محاسب رئيسي";
-        }
+        private bool CanReviewLegalConversion() =>
+            CustomerDecisionsAccess.CanReviewLegalConversion(GetUserType());
+
+        private bool CanApproveWaiver() =>
+            CustomerDecisionsAccess.CanApproveWaiver(GetUserType());
+
+        private bool CanListAccountantQueues() =>
+            CustomerDecisionsAccess.CanListAccountantQueues(GetUserType(), GetAuthSource());
 
         private bool CanWriteNotes()
         {
@@ -63,6 +69,9 @@ namespace BE_Company.Controllers
         {
             return HttpContext.Items["UserType"] as string ?? string.Empty;
         }
+
+        private string? GetAuthSource() =>
+            User.FindFirst(SalesGatewayKeyHandler.AuthSourceClaim)?.Value;
 
         [HttpGet("WeakWeekPayers")]
         public async Task<ActionResult<IEnumerable<CustomerWeekPaymentsGetDTO>>> WeakWeekPayers()
@@ -133,7 +142,7 @@ namespace BE_Company.Controllers
             [FromQuery] int skip = 0,
             CancellationToken ct = default)
         {
-            if (!CanReviewLegalConversion() && GetUserType() != "مدير فرع")
+            if (!CanListAccountantQueues())
             {
                 return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مسموح" });
             }
@@ -148,7 +157,7 @@ namespace BE_Company.Controllers
         {
             if (!CanReviewLegalConversion())
             {
-                return StatusCode(StatusCodes.Status403Forbidden, new { message = "الموافقة من صلاحية المحاسب الرئيسي فقط" });
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "الموافقة من صلاحية المراقب فقط" });
             }
             var userID = GetAuthenticatedUserId();
             if (!userID.HasValue)
@@ -172,7 +181,11 @@ namespace BE_Company.Controllers
         {
             if (!CanReviewLegalConversion())
             {
-                return StatusCode(StatusCodes.Status403Forbidden, new { message = "الرفض من صلاحية المحاسب الرئيسي فقط" });
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "الرفض من صلاحية المراقب فقط" });
+            }
+            if (!CustomerDecisionsAccess.HasRequiredReviewNote(body?.Note))
+            {
+                return BadRequest(new { message = "ملاحظة الرفض مطلوبة" });
             }
             var userID = GetAuthenticatedUserId();
             if (!userID.HasValue)
@@ -188,6 +201,48 @@ namespace BE_Company.Controllers
             catch (InvalidOperationException ex)
             {
                 return Conflict(new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("WaiverAccountantRequests")]
+        public async Task<IActionResult> WaiverAccountantRequests(
+            [FromQuery] string? status,
+            [FromQuery] int take = 100,
+            [FromQuery] int skip = 0,
+            CancellationToken ct = default)
+        {
+            if (!CanListAccountantQueues())
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "غير مسموح" });
+            }
+
+            var rows = await _waiverAccountant.ListAsync(status, take, skip, ct);
+            return Ok(new { total = rows.Count, items = rows });
+        }
+
+        /// <summary>Approve-only: discount sale price + customer note. No reject.</summary>
+        [HttpPut("WaiverAccountantRequests/{requestId:int}/Approve")]
+        public async Task<IActionResult> ApproveWaiverAccountant(int requestId, CancellationToken ct)
+        {
+            if (!CanApproveWaiver())
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "الموافقة من صلاحية المحاسب الرئيسي فقط" });
+            }
+            var userID = GetAuthenticatedUserId();
+            if (!userID.HasValue)
+                return Unauthorized();
+
+            try
+            {
+                var name = HttpContext.Items["UserName"] as string;
+                var row = await _waiverAccountant.ApproveAsync(requestId, userID.Value, name, ct);
+                if (row == null)
+                    return NotFound(new { message = "الطلب غير موجود" });
+                return Ok(row);
+            }
+            catch (SalesCompleteException ex)
+            {
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
             }
         }
 

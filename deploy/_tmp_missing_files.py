@@ -11,7 +11,7 @@ remote = r'''
 cd /tmp/sqlq
 cat > Program.cs <<'CS'
 using Microsoft.Data.SqlClient;
-var cs = "Data Source=127.0.0.1;Initial Catalog=DatabaseCompanyNajaf;User ID=haider;Password=haider12345@@@@@;TrustServerCertificate=True";
+var cs = "Data Source=127.0.0.1;Initial Catalog=DatabaseCompanyNajaf;User ID=haider;Password=${SQL_PASSWORD};TrustServerCertificate=True";
 await using var conn = new SqlConnection(cs);
 await conn.OpenAsync();
 await using var cmd = new SqlCommand("SELECT Id, FileKey, ShopImageKey=NULL FROM dbo.SalesCustomerDocuments", conn);

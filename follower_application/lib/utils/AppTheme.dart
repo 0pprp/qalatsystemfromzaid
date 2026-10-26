@@ -1,32 +1,70 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static const Color primaryColor = Color(0xFF006D5B); // Dark Teal from image
-  static const Color secondaryColor = Color(0xFF26A69A); // Lighter Teal
-  static const Color accentColor = Color(0xFFB2DFDB); // Mint
-  static const Color backgroundColor = Color(0xFFF5F7F9); // Light Grey/White
+  static const Color primaryColor = Color(0xFF006D5B); // Dark Teal
+  static const Color secondaryColor = Color(0xFF26A69A);
+  static const Color accentColor = Color(0xFFB2DFDB);
+  static const Color backgroundColor = Color(0xFFF5F7F9);
   static const Color cardColor = Colors.white;
   static const Color textColor = Color(0xFF333333);
   static const Color subtitleColor = Color(0xFF757575);
 
   static const String fontFamily = 'Cairo';
 
+  /// White labels for TabBar on a teal/primary AppBar (never Material purple).
+  static TabBar primaryAppBarTabBar({
+    required TabController controller,
+    required List<Widget> tabs,
+    bool isScrollable = false,
+  }) {
+    return TabBar(
+      controller: controller,
+      isScrollable: isScrollable,
+      labelColor: Colors.white,
+      unselectedLabelColor: const Color(0xCCFFFFFF),
+      indicatorColor: Colors.white,
+      indicatorWeight: 3,
+      dividerColor: Colors.transparent,
+      labelStyle: const TextStyle(
+          fontFamily: fontFamily, fontWeight: FontWeight.bold),
+      unselectedLabelStyle: const TextStyle(fontFamily: fontFamily),
+      tabs: tabs,
+    );
+  }
+
   static ThemeData get themeData {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: primaryColor,
+      primary: primaryColor,
+      secondary: secondaryColor,
+      brightness: Brightness.light,
+    );
     return ThemeData(
+      useMaterial3: true,
+      colorScheme: scheme,
       primaryColor: primaryColor,
       scaffoldBackgroundColor: backgroundColor,
       fontFamily: fontFamily,
       appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.transparent,
+        backgroundColor: primaryColor,
+        foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
         titleTextStyle: TextStyle(
           fontFamily: fontFamily,
-          color: textColor,
+          color: Colors.white,
           fontSize: 20,
           fontWeight: FontWeight.bold,
         ),
-        iconTheme: IconThemeData(color: textColor),
+        iconTheme: IconThemeData(color: Colors.white),
+      ),
+      tabBarTheme: const TabBarThemeData(
+        labelColor: Colors.white,
+        unselectedLabelColor: Color(0xCCFFFFFF),
+        indicatorColor: Colors.white,
+        dividerColor: Colors.transparent,
+        labelStyle: TextStyle(fontFamily: fontFamily, fontWeight: FontWeight.bold),
+        unselectedLabelStyle: TextStyle(fontFamily: fontFamily),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(

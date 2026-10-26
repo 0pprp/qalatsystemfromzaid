@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
@@ -16,11 +17,14 @@ class ApiService {
       receiveTimeout: const Duration(seconds: 30),
       sendTimeout: const Duration(seconds: 15),
     ));
-    _dio.interceptors.add(LogInterceptor(
-      requestBody: true,
-      responseBody: true,
-      error: true,
-    ));
+    // F20: never log request/response bodies outside debug builds.
+    if (kDebugMode) {
+      _dio.interceptors.add(LogInterceptor(
+        requestBody: true,
+        responseBody: true,
+        error: true,
+      ));
+    }
   }
 
   String get baseUrl => _baseUrl ?? '';

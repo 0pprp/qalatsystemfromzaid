@@ -511,26 +511,20 @@ END;",
                 }
                 else
                 {
-                    postedCustomerId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
-                        "SELECT CAST(IDENT_CURRENT(N'dbo.Customers') AS INT)",
-                        transaction: tx,
-                        cancellationToken: ct)) ?? sale.CustomerId;
+                    throw new SalesCompleteException(
+                        StatusCodes.Status500InternalServerError,
+                        "تعذر قراءة معرف العميل من نتيجة CustomersSales_Create (لا يُستخدم IDENT_CURRENT).");
                 }
 
                 if (created?.CustomerSaleID > 0)
                 {
                     postedCustomerSaleId = created.CustomerSaleID;
                 }
-                else if (postedCustomerId is > 0)
+                else
                 {
-                    postedCustomerSaleId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
-                        @"SELECT TOP 1 CustomerSaleID
-                          FROM dbo.CustomersSales
-                          WHERE CustomerID = @CustomerID
-                          ORDER BY CustomerSaleID DESC",
-                        new { CustomerID = postedCustomerId },
-                        tx,
-                        cancellationToken: ct));
+                    throw new SalesCompleteException(
+                        StatusCodes.Status500InternalServerError,
+                        "تعذر قراءة معرف البيع من نتيجة CustomersSales_Create.");
                 }
 
                 await EnsureOfficialSaleHasItemsAsync(connection, tx, postedCustomerSaleId, ct);

@@ -153,6 +153,19 @@ class ApiClient {
     }
   }
 
+  static Future<dynamic> delete(String path) async {
+    try {
+      final response = await http
+          .delete(uri(path), headers: headers())
+          .timeout(timeout);
+      return _decode(response);
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw ApiException('تعذر الاتصال بالخادم');
+    }
+  }
+
   /// Login goes straight to the resolved environment base: the stored session
   /// base is ignored so a stale demo/production value can never be reused.
   static Future<Map<String, dynamic>> loginDelegatedManager({

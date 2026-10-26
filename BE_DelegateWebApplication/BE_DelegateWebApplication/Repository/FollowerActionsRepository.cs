@@ -68,27 +68,29 @@ WHERE C.CustomerID = @CustomerId;",
                 new { Id = delegateId }, cancellationToken: ct));
         }
 
-        public async Task<string?> GetFollowerCityNameAsync(int followerDelegateId, CancellationToken ct = default)
+        public async Task<string?> GetFollowerCityNameAsync(int followerUserId, CancellationToken ct = default)
         {
+            if (followerUserId <= 0) return null;
             await using var connection = new SqlConnection(_connectionString);
-            // followerDelegateId == Users.UserID for UserType=متابع.
-            var fromUser = await connection.ExecuteScalarAsync<string?>(new CommandDefinition(@"
+            // Followers are Users (UserType=متابع); city comes from UsersSelectedCities.
+            return await connection.ExecuteScalarAsync<string?>(new CommandDefinition(@"
 SELECT TOP 1 Ci.CityName
 FROM dbo.UsersSelectedCities usc
 LEFT JOIN dbo.Cities Ci ON Ci.CityID = usc.CityID
 WHERE usc.UserID = @UserId;",
-                new { UserId = followerDelegateId }, cancellationToken: ct));
-            if (!string.IsNullOrWhiteSpace(fromUser))
-            {
-                return fromUser;
-            }
+                new { UserId = followerUserId }, cancellationToken: ct));
+        }
 
+        public async Task<string?> GetListCityNameAsync(int listDelegateId, CancellationToken ct = default)
+        {
+            if (listDelegateId <= 0) return null;
+            await using var connection = new SqlConnection(_connectionString);
             return await connection.ExecuteScalarAsync<string?>(new CommandDefinition(@"
 SELECT TOP 1 Ci.CityName
 FROM dbo.Delegates D
 LEFT JOIN dbo.Cities Ci ON Ci.CityID = D.CityID
 WHERE D.DelegateID = @Id;",
-                new { Id = followerDelegateId }, cancellationToken: ct));
+                new { Id = listDelegateId }, cancellationToken: ct));
         }
 
         public async Task<string?> GetCityNameByIdAsync(int cityId, CancellationToken ct = default)
@@ -642,7 +644,8 @@ VALUES
                             shopStockEstimatedValue ?? 0,
                             estimatedDailyRevenue ?? 0,
                             customerName,
-                            phone),
+                            phone,
+                            includeWrongSaleTag: true),
                         meta.CreatedAtUtc
                     },
                     transaction: tx,
@@ -771,6 +774,123 @@ IF COL_LENGTH(N'dbo.SalesRequests', N'ShopStockEstimatedValue') IS NULL
 IF COL_LENGTH(N'dbo.SalesRequests', N'EstimatedDailyRevenue') IS NULL
     ALTER TABLE dbo.SalesRequests ADD EstimatedDailyRevenue DECIMAL(18,0) NULL;
 IF COL_LENGTH(N'dbo.SalesRequests', N'IsWrongSale') IS NULL
-    ALTER TABLE dbo.SalesRequests ADD IsWrongSale BIT NOT NULL CONSTRAINT DF_SR_IsWrongSale DEFAULT (0);";
+    ALTER TABLE dbo.SalesRequests ADD IsWrongSale BIT NOT NULL CONSTRAINT DF_SR_IsWrongSale DEFAULT (0);
+IF COL_LENGTH(N'dbo.SalesRequests', N'IsDeleted') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD IsDeleted BIT NOT NULL CONSTRAINT DF_SR_IsDeleted DEFAULT (0);
+IF COL_LENGTH(N'dbo.SalesRequests', N'DeleteReason') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD DeleteReason NVARCHAR(1000) NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'DeletedAtUtc') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD DeletedAtUtc DATETIME2 NULL;
+IF COL_LENGTH(N'dbo.SalesRequests', N'DeletedByName') IS NULL
+    ALTER TABLE dbo.SalesRequests ADD DeletedByName NVARCHAR(200) NULL;
+-- Soft-deleted non-sold requests must surface as Rejected (follower inbox «مرفوض» + note).
+IF COL_LENGTH(N'dbo.SalesRequests', N'IsDeleted') IS NOT NULL
+BEGIN
+    UPDATE dbo.SalesRequests
+    SET
+        Status = N'Rejected',
+        RejectedAtUtc = COALESCE(RejectedAtUtc, DeletedAtUtc, SYSUTCDATETIME()),
+        RejectionReason = COALESCE(
+            NULLIF(LTRIM(RTRIM(RejectionReason)), N''),
+            NULLIF(LTRIM(RTRIM(DeleteReason)), N''),
+            N'حذف من الإدارة')
+    WHERE ISNULL(IsDeleted, 0) = 1
+      AND Status NOT IN (N'Completed', N'Rejected');
+END";
+
+        public Task<IReadOnlyList<FollowerSalesRequestListItemDTO>> ListSalesRequestsForFollowerAsync(
+            int followerId,
+            string? tab,
+            CancellationToken ct = default) =>
+            ListSalesRequestsForOriginatorAsync(followerId, "Follower", tab, ct);
+
+        public Task<IReadOnlyList<FollowerSalesRequestListItemDTO>> ListSalesRequestsForDelegateAsync(
+            int delegateId,
+            string? tab,
+            CancellationToken ct = default) =>
+            ListSalesRequestsForOriginatorAsync(delegateId, "Delegate", tab, ct);
+
+        private async Task<IReadOnlyList<FollowerSalesRequestListItemDTO>> ListSalesRequestsForOriginatorAsync(
+            int originatorId,
+            string customerSourceType,
+            string? tab,
+            CancellationToken ct)
+        {
+            await EnsureSchemaAsync(ct);
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(ct);
+            await connection.ExecuteAsync(new CommandDefinition(SalesRequestsEnsureSql, cancellationToken: ct));
+
+            var normalized = (tab ?? "all").Trim().ToLowerInvariant();
+            // Soft-deleted manager removals must appear under «مرفوض» with the note — never in «قيد العمل».
+            var statusFilter = normalized switch
+            {
+                "rejected" =>
+                    @"AND (
+                        R.Status = N'Rejected'
+                        OR (ISNULL(R.IsDeleted, 0) = 1 AND R.Status <> N'Completed')
+                      )",
+                "completed" =>
+                    "AND ISNULL(R.IsDeleted, 0) = 0 AND R.Status = N'Completed'",
+                "inprogress" or "in_progress" or "قيد العمل" =>
+                    @"AND ISNULL(R.IsDeleted, 0) = 0
+                      AND R.Status NOT IN (N'Completed', N'Rejected')",
+                _ =>
+                    @"AND (
+                        ISNULL(R.IsDeleted, 0) = 0
+                        OR R.Status = N'Rejected'
+                        OR (ISNULL(R.IsDeleted, 0) = 1 AND R.Status <> N'Completed')
+                      )"
+            };
+
+            var sql = $@"
+SELECT
+    R.Id,
+    R.CustomerName,
+    R.CustomerPhone,
+    CASE
+        WHEN ISNULL(R.IsDeleted, 0) = 1 AND R.Status <> N'Completed' THEN N'Rejected'
+        ELSE R.Status
+    END AS Status,
+    R.TargetEmployeeName,
+    R.CreatedAtUtc,
+    R.CompletedAtUtc,
+    COALESCE(R.RejectedAtUtc, R.DeletedAtUtc) AS RejectedAtUtc,
+    COALESCE(NULLIF(LTRIM(RTRIM(R.RejectionReason)), N''), R.DeleteReason) AS RejectionReason,
+    R.PendingNote,
+    R.SaleRequestType,
+    R.SourceListId
+FROM dbo.SalesRequests R
+WHERE R.CreatedByUserId = @OriginatorId
+  AND R.CustomerSourceType = @CustomerSourceType
+  {statusFilter}
+ORDER BY R.CreatedAtUtc DESC;";
+
+            var rows = (await connection.QueryAsync<FollowerSalesRequestListItemDTO>(
+                new CommandDefinition(
+                    sql,
+                    new { OriginatorId = originatorId, CustomerSourceType = customerSourceType },
+                    cancellationToken: ct))).AsList();
+
+            foreach (var row in rows)
+            {
+                row.StatusLabel = StatusLabelAr(row.Status);
+            }
+
+            return rows;
+        }
+
+        private static string StatusLabelAr(string? status) => status switch
+        {
+            "New" => "غير مسند",
+            "Assigned" or "Viewed" or "Returned" => "طلبات البيع",
+            "Pending" => "معلقة",
+            "PreparedForSale" or "InProgress" or "ConvertedToSale" => "جاهز للبيع",
+            "Inspected" => "تم الكشف",
+            "Completed" => "تم البيع",
+            "Rejected" => "تم الرفض",
+            "LegalFollowup" => "القانونية",
+            _ => string.IsNullOrWhiteSpace(status) ? "—" : status
+        };
     }
 }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand teal — never use system colorBackground (gray in dark mode). -->
+    <color name="bm_window_bg">#FF0F5C5C</color>
+    <color name="bm_splash_bg">#FF0F5C5C</color>
+</resources>

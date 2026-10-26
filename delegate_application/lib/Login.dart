@@ -1,6 +1,8 @@
 import 'package:delegate_application/config/app_env.dart';
 import 'package:delegate_application/config/login_city_catalog.dart';
+import 'package:delegate_application/services/DatabaseHelper.dart';
 import 'package:delegate_application/services/delegate_data_refresh_service.dart';
+import 'package:delegate_application/services/payment_sync_service.dart';
 import 'package:delegate_application/ui/app_safe_scaffold.dart';
 import 'package:delegate_application/utils/AppTheme.dart';
 import 'package:flutter/material.dart';
@@ -126,9 +128,15 @@ class _LoginState extends State<Login> {
     await prefs.setString("DelegateID", delegateId);
     await prefs.setString("AsyncId", asyncId);
     await prefs.setString("LinkDelegate", apiUrl);
+    // Clear session-hold so owned pending payments retry with the new session.
+    try {
+      await DatabaseHelper().releaseAwaitingSessionPayments(ownerAsyncId: asyncId);
+    } catch (_) {}
     // Fire-and-forget master-data refresh after successful login.
     // ignore: unawaited_futures
     DelegateDataRefreshService.instance.refreshIfPossible();
+    // ignore: unawaited_futures
+    PaymentSyncService.instance.syncPendingPayments();
   }
 
   Future<void> _login() async {
@@ -198,7 +206,18 @@ class _LoginState extends State<Login> {
           _showErrorDialog("يوجد خلل في معالجة بيانات السيرفر");
         }
       } else if (response.statusCode == 401) {
-        _showErrorDialog("الرمز الذي أدخلته غير صحيح");
+        String msg = "الرمز الذي أدخلته غير صحيح";
+        try {
+          final body = json.decode(response.body);
+          if (body is Map) {
+            final m = '${body['message'] ?? body['Message'] ?? ''}'.trim();
+            if (m.isNotEmpty) msg = m;
+          } else if (body is String && body.trim().isNotEmpty) {
+            msg = body.trim();
+          }
+        } catch (_) {}
+        // Collection switched to follower — show server message (not generic bad password).
+        _showErrorDialog(msg);
       } else {
         _showErrorDialog("الرمز الذي أدخلته غير صحيح");
       }

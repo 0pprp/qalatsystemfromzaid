@@ -1,0 +1,177 @@
+{
+  "branch": "الرصافة",
+  "database": "DatabaseCompanyBaghdadRosafa",
+  "action": "REPORT_ONLY — no moves executed",
+  "rule": "نقل كل أسماء قائمة «X تجهيز محل» إلى القائمة الأصلية «X» عبر تحديث DelegateID (مثل Customers_Move)",
+  "pairs": [
+    {
+      "TajhizId": 5064,
+      "TajhizName": "الامين (تجهيز محل)",
+      "TajhizCustAll": 425,
+      "BaseId": 5063,
+      "BaseName": "الامين",
+      "BaseCustAll": 234,
+      "MatchHint": "same_UserID",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 60,
+      "TajhizName": "البلديات (تجهيز محل)",
+      "TajhizCustAll": 495,
+      "BaseId": 59,
+      "BaseName": "البلديات",
+      "BaseCustAll": 386,
+      "MatchHint": "same_UserID",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 56,
+      "TajhizName": "الحسينية (تجهيز محل)",
+      "TajhizCustAll": 314,
+      "BaseId": 21,
+      "BaseName": "الحسينية",
+      "BaseCustAll": 503,
+      "MatchHint": "select_delegate",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 52,
+      "TajhizName": "الرستمية  (تجهيز محل)",
+      "TajhizCustAll": 394,
+      "BaseId": 11,
+      "BaseName": "الرستمية",
+      "BaseCustAll": 674,
+      "MatchHint": "same_UserID",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 54,
+      "TajhizName": "الرصافي 1 (تجهيز محل)",
+      "TajhizCustAll": 251,
+      "BaseId": 18,
+      "BaseName": "الرصافي 1",
+      "BaseCustAll": 729,
+      "MatchHint": "same_UserID",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 50,
+      "TajhizName": "السوق الاولى  (تجهيز محل)",
+      "TajhizCustAll": 379,
+      "BaseId": 8,
+      "BaseName": "السوق الاولى",
+      "BaseCustAll": 905,
+      "MatchHint": "select_delegate",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 55,
+      "TajhizName": "الشعب (تجهيز محل)",
+      "TajhizCustAll": 307,
+      "BaseId": 19,
+      "BaseName": "الشعب",
+      "BaseCustAll": 592,
+      "MatchHint": "same_UserID",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 46,
+      "TajhizName": "الصدرية (تجهيز محل )",
+      "TajhizCustAll": 378,
+      "BaseId": 3,
+      "BaseName": "الصدرية",
+      "BaseCustAll": 991,
+      "MatchHint": "same_UserID",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 49,
+      "TajhizName": "الطالبية (تجهيز محل)",
+      "TajhizCustAll": 569,
+      "BaseId": 7,
+      "BaseName": "الطالبية",
+      "BaseCustAll": 1013,
+      "MatchHint": "same_UserID",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 5066,
+      "TajhizName": "الكمالية (تجهيز محل)",
+      "TajhizCustAll": 339,
+      "BaseId": 5065,
+      "BaseName": "الكمالية",
+      "BaseCustAll": 302,
+      "MatchHint": "select_delegate",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 53,
+      "TajhizName": "الوزيرية  (تجهيز محل)",
+      "TajhizCustAll": 517,
+      "BaseId": 12,
+      "BaseName": "الوزيرية",
+      "BaseCustAll": 1355,
+      "MatchHint": "select_delegate",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 51,
+      "TajhizName": "بغداد الجديدة  (تجهيز محل)",
+      "TajhizCustAll": 82,
+      "BaseId": 9,
+      "BaseName": "بغداد الجديدة",
+      "BaseCustAll": 412,
+      "MatchHint": "same_UserID",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 44,
+      "TajhizName": "شيخ عمر الاولى ( تجهيز محل  )",
+      "TajhizCustAll": 327,
+      "BaseId": 1,
+      "BaseName": "شيخ عمر الاولى",
+      "BaseCustAll": 1204,
+      "MatchHint": "select_delegate",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 48,
+      "TajhizName": "كمب سارة (تجهيز محل)",
+      "TajhizCustAll": 379,
+      "BaseId": 6,
+      "BaseName": "كمب سارة",
+      "BaseCustAll": 1350,
+      "MatchHint": "same_UserID",
+      "Status": "READY"
+    },
+    {
+      "TajhizId": 45,
+      "TajhizName": "شيخ عمر الثالثه (تجهيز محل)",
+      "TajhizCustAll": 290,
+      "BaseId": 2,
+      "BaseName": "شيخ عمر الثالثة",
+      "BaseCustAll": 1006,
+      "MatchHint": "spelling_variant_ه_ة",
+      "Status": "READY_SUGGESTED",
+      "Note": "اختلاف إملائي: الثالثه ↔ الثالثة"
+    },
+    {
+      "TajhizId": 47,
+      "TajhizName": "فضوه عرب (تجهيز محل )",
+      "TajhizCustAll": 346,
+      "BaseId": 5,
+      "BaseName": "فضوة العرب",
+      "BaseCustAll": 897,
+      "MatchHint": "async_sibling + spelling",
+      "Status": "READY_SUGGESTED",
+      "Note": "اختلاف إملائي: فضوه عرب ↔ فضوة العرب؛ AsyncID مرتبط fath895d3_47"
+    }
+  ],
+  "summary": {
+    "total_tajhiz_lists": 16,
+    "ready_exact": 14,
+    "ready_suggested_spelling": 2,
+    "customers_to_move_exact": 5156,
+    "customers_to_move_if_all_16": 5792
+  }
+}

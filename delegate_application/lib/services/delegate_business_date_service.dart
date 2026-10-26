@@ -63,6 +63,7 @@ class DelegateBusinessDateService with WidgetsBindingObserver {
   }
 
   /// Returns true when a rollover (or first stamp) occurred.
+  /// Never throws — sync/purge failures must not break list/rating UI loads.
   Future<bool> ensureCurrentBusinessDay({DateTime? utcNow}) async {
     if (_rolling) return false;
     _rolling = true;
@@ -77,19 +78,30 @@ class DelegateBusinessDateService with WidgetsBindingObserver {
       // Last-chance upload of previous business-day leftovers before UI zeroes.
       // Bypass gate: at 03:00 the new day's send window is not open yet, but
       // these rows already passed yesterday's 16:00 eligibility.
-      await PaymentSyncService.instance
-          .flushPendingForBusinessDayRollover(utcNow: utcNow);
+      try {
+        await PaymentSyncService.instance
+            .flushPendingForBusinessDayRollover(utcNow: utcNow);
+      } catch (_) {}
 
       // Dedupe exact ClientPaymentId copies before purge.
-      await DatabaseHelper().deleteDuplicateClientPaymentIds();
+      try {
+        await DatabaseHelper().deleteDuplicateClientPaymentIds();
+      } catch (_) {}
 
       // Physical local wipe: Synced rows outside this business day only.
-      await DatabaseHelper().purgeSyncedPaymentsBeforeBusinessDay(utcNow: utcNow);
-      await BusinessDayCollectionStore.purgeOlderThanDays(utcNow: utcNow);
+      try {
+        await DatabaseHelper()
+            .purgeSyncedPaymentsBeforeBusinessDay(utcNow: utcNow);
+      } catch (_) {}
+      try {
+        await BusinessDayCollectionStore.purgeOlderThanDays(utcNow: utcNow);
+      } catch (_) {}
 
       await prefs.setString(prefsKey, current);
       TodayPaymentsRefresh.notify();
       return true;
+    } catch (_) {
+      return false;
     } finally {
       _rolling = false;
     }

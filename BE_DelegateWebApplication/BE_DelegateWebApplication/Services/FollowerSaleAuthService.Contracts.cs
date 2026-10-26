@@ -35,6 +35,10 @@ public static class FollowerSaleAuthRules
     /// <param name="evaluatorRole">
     /// «متابع» أو «مندوب الجباية» — يظهر في نص الإشعار حتى يختار المدير المفوض الكونتينر الصحيح.
     /// </param>
+    /// <param name="includeWrongSaleTag">
+    /// When true (exception inbox / WrongSaleReports only), prepend an internal classification tag.
+    /// Never set this for SalesRequest.Notes shown to sales employees.
+    /// </param>
     public static string FormatShopEvaluationBlock(
         int rating,
         string? note,
@@ -43,12 +47,15 @@ public static class FollowerSaleAuthRules
         string? customerName = null,
         string? customerPhone = null,
         decimal? saleAmount = null,
-        string? evaluatorRole = null)
+        string? evaluatorRole = null,
+        bool includeWrongSaleTag = false)
     {
-        var lines = new List<string>
+        var lines = new List<string>();
+        if (includeWrongSaleTag)
         {
-            "تقييم المتجر / مبيعات خاطئة",
-        };
+            lines.Add("مبيعات خاطئة");
+        }
+
         if (!string.IsNullOrWhiteSpace(evaluatorRole))
         {
             lines.Add($"المصدر: {evaluatorRole.Trim()}");
@@ -66,6 +73,40 @@ public static class FollowerSaleAuthRules
         if (saleAmount is > 0)
             lines.Add($"سعر البيع: {saleAmount.Value:N0}");
         return string.Join("\n", lines);
+    }
+
+    /// <summary>Strip WrongSale scare lines from notes shown to sales employees (legacy + new).</summary>
+    public static string? SanitizeNotesForSalesEmployee(string? notes)
+    {
+        if (string.IsNullOrWhiteSpace(notes))
+        {
+            return notes;
+        }
+
+        var kept = notes
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n')
+            .Select(l => l.TrimEnd())
+            .Where(l =>
+            {
+                var t = l.Trim();
+                if (t.Length == 0) return true;
+                if (t.Contains("تقييم المتجر", StringComparison.Ordinal)
+                    && t.Contains("مبيعات خاطئة", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (string.Equals(t, "مبيعات خاطئة", StringComparison.Ordinal)
+                    || string.Equals(t, "تقييم المتجر", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                return true;
+            });
+        var joined = string.Join("\n", kept).Trim();
+        return joined.Length == 0 ? null : joined;
     }
 }
 
@@ -134,6 +175,10 @@ public sealed class FollowerListStatsRow
     public int ActiveCustomersCount { get; set; }
     public double AverageScore { get; set; }
     public string? FinalRatingLabel { get; set; }
+    public double? ScoreWeekAgo { get; set; }
+    public string WeekTrend { get; set; } = FollowerListTrendRules.Flat;
+    public double? ScoreMonthAgo { get; set; }
+    public string MonthTrend { get; set; } = FollowerListTrendRules.Flat;
     public int ExcellentCount { get; set; }
     public int GoodCount { get; set; }
     public int WeakCount { get; set; }
@@ -195,6 +240,13 @@ public interface IFollowerListStatsService
         DateTime nowLocal,
         CancellationToken ct);
 
+    /// <summary>Single linked list stats (fast path for list-detail tab).</summary>
+    Task<FollowerListStatsRow?> GetStatsForListAsync(
+        int followerUserId,
+        int listId,
+        DateTime nowLocal,
+        CancellationToken ct);
+
     Task<IReadOnlyList<FollowerListStatsCustomerRow>> GetRatingCustomersAsync(
         int followerUserId,
         int listId,
@@ -207,4 +259,16 @@ public interface IFollowerListStatsService
         int listId,
         DateTime nowLocal,
         CancellationToken ct);
+
+    /// <summary>
+    /// Open-balance customers with
+    /// <paramref name="minRemainingInclusive"/> &lt;= AmountRemaining &lt; <paramref name="maxRemainingExclusive"/>.
+    /// </summary>
+    Task<IReadOnlyList<FollowerListStatsCustomerRow>> GetRemainderCustomersAsync(
+        int followerUserId,
+        int listId,
+        decimal maxRemainingExclusive,
+        DateTime nowLocal,
+        CancellationToken ct,
+        decimal minRemainingInclusive = 0);
 }

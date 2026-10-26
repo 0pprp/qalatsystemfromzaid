@@ -647,6 +647,24 @@ namespace BE_SalesEmployee.Controllers
             return StatusCode(status, payload);
         }
 
+        [HttpGet("sales-requests/{cityValue}/{id:int}/cancel-impact")]
+        public async Task<IActionResult> CancelImpact(string cityValue, int id, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.GetAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/cancel-impact", ct);
+            return StatusCode(status, payload);
+        }
+
+        [HttpPost("sales-requests/{cityValue}/{id:int}/cancel")]
+        public async Task<IActionResult> CancelRequest(string cityValue, int id, [FromBody] JsonElement body, CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.PostAsync(
+                user, cityValue, $"sales-manager/sales-requests/{id}/cancel", body.GetRawText(), ct);
+            return StatusCode(status, payload);
+        }
+
         [HttpGet("purchases")]
         public Task<IActionResult> Purchases(
             [FromQuery] string? cityValue,

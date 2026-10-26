@@ -1,4 +1,4 @@
-﻿using BE_Company.DTO;
+using BE_Company.DTO;
 using BE_Company.IRepository;
 using BE_Company.Repository;
 using BE_Company.Sales.Authorization;
@@ -55,9 +55,9 @@ namespace BE_Company.Controllers
                 var authenticationResponse = BuildToken(data, _configuration);
                 return Ok(authenticationResponse);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode((int)HttpStatusCode.InternalServerError, ex.Message);
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "حدث خطأ أثناء معالجة الطلب" });
             }
         }
 
@@ -83,10 +83,98 @@ namespace BE_Company.Controllers
                 var authenticationResponse = BuildToken(data, _configuration, sessionVersion);
                 return Ok(authenticationResponse);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode((int)HttpStatusCode.InternalServerError, ex.Message);
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "حدث خطأ أثناء معالجة الطلب" });
             }
+        }
+
+        /// <summary>
+        /// Sliding refresh: validates the presented access JWT and issues a new one.
+        /// Does not accept unverified tokens. Clients must call this from a non-intercepted HTTP client.
+        /// </summary>
+        [HttpPost("Users_RefreshToken")]
+        public async Task<IActionResult> Users_RefreshToken([FromBody] RefreshTokenRequestDTO? body)
+        {
+            var presented = body?.Token;
+            if (string.IsNullOrWhiteSpace(presented))
+            {
+                var auth = Request.Headers.Authorization.ToString();
+                if (auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                {
+                    presented = auth["Bearer ".Length..].Trim();
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(presented))
+            {
+                return Unauthorized(new { message = "الجلسة غير صالحة" });
+            }
+
+            try
+            {
+                var principal = ValidateAccessToken(presented, _configuration);
+                if (principal is null)
+                {
+                    return Unauthorized(new { message = "الجلسة غير صالحة" });
+                }
+
+                var userIdRaw = principal.FindFirst("UserID")?.Value;
+                var userName = principal.FindFirst("UserName")?.Value ?? "";
+                var userType = principal.FindFirst("UserType")?.Value ?? "";
+                var userImage = principal.FindFirst("UserImage")?.Value ?? "";
+                if (!int.TryParse(userIdRaw, out var userId) || userId <= 0)
+                {
+                    return Unauthorized(new { message = "الجلسة غير صالحة" });
+                }
+
+                int? sessionVersion = null;
+                if (BE_Company.Sales.Authorization.SalesRoles.IsSalesEmployee(userType))
+                {
+                    var current = await _usersRepository.GetSalesEmployeeSessionVersionAsync(userId);
+                    var claimVersion = principal.FindFirst(BE_Company.Services.SalesEmployeeSession.ClaimName)?.Value;
+                    if (!int.TryParse(claimVersion, out var presentedVersion) || presentedVersion != current)
+                    {
+                        return Unauthorized(new { message = "الجلسة منتهية" });
+                    }
+
+                    sessionVersion = current;
+                }
+
+                var dto = new UsersGetDTO
+                {
+                    UserID = userId,
+                    UserName = userName,
+                    UserType = userType,
+                    UserImage = userImage,
+                };
+                return Ok(BuildToken(dto, _configuration, sessionVersion));
+            }
+            catch (Exception)
+            {
+                return Unauthorized(new { message = "الجلسة غير صالحة" });
+            }
+        }
+
+        private static ClaimsPrincipal? ValidateAccessToken(string token, IConfiguration configuration)
+        {
+            var keys = KeysHandler.GetAllKeys(configuration).ToList();
+            if (keys.Count == 0)
+            {
+                throw new InvalidOperationException("JWT signing keys are not configured.");
+            }
+
+            var parameters = new TokenValidationParameters
+            {
+                ValidateIssuer = false,
+                ValidateAudience = false,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKeys = keys,
+                ClockSkew = TimeSpan.FromMinutes(1),
+            };
+            var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+            return handler.ValidateToken(token, parameters, out _);
         }
 
 
@@ -114,10 +202,16 @@ namespace BE_Company.Controllers
                 signingCredentials: credentials
             );
             var token = new JwtSecurityTokenHandler().WriteToken(securityToken);
+            // Keep LoginBodyUserTypeMarker referenced so release DLLs retain the deploy string.
+            _ = AuthenticationResponseDTO.LoginBodyUserTypeMarker;
             return new AuthenticationResponseDTO
             {
                 Token = token,
-                Expiration = expiration
+                Expiration = expiration,
+                UserType = (user.UserType ?? string.Empty).Trim(),
+                UserID = user.UserID,
+                UserName = user.UserName,
+                UserImage = user.UserImage
             };
         }
 
@@ -354,16 +448,42 @@ namespace BE_Company.Controllers
         {
             try
             {
-                int? user_ID = null;
+                // Route userID = target to soft-delete. Actor id goes to UserDeleteID (audit).
+                int? actorUserId = null;
                 if (HttpContext.Items["UserID"] is string userIdStr && int.TryParse(userIdStr, out int parsedUserId))
                 {
-                    userID = parsedUserId;
+                    actorUserId = parsedUserId;
                 }
-                if (!userID.HasValue)
+
+                if (!actorUserId.HasValue)
                 {
                     return Unauthorized("User is not authenticated.");
                 }
-                var result = await _usersRepository.Users_Delete(userID, user_ID);
+
+                if (!userID.HasValue || userID.Value <= 0)
+                {
+                    return BadRequest(new { message = "معرّف المستخدم غير صالح" });
+                }
+
+                var actorUserType = User.FindFirst("UserType")?.Value
+                    ?? HttpContext.Items["UserType"] as string;
+                if (!string.Equals(
+                        actorUserType?.Trim(),
+                        SalesRoles.UserTypeMainAccountant,
+                        StringComparison.Ordinal))
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new
+                    {
+                        message = "غير مصرح بحذف المستخدمين"
+                    });
+                }
+
+                if (userID.Value == actorUserId.Value)
+                {
+                    return BadRequest(new { message = "لا يمكن حذف حسابك الحالي", code = "USERS_DELETE_TARGET_NOT_ACTOR_V1" });
+                }
+
+                var result = await _usersRepository.Users_Delete(userID, actorUserId);
                 return Ok(result);
             }
             catch (Exception ex)

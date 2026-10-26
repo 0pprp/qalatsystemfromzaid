@@ -51,6 +51,7 @@ namespace BE_SalesEmployee.Sales.Services
                     MergeCategory(existing, item, "tripleName", "TripleName");
                     MergeCategory(existing, item, "phone", "Phone");
                     MergeCategory(existing, item, "fatherGrandfather", "FatherGrandfather");
+                    MergeCategory(existing, item, "sonFather", "SonFather");
                     ApplyOverall(existing);
                 }
             }
@@ -189,6 +190,7 @@ namespace BE_SalesEmployee.Sales.Services
             Consider(item, "tripleName", "TripleName", ref worstScore, ref worstLevel, ref worstLabel);
             Consider(item, "phone", "Phone", ref worstScore, ref worstLevel, ref worstLabel);
             Consider(item, "fatherGrandfather", "FatherGrandfather", ref worstScore, ref worstLevel, ref worstLabel);
+            Consider(item, "sonFather", "SonFather", ref worstScore, ref worstLevel, ref worstLabel);
 
             item["hasAnyMatch"] = worstScore is not null;
             item["overallScore"] = worstScore;

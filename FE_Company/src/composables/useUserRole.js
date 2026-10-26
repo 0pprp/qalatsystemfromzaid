@@ -9,10 +9,13 @@ export function useUserRole() {
   const canSwitchCity = computed(() => isAdmin.value)
   const isSalesManager = computed(() => userType.value === 'مدير مبيعات')
   const isDirector = computed(() => userType.value === 'المدير')
-  const canViewDecisions = computed(() => isAdmin.value || isBranchManager.value)
+  const isMonitor = computed(() => userType.value === 'المراقب')
+  const isDirectorOrMonitor = computed(() => isDirector.value || isMonitor.value)
+  const canViewDecisions = computed(() => isAdmin.value || isBranchManager.value || isMonitor.value)
   const canWriteNotes = computed(() => isAdmin.value || isBranchManager.value)
   const canDecide = computed(() => isBranchManager.value)
-  const canViewFollowerGps = computed(() => isAdmin.value)
+  /** Follower GPS lives under عمل المتابعين for المراقب/المدير (not accountant). */
+  const canViewFollowerGps = computed(() => isMonitor.value || isDirector.value)
   const canViewRatings = computed(() => isAdmin.value || isDirector.value || isSalesManager.value)
 
   return {
@@ -27,6 +30,8 @@ export function useUserRole() {
     canDecide,
     isSalesManager,
     isDirector,
+    isMonitor,
+    isDirectorOrMonitor,
     canViewFollowerGps,
     canViewRatings,
   }

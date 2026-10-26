@@ -6,13 +6,143 @@ export default [
   },
   {
     title: 'التقييمات',
-    to: { name: 'director-ratings' },
+    // Explicit empty query → hub cards (not last ?city=)
+    to: { name: 'director-ratings', query: {} },
     icon: { icon: 'tabler-chart-histogram', size: '25' },
+  },
+  {
+    title: 'الملخص',
+    to: { name: 'director-summary' },
+    icon: { icon: 'tabler-table', size: '25' },
+  },
+  {
+    title: 'متابعة المندوبين',
+    to: () => {
+      const city = String(localStorage.getItem('director-delegate-followup-city') || '').trim()
+
+      return { name: 'director-delegate-followup', query: city ? { city } : {} }
+    },
+    icon: { icon: 'tabler-users', size: '25' },
+  },
+  {
+    title: 'متابعة المبيعات',
+    to: () => {
+      const city = String(localStorage.getItem('director-sales-followup-city') || '').trim()
+
+      return { name: 'director-sales-followup', query: city ? { city } : {} }
+    },
+    icon: { icon: 'tabler-shopping-cart', size: '25' },
+  },
+  {
+    title: 'عمل المتابعين',
+    icon: { icon: 'tabler-user-scan', size: '25' },
+    children: [
+      {
+        title: 'مصادقة البيع',
+        to: () => {
+          const city = String(localStorage.getItem('director-follower-work-city') || '').trim()
+
+          return { name: 'director-follower-work', query: { tab: 'sales', ...(city ? { city } : {}) } }
+        },
+        icon: { icon: 'tabler-certificate', size: '22' },
+      },
+      {
+        title: 'المتدنية',
+        to: () => {
+          const city = String(localStorage.getItem('director-follower-work-city') || '').trim()
+
+          return { name: 'director-follower-work', query: { tab: 'declining', ...(city ? { city } : {}) } }
+        },
+        icon: { icon: 'tabler-trending-down', size: '22' },
+      },
+      {
+        title: 'الملاحظات',
+        to: () => {
+          const city = String(localStorage.getItem('director-follower-work-city') || '').trim()
+
+          return { name: 'director-follower-work', query: { tab: 'notes', ...(city ? { city } : {}) } }
+        },
+        icon: { icon: 'tabler-message', size: '22' },
+      },
+      {
+        title: 'الزبائن القديمة',
+        to: () => {
+          const city = String(localStorage.getItem('director-follower-work-city') || '').trim()
+
+          return { name: 'director-follower-work', query: { tab: 'oldCustomers', ...(city ? { city } : {}) } }
+        },
+        icon: { icon: 'tabler-users-group', size: '22' },
+      },
+      {
+        title: 'ملاحظات المندوبين',
+        to: () => {
+          const city = String(localStorage.getItem('director-follower-work-city') || '').trim()
+
+          return { name: 'director-follower-work', query: { tab: 'delegateNotes', ...(city ? { city } : {}) } }
+        },
+        icon: { icon: 'tabler-notes', size: '22' },
+      },
+      {
+        title: 'الجباية',
+        to: () => {
+          const city = String(localStorage.getItem('director-follower-work-city') || '').trim()
+
+          return { name: 'director-follower-work', query: { tab: 'collection', ...(city ? { city } : {}) } }
+        },
+        icon: { icon: 'tabler-cash', size: '22' },
+      },
+      // FollowerRoutesInMonitorWork_V1 — moved from accountant «متابعة المتابعين»
+      {
+        title: 'الموقع المباشر',
+        to: { name: 'sales-manager-followers-map' },
+        icon: { icon: 'tabler-map', size: '22' },
+      },
+      {
+        title: 'المسارات',
+        to: { name: 'sales-manager-followers-routes' },
+        icon: { icon: 'tabler-route', size: '22' },
+      },
+    ],
   },
   {
     title: 'طلبات البيع',
     to: { name: 'sales-manager-requests' },
     icon: { icon: 'tabler-send', size: '25' },
+  },
+  {
+    title: 'الفيديوهات التعليمية',
+    to: { name: 'director-tutorial-videos' },
+    icon: { icon: 'tabler-video', size: '25' },
+  },
+  {
+    title: 'الإعلانات',
+    to: { name: 'director-announcements' },
+    icon: { icon: 'tabler-ad-2', size: '25' },
+  },
+  {
+    title: 'المهام',
+    to: { name: 'director-assigned-tasks' },
+    icon: { icon: 'tabler-list-check', size: '25' },
+  },
+  {
+    title: 'أعمال إدارة الفرع',
+    to: { name: 'director-branch-visits' },
+    icon: { icon: 'tabler-building-community', size: '25' },
+  },
+  {
+    title: 'مهام اللجنة',
+    to: { name: 'director-committee-tasks' },
+    icon: { icon: 'tabler-checklist', size: '25' },
+  },
+  {
+    title: 'ملاحظات التطبيقات',
+    to: { name: 'director-notes' },
+    icon: { icon: 'tabler-notes', size: '25' },
+  },
+  {
+    title: 'التنازلات',
+    to: { name: 'director-waivers' },
+    icon: { icon: 'tabler-receipt-refund', size: '25' },
   },
   {
     title: 'المستخدمين',
@@ -70,6 +200,11 @@ export default [
         icon: { icon: 'tabler-calendar-time', size: '25' },
       },
       {
+        title: 'الزبائن المتدنية',
+        to: { name: 'customers-declining' },
+        icon: { icon: 'tabler-trending-down', size: '25' },
+      },
+      {
         title: 'بحث القانونية',
         to: { name: 'accountant-legal-search' },
         icon: { icon: 'tabler-file-search', size: '25' },
@@ -82,18 +217,23 @@ export default [
     icon: { icon: 'tabler-calendar-stats', size: '25' },
   },
   {
-    title: 'القرارات',
+    title: 'لوحة الأسعار',
+    to: { name: 'price-board' },
+    icon: { icon: 'tabler-tag', size: '25' },
+  },
+  {
+    title: 'أسماء قانونية',
     icon: { icon: 'tabler-gavel', size: '25' },
     children: [
       {
-        title: 'لوحة ضعفاء التسديد',
+        title: 'أسماء قانونية',
         to: { name: 'decision-board' },
         icon: { icon: 'tabler-gavel', size: '22' },
       },
       {
-        title: 'طلبات التحويل القانونية',
-        to: { name: 'legal-conversion-requests' },
-        icon: { icon: 'tabler-scale', size: '22' },
+        title: 'طلبات التنازل',
+        to: { name: 'waiver-accountant-requests' },
+        icon: { icon: 'tabler-cash', size: '22' },
       },
       {
         title: 'سجل القرارات',
@@ -108,14 +248,6 @@ export default [
     icon: { icon: 'tabler-cash', size: '25' },
   },
   {
-    title: 'متابعة المتابعين',
-    icon: { icon: 'tabler-current-location', size: '25' },
-    children: [
-      { title: 'الموقع المباشر', to: { name: 'follower-tracking-map' }, icon: { icon: 'tabler-map', size: '22' } },
-      { title: 'المسارات', to: { name: 'follower-tracking-routes' }, icon: { icon: 'tabler-route', size: '22' } },
-    ],
-  },
-  {
     title: 'إدارة المبيعات',
     icon: { icon: 'tabler-map-pin', size: '25' },
     children: [
@@ -124,6 +256,7 @@ export default [
       { title: 'الموقع المباشر', to: { name: 'sales-manager-map' }, icon: { icon: 'tabler-map', size: '22' } },
       { title: 'المسارات', to: { name: 'sales-manager-routes' }, icon: { icon: 'tabler-route', size: '22' } },
       { title: 'المبيعات', to: { name: 'sales-manager-sales' }, icon: { icon: 'tabler-receipt', size: '22' } },
+      { title: 'ملخص المبيعات', to: { name: 'sales-manager-sales-summary' }, icon: { icon: 'tabler-chart-bar', size: '22' } },
       { title: 'القانونية', to: { name: 'sales-manager-legal-followups' }, icon: { icon: 'tabler-gavel', size: '22' } },
       { title: 'طلبات البيع', to: { name: 'sales-manager-requests' }, icon: { icon: 'tabler-send', size: '22' } },
     ],

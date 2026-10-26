@@ -1,8 +1,9 @@
 import 'package:package_info_plus/package_info_plus.dart';
 
 class AppVersion {
-  static const String name = '1.0.16';
-  static const int code = 17;
+  /// Keep in sync with pubspec.yaml `version: name+code` — mismatch causes update loops.
+  static const String name = '1.0.42';
+  static const int code = 43;
   static const String appKey = 'branch-manager';
 
   static int? _resolvedCode;

@@ -1,6 +1,6 @@
 import 'package:delegate_application/utils/iraq_date.dart';
 
-/// Builds last-7-day receipt amounts from dated facts + local unsynced payment.
+/// Builds last-7-day receipt amounts from dated facts + local unsynced payments.
 ///
 /// Contract (matches GetDateWeek / View_WeekFinal):
 /// index 0 = today, 1 = yesterday, … 6 = six days ago.
@@ -34,11 +34,68 @@ class ReceiptWeekAmounts {
     return out;
   }
 
+  /// Sum of local queue amounts that belong on the **today** business day.
+  static double sumLocalTodayPayments({
+    required Iterable<Map<String, dynamic>> localPayments,
+    required int customerId,
+    DateTime? utcNow,
+  }) {
+    final day = IraqDate.businessDateKey(utcNow);
+    var sum = 0.0;
+    for (final row in localPayments) {
+      final cid = int.tryParse(row['CustomerId']?.toString() ?? '') ?? 0;
+      if (cid != customerId) continue;
+      final created = row['CreatedAtUtc']?.toString();
+      DateTime? at;
+      if (created != null && created.isNotEmpty) {
+        at = DateTime.tryParse(created)?.toUtc();
+      }
+      // Missing CreatedAtUtc → treat as today (just inserted locally).
+      final key = at == null ? day : IraqDate.businessDateKey(at);
+      if (key != day) continue;
+      final amount = (row['Amount'] as num?)?.toDouble() ?? 0;
+      if (amount > 0) sum += amount;
+    }
+    return sum;
+  }
+
+  /// Server week + all local today payments for this customer (idempotent vs snapshot).
+  ///
+  /// If [alreadyIncludedInServerToday] is true (server Amount1 already contains this
+  /// payment), only other local pending rows are added.
+  static List<double> buildWeekForReceipt({
+    required List<double> serverAmounts,
+    required List<String> dayLabels,
+    required Iterable<Map<String, dynamic>> localPayments,
+    required int customerId,
+    double? extraPaymentJustSaved,
+    bool assumeExtraAlreadyInLocalRows = true,
+    DateTime? utcNow,
+  }) {
+    ensureDayLabels(dayLabels);
+    final amounts = ensureAmounts(serverAmounts);
+    final localToday = sumLocalTodayPayments(
+      localPayments: localPayments,
+      customerId: customerId,
+      utcNow: utcNow,
+    );
+
+    // Prefer max(serverToday, localToday) then add any just-saved amount not yet in query.
+    var today = amounts[0];
+    if (localToday > today) {
+      today = localToday;
+    }
+    if (extraPaymentJustSaved != null &&
+        extraPaymentJustSaved > 0 &&
+        !assumeExtraAlreadyInLocalRows) {
+      today += extraPaymentJustSaved;
+    }
+    amounts[0] = today;
+    return amounts;
+  }
+
   /// Merges [paymentAmount] into **today's slot (index 0)**.
   /// Never doubles when [alreadyIncluded] is true.
-  ///
-  /// Optional [dayLabels] are for display only; financial today is always index 0
-  /// per server Amount1 contract — label heuristics must not relocate the amount.
   static List<double> mergeLocalPayment({
     required List<double> serverAmounts,
     required List<String> dayLabels,
@@ -47,13 +104,10 @@ class ReceiptWeekAmounts {
     bool alreadyIncluded = false,
   }) {
     final amounts = ensureAmounts(serverAmounts);
-    // Keep analyzer/API compat — labels do not move the today slot.
     ensureDayLabels(dayLabels);
     if (paymentAmount <= 0 || alreadyIncluded) {
       return amounts;
     }
-
-    // Absolute rule: Amount1 / first receipt row = today.
     amounts[0] = amounts[0] + paymentAmount;
     return amounts;
   }
@@ -65,7 +119,6 @@ class ReceiptWeekAmounts {
   }) {
     final amounts = ensureAmounts(weekAmounts);
     if (amountPush > 0 && amounts[0] + 0.0001 < amountPush) {
-      // Local collection not reflected in snapshot — show the paid amount today.
       amounts[0] = amountPush;
     }
     return amounts;
@@ -84,16 +137,14 @@ class ReceiptWeekAmounts {
     return buf.toString();
   }
 
-  /// Safe printed receipt number: prefer parsed device count + 1 once.
   static String printedReceiptNumber(String? countReceiptDevice) {
     final raw = (countReceiptDevice ?? '').trim();
     if (raw.isEmpty) return '1';
     final n = int.tryParse(raw);
-    if (n == null) return raw; // UUID / non-numeric — print as-is, never int.parse
+    if (n == null) return raw;
     return (n + 1).toString();
   }
 
-  /// Business-date key for diagnostics / future dated merges.
   static String todayBusinessKey([DateTime? utcNow]) =>
       IraqDate.businessDateKey(utcNow);
 }

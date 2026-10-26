@@ -202,3 +202,14 @@ export function useDirectorRatingsCache() {
 export function __resetDirectorRatingsCacheForTests() {
   sharedCache = null
 }
+
+/** Clears in-memory singleton and sessionStorage (logout / identity switch). */
+export function clearDirectorRatingsCache() {
+  sharedCache = null
+  try {
+    sessionStorage.removeItem(CACHE_KEY)
+  } catch {
+    // ignore
+  }
+}
+

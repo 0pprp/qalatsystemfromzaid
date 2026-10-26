@@ -3,7 +3,7 @@ import 'package:delegate_application/utils/iraq_date.dart';
 import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 
-/// Android WorkManager bridge for payment upload after the 16:00 Baghdad gate.
+/// Android WorkManager bridge for payment upload when online.
 ///
 /// Does not rely on an in-process Timer — works when the app is killed.
 /// Network constraint is always required.
@@ -16,7 +16,6 @@ const String kPaymentSyncPeriodicUnique = 'delegate_payment_sync_periodic_unique
 void paymentSyncCallbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     WidgetsFlutterBinding.ensureInitialized();
-    // Gate closed → leave pending untouched; no HTTP.
     if (!IraqDate.isPaymentSyncGateOpen()) {
       return true;
     }
@@ -41,7 +40,7 @@ class PaymentSyncScheduler {
     await ensureScheduled();
   }
 
-  /// Schedule next 16:00 one-off + periodic retry with network required.
+  /// Schedule soon one-off + periodic retry with network required.
   Future<void> ensureScheduled({DateTime? utcNow}) async {
     if (!_initialized) {
       await initialize();
