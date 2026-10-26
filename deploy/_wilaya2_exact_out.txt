@@ -1,6 +1,0 @@
-Changed language setting to us_english.
-MovedNonOverlap=11
-Msg 208, Level 16, State 1, Server vmi3533397, Line 56
-Invalid object name 'noOct1'.
-
-SQL_EXIT 0

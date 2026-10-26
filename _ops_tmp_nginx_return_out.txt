@@ -1,6 +1,0 @@
-﻿=== all return hits with status ===
-169.58.236.52 - - [23/Sep/2026:13:30:27 +0200] "POST /api/sales-manager/sales-requests/7/return HTTP/1.1" 200 4622 "-" "-"
-37.237.190.229 - - [23/Sep/2026:13:30:27 +0200] "POST /sales-gw/api/sales-manager/sales-requests/14/7/return HTTP/1.1" 200 4789 "http://admincompany.alsaaeidy.com/" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
-
-=== error log return ===
-(none)

@@ -56,6 +56,7 @@ _tmp_*.tar
 .cursor/
 .agents/
 skills-lock.json
+.github/skills/
 
 # OS
 Thumbs.db
@@ -68,6 +69,11 @@ tools/
 _publish_*/
 _probe_*/
 _pub_*/
+_ops_*/
+_ops_tmp*
+_sf_*
+_sfu_*
+_rusafa_*
 
 # Python and shell ops scripts
 *.py
