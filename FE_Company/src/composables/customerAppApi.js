@@ -1,6 +1,6 @@
 /**
  * BE_CustomerApp (تطبيق المسوّقين) — admin API helpers for the dashboard.
- * Contract: Customer_website_app/docs/API_CONTRACT.md section 9 (admin/*).
+ * Backend: PromoterApps/FieldPromoterApp/backend/BE_CustomerApp (تطبيق المروج الميداني).
  * Auth: the same gateway JWT stored in localStorage.Token after central login
  * (accepted roles: المدير / المراقب). All helpers are prefixed `ca` to avoid
  * auto-import name clashes with other composables.

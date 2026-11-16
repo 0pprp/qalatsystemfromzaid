@@ -100,4 +100,4 @@ Publish*.bat
 
 # Runtime data (oversight accounts with passwords)
 BE_SalesEmployee/App_Data/
-CustomerApp/backend/*/App_Data/
+PromoterApps/*/backend/*/App_Data/
