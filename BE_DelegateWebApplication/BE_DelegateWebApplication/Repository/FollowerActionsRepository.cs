@@ -93,6 +93,27 @@ WHERE D.DelegateID = @Id;",
                 new { Id = listDelegateId }, cancellationToken: ct));
         }
 
+        /// <summary>
+        /// Province of this branch database: Cities row for the branch's GetCityID id,
+        /// else the static Arabic name. Never depends on a delegate/user row.
+        /// </summary>
+        public async Task<string?> GetBranchProvinceNameAsync(CancellationToken ct = default)
+        {
+            var dbName = new SqlConnectionStringBuilder(_connectionString).InitialCatalog;
+            var branch = BranchProvince.FromDatabaseName(dbName);
+            if (branch == null) return null;
+            string? fromCities = null;
+            try
+            {
+                fromCities = await GetCityNameByIdAsync(branch.Value.CityId, ct);
+            }
+            catch (SqlException)
+            {
+                // Fall through to the static label.
+            }
+            return BranchProvince.FirstNonEmpty(fromCities, branch.Value.Name);
+        }
+
         public async Task<string?> GetCityNameByIdAsync(int cityId, CancellationToken ct = default)
         {
             if (cityId <= 0) return null;

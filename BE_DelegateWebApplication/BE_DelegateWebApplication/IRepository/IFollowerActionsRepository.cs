@@ -12,6 +12,7 @@ namespace BE_DelegateWebApplication.IRepository
         /// <summary>City/province of an assigned list (Delegates.CityID → Cities).</summary>
         Task<string?> GetListCityNameAsync(int listDelegateId, CancellationToken ct = default);
         Task<string?> GetCityNameByIdAsync(int cityId, CancellationToken ct = default);
+        Task<string?> GetBranchProvinceNameAsync(CancellationToken ct = default);
         Task<IReadOnlyList<FollowerCustomerPaymentDTO>> ListCustomerPaymentsAsync(int customerId, CancellationToken ct = default);
         Task<IReadOnlyList<FollowerSalesDocumentRow>> ListCustomerSalesDocumentsAsync(int customerId, string? customerName, string? phone, CancellationToken ct = default);
         Task<FollowerSalesDocumentRow?> GetSalesDocumentAsync(int documentId, CancellationToken ct = default);
