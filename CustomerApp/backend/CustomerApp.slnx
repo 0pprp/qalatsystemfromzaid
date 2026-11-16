@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="BE_CustomerApp.Tests/BE_CustomerApp.Tests.csproj" />
+  <Project Path="BE_CustomerApp/BE_CustomerApp.csproj" />
+  <Project Path="BE_PromotersApp.Tests/BE_PromotersApp.Tests.csproj" />
+  <Project Path="BE_PromotersApp/BE_PromotersApp.csproj" />
+</Solution>
