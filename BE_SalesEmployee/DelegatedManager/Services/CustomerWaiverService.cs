@@ -180,10 +180,12 @@ public sealed class CustomerWaiverService
     public async Task<CustomerWaiverResult> CreateAsync(
         GatewayUser requester,
         CreateCustomerWaiverInput input,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool trustedOversight = false)
     {
         // Branch BE already authenticated مدير فرع; internal route trusts that assertion.
-        if (!IsTrustedBranchManager(requester))
+        // trustedOversight: «ادارة الفرع» on the dashboard (المدير / المراقبين / لجنة المراقبة), policy-checked by the controller.
+        if (!trustedOversight && !IsTrustedBranchManager(requester))
         {
             return CustomerWaiverResult.Forbidden("طلب التنازل متاح لمدير الفرع فقط");
         }

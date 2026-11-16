@@ -6,6 +6,7 @@ import { computed, ref } from 'vue'
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+import { shouldHidePaidRemaining, sumVisibleFinancial } from '@/composables/legalFinancialVisibility'
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -136,7 +137,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-check', // إجمالي الواصل
     value: formattedNumber(
-      customersData.value.reduce((sum, customer) => sum + (customer.receiptsTotal || 0), 0),
+      sumVisibleFinancial(customersData.value, customer => customer.receiptsTotal),
     ),
     title: 'إجمالي الواصل',
     color: "success",
@@ -145,7 +146,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-alert-circle', // إجمالي المبلغ المتبقي
     value: formattedNumber(
-      customersData.value.reduce((sum, customer) => sum + (customer.amountRemaining || 0), 0),
+      sumVisibleFinancial(customersData.value, customer => customer.amountRemaining),
     ),
     title: 'إجمالي المبلغ المتبقي',
     color: "error",
@@ -188,9 +189,9 @@ function exportToExcel() {
     'سعر البيع': customer.amountTotalSales || 'لا يوجد',
     'سعر الشراء': customer.costTotalSales || 'لا يوجد',
     'القسط': customer.amountDaySales || 'لا يوجد',
-    'الواصل': customer.receiptsTotal || 'لا يوجد',
-    'الباقي': customer.amountRemaining || 'لا يوجد',
-    'نسبة التسديد': customer.receiptRateDevice || 'لا يوجد',
+    'الواصل': shouldHidePaidRemaining(customer) ? '—' : (customer.receiptsTotal || 'لا يوجد'),
+    'الباقي': shouldHidePaidRemaining(customer) ? '—' : (customer.amountRemaining || 'لا يوجد'),
+    'نسبة التسديد': shouldHidePaidRemaining(customer) ? '—' : (customer.receiptRateDevice || 'لا يوجد'),
     'عدد التسديدات': customer.countReceiptDevice || 'لا يوجد',
     'عدد الأيام': customer.numberOfDayDevice || 'لا يوجد',
     'تاريخ اخر تسديد': customer.lastPaymentDate ? new Date(customer.lastPaymentDate).toLocaleDateString('en-CA') : 'لا يوجد',
@@ -284,17 +285,20 @@ const paymentDetails = ref({
   amountRemaining: 0,
   paymentAmount: 0,
   paymentDate: new Date().toLocaleDateString('en-CA'),
+  hidePaidRemaining: false,
 })
 
 // دالة فتح Dialog التسديد وملئ البيانات
 function openPaymentDialog(item) {
   currentCustomerID.value = item.customerID
+  const hideFin = shouldHidePaidRemaining(item)
   paymentDetails.value.customerName = item.customerName
   paymentDetails.value.delegateName = item.delegateName
   paymentDetails.value.amountTotalSales = item.amountTotalSales || 0
   paymentDetails.value.amountDaySales = item.amountDaySales || 0
-  paymentDetails.value.receiptsTotal = item.receiptsTotal || 0
-  paymentDetails.value.amountRemaining = item.amountRemaining || 0
+  paymentDetails.value.hidePaidRemaining = hideFin
+  paymentDetails.value.receiptsTotal = hideFin ? 0 : (item.receiptsTotal || 0)
+  paymentDetails.value.amountRemaining = hideFin ? 0 : (item.amountRemaining || 0)
   paymentDetails.value.paymentAmount = item.amountDaySales || 0
   paymentDetails.value.paymentDate =  new Date().toLocaleDateString('en-CA')
   paymentDialog.value = true
@@ -466,17 +470,17 @@ function exportReceiptToExcel() {
           </template>
           <template #item.receiptsTotal="{ item }">
             <div class="premium-amount amt-total-receipts">
-              {{ formattedNumber(item.receiptsTotal) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.receiptsTotal) }}
             </div>
           </template>
           <template #item.amountRemaining="{ item }">
             <div class="premium-amount amt-remaining">
-              {{ formattedNumber(item.amountRemaining) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.amountRemaining) }}
             </div>
           </template>
           <template #item.receiptRateDevice="{ item }">
             <div>
-              {{ item.receiptRateDevice || 'لا يوجد' }}
+              {{ shouldHidePaidRemaining(item) ? '—' : (item.receiptRateDevice || 'لا يوجد') }}
             </div>
           </template>
           <template #item.countReceiptDevice="{ item }">
@@ -877,7 +881,7 @@ function exportReceiptToExcel() {
                   الواصل
                 </VLabel>
                 <VTextField
-                  :value="formattedNumber(paymentDetails.receiptsTotal)"
+                  :value="paymentDetails.hidePaidRemaining ? '—' : formattedNumber(paymentDetails.receiptsTotal)"
                   readonly
                   prepend-inner-icon="tabler-chart-pie"
                 />
@@ -887,7 +891,7 @@ function exportReceiptToExcel() {
                   الباقي
                 </VLabel>
                 <VTextField
-                  :value="formattedNumber(paymentDetails.amountRemaining)"
+                  :value="paymentDetails.hidePaidRemaining ? '—' : formattedNumber(paymentDetails.amountRemaining)"
                   readonly
                   prepend-inner-icon="tabler-alert-circle"
                 />

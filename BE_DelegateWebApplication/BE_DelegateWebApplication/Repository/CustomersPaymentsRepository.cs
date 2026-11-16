@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using BE_DelegateWebApplication.DTO;
 using BE_DelegateWebApplication.IRepository;
+using BE_DelegateWebApplication.Services;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using System.Data;
@@ -20,13 +21,14 @@ namespace BE_DelegateWebApplication.Repository
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.QueryAsync<CustomersPaymentGetDTO>("GetCustomersPaymentsCustomerDate",
+                var result = (await connection.QueryAsync<CustomersPaymentGetDTO>("GetCustomersPaymentsCustomerDate",
                 new
                 {
                     CustomerID = customerId,
                     DateCreate = dateCreate
                 },
-                commandType: CommandType.StoredProcedure);
+                commandType: CommandType.StoredProcedure)).ToList();
+                await LegalCustomerFlagStamp.ApplyAsync(connection, result, r => r.CustomerId, (r, legal) => r.IsLegal = legal);
                 return result;
             }
         }
@@ -35,12 +37,13 @@ namespace BE_DelegateWebApplication.Repository
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.QueryAsync<CustomersPaymentGetDTO>("GetCustomersPaymentsCustomer",
+                var result = (await connection.QueryAsync<CustomersPaymentGetDTO>("GetCustomersPaymentsCustomer",
                 new
                 {
                     CustomerID = customerId
                 },
-                commandType: CommandType.StoredProcedure);
+                commandType: CommandType.StoredProcedure)).ToList();
+                await LegalCustomerFlagStamp.ApplyAsync(connection, result, r => r.CustomerId, (r, legal) => r.IsLegal = legal);
                 return result;
             }
         }
@@ -49,13 +52,14 @@ namespace BE_DelegateWebApplication.Repository
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.QueryAsync<CustomersPaymentGetDTO>("GetCustomersPaymentsByCustomerNameByDelegateID",
+                var result = (await connection.QueryAsync<CustomersPaymentGetDTO>("GetCustomersPaymentsByCustomerNameByDelegateID",
                 new
                 {
                     DelegateID = id,
                     CustomerName = customerName,
                 },
-                commandType: CommandType.StoredProcedure );
+                commandType: CommandType.StoredProcedure)).ToList();
+                await LegalCustomerFlagStamp.ApplyAsync(connection, result, r => r.CustomerId, (r, legal) => r.IsLegal = legal);
                 return result;
             }
         }

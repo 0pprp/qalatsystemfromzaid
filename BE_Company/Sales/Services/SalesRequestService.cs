@@ -117,6 +117,7 @@ namespace BE_Company.Sales.Services
                 CustomerAddress = request.Customer?.Address,
                 Notes = request.Notes,
                 MaxSalePrice = SalesRequestPriceCeiling.Normalize(request.MaxSalePrice),
+                SaleRequestType = request.ExistingCustomerId is > 0 ? SaleRequestTypes.Old : SaleRequestTypes.New,
                 Status = SalesRequestStatuses.New,
                 FilterStatus = SalesFilterStatuses.ReadyForSale,
                 CreatedAtUtc = _clock.UtcNow
@@ -280,6 +281,7 @@ namespace BE_Company.Sales.Services
                 CustomerProvince = province,
                 CustomerAddress = address,
                 Notes = notes,
+                SaleRequestType = SaleRequestTypes.New,
                 Status = SalesRequestStatuses.New,
                 FilterStatus = SalesFilterStatuses.ReadyForSale,
                 CreatedAtUtc = _clock.UtcNow
@@ -381,6 +383,7 @@ namespace BE_Company.Sales.Services
                 CustomerProvince = province,
                 CustomerAddress = address,
                 Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(),
+                SaleRequestType = SaleRequestTypes.New,
                 Status = SalesRequestStatuses.New,
                 FilterStatus = SalesFilterStatuses.ReadyForSale,
                 CreatedAtUtc = _clock.UtcNow
@@ -591,15 +594,16 @@ namespace BE_Company.Sales.Services
             string? q,
             int page,
             int pageSize,
-            CancellationToken ct)
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null)
         {
             await _repo.EnsureSchemaAsync(ct);
             page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize <= 0 ? 40 : pageSize, 1, 100);
             var skip = (page - 1) * pageSize;
 
-            var countsTask = _repo.CountManagerTabsAsync(ct);
-            var pageTask = _repo.ListManagerPageAsync(tab, employeeId, q, skip, pageSize, ct);
+            var countsTask = _repo.CountManagerTabsAsync(ct, filter);
+            var pageTask = _repo.ListManagerPageAsync(tab, employeeId, q, skip, pageSize, ct, filter);
             await Task.WhenAll(countsTask, pageTask);
 
             var (items, total) = await pageTask;
@@ -619,14 +623,15 @@ namespace BE_Company.Sales.Services
             string? q,
             int page,
             int pageSize,
-            CancellationToken ct)
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null)
         {
             await _repo.EnsureSchemaAsync(ct);
             page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize <= 0 ? 40 : pageSize, 1, 100);
             var skip = (page - 1) * pageSize;
-            var countsTask = _repo.CountManagerTabsAsync(ct);
-            var pageTask = _repo.ListDeletedPageAsync(q, skip, pageSize, ct);
+            var countsTask = _repo.CountManagerTabsAsync(ct, filter);
+            var pageTask = _repo.ListDeletedPageAsync(q, skip, pageSize, ct, filter);
             await Task.WhenAll(countsTask, pageTask);
             var (items, total) = await pageTask;
             var counts = await countsTask;
@@ -1416,7 +1421,7 @@ namespace BE_Company.Sales.Services
 
                     row.CustomerPhone = null;
                 }
-                else
+                else if (!PhoneUnchanged(row.CustomerPhone, body.Phone))
                 {
                     SalesPhoneNormalizer.RequireValidIfPresent(body.Phone);
                     var phone = SalesPhoneNormalizer.ForStorage(body.Phone);
@@ -1476,6 +1481,13 @@ namespace BE_Company.Sales.Services
             {
                 row.CityName = string.IsNullOrWhiteSpace(body.CityName) ? row.CityName : body.CityName.Trim();
             }
+
+            row.CustomerName = Trunc(row.CustomerName, 200);
+            row.CustomerPhone = string.IsNullOrWhiteSpace(row.CustomerPhone) ? null : Trunc(row.CustomerPhone, 50);
+            row.CustomerAddress = string.IsNullOrWhiteSpace(row.CustomerAddress) ? null : Trunc(row.CustomerAddress, 400);
+            row.CustomerProvince = string.IsNullOrWhiteSpace(row.CustomerProvince) ? null : Trunc(row.CustomerProvince, 100);
+            row.CityName = string.IsNullOrWhiteSpace(row.CityName) ? row.CityName : Trunc(row.CityName, 200);
+            row.Notes = string.IsNullOrWhiteSpace(row.Notes) ? null : Trunc(row.Notes, 1000);
 
             await _repo.UpdateAsync(row, ct);
 
@@ -1697,6 +1709,27 @@ WHERE (@OriginalPhone IS NOT NULL AND LTRIM(RTRIM(ISNULL(Phone, N''))) = @Origin
             {
                 // Identity sync must not fail the manager edit of the request itself.
             }
+        }
+
+        private static bool PhoneUnchanged(string? stored, string incoming)
+        {
+            var left = (stored ?? "").Trim();
+            var right = incoming.Trim();
+            if (string.Equals(left, right, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var storedNorm = SalesPhoneNormalizer.ForStorage(left);
+            var incomingNorm = SalesPhoneNormalizer.ForStorage(right);
+            if (storedNorm.Length > 0 && string.Equals(storedNorm, incomingNorm, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var storedMatch = SalesPhoneNormalizer.ForMatch(left);
+            var incomingMatch = SalesPhoneNormalizer.ForMatch(right);
+            return storedMatch.Length == 10 && storedMatch == incomingMatch;
         }
 
         private static string Trunc(string? value, int max)
@@ -2159,7 +2192,7 @@ WHERE (@OriginalPhone IS NOT NULL AND LTRIM(RTRIM(ISNULL(Phone, N''))) = @Origin
                 ActorName = actor.EmployeeName,
                 ActorType = actor.UserType ?? actor.Role,
                 EmployeeId = row.TargetEmployeeId > 0 ? row.TargetEmployeeId : null,
-                Note = note,
+                Note = string.IsNullOrWhiteSpace(note) ? null : Trunc(note, 1000),
                 CreatedAtUtc = _clock.UtcNow
             }, ct);
         }

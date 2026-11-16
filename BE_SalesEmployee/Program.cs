@@ -36,10 +36,15 @@ builder.Services.AddSingleton<DelegatedManagerAccountService>();
 builder.Services.AddSingleton<MainFollowerAccountService>();
 builder.Services.AddSingleton<DirectorAccountService>();
 builder.Services.AddSingleton<MonitorAccountService>();
+builder.Services.AddScoped<OversightAccountService>();
+builder.Services.AddScoped<ArchiveRecipientsService>();
+builder.Services.AddScoped<BE_SalesEmployee.Middleware.CommitteeScopeMiddleware>();
 builder.Services.AddScoped<SalesFilterLoginService>();
 builder.Services.AddSingleton<SalesDevelopmentGuard>();
 builder.Services.AddScoped<IGlobalCustomerSearchService, GatewayGlobalCustomerSearchService>();
 builder.Services.AddScoped<ISalesManagerBranchAggregator, SalesManagerBranchAggregator>();
+// Customer store app (BE_CustomerApp) → Qalaa branches, api/internal/customer-app/*.
+builder.Services.AddScoped<BE_SalesEmployee.Sales.CustomerApp.CustomerAppGatewayService>();
 
 // Delegated Manager + MainFollower central stores.
 // Production must use SQL (no in-memory fallback for financial/ops continuity).
@@ -63,6 +68,7 @@ if (gatewaySqlConfigured)
     builder.Services.AddScoped<ISalesEmployeeAppBlockStore, SqlSalesEmployeeAppBlockStore>();
     builder.Services.AddScoped<BE_SalesEmployee.MainFollower.Stores.ICommitteeStore,
         BE_SalesEmployee.MainFollower.Stores.SqlCommitteeStore>();
+    builder.Services.AddScoped<IOversightAccountStore, SqlOversightAccountStore>();
 }
 else if (builder.Environment.IsProduction())
 {
@@ -87,6 +93,7 @@ else
     builder.Services.AddSingleton<ISalesEmployeeAppBlockStore, InMemorySalesEmployeeAppBlockStore>();
     builder.Services.AddSingleton<BE_SalesEmployee.MainFollower.Stores.ICommitteeStore,
         BE_SalesEmployee.MainFollower.Stores.InMemoryCommitteeStore>();
+    builder.Services.AddSingleton<IOversightAccountStore, FileOversightAccountStore>();
 }
 
 // Reviews/shifts: SQL when gateway configured; otherwise in-memory only outside Production.
@@ -158,12 +165,21 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy(SalesPolicies.BranchManager, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.BranchManager)));
     options.AddPolicy(SalesPolicies.DirectorOrMonitor, p =>
+        p.Requirements.Add(new SalesRoleRequirement(
+            SalesRoles.Director, SalesRoles.Monitor, SalesRoles.CommitteeHead, SalesRoles.CommitteeAssistant)));
+    options.AddPolicy(SalesPolicies.DirectorOrSupervisor, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.Director, SalesRoles.Monitor)));
+    options.AddPolicy(SalesPolicies.PriceBoardEditor, p =>
+        p.Requirements.Add(new SalesRoleRequirement(SalesRoles.Monitor)));
     options.AddPolicy(SalesPolicies.SalesManagerOrDelegatedManager, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager, SalesRoles.DelegatedManager)));
     options.AddPolicy(SalesPolicies.SalesManagerOrDirector, p =>
         p.Requirements.Add(new SalesRoleRequirement(
-            SalesRoles.SalesManager, SalesRoles.Director, SalesRoles.Monitor)));
+            SalesRoles.SalesManager, SalesRoles.Director, SalesRoles.Monitor,
+            SalesRoles.CommitteeHead, SalesRoles.CommitteeAssistant)));
+    options.AddPolicy(SalesPolicies.ArchiveFlow, p =>
+        p.Requirements.Add(new SalesRoleRequirement(
+            SalesRoles.ArchiveManager, SalesRoles.CommitteeHead, SalesRoles.CommitteeAssistant)));
     options.AddPolicy(SalesPolicies.ReadGps, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
     options.AddPolicy(SalesPolicies.ReadOtherSalesEmployees, p =>
@@ -260,6 +276,7 @@ app.UseMiddleware<BE_SalesEmployee.Middleware.CorrelationIdMiddleware>();
 app.UseCors("free");
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<BE_SalesEmployee.Middleware.CommitteeScopeMiddleware>();
 app.MapControllers();
 app.MapHub<BE_SalesEmployee.Hubs.SalesTrackingHub>("/hubs/sales-tracking");
 app.Run();

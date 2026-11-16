@@ -1,6 +1,7 @@
 import 'package:follower_application/HomePage.dart';
 import 'package:follower_application/Login.dart';
 import 'package:follower_application/WelcomePage.dart';
+import 'package:follower_application/archive_requests_page.dart';
 import 'package:follower_application/committee_tasks_page.dart';
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/core/update/app_version.dart';
@@ -80,6 +81,7 @@ class MyApp extends StatelessWidget {
             '/PendingSales': (context) => const PendingSalesPage(),
             '/ListStats': (context) => const ListStatsPage(),
             '/CommitteeTasks': (context) => const CommitteeTasksPage(),
+            '/ArchiveRequests': (context) => const ArchiveRequestsPage(),
           },
           theme: AppTheme.themeData,
           darkTheme: AppTheme.themeData.copyWith(

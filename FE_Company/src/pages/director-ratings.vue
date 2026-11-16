@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import * as XLSX from 'xlsx'
 import { useSalesBranches } from '@/composables/useSalesBranches'
 import {
   directorCities,
@@ -59,7 +60,9 @@ const bucketError = ref('')
 const bucketCustomers = ref([])
 const bucketSearch = ref('')
 const activeBucket = ref(null)
+const bucketExporting = ref(false)
 const bucketPageSize = 500
+const bucketExportPageSize = 1000
 
 const today = new Date()
 const pad = n => String(n).padStart(2, '0')
@@ -1104,6 +1107,162 @@ async function searchBucketServer() {
   }
 }
 
+function formatExportDate(value) {
+  if (!value)
+    return ''
+  const raw = String(value)
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw))
+    return raw.slice(0, 10)
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime()))
+    return ''
+
+  return d.toLocaleDateString('en-CA')
+}
+
+function exportAmount(row, key) {
+  if (row.hidePaidRemaining && (key === 'amountPaid' || key === 'amountRemaining'))
+    return ''
+  const n = Number(row[key])
+
+  return Number.isFinite(n) ? n : ''
+}
+
+function safeFilePart(value) {
+  return String(value || '')
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40)
+}
+
+async function fetchBucketExportPage(bucket, q, skip) {
+  const { scope: apiScope, id: apiId } = trendScopeId()
+  const data = await directorStatsRatingCustomers({
+    cityValue: selected.value.value,
+    scope: apiScope,
+    id: apiId,
+    level: bucket.key,
+    fromDate: fromDate.value,
+    toDate: toDate.value,
+    take: bucketExportPageSize,
+    skip,
+    q: q || undefined,
+  })
+
+  return mapCustomerRows(unwrapCustomerList(data), bucket.label)
+}
+
+async function collectBucketExportRows() {
+  const bucket = activeBucket.value
+  const q = bucketSearch.value.trim()
+  if (!bucket || !selected.value)
+    return []
+
+  const expected = Number(bucketCounts.value?.[bucket.countKey] || 0)
+  const loaded = bucketCustomers.value
+
+  if (q && !bucketTruncated.value)
+    return filteredBucketCustomers.value.slice()
+  if (!q && expected > 0 && loaded.length >= expected)
+    return loaded.slice()
+  if (!q && !bucketTruncated.value && loaded.length)
+    return loaded.slice()
+
+  const rows = []
+  const seen = new Set()
+  let skip = 0
+  const pageCap = q
+    ? 3
+    : Math.min(200, Math.max(4, Math.ceil((expected || bucketExportPageSize) / bucketExportPageSize) + 8))
+
+  for (let page = 0; page < pageCap; page += 1) {
+    const batch = await fetchBucketExportPage(bucket, q, skip)
+    if (!batch.length)
+      break
+    for (const row of batch) {
+      if (seen.has(row.customerId))
+        continue
+      seen.add(row.customerId)
+      rows.push(row)
+    }
+    if (!q && expected > 0 && rows.length >= expected)
+      break
+    if (q && batch.length < bucketExportPageSize)
+      break
+    skip += bucketExportPageSize
+  }
+
+  return rows
+}
+
+function writeCustomerSheet(rows) {
+  const headers = ['الاسم', 'الهاتف', 'التقييم', 'المتبقي', 'سعر البيع', 'الواصل', 'تاريخ البيع', 'آخر تسديد', 'رقم الزبون']
+  const aoa = [
+    headers,
+    ...rows.map(c => [
+      c.customerName || '',
+      c.phone || '',
+      c.ratingLabel || '',
+      exportAmount(c, 'amountRemaining'),
+      exportAmount(c, 'amountTotal'),
+      exportAmount(c, 'amountPaid'),
+      formatExportDate(c.dateSale),
+      formatExportDate(c.lastPaymentDate),
+      c.customerId ?? '',
+    ]),
+  ]
+  const sheet = XLSX.utils.aoa_to_sheet(aoa)
+  rows.forEach((row, index) => {
+    const phone = String(row.phone || '').trim()
+    if (!phone)
+      return
+    sheet[XLSX.utils.encode_cell({ r: index + 1, c: 1 })] = { t: 's', v: phone, z: '@' }
+  })
+  sheet['!cols'] = [
+    { wch: 28 },
+    { wch: 16 },
+    { wch: 12 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 12 },
+  ]
+
+  return sheet
+}
+
+async function exportBucketExcel() {
+  if (bucketExporting.value || !activeBucket.value || !selected.value)
+    return
+  bucketExporting.value = true
+  try {
+    const rows = await collectBucketExportRows()
+    rows.sort((a, b) => String(a.customerName || '').localeCompare(String(b.customerName || ''), 'ar'))
+    if (!rows.length) {
+      toast.warning('لا زبائن للتصدير')
+
+      return
+    }
+    const workbook = XLSX.utils.book_new()
+    const label = safeFilePart(activeBucket.value.label) || 'تقييم'
+    const sheetName = `زبائن ${label}`.replace(/[:\\/?*[\]]/g, ' ').trim().slice(0, 31) || 'زبائن'
+    XLSX.utils.book_append_sheet(workbook, writeCustomerSheet(rows), sheetName)
+    workbook.Workbook = { Views: [{ RTL: true }] }
+    const parts = ['زبائن', label, safeFilePart(selected.value.name), safeFilePart(bucketSearch.value.trim())].filter(Boolean)
+    XLSX.writeFile(workbook, `${parts.join('_')}.xlsx`)
+    toast.success(`تم تصدير ${rows.length} زبون`)
+  }
+  catch (err) {
+    toast.error(err?.response?.data?.message || err?.message || 'تعذر تصدير القائمة')
+  }
+  finally {
+    bucketExporting.value = false
+  }
+}
+
 const RETURN_KEY = 'director-ratings-return-v1'
 
 function saveDirectorReturnState() {
@@ -1981,14 +2140,26 @@ onBeforeUnmount(() => {})
               placeholder="بحث بالاسم أو الهاتف…"
               @keyup.enter="searchBucketServer"
             />
-            <VBtn
-              color="primary"
-              variant="tonal"
-              :loading="bucketBusy"
-              @click="searchBucketServer"
-            >
-              بحث في السيرفر
-            </VBtn>
+            <div class="bucket-toolbar-actions">
+              <VBtn
+                color="primary"
+                variant="tonal"
+                :loading="bucketBusy"
+                @click="searchBucketServer"
+              >
+                بحث في السيرفر
+              </VBtn>
+              <VBtn
+                color="success"
+                variant="tonal"
+                prepend-icon="tabler-file-spreadsheet"
+                :loading="bucketExporting"
+                :disabled="bucketBusy || (!filteredBucketCustomers.length && !bucketSearch.trim())"
+                @click="exportBucketExcel"
+              >
+                تصدير إلى Excel
+              </VBtn>
+            </div>
           </div>
           <p
             v-if="bucketTruncated"
@@ -2635,6 +2806,12 @@ onBeforeUnmount(() => {})
   grid-template-columns: 1fr auto;
   gap: 0.75rem;
   align-items: center;
+}
+
+.bucket-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .customer-grid {

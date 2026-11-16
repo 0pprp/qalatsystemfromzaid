@@ -1,7 +1,9 @@
 /**
- * Legal (IsLegal) customers: الواصل / الباقي are shown (no longer masked).
- * Helpers kept so call sites stay stable; hide always returns false.
+ * Legal (IsLegal) customers: الواصل / الباقي stay hidden for every user
+ * except المحاسب الرئيسي. Sale orders are not covered here.
  */
+
+const MAIN_ACCOUNTANT = 'محاسب رئيسي'
 
 function truthyFlag(v) {
   if (v === true || v === 1 || v === '1')
@@ -13,6 +15,25 @@ function truthyFlag(v) {
   }
 
   return false
+}
+
+function viewerUserType(ctx) {
+  if (ctx && Object.prototype.hasOwnProperty.call(ctx, 'userType'))
+    return String(ctx.userType ?? '').trim()
+
+  try {
+    if (typeof localStorage === 'undefined' || !localStorage)
+      return ''
+
+    return String(localStorage.getItem('UserType') || '').trim()
+  }
+  catch {
+    return ''
+  }
+}
+
+export function isMainAccountantViewer(ctx = null) {
+  return viewerUserType(ctx) === MAIN_ACCOUNTANT
 }
 
 export function isLegalCustomer(row) {
@@ -27,14 +48,19 @@ export function isLegalCustomer(row) {
 
 /**
  * @param {object} row
- * @param {{ showType?: string } | null} [ctx]
- * @returns {boolean} always false — amounts stay visible for accountant/director
+ * @param {{ showType?: string, userType?: string } | null} [ctx]
+ * @returns {boolean}
  */
 export function shouldHidePaidRemaining(row, ctx = null) {
-  return false
+  if (isMainAccountantViewer(ctx))
+    return false
+  if (ctx?.showType === 'القانونية')
+    return true
+
+  return isLegalCustomer(row)
 }
 
-/** @returns {number|null} null when missing */
+/** @returns {number|null} null when hidden or missing */
 export function visibleReceiptsTotal(row, ctx = null) {
   if (shouldHidePaidRemaining(row, ctx))
     return null
@@ -43,7 +69,7 @@ export function visibleReceiptsTotal(row, ctx = null) {
   return v == null || v === '' ? null : Number(v)
 }
 
-/** @returns {number|null} null when missing */
+/** @returns {number|null} null when hidden or missing */
 export function visibleAmountRemaining(row, ctx = null) {
   if (shouldHidePaidRemaining(row, ctx))
     return null
@@ -59,7 +85,7 @@ export function formatHiddenFinancial(value, formatFn) {
   return typeof formatFn === 'function' ? formatFn(value) : String(value)
 }
 
-/** Sum receipts/remaining for widgets — includes legal customers. */
+/** Sum receipts/remaining for widgets — skips rows whose amounts are hidden. */
 export function sumVisibleFinancial(rows, picker, ctx = null) {
   let sum = 0
   for (const row of rows || []) {

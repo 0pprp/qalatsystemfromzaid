@@ -6,6 +6,13 @@ import { useTheme } from 'vuetify'
 import { findProvince } from '@/utils/provinceCatalog'
 import { useCities, isLocalLab, isDemo, LOCAL_API, DEMO_API } from '@/composables/useCities'
 import { salesGatewayBase } from '@/composables/useSalesBranches'
+import {
+  isArchiveManagerRole,
+  isCommitteeRole,
+  isSupervisorRole,
+  ROLE_DIRECTOR,
+  storeAllowedCities,
+} from '@/utils/oversightRoles'
 
 // Import assets
 import bgImage from '@images/background.png'
@@ -39,6 +46,41 @@ const validateForm = async () => {
 }
 
 
+function acceptCentralRole(res) {
+  const userType = String(res?.userType || res?.UserType || '')
+  const known = userType === ROLE_DIRECTOR || isSupervisorRole(userType) || isCommitteeRole(userType) || isArchiveManagerRole(userType)
+  if (!res?.token || !known)
+    return false
+  localStorage.setItem('Token', res.token)
+  localStorage.setItem('Expiration', res.expiration || '')
+  localStorage.setItem('UserID', String(res.userId ?? 0))
+  localStorage.setItem('UserName', res.userName || form.value.userName)
+  localStorage.setItem('UserType', userType)
+  localStorage.setItem('LinkCity', salesGatewayBase())
+  localStorage.setItem('CityName', res.cityName || (isCommitteeRole(userType) ? 'فروع اللجنة' : 'كل المحافظات'))
+  storeAllowedCities(res.allowedCities || res.AllowedCities || [])
+  localStorage.removeItem('Database')
+  localStorage.removeItem('SalesManagerScope')
+  if (userType === ROLE_DIRECTOR) {
+    localStorage.setItem('DirectorScope', 'central')
+    localStorage.removeItem('MonitorScope')
+  }
+  else {
+    localStorage.setItem('MonitorScope', 'central')
+    localStorage.removeItem('DirectorScope')
+  }
+  loginLoadingBtn.value = false
+  if (!isArchiveManagerRole(userType))
+    import('@/composables/warmDirectorCache').then(m => m.warmDirectorCacheInBackground()).catch(() => {})
+  if (isArchiveManagerRole(userType))
+    router.push('/archive-overview')
+  else if (isCommitteeRole(userType))
+    router.push('/director-delegate-followup')
+  else
+    router.push({ path: '/director-ratings', query: {} })
+  return true
+}
+
 async function login() {
   showAlert.value = false
   loginLoadingBtn.value = false
@@ -57,44 +99,8 @@ async function login() {
           body: JSON.stringify(form.value),
         }).then(res => res.json()).catch(() => null)
 
-        if (directorRes?.token && directorRes.userType === 'المدير') {
-          localStorage.setItem('Token', directorRes.token)
-          localStorage.setItem('Expiration', directorRes.expiration)
-          localStorage.setItem('UserID', String(directorRes.userId ?? 0))
-          localStorage.setItem('UserName', directorRes.userName || form.value.userName)
-          localStorage.setItem('UserType', 'المدير')
-          localStorage.setItem('DirectorScope', 'central')
-          localStorage.setItem('LinkCity', salesGatewayBase())
-          localStorage.setItem('CityName', 'كل المحافظات')
-          localStorage.removeItem('Database')
-          localStorage.removeItem('SalesManagerScope')
-          localStorage.removeItem('MonitorScope')
-          loginLoadingBtn.value = false
-          import('@/composables/warmDirectorCache').then(m => m.warmDirectorCacheInBackground()).catch(() => {})
-          router.push({ path: '/director-ratings', query: {} })
-
+        if (directorRes?.token && acceptCentralRole(directorRes))
           return
-        }
-
-        // LoginDirector may return المراقب (gateway fallback) — all provinces, no city.
-        if (directorRes?.token && directorRes.userType === 'المراقب') {
-          localStorage.setItem('Token', directorRes.token)
-          localStorage.setItem('Expiration', directorRes.expiration)
-          localStorage.setItem('UserID', String(directorRes.userId ?? 0))
-          localStorage.setItem('UserName', directorRes.userName || form.value.userName)
-          localStorage.setItem('UserType', 'المراقب')
-          localStorage.setItem('MonitorScope', 'central')
-          localStorage.setItem('LinkCity', salesGatewayBase())
-          localStorage.setItem('CityName', 'كل المحافظات')
-          localStorage.removeItem('Database')
-          localStorage.removeItem('SalesManagerScope')
-          localStorage.removeItem('DirectorScope')
-          loginLoadingBtn.value = false
-          import('@/composables/warmDirectorCache').then(m => m.warmDirectorCacheInBackground()).catch(() => {})
-          router.push({ path: '/director-ratings', query: {} })
-
-          return
-        }
 
         const monitorRes = await fetch(`${salesGatewayBase()}Auth/LoginMonitor`, {
           method: 'POST',
@@ -109,24 +115,8 @@ async function login() {
           return { ok: res.ok, status: res.status, body }
         }).catch(() => null)
 
-        if (monitorRes?.body?.token && monitorRes.body.userType === 'المراقب') {
-          localStorage.setItem('Token', monitorRes.body.token)
-          localStorage.setItem('Expiration', monitorRes.body.expiration)
-          localStorage.setItem('UserID', String(monitorRes.body.userId ?? 0))
-          localStorage.setItem('UserName', monitorRes.body.userName || form.value.userName)
-          localStorage.setItem('UserType', 'المراقب')
-          localStorage.setItem('MonitorScope', 'central')
-          localStorage.setItem('LinkCity', salesGatewayBase())
-          localStorage.setItem('CityName', 'كل المحافظات')
-          localStorage.removeItem('Database')
-          localStorage.removeItem('SalesManagerScope')
-          localStorage.removeItem('DirectorScope')
-          loginLoadingBtn.value = false
-          import('@/composables/warmDirectorCache').then(m => m.warmDirectorCacheInBackground()).catch(() => {})
-          router.push({ path: '/director-ratings', query: {} })
-
+        if (monitorRes?.body?.token && acceptCentralRole(monitorRes.body))
           return
-        }
 
         if (monitorRes?.status === 404) {
           centralAuthHint = 'مسار دخول المراقب غير متاح على السيرفر — انشر/أعد تشغيل بوابة المبيعات'
@@ -161,7 +151,7 @@ async function login() {
           localStorage.setItem('CityName', 'كل المحافظات')
           localStorage.removeItem('Database')
           loginLoadingBtn.value = false
-          router.push('/sales-manager-dashboard')
+          router.push('/sales-manager-employees')
 
           return
         }
@@ -299,7 +289,7 @@ async function login() {
         localStorage.setItem("Database", database)
         localStorage.removeItem('SalesManagerScope')
 
-        router.push(userType === 'مدير مبيعات' ? '/sales-manager-dashboard' : '/')
+        router.push(userType === 'مدير مبيعات' ? '/sales-manager-employees' : '/')
       }
     } catch (err) {
       loginLoadingBtn.value = false

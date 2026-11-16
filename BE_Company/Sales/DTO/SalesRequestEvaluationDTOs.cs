@@ -118,6 +118,18 @@ namespace BE_Company.Sales.DTO
         public int ReceiptCount { get; set; }
         public bool IsLegal { get; set; }
         public bool IsSettled { get; set; }
+        /// <summary>
+        /// Finished accounts only: each payment in the 30 days ending on the last
+        /// payment whose amount is at least 20% of the sale total.
+        /// </summary>
+        public List<SalesRequestLargePaymentNoteDTO> LargeClosingPayments { get; set; } = [];
+    }
+
+    public sealed class SalesRequestLargePaymentNoteDTO
+    {
+        public DateTime PaymentDate { get; set; }
+        public double Amount { get; set; }
+        public string Text { get; set; } = "";
     }
 
     public sealed class SalesRequestEvaluationHitsPageDTO

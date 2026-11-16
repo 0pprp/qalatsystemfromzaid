@@ -6,6 +6,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -36,6 +37,7 @@ const paymentDetails = ref({
   amountRemaining: 0,
   paymentAmount: 0,
   paymentDate: new Date().toLocaleDateString('en-CA'),
+  hidePaidRemaining: false,
 })
 
 
@@ -88,10 +90,12 @@ async function openPaymentDialog(item) {
     currentCustomerID.value=data.customerID
     paymentDetails.value.customerName = data.customerName
     paymentDetails.value.delegateName = data.delegateName
+    const hideFin = shouldHidePaidRemaining(data)
     paymentDetails.value.amountTotalSales = data.amountTotalSales || 0
     paymentDetails.value.amountDaySales = data.amountDaySales || 0
-    paymentDetails.value.receiptsTotal = data.receiptsTotal || 0
-    paymentDetails.value.amountRemaining = data.amountRemaining || 0
+    paymentDetails.value.hidePaidRemaining = hideFin
+    paymentDetails.value.receiptsTotal = hideFin ? 0 : (data.receiptsTotal || 0)
+    paymentDetails.value.amountRemaining = hideFin ? 0 : (data.amountRemaining || 0)
     paymentDetails.value.paymentAmount = data.amountDaySales || 0
     paymentDetails.value.paymentDate = new Date().toLocaleDateString('en-CA')
     paymentDialog.value = true
@@ -994,7 +998,7 @@ const onNumberInput = e => {
                 الواصل
               </VLabel>
               <VTextField
-                :value="formattedNumber(paymentDetails.receiptsTotal)"
+                :value="paymentDetails.hidePaidRemaining ? '—' : formattedNumber(paymentDetails.receiptsTotal)"
                 readonly
                 prepend-inner-icon="tabler-currency-dollar"
               />
@@ -1005,7 +1009,7 @@ const onNumberInput = e => {
                 الباقي
               </VLabel>
               <VTextField
-                :value="formattedNumber(paymentDetails.amountRemaining)"
+                :value="paymentDetails.hidePaidRemaining ? '—' : formattedNumber(paymentDetails.amountRemaining)"
                 readonly
                 prepend-inner-icon="tabler-alert-circle"
               />

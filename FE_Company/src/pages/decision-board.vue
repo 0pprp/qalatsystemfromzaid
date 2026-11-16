@@ -6,6 +6,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import { useToast } from '@/composables/useToast'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 import { useUserRole } from '@/composables/useUserRole'
 import {
   directorLegalConversionApprove,
@@ -22,6 +23,7 @@ const router = useRouter()
 const toast = useToast()
 const { canDecide, isAdmin, isMonitor } = useUserRole()
 const canReviewLegal = computed(() => isMonitor.value)
+const hideLegalMoney = computed(() => shouldHidePaidRemaining({ isLegal: true }))
 const {
   cityValue: monitorCity,
   cityItems: monitorCityItems,
@@ -677,8 +679,8 @@ function legalExportCell(row, key) {
   case 'status': return legalStatusLabel(row.status)
   case 'requestedByName': return row.requestedByName || '—'
   case 'delegateName': return row.delegateName || '—'
-  case 'paidPercent': return row.paidPercent ?? '—'
-  case 'weekPaid': return row.weekPaid ?? '—'
+  case 'paidPercent': return hideLegalMoney.value ? '—' : (row.paidPercent ?? '—')
+  case 'weekPaid': return hideLegalMoney.value ? '—' : (row.weekPaid ?? '—')
   case 'requestNote': return row.requestNote || '—'
   case 'requestedAt': return legalFmtDate(row.requestedAt)
   case 'reviewedByName': return row.reviewedByName || '—'
@@ -686,13 +688,13 @@ function legalExportCell(row, key) {
   case 'reviewedAt': return legalFmtDate(row.reviewedAt)
   case 'dateSaleDevice': return legalFmtDate(row.dateSaleDevice)
   case 'amountTotalSales': return row.amountTotalSales ?? '—'
-  case 'receiptsTotal': return row.receiptsTotal ?? '—'
-  case 'amountRemaining': return row.amountRemaining ?? '—'
+  case 'receiptsTotal': return hideLegalMoney.value ? '—' : (row.receiptsTotal ?? '—')
+  case 'amountRemaining': return hideLegalMoney.value ? '—' : (row.amountRemaining ?? '—')
   case 'amountDaySales': return row.amountDaySales ?? '—'
   case 'lastPaymentDate': return legalFmtDate(row.lastPaymentDate)
-  case 'lastPaymentAmount': return row.lastPaymentAmount ?? '—'
+  case 'lastPaymentAmount': return hideLegalMoney.value ? '—' : (row.lastPaymentAmount ?? '—')
   case 'receiptRateDevice':
-    return row.receiptRateDevice != null ? `${row.receiptRateDevice}%` : '—'
+    return hideLegalMoney.value ? '—' : (row.receiptRateDevice != null ? `${row.receiptRateDevice}%` : '—')
   case 'countReceiptDevice': return row.countReceiptDevice ?? '—'
   case 'numberOfDayDevice': return row.numberOfDayDevice ?? '—'
   case 'address': return row.address || '—'
@@ -1069,7 +1071,7 @@ onMounted(() => {
       </template>
       <template #item.weekPaid="{ item }">
         <div class="premium-amount amt-total-receipts">
-          {{ formattedNumber(item.weekPaid) }}
+          {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.weekPaid) }}
         </div>
       </template>
       <template #item.paidPercent="{ item }">
@@ -1078,12 +1080,12 @@ onMounted(() => {
           size="small"
           label
         >
-          {{ item.paidPercent ?? 0 }} %
+          {{ shouldHidePaidRemaining(item) ? '—' : `${item.paidPercent ?? 0} %` }}
         </VChip>
       </template>
       <template #item.amountRemaining="{ item }">
         <div class="premium-amount amt-remaining">
-          {{ formattedNumber(item.amountRemaining) }}
+          {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.amountRemaining) }}
         </div>
       </template>
       <template #item.lastPaymentDate="{ item }">
@@ -1316,25 +1318,25 @@ onMounted(() => {
           <span class="legal-cell-nowrap">{{ formattedNumber(item.amountTotalSales) }}</span>
         </template>
         <template #item.receiptsTotal="{ item }">
-          <span class="legal-cell-nowrap">{{ formattedNumber(item.receiptsTotal) }}</span>
+          <span class="legal-cell-nowrap">{{ hideLegalMoney ? '—' : formattedNumber(item.receiptsTotal) }}</span>
         </template>
         <template #item.amountRemaining="{ item }">
-          <span class="legal-cell-nowrap">{{ formattedNumber(item.amountRemaining) }}</span>
+          <span class="legal-cell-nowrap">{{ hideLegalMoney ? '—' : formattedNumber(item.amountRemaining) }}</span>
         </template>
         <template #item.amountDaySales="{ item }">
           <span class="legal-cell-nowrap">{{ formattedNumber(item.amountDaySales) }}</span>
         </template>
         <template #item.weekPaid="{ item }">
-          <span class="legal-cell-nowrap">{{ formattedNumber(item.weekPaid) }}</span>
+          <span class="legal-cell-nowrap">{{ hideLegalMoney ? '—' : formattedNumber(item.weekPaid) }}</span>
         </template>
         <template #item.lastPaymentAmount="{ item }">
-          <span class="legal-cell-nowrap">{{ formattedNumber(item.lastPaymentAmount) }}</span>
+          <span class="legal-cell-nowrap">{{ hideLegalMoney ? '—' : formattedNumber(item.lastPaymentAmount) }}</span>
         </template>
         <template #item.paidPercent="{ item }">
-          <span class="legal-cell-nowrap">{{ item.paidPercent != null ? `${Number(item.paidPercent).toFixed(1)}%` : '—' }}</span>
+          <span class="legal-cell-nowrap">{{ hideLegalMoney ? '—' : (item.paidPercent != null ? `${Number(item.paidPercent).toFixed(1)}%` : '—') }}</span>
         </template>
         <template #item.receiptRateDevice="{ item }">
-          <span class="legal-cell-nowrap">{{ item.receiptRateDevice != null ? `${item.receiptRateDevice}%` : '—' }}</span>
+          <span class="legal-cell-nowrap">{{ hideLegalMoney ? '—' : (item.receiptRateDevice != null ? `${item.receiptRateDevice}%` : '—') }}</span>
         </template>
         <template #item.requestNote="{ item }">
           <span

@@ -24,6 +24,7 @@ public sealed class DirectorSalesFollowupRatingRowDto
     public string? Note { get; set; }
     public DateTime RatingDate { get; set; }
     public string? ListName { get; set; }
+    public int? CustomerId { get; set; }
     public string? CustomerName { get; set; }
     public int? ListId { get; set; }
     public int? RequestId { get; set; }
@@ -47,18 +48,30 @@ public sealed class DirectorSalesFollowupSystemDayAvgDto
     public int CustomerCount { get; set; }
 }
 
+/// <summary>This agent's sales inside one branch list (قائمة / مندوب).</summary>
+public sealed class DirectorSalesFollowupListSalesDto
+{
+    public int ListId { get; set; }
+    public string ListName { get; set; } = "";
+    public int SalesCount { get; set; }
+    public double AverageScore { get; set; }
+    public string RatingLabel { get; set; } = "";
+}
+
 public sealed class DirectorSalesFollowupDetailDto
 {
     public DirectorSalesFollowupEmployeeCardDto Employee { get; set; } = new();
     public DirectorSalesFollowupRatingRowDto? ManagerRating { get; set; }
     public DirectorSalesFollowupRatingBucketDto SalesDelegateRatings { get; set; } = new();
     public DirectorSalesFollowupRatingBucketDto FollowerSaleAuthRatings { get; set; } = new();
-    /// <summary>تقييم مندوب الجباية عند أول مبيع — لوحة المدير: ≤6 فقط بدون اسم زبون.</summary>
+    /// <summary>تقييم مندوب الجباية عند أول مبيع — لوحة المدير: ≤6 مع اسم الزبون.</summary>
     public DirectorSalesFollowupRatingBucketDto CollectionDelegateRatings { get; set; } = new();
     /// <summary>آخر 30 متوسط يومي لتقييم النظام (Snapshot لكل يوم).</summary>
     public IReadOnlyList<DirectorSalesFollowupSystemDayAvgDto> SystemRatingHistory { get; set; } = [];
     /// <summary>زبائن سدّدوا بالكامل (باقي ≤ 0 وغير قانونية).</summary>
     public int ZeroedCustomerCount { get; set; }
+    /// <summary>مبيعات هذا المندوب في كل قائمة بالمحافظة، مع القوائم بلا مبيعات.</summary>
+    public IReadOnlyList<DirectorSalesFollowupListSalesDto> ListSales { get; set; } = [];
     /// <summary>Customers embedded for one-shot FE load (same shape as متابعة المندوبين).</summary>
     public IReadOnlyList<DirectorDelegateFollowupCustomerDto> Customers { get; set; } = [];
     /// <summary>خط التحويلات — نفس منطق متابعة المندوبين على زبائن هذا البائع.</summary>
@@ -182,15 +195,17 @@ public sealed class DirectorSalesFollowupService : IDirectorSalesFollowupService
         var authTask = LoadFollowerSaleAuthHistoryAsync(employeeId, customerIds, ct);
         var collectorTask = LoadCollectionDelegateHistoryAsync(customerIds, ct);
         var custTask = BuildCustomerRowsAsync(customerIds, facts, asOf, ct);
-        await Task.WhenAll(authTask, collectorTask, custTask);
+        var listsTask = LoadBranchListsAsync(ct);
+        await Task.WhenAll(authTask, collectorTask, custTask, listsTask);
 
         var customers = await custTask;
         var factsList = facts as IReadOnlyList<CustomerRatingFacts> ?? facts.ToList();
-        // Board: ≤6 only, anonymized (score + note + date). High left empty.
+        // Board: ≤6 only, with the customer so the name can open the profile.
         var folLow = DirectorSalesFollowupRules.AnonymizeLowOnly(await authTask);
         var colLow = DirectorSalesFollowupRules.AnonymizeLowOnly(await collectorTask);
         var systemHistory = DirectorSalesFollowupRules.BuildSystemAverageHistory(factsList, asOf);
         var zeroedCount = DirectorSalesFollowupRules.CountZeroedCustomers(factsList);
+        var listSales = DirectorSalesFollowupRules.BuildListSales(await listsTask, factsList, asOf);
 
         // Same cohort as متابعة المندوبين: remaining > 0 (legal included for التحويل/قانونية)
         var openBalance = factsList.Where(f => f.AmountRemaining > 0).ToList();
@@ -209,6 +224,7 @@ public sealed class DirectorSalesFollowupService : IDirectorSalesFollowupService
             CollectionDelegateRatings = new DirectorSalesFollowupRatingBucketDto { High = [], Low = colLow },
             SystemRatingHistory = systemHistory,
             ZeroedCustomerCount = zeroedCount,
+            ListSales = listSales,
             Customers = customers,
             Conversion = conversion,
             Marker = DirectorSalesFollowupRules.DeployMarker,
@@ -690,6 +706,7 @@ SELECT TOP (60)
     CAST(a.Rating AS int) AS Score,
     a.Note,
     CAST(a.AuthenticatedAtUtc AS date) AS RatingDate,
+    a.CustomerId AS CustomerId,
     ISNULL(c.CustomerName, N'') AS CustomerName,
     a.ListId,
     d.DelegateName AS ListName,
@@ -737,10 +754,17 @@ SELECT TOP (60)
     CAST(sr.ShopRating AS int) AS Score,
     sr.ShopRatingNote AS Note,
     CAST(COALESCE(sr.CompletedAtUtc, sr.AuthenticatedAtUtc, sr.UpdatedAtUtc, sr.CreatedAtUtc) AS date) AS RatingDate,
+    COALESCE(NULLIF(sr.ExistingCustomerId, 0), NULLIF(sd.CustomerId, 0)) AS CustomerId,
     sr.CustomerName,
     sr.Id AS RequestId,
     N'shop' AS Kind
 FROM dbo.SalesRequests sr
+LEFT JOIN (
+    SELECT SalesRequestId, MAX(CustomerId) AS CustomerId
+    FROM dbo.SalesDrafts
+    WHERE CustomerId > 0
+    GROUP BY SalesRequestId
+) sd ON sd.SalesRequestId = sr.Id
 WHERE sr.ShopRating IS NOT NULL
   AND sr.ShopRating >= 0
   AND sr.TargetEmployeeId = @EmployeeId
@@ -782,6 +806,7 @@ SELECT TOP (60)
     CAST(e.Rating AS int) AS Score,
     e.Note,
     CAST(e.CreatedAtUtc AS date) AS RatingDate,
+    e.CustomerId AS CustomerId,
     ISNULL(c.CustomerName, N'') AS CustomerName,
     e.ListId,
     COALESCE(NULLIF(e.DelegateName, N''), d.DelegateName) AS ListName,
@@ -848,10 +873,51 @@ BEGIN
 END", cancellationToken: ct));
     }
 
+    private async Task<IReadOnlyList<DirectorSalesFollowupRules.BranchListRef>> LoadBranchListsAsync(
+        CancellationToken ct)
+    {
+        try
+        {
+            await using var c = Open();
+            var rows = await c.QueryAsync<(int ListId, string? ListName, int State)>(new CommandDefinition(@"
+SELECT
+    d.DelegateID AS ListId,
+    LTRIM(RTRIM(ISNULL(d.DelegateName, N''))) AS ListName,
+    ISNULL(d.DelegateState, 1) AS State
+FROM dbo.Delegates d;", cancellationToken: ct));
+            return rows
+                .Where(r => r.ListId > 0)
+                .Select(r => new DirectorSalesFollowupRules.BranchListRef(
+                    r.ListId,
+                    r.ListName ?? "",
+                    r.State == 1))
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     private async Task<IReadOnlyList<int>> LoadEmployeeCustomerIdsAsync(int employeeId, CancellationToken ct)
     {
         var map = await LoadEmployeeCustomerMapAsync([employeeId], ct);
         return map.TryGetValue(employeeId, out var ids) ? ids : [];
+    }
+
+    private sealed class DraftCustomerLink
+    {
+        public int EmployeeId { get; set; }
+        public int CustomerId { get; set; }
+        public int? CustomerSaleId { get; set; }
+        public string? PostingStatus { get; set; }
+    }
+
+    private sealed class BranchSalePresence
+    {
+        public bool Exists { get; set; }
+        public bool Active { get; set; }
+        public HashSet<int> SaleIds { get; } = [];
     }
 
     private async Task<Dictionary<int, List<int>>> LoadEmployeeCustomerMapAsync(
@@ -861,48 +927,144 @@ END", cancellationToken: ct));
         var map = employeeIds.ToDictionary(id => id, _ => new List<int>());
         if (employeeIds.Count == 0) return map;
 
+        // Only completed drafts prove a sale. SalesRequests.ExistingCustomerId is the customer's
+        // previous account (sold earlier, often by someone else) — a re-sale always posts a new
+        // CustomerID, so the request link must never be attributed to this employee.
+        var drafts = new List<DraftCustomerLink>();
+
         await using var c = Open();
+        var hasSaleId = await ScalarFlagAsync(c, @"
+SELECT CASE WHEN COL_LENGTH(N'dbo.SalesDrafts', N'CustomerSaleId') IS NULL THEN 0 ELSE 1 END", ct);
+        var hasPosting = await ScalarFlagAsync(c, @"
+SELECT CASE WHEN COL_LENGTH(N'dbo.SalesDrafts', N'PostingStatus') IS NULL THEN 0 ELSE 1 END", ct);
+        var saleExpr = hasSaleId == 1
+            ? "CustomerSaleId"
+            : "CAST(NULL AS int) AS CustomerSaleId";
+        var postingExpr = hasPosting == 1
+            ? "PostingStatus"
+            : "CAST(NULL AS nvarchar(20)) AS PostingStatus";
+
         foreach (var chunk in SqlInClauseBatch.Chunk(employeeIds))
         {
             try
             {
-                var fromDrafts = await c.QueryAsync<(int EmployeeId, int CustomerId)>(new CommandDefinition(@"
-SELECT DISTINCT EmployeeId, CustomerId
+                var fromDrafts = await c.QueryAsync<DraftCustomerLink>(new CommandDefinition($@"
+SELECT DISTINCT EmployeeId, CustomerId, {saleExpr}, {postingExpr}
 FROM dbo.SalesDrafts
 WHERE EmployeeId IN @Ids
   AND Status = N'Completed'
   AND CustomerId IS NOT NULL AND CustomerId > 0;",
                     new { Ids = chunk }, cancellationToken: ct));
-                foreach (var row in fromDrafts)
-                {
-                    if (map.TryGetValue(row.EmployeeId, out var list))
-                        list.Add(row.CustomerId);
-                }
+                drafts.AddRange(fromDrafts);
             }
             catch { /* table may be missing */ }
+        }
 
-            try
-            {
-                var fromRequests = await c.QueryAsync<(int EmployeeId, int CustomerId)>(new CommandDefinition(@"
-SELECT DISTINCT TargetEmployeeId AS EmployeeId, ExistingCustomerId AS CustomerId
-FROM dbo.SalesRequests
-WHERE TargetEmployeeId IN @Ids
-  AND Status = N'Completed'
-  AND ExistingCustomerId IS NOT NULL AND ExistingCustomerId > 0;",
-                    new { Ids = chunk }, cancellationToken: ct));
-                foreach (var row in fromRequests)
-                {
-                    if (map.TryGetValue(row.EmployeeId, out var list))
-                        list.Add(row.CustomerId);
-                }
-            }
-            catch { /* ignore */ }
+        var customerIds = drafts.Select(d => d.CustomerId)
+            .Distinct()
+            .ToList();
+        var presence = await TryLoadBranchSalePresenceAsync(c, customerIds, ct);
+
+        foreach (var draft in drafts)
+        {
+            if (presence is not null && !DraftSaleStillCounts(draft, presence))
+                continue;
+            if (map.TryGetValue(draft.EmployeeId, out var list))
+                list.Add(draft.CustomerId);
         }
 
         foreach (var key in map.Keys.ToList())
             map[key] = map[key].Distinct().ToList();
 
         return map;
+    }
+
+    private static bool DraftSaleStillCounts(
+        DraftCustomerLink draft,
+        IReadOnlyDictionary<int, BranchSalePresence> presence)
+    {
+        presence.TryGetValue(draft.CustomerId, out var row);
+        var saleIds = row?.SaleIds;
+        var linkedExists = draft.CustomerSaleId is > 0
+            && saleIds is not null
+            && saleIds.Contains(draft.CustomerSaleId.Value);
+        return DirectorSalesFollowupRules.CountsAsExistingSale(
+            draft.CustomerSaleId,
+            draft.PostingStatus,
+            customerExists: row?.Exists == true,
+            customerActive: row?.Active == true,
+            linkedOfficialSaleExists: linkedExists,
+            customerHasAnyOfficialSale: saleIds is { Count: > 0 });
+    }
+
+    /// <summary>
+    /// Null when branch sales cannot be read — callers keep the previous completed-sale set.
+    /// </summary>
+    private async Task<Dictionary<int, BranchSalePresence>?> TryLoadBranchSalePresenceAsync(
+        SqlConnection c,
+        IReadOnlyList<int> customerIds,
+        CancellationToken ct)
+    {
+        if (customerIds.Count == 0)
+            return new Dictionary<int, BranchSalePresence>();
+
+        try
+        {
+            var map = new Dictionary<int, BranchSalePresence>();
+            foreach (var chunk in SqlInClauseBatch.Chunk(customerIds))
+            {
+                var customers = await c.QueryAsync<(int CustomerId, bool Active)>(new CommandDefinition(@"
+SELECT
+    CustomerID AS CustomerId,
+    CAST(CASE WHEN ISNULL(CustomerState, 1) = 1 THEN 1 ELSE 0 END AS bit) AS Active
+FROM dbo.Customers
+WHERE CustomerID IN @Ids;",
+                    new { Ids = chunk }, cancellationToken: ct));
+                foreach (var row in customers)
+                {
+                    map[row.CustomerId] = new BranchSalePresence
+                    {
+                        Exists = true,
+                        Active = row.Active,
+                    };
+                }
+
+                var sales = await c.QueryAsync<(int CustomerId, int CustomerSaleId)>(new CommandDefinition(@"
+SELECT CustomerID AS CustomerId, CustomerSaleID AS CustomerSaleId
+FROM dbo.CustomersSales
+WHERE CustomerID IN @Ids;",
+                    new { Ids = chunk }, cancellationToken: ct));
+                foreach (var row in sales)
+                {
+                    if (!map.TryGetValue(row.CustomerId, out var presence))
+                    {
+                        presence = new BranchSalePresence();
+                        map[row.CustomerId] = presence;
+                    }
+
+                    if (row.CustomerSaleId > 0)
+                        presence.SaleIds.Add(row.CustomerSaleId);
+                }
+            }
+
+            return map;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task<int> ScalarFlagAsync(SqlConnection c, string sql, CancellationToken ct)
+    {
+        try
+        {
+            return await c.ExecuteScalarAsync<int>(new CommandDefinition(sql, cancellationToken: ct));
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private async Task<string?> ResolveEmployeeNameAsync(int employeeId, CancellationToken ct)

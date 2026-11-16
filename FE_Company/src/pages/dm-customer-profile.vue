@@ -7,6 +7,7 @@ import {
   dmCustomerProfile,
 } from '@/composables/delegatedManagerApi'
 import { formatIraqDate } from '@/composables/iraqDate'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 import { useToast } from '@/composables/useToast'
 
 defineOptions({ name: 'DmCustomerProfile' })
@@ -24,6 +25,7 @@ const initialPhone = computed(() => String(route.query.phone || '').trim())
 const busy = ref(false)
 const saving = ref(false)
 const profile = ref(null)
+const hideLegalPaidRemaining = computed(() => shouldHidePaidRemaining(profile.value))
 const notes = ref([])
 const noteText = ref('')
 
@@ -321,11 +323,11 @@ onMounted(load)
           </div>
           <div class="dm-kv">
             <span>الواصل</span>
-            <strong>{{ money(pick(paymentSummary, 'receiptsTotal', 'ReceiptsTotal')) }}</strong>
+            <strong>{{ hideLegalPaidRemaining ? '—' : money(pick(paymentSummary, 'receiptsTotal', 'ReceiptsTotal')) }}</strong>
           </div>
           <div class="dm-kv">
             <span>الباقي</span>
-            <strong>{{ money(pick(paymentSummary, 'amountRemaining', 'AmountRemaining')) }}</strong>
+            <strong>{{ hideLegalPaidRemaining ? '—' : money(pick(paymentSummary, 'amountRemaining', 'AmountRemaining')) }}</strong>
           </div>
           <div class="dm-kv">
             <span>تاريخ البيع</span>
@@ -407,11 +409,11 @@ onMounted(load)
             </div>
             <div class="dm-kv">
               <span>الواصل</span>
-              <strong>{{ money(sale.paid) }}</strong>
+              <strong>{{ hideLegalPaidRemaining ? '—' : money(sale.paid) }}</strong>
             </div>
             <div class="dm-kv">
               <span>الباقي</span>
-              <strong>{{ money(sale.remaining) }}</strong>
+              <strong>{{ hideLegalPaidRemaining ? '—' : money(sale.remaining) }}</strong>
             </div>
             <div class="dm-kv">
               <span>تاريخ البيع</span>

@@ -28,6 +28,7 @@ namespace BE_DelegateWebApplication.Controllers
         private readonly IFollowerDeclineService _decline;
         private readonly IFollowerCollectionPaymentService _collectionPayments;
         private readonly IFollowerDelegateDayRatingService _dayRatings;
+        private readonly IFollowerShopCaptureService _shopCapture;
 
         public FollowersController(
             IDelegateRepository delegateRepository,
@@ -47,7 +48,8 @@ namespace BE_DelegateWebApplication.Controllers
             IFollowerListCardsService listCards,
             IFollowerDeclineService decline,
             IFollowerCollectionPaymentService collectionPayments,
-            IFollowerDelegateDayRatingService dayRatings)
+            IFollowerDelegateDayRatingService dayRatings,
+            IFollowerShopCaptureService shopCapture)
         {
             _delegateRepository = delegateRepository;
             _customersRepository = customersRepository;
@@ -67,6 +69,7 @@ namespace BE_DelegateWebApplication.Controllers
             _decline = decline;
             _collectionPayments = collectionPayments;
             _dayRatings = dayRatings;
+            _shopCapture = shopCapture;
         }
 
         [HttpGet("Lists")]
@@ -246,6 +249,7 @@ namespace BE_DelegateWebApplication.Controllers
                 AmountDaySales = info.AmountDaySales,
                 AmountRemaining = info.AmountRemaining,
                 ReceiptsTotal = info.ReceiptsTotal,
+                IsLegal = info.IsLegal == true,
                 AmountReceverDay = info.AmountReceverDay,
                 ItemsNames = info.ItemsNames,
                 DateSaleDevice = info.DateSaleDevice,
@@ -948,6 +952,11 @@ namespace BE_DelegateWebApplication.Controllers
             public string? Note { get; set; }
             public decimal ShopStockEstimatedValue { get; set; }
             public decimal EstimatedDailyRevenue { get; set; }
+
+            /// <summary>Shop GPS taken by the follower during approval (app 1.0.41+). Photo is uploaded first via ShopCapture.</summary>
+            public double? Latitude { get; set; }
+            public double? Longitude { get; set; }
+            public double? Accuracy { get; set; }
         }
 
         [HttpPost("PendingSales/Authenticate")]
@@ -961,6 +970,12 @@ namespace BE_DelegateWebApplication.Controllers
                 var denied = await EnsureCustomerInScope(father.DelegateId, body.ListId, body.CustomerId, ct);
                 if (denied != null) return denied;
 
+                var hasPoint = body.Latitude is { } lat && body.Longitude is { } lng;
+                if (hasPoint && !FollowerShopCaptureService.IsValidIraqPoint(body.Latitude!.Value, body.Longitude!.Value))
+                {
+                    return BadRequest(new { message = "موقع المحل غير صالح" });
+                }
+
                 var row = await _saleAuth.AuthenticateAsync(
                     father.UserId ?? father.DelegateId,
                     father.DelegateName,
@@ -971,6 +986,13 @@ namespace BE_DelegateWebApplication.Controllers
                     body.ShopStockEstimatedValue,
                     body.EstimatedDailyRevenue,
                     ct);
+
+                if (hasPoint)
+                {
+                    await _shopCapture.SaveLocationAsync(
+                        body.CustomerId, body.Latitude!.Value, body.Longitude!.Value, body.Accuracy,
+                        father.UserId ?? father.DelegateId, ct);
+                }
 
                 // تقييم ≤6 → مبيع خاطئ لإشعار المدير المفوض (best-effort).
                 if (FollowerSaleAuthRules.IsWrongSaleRating(row.Rating))

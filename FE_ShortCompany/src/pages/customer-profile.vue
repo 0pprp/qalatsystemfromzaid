@@ -4,6 +4,7 @@ import axios from 'axios'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
+import { shouldHidePaidRemaining, formatHiddenFinancial, visibleAmountRemaining, visibleReceiptsTotal } from '@/composables/legalFinancialVisibility'
 import { useUserRole } from '@/composables/useUserRole'
 
 const apiUrl = localStorage.getItem('LinkCity')
@@ -13,6 +14,7 @@ const { canWriteNotes } = useUserRole()
 
 const customerID = computed(() => Number(route.query.customerID) || 0)
 const customer = ref(null)
+const hidePaidRemaining = computed(() => shouldHidePaidRemaining(customer.value))
 const notes = ref([])
 const decisions = ref([])
 const loading = ref(false)
@@ -186,7 +188,7 @@ onMounted(fetchProfile)
             class="pa-4"
           >
             <div class="text-caption">الواصل</div>
-            <div class="text-h6">{{ formattedNumber(customer?.receiptsTotal) }}</div>
+            <div class="text-h6">{{ hidePaidRemaining ? '—' : formatHiddenFinancial(visibleReceiptsTotal(customer), formattedNumber) }}</div>
           </VSheet>
         </VCol>
         <VCol cols="12" sm="6" md="3">
@@ -196,7 +198,7 @@ onMounted(fetchProfile)
             class="pa-4"
           >
             <div class="text-caption">الباقي</div>
-            <div class="text-h6">{{ formattedNumber(customer?.amountRemaining) }}</div>
+            <div class="text-h6">{{ hidePaidRemaining ? '—' : formatHiddenFinancial(visibleAmountRemaining(customer), formattedNumber) }}</div>
           </VSheet>
         </VCol>
         <VCol cols="12" sm="6" md="3">

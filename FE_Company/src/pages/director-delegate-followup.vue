@@ -4,14 +4,18 @@ import { useRoute, useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import {
   directorCities,
+  directorCitiesCached,
   directorDelegateFollowupListCustomers,
   directorDelegateFollowupListSummary,
   directorDelegateFollowupLists,
+  directorDelegateFollowupListsCached,
   directorDelegateFollowupUpsertBoardOperatorRating,
 } from '@/composables/directorApi'
 import { useSalesBranches } from '@/composables/useSalesBranches'
 import { useToast } from '@/composables/useToast'
 import { useUserRole } from '@/composables/useUserRole'
+import DelegateListsShopMap from '@/components/DelegateListsShopMap.vue'
+import DelegateSalesOrdersSection from '@/components/DelegateSalesOrdersSection.vue'
 
 defineOptions({ name: 'DirectorDelegateFollowup' })
 definePage({
@@ -28,22 +32,79 @@ const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 const { branches, fetchCities } = useSalesBranches()
-const { isDirectorOrMonitor } = useUserRole()
+const { canOpenOversightBoards, isAdmin, isCommittee, canRateHeadSlot, canRateAccountantSlot } = useUserRole()
 
-const gatewayCities = ref([])
+/** المحاسب الرئيسي: فرعه المحدد فقط (LinkCity) — بدون اختيار محافظة. */
+const canOpenBoard = computed(() => canOpenOversightBoards.value || isAdmin.value)
+
+function accountantCityKey() {
+  return String(localStorage.getItem('CityName') || '').trim() || 'branch'
+}
+
+const gatewayCities = ref(directorCitiesCached())
 const listsBusy = ref(false)
 const listCards = ref([])
 const summaryBusy = ref(false)
 const summary = ref(null)
 const detailCacheKey = ref('')
 
+/** خريطة القوائم — القوائم المحددة ولون كل قائمة (حسب ترتيب التحديد). */
+const MAP_LIST_COLORS = [
+  '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42b4d4',
+  '#f032e6', '#9a6324', '#469990', '#000075', '#808000', '#800000',
+]
+const mapListIds = ref([])
+const mapListColors = ref({})
+
+const mapLists = computed(() => mapListIds.value
+  .map(id => {
+    const card = listCards.value.find(c => c.listId === id)
+
+    return card ? { listId: id, listName: card.listName, color: mapListColors.value[id] } : null
+  })
+  .filter(Boolean))
+
+function isMapList(listId) {
+  return mapListIds.value.includes(listId)
+}
+
+function nextMapColor() {
+  const used = new Set(mapListIds.value.map(id => mapListColors.value[id]))
+
+  return MAP_LIST_COLORS.find(c => !used.has(c)) || MAP_LIST_COLORS[mapListIds.value.length % MAP_LIST_COLORS.length]
+}
+
+function toggleMapList(listId) {
+  if (isMapList(listId)) {
+    mapListIds.value = mapListIds.value.filter(id => id !== listId)
+
+    return
+  }
+  mapListColors.value = { ...mapListColors.value, [listId]: nextMapColor() }
+  mapListIds.value = [...mapListIds.value, listId]
+}
+
+function selectAllMapLists() {
+  for (const c of listCards.value) {
+    if (!isMapList(c.listId))
+      toggleMapList(c.listId)
+  }
+}
+
+function clearMapLists() {
+  mapListIds.value = []
+  mapListColors.value = {}
+}
+
 const customers = ref([])
 const customersBusy = ref(false)
 const customersCacheKey = ref('')
 const tableVisible = ref(false)
 const tableFilter = ref('all') // all | rating | legal | lt100 | 100to200
+const tableSearch = ref('')
 
 const rateDialog = ref(false)
+const rateSlot = ref('head')
 const rateBusy = ref(false)
 const rateScore = ref(8)
 const rateNote = ref('')
@@ -63,11 +124,11 @@ const NEW_SALE_UNPAID_MIN_DAYS = 3
 const unpaidNewSalesDialog = ref(false)
 
 const RATING_BUCKETS = [
-  { key: 'ممتاز', label: 'ممتاز' },
-  { key: 'جيد', label: 'جيد' },
-  { key: 'ضعيف', label: 'ضعيف' },
-  { key: 'متلكئ', label: 'متلكئ' },
-  { key: 'سيء', label: 'سيء' },
+  { key: 'ممتاز', label: 'ممتاز', revenueLabel: 'الواردات من الممتازين' },
+  { key: 'جيد', label: 'جيد', revenueLabel: 'الواردات من الجيدين' },
+  { key: 'ضعيف', label: 'ضعيف', revenueLabel: 'الواردات من الضعفاء' },
+  { key: 'متلكئ', label: 'متلكئ', revenueLabel: 'الواردات من المتلكئين' },
+  { key: 'سيء', label: 'سيء', revenueLabel: 'الواردات من السيئين' },
 ]
 
 /** ActivateInputRatingSlots_V1 — wired to follower day / BM visit / sales shop ratings */
@@ -78,13 +139,6 @@ const INPUT_RATING_SLOTS = [
     summaryKey: 'followerCommitteeRating',
     historyKey: 'followerCommitteeLast30Days',
     emptyHint: 'يظهر بعد إنهاء الجباية وتقييم القائمة',
-  },
-  {
-    key: 'supervision',
-    label: 'تقييم لجنة الإشراف (إدارة الفرع)',
-    summaryKey: 'supervisionCommitteeRating',
-    historyKey: 'supervisionCommitteeLast30Days',
-    emptyHint: 'يظهر بعد مغادرة الفرع وتقييم القائمة',
   },
   {
     key: 'salesDelegate',
@@ -162,7 +216,6 @@ const tableHeaders = computed(() =>
 const statusFilterItems = [
   { title: 'الكل', value: 'all' },
   ...RATING_BUCKETS.map(b => ({ title: b.label, value: b.key })),
-  { title: 'قانونية', value: 'legal' },
   { title: 'باقي أقل من 100,000', value: 'lt100' },
   { title: 'باقي 100–200 ألف', value: '100to200' },
 ]
@@ -212,6 +265,37 @@ const baghdadTodayIso = computed(() => {
     day: '2-digit',
   }).format(new Date())
 })
+
+function shiftIsoDate(iso, days) {
+  const [y, m, d] = String(iso || '').split('-').map(Number)
+  if (!y || !m || !d)
+    return ''
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dt.toISOString().slice(0, 10)
+}
+
+function isFridayIso(iso) {
+  const [y, m, d] = String(iso || '').split('-').map(Number)
+  if (!y || !m || !d)
+    return false
+
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 5
+}
+
+const baghdadYesterdayIso = computed(() => {
+  const day = shiftIsoDate(baghdadTodayIso.value, -1)
+
+  return isFridayIso(day) ? shiftIsoDate(day, -1) : day
+})
+
+const rateNoteRequired = computed(() => {
+  const score = Number(rateScore.value)
+  return Number.isFinite(score) && score <= 6
+})
+
+const visibleConversionTargets = computed(() =>
+  (summary.value?.conversion?.targets || []).filter(t => t.targetLabel !== 'قانونية'))
 
 function softError(e, fallback) {
   return String(e?.response?.data?.message || e?.message || fallback || 'حدث خطأ')
@@ -340,6 +424,20 @@ function normDayAmount(row) {
   }
 }
 
+function normBoardRating(raw) {
+  const board = raw || {}
+  const score = pick(board, 'score', 'Score')
+
+  return {
+    listId: Number(pick(board, 'listId', 'ListId') || 0),
+    ratingDate: pick(board, 'ratingDate', 'RatingDate') || null,
+    score: score == null || score === '' ? null : Number(score),
+    note: pick(board, 'note', 'Note') || null,
+    ratedByUserName: pick(board, 'ratedByUserName', 'RatedByUserName') || null,
+    hasRating: Boolean(pick(board, 'hasRating', 'HasRating')),
+  }
+}
+
 function normDayRating(row) {
   return {
     date: row.date ?? row.Date ?? null,
@@ -347,6 +445,7 @@ function normDayRating(row) {
     label: String(row.label ?? row.Label ?? ''),
     boardOperatorScore: row.boardOperatorScore ?? row.BoardOperatorScore ?? null,
     boardOperatorNote: row.boardOperatorNote ?? row.BoardOperatorNote ?? null,
+    boardOperatorRatedBy: row.boardOperatorRatedBy ?? row.BoardOperatorRatedBy ?? null,
   }
 }
 
@@ -372,6 +471,8 @@ function normTierMoney(row) {
     label: String(row.label ?? row.Label ?? ''),
     requiredDue: Number(row.requiredDue ?? row.RequiredDue ?? 0),
     collectedYesterday: Number(row.collectedYesterday ?? row.CollectedYesterday ?? 0),
+    customerCount: Number(row.customerCount ?? row.CustomerCount ?? 0),
+    payersYesterday: Number(row.payersYesterday ?? row.PayersYesterday ?? 0),
     collectedLast30Days: (row.collectedLast30Days ?? row.CollectedLast30Days ?? []).map(normDayAmount),
   }
 }
@@ -418,7 +519,6 @@ function normListCard(row) {
 function normSummary(row) {
   if (!row)
     return null
-  const board = pick(row, 'boardOperatorRating', 'BoardOperatorRating') || {}
   const conv = pick(row, 'conversion', 'Conversion') || {}
 
   return {
@@ -446,6 +546,7 @@ function normSummary(row) {
     tierMoney: (pick(row, 'tierMoney', 'TierMoney') || []).map(normTierMoney),
     realRatingLast30Days: (pick(row, 'realRatingLast30Days', 'RealRatingLast30Days') || []).map(normDayRating),
     boardOperatorLast30Days: (pick(row, 'boardOperatorLast30Days', 'BoardOperatorLast30Days') || []).map(normDayRating),
+    accountantBoardOperatorLast30Days: (pick(row, 'accountantBoardOperatorLast30Days', 'AccountantBoardOperatorLast30Days') || []).map(normDayRating),
     followerCommitteeLast30Days: (pick(row, 'followerCommitteeLast30Days', 'FollowerCommitteeLast30Days') || []).map(normDayRating),
     supervisionCommitteeLast30Days: (pick(row, 'supervisionCommitteeLast30Days', 'SupervisionCommitteeLast30Days') || []).map(normDayRating),
     salesDelegateLast30Days: (pick(row, 'salesDelegateLast30Days', 'SalesDelegateLast30Days') || []).map(normDayRating),
@@ -484,13 +585,10 @@ function normSummary(row) {
         }))
         .filter(t => t.targetLabel && t.targetLabel !== 'غير شيء'),
     },
-    boardOperatorRating: {
-      listId: Number(pick(board, 'listId', 'ListId') || 0),
-      ratingDate: pick(board, 'ratingDate', 'RatingDate') || null,
-      score: pick(board, 'score', 'Score') == null ? null : Number(pick(board, 'score', 'Score')),
-      note: pick(board, 'note', 'Note') || null,
-      hasRating: Boolean(pick(board, 'hasRating', 'HasRating')),
-    },
+    boardOperatorRating: normBoardRating(pick(row, 'boardOperatorRating', 'BoardOperatorRating')),
+    boardOperatorRatingToday: normBoardRating(pick(row, 'boardOperatorRatingToday', 'BoardOperatorRatingToday')),
+    accountantBoardOperatorRating: normBoardRating(pick(row, 'accountantBoardOperatorRating', 'AccountantBoardOperatorRating')),
+    accountantBoardOperatorRatingToday: normBoardRating(pick(row, 'accountantBoardOperatorRatingToday', 'AccountantBoardOperatorRatingToday')),
     followerCommitteeRating: normInputRating(pick(row, 'followerCommitteeRating', 'FollowerCommitteeRating')),
     supervisionCommitteeRating: normInputRating(pick(row, 'supervisionCommitteeRating', 'SupervisionCommitteeRating')),
     salesDelegateRating: normInputRating(pick(row, 'salesDelegateRating', 'SalesDelegateRating')),
@@ -520,16 +618,20 @@ const tierMoneyByLabel = computed(() => {
 })
 
 const filteredCustomers = computed(() => {
-  let rows = customers.value
+  let rows = customers.value.filter(c => !c.isLegal)
   const f = tableFilter.value
-  if (f === 'legal')
-    rows = rows.filter(c => c.isLegal)
-  else if (f === 'lt100')
+  if (f === 'lt100')
     rows = rows.filter(c => c.amountRemaining > 0 && c.amountRemaining < 100000)
   else if (f === '100to200')
     rows = rows.filter(c => c.amountRemaining >= 100000 && c.amountRemaining < 200000)
-  else if (f && f !== 'all')
-    rows = rows.filter(c => !c.isLegal && c.phantomRatingLabel === f)
+  else if (f && f !== 'all' && f !== 'legal')
+    rows = rows.filter(c => c.phantomRatingLabel === f)
+
+  const q = String(tableSearch.value || '').trim().toLowerCase()
+  if (q) {
+    rows = rows.filter(c => [c.customerName, c.phoneNumber, c.shopName, c.address, String(c.customerID)]
+      .some(v => String(v || '').toLowerCase().includes(q)))
+  }
 
   return rows
 })
@@ -715,12 +817,13 @@ function onRealRatingClick() {
   )
 }
 
-function onBoardOpClick(ev) {
+function onBoardOpClick(ev, slot = 'head') {
   if (ev?.target?.closest?.('button'))
     return
+  const accountant = slot === 'accountant'
   openHistory(
-    'تقييم عامل اللوحة — آخر 30 يوماً',
-    summary.value?.boardOperatorLast30Days || [],
+    `${boardSlotLabel(slot)} — آخر 30 يوماً`,
+    (accountant ? summary.value?.accountantBoardOperatorLast30Days : summary.value?.boardOperatorLast30Days) || [],
     'board',
   )
 }
@@ -779,11 +882,25 @@ function showTableWithFilter(key = 'all') {
   tableVisible.value = true
 }
 
-function openRateDialog(ev) {
+/** head = «تقييم لجنة المراقبة» (both committee members) · accountant = «تقييم المحاسب الرئيسي». */
+function boardSlotLabel(slot) {
+  return slot === 'accountant' ? 'تقييم المحاسب الرئيسي' : 'تقييم لجنة المراقبة'
+}
+
+function canRateSlot(slot) {
+  return slot === 'accountant' ? canRateAccountantSlot.value : canRateHeadSlot.value
+}
+
+function openRateDialog(ev, slot = 'head') {
   ev?.stopPropagation?.()
-  const cur = summary.value?.boardOperatorRating?.score
-  rateScore.value = cur == null ? 8 : Number(cur)
-  rateNote.value = summary.value?.boardOperatorRating?.note || ''
+  if (!canRateSlot(slot))
+    return
+  rateSlot.value = slot
+  const today = slot === 'accountant'
+    ? summary.value?.accountantBoardOperatorRatingToday
+    : summary.value?.boardOperatorRatingToday
+  rateScore.value = today?.score == null ? 8 : Number(today.score)
+  rateNote.value = today?.note || ''
   rateDialog.value = true
 }
 
@@ -793,8 +910,13 @@ async function saveBoardOperatorRating() {
   if (!city || !listId)
     return
   const score = Number(rateScore.value)
-  if (!Number.isFinite(score) || score < 0 || score > 10) {
-    toast.error('التقييم يجب أن يكون بين 0 و 10')
+  if (rateScore.value === '' || rateScore.value == null || !Number.isInteger(score) || score < 0 || score > 10) {
+    toast.error('التقييم يجب أن يكون رقماً صحيحاً بين 0 و 10')
+
+    return
+  }
+  if (score <= 6 && !String(rateNote.value || '').trim()) {
+    toast.error('الملاحظة إلزامية عندما يكون التقييم 6 أو أقل')
 
     return
   }
@@ -805,18 +927,24 @@ async function saveBoardOperatorRating() {
       listId,
       score,
       note: rateNote.value,
+      slot: rateSlot.value,
     })
     if (summary.value) {
-      summary.value.boardOperatorRating = {
+      const saved = {
         listId,
         ratingDate: row?.ratingDate ?? row?.RatingDate ?? baghdadTodayIso.value,
         score: Number(row?.score ?? row?.Score ?? score),
         note: row?.note ?? row?.Note ?? (rateNote.value || null),
+        ratedByUserName: row?.ratedByUserName ?? row?.RatedByUserName ?? null,
         hasRating: true,
       }
+      if (rateSlot.value === 'accountant')
+        summary.value.accountantBoardOperatorRatingToday = saved
+      else
+        summary.value.boardOperatorRatingToday = saved
     }
     rateDialog.value = false
-    toast.success('تم حفظ تقييم عامل اللوحة')
+    toast.success('تم حفظ التقييم لليوم')
     await loadListDetail({ force: true })
   }
   catch (e) {
@@ -828,6 +956,15 @@ async function saveBoardOperatorRating() {
 }
 
 async function ensureCityQuery() {
+  if (isAdmin.value) {
+    const own = accountantCityKey()
+    if (cityKey() !== own) {
+      const sameList = !route.query.city ? route.query : {}
+      await router.replace({ query: { ...sameList, city: own } })
+    }
+
+    return own
+  }
   const q = cityKey()
   if (q) {
     localStorage.setItem(CITY_STORAGE_KEY, q)
@@ -877,15 +1014,15 @@ async function backToLists() {
   tableFilter.value = null
 }
 
+/** Both branch sources in parallel; cached names stay on screen meanwhile (and on failure). */
 async function loadCities() {
-  try {
-    await fetchCities()
-    const rows = await directorCities()
-    gatewayCities.value = Array.isArray(rows) ? rows : []
-  }
-  catch {
-    gatewayCities.value = []
-  }
+  await Promise.allSettled([
+    fetchCities(),
+    directorCities().then(rows => {
+      if (Array.isArray(rows))
+        gatewayCities.value = rows
+    }),
+  ])
 }
 
 async function loadLists() {
@@ -895,13 +1032,18 @@ async function loadLists() {
 
     return
   }
-  listsBusy.value = true
+  // Last copy for this branch shows instantly; fresh copy replaces it when ready.
+  const cached = directorDelegateFollowupListsCached(city)
+  listCards.value = cached ? cached.map(normListCard).filter(c => c.listId > 0) : []
+  listsBusy.value = !cached
   try {
     const rows = await directorDelegateFollowupLists({ cityValue: city })
-    listCards.value = (Array.isArray(rows) ? rows : []).map(normListCard).filter(c => c.listId > 0)
+    if (cityKey() === city)
+      listCards.value = (Array.isArray(rows) ? rows : []).map(normListCard).filter(c => c.listId > 0)
   }
   catch (e) {
-    listCards.value = []
+    if (!cached)
+      listCards.value = []
     toast.error(softError(e, 'تعذر تحميل قوائم المندوبين'))
   }
   finally {
@@ -920,7 +1062,7 @@ async function preloadCustomers(city, listId, cacheKey) {
   customersBusy.value = true
   try {
     const cust = await directorDelegateFollowupListCustomers({ cityValue: city, listId })
-    customers.value = (Array.isArray(cust) ? cust : []).map(normCustomer).filter(c => c.customerID > 0)
+    customers.value = (Array.isArray(cust) ? cust : []).map(normCustomer).filter(c => c.customerID > 0 && !c.isLegal)
     customersCacheKey.value = cacheKey
   }
   catch (e) {
@@ -974,7 +1116,7 @@ async function loadListDetail({ force = false } = {}) {
 watch(
   () => [route.name, route.path, route.query.city, route.query.listId],
   async () => {
-    if (!isDirectorOrMonitor.value || !isFollowupRouteActive())
+    if (!canOpenBoard.value || !isFollowupRouteActive())
       return
     await ensureCityQuery()
     if (!cityKey())
@@ -986,10 +1128,17 @@ watch(
   },
 )
 
+// Map selection belongs to one branch's lists.
+watch(() => String(route.query.city || ''), (city, prev) => {
+  if (city !== prev)
+    clearMapLists()
+})
+
 onMounted(async () => {
-  if (!isDirectorOrMonitor.value)
+  if (!canOpenBoard.value)
     return
-  await loadCities()
+  if (!isAdmin.value)
+    void loadCities() // don't block lists/summary on branch names
   await ensureCityQuery()
   if (cityKey() && selectedListId.value > 0)
     await loadListDetail()
@@ -1011,7 +1160,7 @@ onMounted(async () => {
       </div>
       <div class="dfu-actions">
         <VBtn
-          v-if="cityKey()"
+          v-if="cityKey() && !isAdmin"
           variant="tonal"
           color="secondary"
           prepend-icon="tabler-map-pin"
@@ -1058,23 +1207,79 @@ onMounted(async () => {
         v-else
         class="list-cards"
       >
-        <button
+        <div
           v-for="card in listCards"
           :key="card.listId"
-          type="button"
-          class="list-card"
-          @click="openList(card.listId)"
+          class="list-card-wrap"
         >
-          <strong class="list-card__name">{{ card.listName }}</strong>
-          <span class="list-card__score">{{ fmtScore(card.realRating) }}</span>
-          <span class="list-card__label">{{ card.realRatingLabel || 'التقييم الحقيقي' }}</span>
-          <span class="list-card__count">
-            غير المصفرين:
-            <b>{{ card.nonZeroedCustomerCount }}</b>
-          </span>
-          <span class="list-card__meta muted">آخر تسديد: {{ fmtDate(card.lastPaymentDate) }}</span>
-        </button>
+          <button
+            type="button"
+            class="list-card"
+            :style="isMapList(card.listId) ? { borderColor: mapListColors[card.listId], boxShadow: `inset 0 0 0 1px ${mapListColors[card.listId]}` } : null"
+            @click="openList(card.listId)"
+          >
+            <strong class="list-card__name">{{ card.listName }}</strong>
+            <span class="list-card__score">{{ fmtScore(card.realRating) }}</span>
+            <span class="list-card__label">{{ card.realRatingLabel || 'التقييم الحقيقي' }}</span>
+            <span class="list-card__count">
+              غير المصفرين:
+              <b>{{ card.nonZeroedCustomerCount }}</b>
+            </span>
+            <span class="list-card__meta muted">آخر تسديد: {{ fmtDate(card.lastPaymentDate) }}</span>
+          </button>
+          <label
+            class="list-card__pick"
+            :title="isMapList(card.listId) ? 'إزالة من الخريطة' : 'عرض على الخريطة'"
+          >
+            <input
+              type="checkbox"
+              :checked="isMapList(card.listId)"
+              :aria-label="`عرض ${card.listName} على الخريطة`"
+              @change="toggleMapList(card.listId)"
+            >
+            <span
+              class="list-card__pick-box"
+              :style="isMapList(card.listId) ? { background: mapListColors[card.listId], borderColor: mapListColors[card.listId] } : null"
+            >
+              <VIcon
+                v-if="isMapList(card.listId)"
+                icon="tabler-check"
+                size="14"
+                color="white"
+              />
+            </span>
+            <span class="list-card__pick-text">الخريطة</span>
+          </label>
+        </div>
       </div>
+
+      <div
+        v-if="!listsBusy && listCards.length"
+        class="map-pick-bar"
+      >
+        <span class="muted">حدّد المربعات لعرض زبائن القوائم على الخريطة — كل قائمة بلون</span>
+        <VBtn
+          size="small"
+          variant="tonal"
+          @click="selectAllMapLists"
+        >
+          تحديد الكل
+        </VBtn>
+        <VBtn
+          v-if="mapListIds.length"
+          size="small"
+          variant="text"
+          @click="clearMapLists"
+        >
+          إلغاء التحديد ({{ mapListIds.length }})
+        </VBtn>
+      </div>
+
+      <DelegateListsShopMap
+        v-if="!listsBusy && listCards.length"
+        :city-value="cityKey()"
+        :lists="mapLists"
+      />
     </template>
 
     <template v-else>
@@ -1121,29 +1326,70 @@ onMounted(async () => {
             </button>
 
             <div
+              v-if="!isAdmin"
               class="sub-card sub-card--click sub-card--action"
               role="button"
               tabindex="0"
-              @click="onBoardOpClick"
-              @keydown.enter="onBoardOpClick"
+              @click="onBoardOpClick($event, 'head')"
+              @keydown.enter="onBoardOpClick($event, 'head')"
             >
-              <span class="sub-card__label">تقييم عامل اللوحة</span>
+              <span class="sub-card__label">تقييم لجنة المراقبة</span>
               <template v-if="summary.boardOperatorRating?.score != null">
                 <strong class="sub-card__value">{{ summary.boardOperatorRating.score }} / 10</strong>
                 <small v-if="summary.boardOperatorRating.note">{{ summary.boardOperatorRating.note }}</small>
+                <small
+                  v-if="summary.boardOperatorRating.ratedByUserName"
+                  class="muted"
+                >بواسطة: {{ summary.boardOperatorRating.ratedByUserName }}</small>
+                <small class="muted">{{ fmtDate(summary.boardOperatorRating.ratingDate) || baghdadYesterdayIso }}</small>
               </template>
               <template v-else>
                 <div class="sub-card__empty">
-                  لا يوجد تقييم لهذا اليوم
+                  لا يوجد تقييم ليوم {{ baghdadYesterdayIso }}
                 </div>
               </template>
               <VBtn
+                v-if="canRateHeadSlot"
                 size="small"
                 color="primary"
                 class="mt-2"
-                @click="openRateDialog"
+                @click="openRateDialog($event, 'head')"
               >
-                قيم المندوب ليوم {{ baghdadTodayIso }}
+                قيّم ليوم {{ baghdadTodayIso }}
+              </VBtn>
+            </div>
+
+            <div
+              v-if="!isCommittee"
+              class="sub-card sub-card--click sub-card--action"
+              role="button"
+              tabindex="0"
+              @click="onBoardOpClick($event, 'accountant')"
+              @keydown.enter="onBoardOpClick($event, 'accountant')"
+            >
+              <span class="sub-card__label">تقييم المحاسب الرئيسي</span>
+              <template v-if="summary.accountantBoardOperatorRating?.score != null">
+                <strong class="sub-card__value">{{ summary.accountantBoardOperatorRating.score }} / 10</strong>
+                <small v-if="summary.accountantBoardOperatorRating.note">{{ summary.accountantBoardOperatorRating.note }}</small>
+                <small
+                  v-if="summary.accountantBoardOperatorRating.ratedByUserName"
+                  class="muted"
+                >بواسطة: {{ summary.accountantBoardOperatorRating.ratedByUserName }}</small>
+                <small class="muted">{{ fmtDate(summary.accountantBoardOperatorRating.ratingDate) || baghdadYesterdayIso }}</small>
+              </template>
+              <template v-else>
+                <div class="sub-card__empty">
+                  لا يوجد تقييم ليوم {{ baghdadYesterdayIso }}
+                </div>
+              </template>
+              <VBtn
+                v-if="canRateAccountantSlot"
+                size="small"
+                color="primary"
+                class="mt-2"
+                @click="openRateDialog($event, 'accountant')"
+              >
+                قيّم ليوم {{ baghdadTodayIso }}
               </VBtn>
             </div>
 
@@ -1222,17 +1468,18 @@ onMounted(async () => {
               :key="`tier-${b.key}`"
               type="button"
               class="sub-card sub-card--click"
-              @click="onRevenueClick(`واردات ${b.label} — آخر 30 يوماً`, tierMoneyByLabel[b.key]?.collectedLast30Days)"
+              @click="onRevenueClick(`${b.revenueLabel} — آخر 30 يوماً`, tierMoneyByLabel[b.key]?.collectedLast30Days)"
             >
-              <span class="sub-card__label">واردات {{ b.label }}</span>
+              <span class="sub-card__label">{{ b.revenueLabel }}</span>
               <strong class="sub-card__value">
-                {{ fmtNum(tierMoneyByLabel[b.key]?.requiredDue) }}
+                {{ fmtNum(tierMoneyByLabel[b.key]?.collectedYesterday) }}
               </strong>
-              <small>القسط المطلوب (افتراضي)</small>
+              <small>تحصيل أمس</small>
               <div class="sub-card__row">
-                <span>أمس:</span>
-                <b>{{ fmtNum(tierMoneyByLabel[b.key]?.collectedYesterday) }}</b>
+                <span>سدد أمس:</span>
+                <b>{{ tierMoneyByLabel[b.key]?.payersYesterday || 0 }} من {{ tierMoneyByLabel[b.key]?.customerCount || tierCountMap[b.key] || 0 }}</b>
               </div>
+              <small class="muted">القسط المطلوب: {{ fmtNum(tierMoneyByLabel[b.key]?.requiredDue) }}</small>
             </button>
           </div>
         </section>
@@ -1273,15 +1520,6 @@ onMounted(async () => {
               <span class="sub-card__label">باقي 100,000 – أقل من 200,000</span>
               <strong class="sub-card__value">{{ summary.remaining100To200Count }}</strong>
             </button>
-            <button
-              type="button"
-              class="sub-card sub-card--click sub-card--legal"
-              :class="{ 'sub-card--active': tableVisible && tableFilter === 'legal' }"
-              @click="toggleTableFilter('legal')"
-            >
-              <span class="sub-card__label">القانونية</span>
-              <strong class="sub-card__value">{{ summary.legalCustomerCount }}</strong>
-            </button>
           </div>
         </section>
 
@@ -1294,7 +1532,7 @@ onMounted(async () => {
           </p>
           <div class="sub-grid">
             <button
-              v-for="t in summary.conversion.targets"
+              v-for="t in visibleConversionTargets"
               :key="`conv-${t.targetLabel}`"
               type="button"
               class="sub-card sub-card--click sub-card--conversion"
@@ -1307,186 +1545,205 @@ onMounted(async () => {
           </div>
         </section>
 
-        <section
-          v-if="tableVisible"
-          class="table-panel"
+        <DelegateSalesOrdersSection
+          :city-value="cityKey()"
+          :list-id="selectedListId"
+          :list-name="selectedListName"
+        />
+
+        <VDialog
+          v-model="tableVisible"
+          fullscreen
+          scrollable
+          transition="dialog-bottom-transition"
         >
-          <div class="table-panel__head">
-            <strong>جدول الزبائن</strong>
-            <VSelect
-              v-model="tableFilter"
-              :items="statusFilterItems"
-              item-title="title"
-              item-value="value"
-              label="فلتر الحالة"
-              density="compact"
-              variant="outlined"
-              hide-details
-              style="max-width: 220px"
-            />
-            <span class="muted">{{ filteredCustomers.length }} زبون</span>
-            <VSpacer />
-            <VBtn
-              size="small"
-              variant="tonal"
-              prepend-icon="tabler-columns"
-              @click="resetColumnOrder"
-            >
-              ترتيب افتراضي
-            </VBtn>
-            <VBtn
-              size="small"
-              color="success"
-              prepend-icon="tabler-file-spreadsheet"
-              :disabled="!filteredCustomers.length"
-              @click="exportToExcel"
-            >
-              تصدير Excel
-            </VBtn>
-            <VBtn
-              size="small"
-              color="primary"
-              variant="tonal"
-              @click="openCustomerDetailsPage"
-            >
-              صفحة التفاصيل الكاملة
-            </VBtn>
-            <VBtn
-              size="small"
-              variant="text"
-              @click="tableVisible = false"
-            >
-              إخفاء
-            </VBtn>
-          </div>
-          <p class="muted table-hint">
-            كل صف سطر واحد — رأس الأعمدة ثابت عند التمرير داخل الجدول — اضغط مطولاً على رأس العمود ثم اسحبه لإعادة الترتيب
-          </p>
-          <div class="dfu-inline-table-host">
-            <VDataTable
-              :headers="tableHeaders"
-              :items="filteredCustomers"
-              :loading="customersBusy"
-              item-value="customerID"
-              density="compact"
-              class="dfu-inline-table"
-              hide-default-footer
-              :items-per-page="-1"
-            >
-              <template #headers="{ columns }">
-                <tr>
-                  <th
-                    v-for="column in columns"
-                    :key="column.key"
-                    class="dfu-th"
-                    :class="{
-                      'dfu-th--armed': headerHoldReady && headerPressKey === column.key,
-                      'dfu-th--over': dragOverKey === column.key,
-                    }"
-                    draggable="true"
-                    @pointerdown="onHeaderPointerDown(column.key)"
-                    @pointercancel="clearHeaderHold"
-                    @dragstart="onHeaderDragStart($event, column.key)"
-                    @dragover="onHeaderDragOver($event, column.key)"
-                    @drop="onHeaderDrop($event, column.key)"
-                    @dragend="onHeaderDragEnd"
+          <VCard class="table-panel table-panel--dialog">
+            <div class="table-panel__head">
+              <strong>جدول الزبائن — {{ selectedListName }}</strong>
+              <VTextField
+                v-model="tableSearch"
+                placeholder="بحث عن زبون (الاسم، الهاتف، المحل، العنوان)"
+                prepend-inner-icon="tabler-search"
+                density="compact"
+                variant="outlined"
+                hide-details
+                clearable
+                style="max-width: 340px; min-width: 220px"
+              />
+              <VSelect
+                v-model="tableFilter"
+                :items="statusFilterItems"
+                item-title="title"
+                item-value="value"
+                label="فلتر الحالة"
+                density="compact"
+                variant="outlined"
+                hide-details
+                style="max-width: 220px"
+              />
+              <span class="muted">{{ filteredCustomers.length }} زبون</span>
+              <VSpacer />
+              <VBtn
+                size="small"
+                variant="tonal"
+                prepend-icon="tabler-columns"
+                @click="resetColumnOrder"
+              >
+                ترتيب افتراضي
+              </VBtn>
+              <VBtn
+                size="small"
+                color="success"
+                prepend-icon="tabler-file-spreadsheet"
+                :disabled="!filteredCustomers.length"
+                @click="exportToExcel"
+              >
+                تصدير Excel
+              </VBtn>
+              <VBtn
+                size="small"
+                color="primary"
+                variant="tonal"
+                @click="openCustomerDetailsPage"
+              >
+                صفحة التفاصيل الكاملة
+              </VBtn>
+              <VBtn
+                icon="tabler-x"
+                size="small"
+                variant="text"
+                @click="tableVisible = false"
+              />
+            </div>
+            <p class="muted table-hint">
+              كل صف سطر واحد — رأس الأعمدة ثابت عند التمرير داخل الجدول — اضغط مطولاً على رأس العمود ثم اسحبه لإعادة الترتيب
+            </p>
+            <div class="dfu-inline-table-host">
+              <VDataTable
+                :headers="tableHeaders"
+                :items="filteredCustomers"
+                :loading="customersBusy"
+                item-value="customerID"
+                density="compact"
+                class="dfu-inline-table"
+                hide-default-footer
+                :items-per-page="-1"
+              >
+                <template #headers="{ columns }">
+                  <tr>
+                    <th
+                      v-for="column in columns"
+                      :key="column.key"
+                      class="dfu-th"
+                      :class="{
+                        'dfu-th--armed': headerHoldReady && headerPressKey === column.key,
+                        'dfu-th--over': dragOverKey === column.key,
+                      }"
+                      draggable="true"
+                      @pointerdown="onHeaderPointerDown(column.key)"
+                      @pointercancel="clearHeaderHold"
+                      @dragstart="onHeaderDragStart($event, column.key)"
+                      @dragover="onHeaderDragOver($event, column.key)"
+                      @drop="onHeaderDrop($event, column.key)"
+                      @dragend="onHeaderDragEnd"
+                    >
+                      <span class="dfu-th__label">{{ column.title }}</span>
+                    </th>
+                  </tr>
+                </template>
+                <template #item.profile="{ item }">
+                  <VBtn
+                    size="x-small"
+                    color="secondary"
+                    variant="tonal"
+                    class="dfu-cell-nowrap"
+                    @click="openCustomerProfile(item)"
                   >
-                    <span class="dfu-th__label">{{ column.title }}</span>
-                  </th>
-                </tr>
-              </template>
-              <template #item.profile="{ item }">
-                <VBtn
-                  size="x-small"
-                  color="secondary"
-                  variant="tonal"
-                  class="dfu-cell-nowrap"
-                  @click="openCustomerProfile(item)"
-                >
-                  بروفايل
-                </VBtn>
-              </template>
-              <template #item.customerName="{ item }">
-                <span
-                  class="dfu-cell-nowrap dfu-customer-name"
-                  :title="item.customerName || ''"
-                >{{ item.customerName || '—' }}</span>
-              </template>
-              <template #item.phantomRatingLabel="{ item }">
-                <span class="dfu-cell-nowrap">{{ item.isLegal ? 'قانونية' : (item.phantomRatingLabel || '—') }}</span>
-              </template>
-              <template #item.amountDaySales="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtNum(item.amountDaySales) }}</span>
-              </template>
-              <template #item.amountRemaining="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtNum(item.amountRemaining) }}</span>
-              </template>
-              <template #item.receiptsTotal="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtNum(item.receiptsTotal) }}</span>
-              </template>
-              <template #item.amountTotalSales="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtNum(item.amountTotalSales) }}</span>
-              </template>
-              <template #item.lastPaymentAmount="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtNum(item.lastPaymentAmount) }}</span>
-              </template>
-              <template #item.lastPaymentDate="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtDate(item.lastPaymentDate) }}</span>
-              </template>
-              <template #item.dateSaleDevice="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtDate(item.dateSaleDevice) }}</span>
-              </template>
-              <template #item.address="{ item }">
-                <span
-                  class="dfu-cell-nowrap"
-                  :title="item.address || ''"
-                >{{ item.address || '—' }}</span>
-              </template>
-              <template #item.phoneNumber="{ item }">
-                <span class="dfu-cell-nowrap">{{ item.phoneNumber || '—' }}</span>
-              </template>
-              <template #item.shopName="{ item }">
-                <span
-                  class="dfu-cell-nowrap"
-                  :title="item.shopName || ''"
-                >{{ item.shopName || '—' }}</span>
-              </template>
-              <template #item.receiptName="{ item }">
-                <span class="dfu-cell-nowrap">{{ item.receiptName || '—' }}</span>
-              </template>
-              <template #item.saleName="{ item }">
-                <span class="dfu-cell-nowrap">{{ item.saleName || '—' }}</span>
-              </template>
-              <template #item.itemsNames="{ item }">
-                <span
-                  class="dfu-cell-nowrap"
-                  :title="item.itemsNames || ''"
-                >{{ item.itemsNames || '—' }}</span>
-              </template>
-              <template #item.notes="{ item }">
-                <span
-                  class="dfu-cell-nowrap"
-                  :title="item.notes || ''"
-                >{{ item.notes || '—' }}</span>
-              </template>
-              <template #item.receiptRateDevice="{ item }">
-                <span class="dfu-cell-nowrap">{{ item.receiptRateDevice != null ? `${item.receiptRateDevice}%` : '—' }}</span>
-              </template>
-              <template #item.countReceiptDevice="{ item }">
-                <span class="dfu-cell-nowrap">{{ item.countReceiptDevice ?? '—' }}</span>
-              </template>
-              <template #item.numberOfDayDevice="{ item }">
-                <span class="dfu-cell-nowrap">{{ item.numberOfDayDevice ?? '—' }}</span>
-              </template>
-            </VDataTable>
-          </div>
-        </section>
+                    بروفايل
+                  </VBtn>
+                </template>
+                <template #item.customerName="{ item }">
+                  <span
+                    class="dfu-cell-nowrap dfu-customer-name"
+                    :title="item.customerName || ''"
+                  >{{ item.customerName || '—' }}</span>
+                </template>
+                <template #item.phantomRatingLabel="{ item }">
+                  <span class="dfu-cell-nowrap">{{ item.isLegal ? 'قانونية' : (item.phantomRatingLabel || '—') }}</span>
+                </template>
+                <template #item.amountDaySales="{ item }">
+                  <span class="dfu-cell-nowrap">{{ fmtNum(item.amountDaySales) }}</span>
+                </template>
+                <template #item.amountRemaining="{ item }">
+                  <span class="dfu-cell-nowrap">{{ fmtNum(item.amountRemaining) }}</span>
+                </template>
+                <template #item.receiptsTotal="{ item }">
+                  <span class="dfu-cell-nowrap">{{ fmtNum(item.receiptsTotal) }}</span>
+                </template>
+                <template #item.amountTotalSales="{ item }">
+                  <span class="dfu-cell-nowrap">{{ fmtNum(item.amountTotalSales) }}</span>
+                </template>
+                <template #item.lastPaymentAmount="{ item }">
+                  <span class="dfu-cell-nowrap">{{ fmtNum(item.lastPaymentAmount) }}</span>
+                </template>
+                <template #item.lastPaymentDate="{ item }">
+                  <span class="dfu-cell-nowrap">{{ fmtDate(item.lastPaymentDate) }}</span>
+                </template>
+                <template #item.dateSaleDevice="{ item }">
+                  <span class="dfu-cell-nowrap">{{ fmtDate(item.dateSaleDevice) }}</span>
+                </template>
+                <template #item.address="{ item }">
+                  <span
+                    class="dfu-cell-nowrap"
+                    :title="item.address || ''"
+                  >{{ item.address || '—' }}</span>
+                </template>
+                <template #item.phoneNumber="{ item }">
+                  <span class="dfu-cell-nowrap">{{ item.phoneNumber || '—' }}</span>
+                </template>
+                <template #item.shopName="{ item }">
+                  <span
+                    class="dfu-cell-nowrap"
+                    :title="item.shopName || ''"
+                  >{{ item.shopName || '—' }}</span>
+                </template>
+                <template #item.receiptName="{ item }">
+                  <span class="dfu-cell-nowrap">{{ item.receiptName || '—' }}</span>
+                </template>
+                <template #item.saleName="{ item }">
+                  <span class="dfu-cell-nowrap">{{ item.saleName || '—' }}</span>
+                </template>
+                <template #item.itemsNames="{ item }">
+                  <span
+                    class="dfu-cell-nowrap"
+                    :title="item.itemsNames || ''"
+                  >{{ item.itemsNames || '—' }}</span>
+                </template>
+                <template #item.notes="{ item }">
+                  <span
+                    class="dfu-cell-nowrap"
+                    :title="item.notes || ''"
+                  >{{ item.notes || '—' }}</span>
+                </template>
+                <template #item.receiptRateDevice="{ item }">
+                  <span class="dfu-cell-nowrap">{{ item.receiptRateDevice != null ? `${item.receiptRateDevice}%` : '—' }}</span>
+                </template>
+                <template #item.countReceiptDevice="{ item }">
+                  <span class="dfu-cell-nowrap">{{ item.countReceiptDevice ?? '—' }}</span>
+                </template>
+                <template #item.numberOfDayDevice="{ item }">
+                  <span class="dfu-cell-nowrap">{{ item.numberOfDayDevice ?? '—' }}</span>
+                </template>
+              </VDataTable>
+            </div>
+          </VCard>
+        </VDialog>
       </template>
     </template>
 
     <VDialog
       v-model="historyDialog"
-      max-width="720"
+      :max-width="historyKind === 'board' ? 960 : 720"
     >
       <VCard>
         <VCardTitle>{{ historyTitle }}</VCardTitle>
@@ -1511,10 +1768,14 @@ onMounted(async () => {
             <li
               v-for="(row, idx) in historyRows"
               :key="idx"
-              :class="{ 'hist-list__row--click': historyKind === 'conversion' }"
+              :class="{
+                'hist-list__row--click': historyKind === 'conversion',
+                'hist-list__board': historyKind === 'board',
+              }"
               @click="historyKind === 'conversion' ? onConversionDateClick(row) : undefined"
             >
               <span
+                class="hist-date"
                 :class="{ 'hist-date--link': historyKind === 'conversion' }"
               >{{ fmtDate(row.date) }}</span>
               <template v-if="historyKind === 'amount'">
@@ -1524,7 +1785,18 @@ onMounted(async () => {
                 <b>{{ fmtScore(row.score) }} · {{ row.label || '—' }}</b>
               </template>
               <template v-else-if="historyKind === 'board'">
-                <b>{{ row.boardOperatorScore == null ? '—' : `${row.boardOperatorScore}/10` }}</b>
+                <div class="hist-board">
+                  <b>{{ row.boardOperatorScore == null ? '—' : `${row.boardOperatorScore}/10` }}</b>
+                  <span
+                    v-if="row.boardOperatorScore != null"
+                    class="hist-note"
+                    :class="{ 'hist-note--empty': !row.boardOperatorNote }"
+                  >{{ row.boardOperatorNote || 'لا توجد ملاحظة' }}</span>
+                  <small
+                    v-if="row.boardOperatorScore != null && row.boardOperatorRatedBy"
+                    class="muted"
+                  >بواسطة: {{ row.boardOperatorRatedBy }}</small>
+                </div>
               </template>
               <template v-else-if="historyKind === 'conversion'">
                 <div class="conv-day">
@@ -1660,7 +1932,9 @@ onMounted(async () => {
       max-width="420"
     >
       <VCard>
-        <VCardTitle>قيم المندوب ليوم {{ baghdadTodayIso }}</VCardTitle>
+        <VCardTitle>
+          {{ boardSlotLabel(rateSlot) }} — {{ baghdadTodayIso }}
+        </VCardTitle>
         <VCardText class="d-flex flex-column gap-3">
           <VTextField
             v-model.number="rateScore"
@@ -1674,10 +1948,12 @@ onMounted(async () => {
           />
           <VTextarea
             v-model="rateNote"
-            label="ملاحظة (اختياري)"
+            :label="rateNoteRequired ? 'ملاحظة (إلزامية)' : 'ملاحظة (اختياري)'"
             rows="3"
             density="compact"
-            hide-details
+            :hide-details="!rateNoteRequired"
+            :hint="rateNoteRequired ? 'التقييم 6 أو أقل يتطلب ملاحظة' : ''"
+            :persistent-hint="rateNoteRequired"
           />
         </VCardText>
         <VCardActions>
@@ -1733,6 +2009,45 @@ onMounted(async () => {
   gap: 4px;
 }
 .city-card:hover, .list-card:hover { border-color: rgb(var(--v-theme-primary)); }
+.list-card-wrap { position: relative; display: flex; }
+.list-card-wrap > .list-card { flex: 1; padding-top: 34px; }
+.list-card__pick {
+  position: absolute;
+  top: 8px;
+  inset-inline-start: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  user-select: none;
+}
+.list-card__pick input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.list-card__pick-box {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 2px solid rgba(var(--v-theme-on-surface), 0.45);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.list-card__pick input:focus-visible + .list-card__pick-box {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
+}
+.map-pick-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 14px;
+}
 .list-card__name { font-size: 1.05rem; }
 .list-card__score { font-size: 1.35rem; font-weight: 800; color: rgb(var(--v-theme-primary)); }
 .list-card__label { font-size: 0.85rem; }
@@ -1870,18 +2185,39 @@ onMounted(async () => {
   margin: 0;
   padding: 0;
 }
-.hist-list--lg { max-height: 420px; overflow: auto; }
+.hist-list--lg { max-height: min(70vh, 640px); overflow: auto; }
 .hist-list li {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 4px;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 10px 4px;
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   font-size: 0.95rem;
+}
+.hist-list__board { align-items: stretch; }
+.hist-date { flex: 0 0 auto; padding-top: 2px; }
+.hist-board {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 .hist-list__row--click { cursor: pointer; }
 .hist-list__row--click:hover { background: rgba(var(--v-theme-primary), 0.06); }
 .hist-date--link { color: rgb(var(--v-theme-primary)); text-decoration: underline; }
+.hist-note {
+  display: block;
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  text-align: start;
+  color: rgba(var(--v-theme-on-surface), 0.88);
+}
+.hist-note--empty { color: rgba(var(--v-theme-on-surface), 0.45); }
 
 .table-panel {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
@@ -1895,6 +2231,20 @@ onMounted(async () => {
   align-items: center;
   gap: 10px;
   margin-bottom: 8px;
+}
+.table-panel--dialog {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  border: none;
+  border-radius: 0 !important;
+  margin-bottom: 0;
+  padding: 16px;
+}
+.table-panel--dialog .dfu-inline-table-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 .dfu-inline-table-host {
   max-height: calc(100vh - 280px);

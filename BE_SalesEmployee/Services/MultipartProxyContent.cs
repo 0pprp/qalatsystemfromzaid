@@ -13,6 +13,18 @@ public static class MultipartProxyContent
         string fieldName = "file",
         CancellationToken ct = default)
     {
+        var form = new MultipartFormDataContent();
+        await AddAsync(form, file, fieldName, ct);
+        return form;
+    }
+
+    public static async Task AddAsync(
+        MultipartFormDataContent form,
+        IFormFile file,
+        string fieldName = "file",
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(form);
         ArgumentNullException.ThrowIfNull(file);
         if (file.Length <= 0)
         {
@@ -43,9 +55,7 @@ public static class MultipartProxyContent
         var part = new ByteArrayContent(bytes);
         part.Headers.ContentType = new MediaTypeHeaderValue(NormalizeContentType(file.ContentType));
         var fileName = string.IsNullOrWhiteSpace(file.FileName) ? "upload.bin" : file.FileName;
-        var form = new MultipartFormDataContent();
         form.Add(part, fieldName, fileName);
-        return form;
     }
 
     public static string NormalizeContentType(string? contentType) =>

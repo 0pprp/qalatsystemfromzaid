@@ -73,7 +73,8 @@ namespace BE_Company.Sales.Services
                              DelegateID AS DelegateId,
                              AmountTotalSales,
                              ReceiptsTotal,
-                             AmountRemaining
+                             AmountRemaining,
+                             CAST(ISNULL(IsLegal, 0) AS bit) AS IsLegal
                       FROM View_CustomersDelegate
                       WHERE CustomerState = 1",
                     cancellationToken: ct));
@@ -105,7 +106,8 @@ namespace BE_Company.Sales.Services
                         DelegateId = c.DelegateID,
                         AmountTotalSales = c.AmountTotalSales,
                         ReceiptsTotal = c.ReceiptsTotal,
-                        AmountRemaining = c.AmountRemaining
+                        AmountRemaining = c.AmountRemaining,
+                        IsLegal = c.IsLegal == true
                     })
                     .ToList();
             }

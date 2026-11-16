@@ -125,6 +125,7 @@ namespace BE_Company.Sales.Services
                 AmountTotalSales = customer.AmountTotalSales,
                 ReceiptsTotal = accountReceipts,
                 AmountRemaining = accountRemaining,
+                IsLegal = customer.IsLegal,
                 Sales = (sales ?? [])
                     .Select(s => new SalesExcelSearchSaleDTO
                     {

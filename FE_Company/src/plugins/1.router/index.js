@@ -1,4 +1,5 @@
 import { isAuthenticated, removeLocalStorage, removeToken } from "@/services/tokenService"
+import { isArchiveManagerRole, isCommitteeRole, isOversightBoardRole, isSupervisorRole } from "@/utils/oversightRoles"
 import { setupLayouts } from 'virtual:generated-layouts'
 import { createRouter, createWebHashHistory } from 'vue-router/auto'
 
@@ -30,6 +31,7 @@ const router = createRouter({
 
 
 const DM_USER_TYPE = 'مدير مفوض'
+
 const dmPaths = [
   '/dm-dashboard',
   '/dm-assigned-tasks',
@@ -48,16 +50,49 @@ function isDmPath(path) {
   return path === '/dm-login' || dmPaths.includes(path) || String(path || '').startsWith('/dm-')
 }
 
+/** تطبيق المسوّقين (BE_CustomerApp) — المدير + المراقب فقط */
+const customerAppPaths = [
+  '/customer-app-overview',
+  '/customer-app-agents',
+  '/customer-app-attendance',
+  '/customer-app-prospects',
+  '/customer-app-targets',
+  '/customer-app-settings',
+]
+
+/** المروّجون أونلاين (BE_PromotersApp) — المدير + المراقب فقط، منفصل عن تطبيق المسوّقين */
+const promotersAppPaths = [
+  '/promoters-app-overview',
+  '/promoters-app-users',
+  '/promoters-app-products',
+  '/promoters-app-orders',
+  '/promoters-app-payouts',
+  '/promoters-app-materials',
+  '/promoters-app-settings',
+]
+
+function isPromotersAppPath(path) {
+  return promotersAppPaths.includes(path) || String(path || '').startsWith('/promoters-app-')
+}
+
+function isCustomerAppPath(path) {
+  return customerAppPaths.includes(path) || String(path || '').startsWith('/customer-app-')
+}
+
 function homePath() {
   const t = localStorage.getItem('UserType')
   if (t === DM_USER_TYPE)
     return '/dm-dashboard'
   if (t === 'المدير')
     return '/director-ratings'
-  if (t === 'المراقب')
+  if (isSupervisorRole(t))
     return { path: '/director-ratings', query: {} }
+  if (isCommitteeRole(t))
+    return '/director-delegate-followup'
+  if (isArchiveManagerRole(t))
+    return '/archive-overview'
   if (t === 'مدير مبيعات')
-    return '/sales-manager-dashboard'
+    return '/sales-manager-employees'
 
   return '/'
 }
@@ -100,11 +135,26 @@ router.beforeEach((to, from, next) => {
     return next(homePath())
 
   if (userType === 'مدير مبيعات' && to.path === '/')
-    return next('/sales-manager-dashboard')
+    return next('/sales-manager-employees')
   if (userType === 'المدير' && to.path === '/')
     return next('/director-ratings')
-  if (userType === 'المراقب' && to.path === '/')
+  if (isSupervisorRole(userType) && to.path === '/')
     return next({ path: '/director-ratings', query: {} })
+  if (isCommitteeRole(userType) && to.path === '/')
+    return next('/director-delegate-followup')
+
+  // مسؤول الارشيف: the three archive pages only.
+  const archiveManagerPaths = ['/archive-overview', '/archive-sales', '/archive-requests', '/archive-finished-customers']
+  if (isArchiveManagerRole(userType)) {
+    if (!archiveManagerPaths.includes(to.path) && to.path !== '/sales-manager-customer-profile' && to.path !== '/logout')
+      return next('/archive-overview')
+
+    return next()
+  }
+  if (archiveManagerPaths.includes(to.path))
+    return next(homePath())
+  if (to.path === '/committee-archive' && !isCommitteeRole(userType))
+    return next(homePath())
 
   const adminOnlyPaths = [
     '/users-list',
@@ -114,6 +164,7 @@ router.beforeEach((to, from, next) => {
     '/accountant-tutorial-video',
     '/accountant-wrong-sales',
   ]
+
   if (adminOnlyPaths.includes(to.path) && userType !== 'محاسب رئيسي') {
     return next(homePath())
   }
@@ -122,7 +173,7 @@ router.beforeEach((to, from, next) => {
   if (to.path === '/decision-board'
     && userType !== 'مدير فرع'
     && userType !== 'محاسب رئيسي'
-    && userType !== 'المراقب') {
+    && !isSupervisorRole(userType)) {
     return next(homePath())
   }
 
@@ -135,18 +186,21 @@ router.beforeEach((to, from, next) => {
   if (decisionPaths.includes(to.path)
     && userType !== 'مدير فرع'
     && userType !== 'محاسب رئيسي'
-    && userType !== 'المراقب') {
+    && !isSupervisorRole(userType)) {
     return next(homePath())
   }
 
   if (to.path === '/price-board'
     && userType !== 'محاسب رئيسي'
-    && userType !== 'المراقب') {
+    && !isSupervisorRole(userType)) {
+    return next(homePath())
+  }
+
+  if (to.path === '/sales-manager-dashboard' && userType !== 'المدير') {
     return next(homePath())
   }
 
   const salesManagerPaths = [
-    '/sales-manager-dashboard',
     '/sales-manager-employees',
     '/sales-manager-map',
     '/sales-manager-routes',
@@ -155,44 +209,51 @@ router.beforeEach((to, from, next) => {
     '/sales-manager-request-create',
     '/sales-manager-excel-search',
   ]
+
+
   // مدير المبيعات + المراقب (كامل إدارة المبيعات)
   if (salesManagerPaths.includes(to.path)
     && userType !== 'مدير مبيعات'
-    && userType !== 'المراقب') {
+    && !isSupervisorRole(userType)) {
     return next(homePath())
   }
 
   // ملخص المبيعات: المراقب فقط
-  if (to.path === '/sales-manager-sales-summary' && userType !== 'المراقب') {
+  if (to.path === '/sales-manager-sales-summary' && !isSupervisorRole(userType)) {
     return next(homePath())
   }
 
   // تبويبات أُزيلت من قائمة مدير المبيعات — منع الدخول المباشر
   // map/routes stay open for المراقب + المدير under عمل المتابعين
   const followerRoutesInMonitorWorkMarker = 'FollowerRoutesInMonitorWork_V1'
+
   void followerRoutesInMonitorWorkMarker
+
   const salesManagerHiddenPaths = [
     '/sales-manager-ratings',
     '/sales-manager-followers',
     '/sales-manager-purchases',
     '/sales-manager-tutorial-links',
   ]
+
   if (userType === 'مدير مبيعات' && salesManagerHiddenPaths.includes(to.path)) {
-    return next('/sales-manager-dashboard')
+    return next('/sales-manager-employees')
   }
   if (userType === 'مدير مبيعات'
     && (to.path === '/sales-manager-followers-map'
       || to.path === '/sales-manager-followers-routes')) {
-    return next('/sales-manager-dashboard')
+    return next('/sales-manager-employees')
   }
 
   const followerGpsPaths = [
     '/sales-manager-followers-map',
     '/sales-manager-followers-routes',
   ]
+
   if (followerGpsPaths.includes(to.path)
-    && userType !== 'المراقب'
-    && userType !== 'المدير') {
+    && !isSupervisorRole(userType)
+    && userType !== 'المدير'
+    && !isCommitteeRole(userType)) {
     return next(homePath())
   }
 
@@ -200,17 +261,24 @@ router.beforeEach((to, from, next) => {
   if (to.path === '/sales-manager-requests'
     && userType !== 'مدير مبيعات'
     && userType !== 'المدير'
-    && userType !== 'المراقب') {
+    && !isSupervisorRole(userType)) {
     return next(homePath())
   }
 
   if (to.path === '/director-ratings'
     && userType !== 'المدير'
-    && userType !== 'المراقب') {
+    && !isSupervisorRole(userType)) {
     return next(homePath())
   }
 
   if (to.path === '/accountant-ratings' && userType !== 'محاسب رئيسي') {
+    return next(homePath())
+  }
+
+  // تطبيق المسوّقين: المدير + المراقب فقط
+  if ((isCustomerAppPath(to.path) || isPromotersAppPath(to.path))
+    && userType !== 'المدير'
+    && !isSupervisorRole(userType)) {
     return next(homePath())
   }
 
@@ -219,6 +287,7 @@ router.beforeEach((to, from, next) => {
     '/director-summary',
     '/director-delegate-followup',
     '/director-delegate-followup-customers',
+    '/director-bad-customers',
     '/director-sales-followup',
     '/director-follower-work',
     '/director-tutorial-videos',
@@ -228,11 +297,20 @@ router.beforeEach((to, from, next) => {
     '/director-committee-tasks',
     '/director-notes',
     '/director-waivers',
+    '/branch-management',
+    '/sales-manager-dashboard',
     '/sales-manager-customer-profile',
     '/sales-manager-requests',
     '/sales-manager-followers-map',
     '/sales-manager-followers-routes',
+    '/oversight-accounts',
+
+    // تطبيق المسوّقين (BE_CustomerApp) — كامل الصلاحيات للمدير
+    ...customerAppPaths,
+    ...promotersAppPaths,
   ]
+
+
   // Director: ratings + tutorial videos + notes + sales requests + customer profile
   if (userType === 'المدير' && !directorAllowed.includes(to.path) && to.path !== '/logout') {
     return next('/director-ratings')
@@ -243,9 +321,9 @@ router.beforeEach((to, from, next) => {
     '/director-ratings',
     '/director-delegate-followup',
     '/director-delegate-followup-customers',
+    '/director-bad-customers',
     '/director-sales-followup',
     '/director-follower-work',
-    '/sales-manager-dashboard',
     '/sales-manager-employees',
     '/sales-manager-map',
     '/sales-manager-routes',
@@ -262,13 +340,41 @@ router.beforeEach((to, from, next) => {
     '/waiver-accountant-requests',
     '/decisions-list',
     '/price-board',
+    '/director-announcements',
+    '/branch-management',
+
+    // تطبيق المسوّقين (BE_CustomerApp)
+    ...customerAppPaths,
+    ...promotersAppPaths,
   ]
-  if (userType === 'المراقب' && !monitorAllowed.includes(to.path) && to.path !== '/logout') {
+
+  if (isSupervisorRole(userType) && !monitorAllowed.includes(to.path) && to.path !== '/oversight-accounts' && to.path !== '/logout') {
     return next({ path: '/director-ratings', query: {} })
   }
 
+  const committeeAllowed = [
+    '/director-delegate-followup',
+    '/director-delegate-followup-customers',
+    '/director-bad-customers',
+    '/director-sales-followup',
+    '/director-follower-work',
+    '/sales-manager-followers-map',
+    '/sales-manager-followers-routes',
+    '/committee-archive',
+    '/branch-management',
+  ]
+
+  if (isCommitteeRole(userType) && to.path === '/director-follower-work' && to.query?.tab === 'collection')
+    return next({ path: '/director-follower-work', query: { ...to.query, tab: 'sales' } })
+
+  if (isCommitteeRole(userType) && !committeeAllowed.includes(to.path) && to.path !== '/logout') {
+    return next('/director-delegate-followup')
+  }
+
+  if (to.path === '/director-announcements' && userType !== 'المدير' && !isSupervisorRole(userType))
+    return next(homePath())
+
   if ((to.path === '/director-tutorial-videos'
-    || to.path === '/director-announcements'
     || to.path === '/director-assigned-tasks'
     || to.path === '/director-branch-visits'
     || to.path === '/director-committee-tasks'
@@ -278,6 +384,10 @@ router.beforeEach((to, from, next) => {
     return next(homePath())
   }
 
+  // ادارة الفرع: المدير + مسؤول المراقبين + لجنة المراقبة (رئيس + مساعد) فقط
+  if (to.path === '/branch-management' && !isOversightBoardRole(userType))
+    return next(homePath())
+
   if (to.path === '/director-summary' && userType !== 'المدير') {
     return next(homePath())
   }
@@ -285,7 +395,7 @@ router.beforeEach((to, from, next) => {
   if (to.path === '/sales-manager-customer-profile'
     && userType !== 'مدير مبيعات'
     && userType !== 'المدير'
-    && userType !== 'المراقب') {
+    && !isSupervisorRole(userType)) {
     return next(homePath())
   }
 

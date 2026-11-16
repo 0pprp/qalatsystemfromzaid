@@ -285,6 +285,7 @@ SELECT
     CAST(ISNULL(vc.AmountTotalSales, 0) AS FLOAT) AS AmountTotalSales,
     CAST(ISNULL(vc.AmountDaySales, 0) AS FLOAT) AS AmountDaySales,
     CAST(ISNULL(vc.AmountRemaining, 0) AS FLOAT) AS AmountRemaining,
+    CAST(ISNULL(c.IsLegal, 0) AS BIT) AS IsLegal,
     CAST(ISNULL(w.WeekPaid, 0) AS FLOAT) AS WeekPaid,
     CASE WHEN ISNULL(vc.AmountTotalSales, 0) > 0
          THEN ROUND(ISNULL(w.WeekPaid, 0) * 100.0 / vc.AmountTotalSales, 2)
@@ -334,7 +335,8 @@ SELECT
     ISNULL(vc.PhoneNumber, c.PhoneNumber) AS PhoneNumber,
     CAST(ISNULL(vc.AmountTotalSales, 0) AS FLOAT) AS AmountTotalSales,
     CAST(ISNULL(vc.AmountDaySales, 0) AS FLOAT) AS AmountDaySales,
-    CAST(ISNULL(vc.AmountRemaining, 0) AS FLOAT) AS AmountRemaining
+    CAST(ISNULL(vc.AmountRemaining, 0) AS FLOAT) AS AmountRemaining,
+    CAST(ISNULL(c.IsLegal, 0) AS BIT) AS IsLegal
 FROM dbo.Customers c
 LEFT JOIN dbo.View_Customers vc ON vc.CustomerID = c.CustomerID
 WHERE c.DelegateID = @ListId

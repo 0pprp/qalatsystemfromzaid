@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import * as XLSX from 'xlsx'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { smErrorMessage, smPost, withCityQuery } from '@/composables/salesManagerApi'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
@@ -168,8 +169,8 @@ function flattenReportRows() {
           ...base,
           'تاريخ البيع': '',
           'قيمة البيع': '',
-          'المستلم': pick(match, 'receiptsTotal', 'ReceiptsTotal') ?? '',
-          'المتبقي': pick(match, 'amountRemaining', 'AmountRemaining') ?? '',
+          'المستلم': shouldHidePaidRemaining(match) ? '—' : (pick(match, 'receiptsTotal', 'ReceiptsTotal') ?? ''),
+          'المتبقي': shouldHidePaidRemaining(match) ? '—' : (pick(match, 'amountRemaining', 'AmountRemaining') ?? ''),
         })
         continue
       }
@@ -178,8 +179,8 @@ function flattenReportRows() {
           ...base,
           'تاريخ البيع': ymd(pick(sale, 'saleDate', 'SaleDate')),
           'قيمة البيع': pick(sale, 'saleAmount', 'SaleAmount') ?? '',
-          'المستلم': pick(sale, 'receiptsTotal', 'ReceiptsTotal') ?? pick(match, 'receiptsTotal', 'ReceiptsTotal') ?? '',
-          'المتبقي': pick(sale, 'amountRemaining', 'AmountRemaining') ?? pick(match, 'amountRemaining', 'AmountRemaining') ?? '',
+          'المستلم': shouldHidePaidRemaining(match) ? '—' : (pick(sale, 'receiptsTotal', 'ReceiptsTotal') ?? pick(match, 'receiptsTotal', 'ReceiptsTotal') ?? ''),
+          'المتبقي': shouldHidePaidRemaining(match) ? '—' : (pick(sale, 'amountRemaining', 'AmountRemaining') ?? pick(match, 'amountRemaining', 'AmountRemaining') ?? ''),
         })
       }
     }
@@ -398,8 +399,8 @@ function statusLabel(query) {
                 >
                   <td>{{ ymd(pick(sale, 'saleDate', 'SaleDate')) }}</td>
                   <td>{{ money(pick(sale, 'saleAmount', 'SaleAmount')) }}</td>
-                  <td>{{ money(pick(sale, 'receiptsTotal', 'ReceiptsTotal')) }}</td>
-                  <td>{{ money(pick(sale, 'amountRemaining', 'AmountRemaining')) }}</td>
+                  <td>{{ shouldHidePaidRemaining(match) ? '—' : money(pick(sale, 'receiptsTotal', 'ReceiptsTotal')) }}</td>
+                  <td>{{ shouldHidePaidRemaining(match) ? '—' : money(pick(sale, 'amountRemaining', 'AmountRemaining')) }}</td>
                 </tr>
                 <tr v-if="!(pick(match, 'sales', 'Sales') || []).length">
                   <td

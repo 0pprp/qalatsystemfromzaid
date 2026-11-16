@@ -38,17 +38,20 @@ namespace BE_Company.Sales.Services
         private readonly ISalesExcelCustomerSearchCatalog _catalog;
         private readonly IRatingDataSource _rating;
         private readonly IIraqClock _clock;
+        private readonly ICustomerPaymentLookup? _payments;
 
         public SalesRequestEvaluationService(
             ISalesRequestRepository requests,
             ISalesExcelCustomerSearchCatalog catalog,
             IRatingDataSource rating,
-            IIraqClock clock)
+            IIraqClock clock,
+            ICustomerPaymentLookup? payments = null)
         {
             _requests = requests;
             _catalog = catalog;
             _rating = rating;
             _clock = clock;
+            _payments = payments;
         }
 
         public async Task<SalesRequestEvaluationBatchResultDTO> EvaluateBatchAsync(
@@ -267,6 +270,8 @@ namespace BE_Company.Sales.Services
                 });
             }
 
+            await AttachClosingLumpNotesAsync(cat, items, ct);
+
             return new SalesRequestEvaluationHitsPageDTO
             {
                 RequestId = requestId,
@@ -477,6 +482,46 @@ namespace BE_Company.Sales.Services
             if (cat.Equals(CategorySonFather, StringComparison.OrdinalIgnoreCase))
                 return SalesRequestNameSimilarity.SonFatherMatchReason(customerName, candidateName);
             return SalesRequestNameSimilarity.FatherGrandfatherMatchReason(customerName, candidateName);
+        }
+
+        private async Task AttachClosingLumpNotesAsync(
+            string category,
+            List<SalesRequestEvaluationHitDTO> items,
+            CancellationToken ct)
+        {
+            if (_payments is null || !ClosingLumpPayments.AppliesToCategory(category) || items.Count == 0)
+            {
+                return;
+            }
+
+            var settledIds = items
+                .Where(item => ClosingLumpPayments.IsFinishedAccount(item.AmountTotalSales, item.AmountRemaining))
+                .Select(item => item.CustomerId)
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+            if (settledIds.Count == 0)
+            {
+                return;
+            }
+
+            var rows = await _payments.GetByCustomerIdsAsync(settledIds, ct);
+            var byCustomer = rows
+                .GroupBy(row => row.CustomerId)
+                .ToDictionary(group => group.Key, group => (IReadOnlyList<CustomerPaymentSlice>)group.ToList());
+
+            foreach (var item in items)
+            {
+                if (!byCustomer.TryGetValue(item.CustomerId, out var pays))
+                {
+                    continue;
+                }
+
+                item.LargeClosingPayments = ClosingLumpPayments.Find(
+                    pays,
+                    item.AmountTotalSales,
+                    item.AmountRemaining);
+            }
         }
 
         private static void EnsureManager(SalesIdentity actor)

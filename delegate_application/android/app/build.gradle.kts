@@ -55,13 +55,14 @@ android {
             // (a) keep using that same keystore via key.properties, or
             // (b) publish a new applicationId (users reinstall — local SQLite lost).
             // Documented in docs/release-signing.md — do not flip certificate casually.
-            if (!keystorePropertiesFile.exists()) {
-                throw GradleException(
-                    "Release signing blocked: android/key.properties missing. " +
-                        "Silent debug fallback removed (audit F14). See docs/release-signing.md"
-                )
+            // Field devices currently run the debug-signed release APK. When
+            // key.properties is absent, keep that same debug certificate so an
+            // update installs in place and local payments are not wiped.
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
             }
-            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

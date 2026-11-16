@@ -10,5 +10,6 @@
         public double? ReceiptsTotal { get; set; }
         public double? AmountTotalSales { get; set; }
         public double? AmountRemaining { get; set; }
+        public bool? IsLegal { get; set; }
     }
 }

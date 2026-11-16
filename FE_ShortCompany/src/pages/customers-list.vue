@@ -7,6 +7,7 @@ import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+import { shouldHidePaidRemaining, sumVisibleFinancial } from '@/composables/legalFinancialVisibility'
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -35,6 +36,7 @@ const paymentDetails = ref({
   amountRemaining: 0,
   paymentAmount: 0,
   paymentDate: new Date().toLocaleDateString('en-CA'),
+  hidePaidRemaining: false,
 })
 
 const filterDateFrom = ref(null)
@@ -77,12 +79,14 @@ function clearDateFilters() {
 // دالة فتح Dialog التسديد وملئ البيانات
 function openPaymentDialog(item) {
   currentCustomerID.value = item.customerID
+  const hideFin = shouldHidePaidRemaining(item, { showType: filters.value.showType })
   paymentDetails.value.customerName = item.customerName
   paymentDetails.value.delegateName = item.delegateName
   paymentDetails.value.amountTotalSales = item.amountTotalSales || 0
   paymentDetails.value.amountDaySales = item.amountDaySales || 0
-  paymentDetails.value.receiptsTotal = item.receiptsTotal || 0
-  paymentDetails.value.amountRemaining = item.amountRemaining || 0
+  paymentDetails.value.hidePaidRemaining = hideFin
+  paymentDetails.value.receiptsTotal = hideFin ? 0 : (item.receiptsTotal || 0)
+  paymentDetails.value.amountRemaining = hideFin ? 0 : (item.amountRemaining || 0)
   paymentDetails.value.paymentAmount = item.amountDaySales || 0
   paymentDetails.value.paymentDate =new Date().toLocaleDateString('en-CA')
   paymentDialog.value = true
@@ -209,7 +213,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar', // إجمالي الواصل
     value: formattedNumber(
-      customersData.value.reduce((sum, customer) => sum + (customer.receiptsTotal || 0), 0),
+      sumVisibleFinancial(customersData.value, customer => customer.receiptsTotal, { showType: filters.value.showType }),
     ),
     title: 'إجمالي الواصل',
     color: "error",
@@ -218,7 +222,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar', // إجمالي المبلغ المتبقي
     value: formattedNumber(
-      customersData.value.reduce((sum, customer) => sum + (customer.amountRemaining || 0), 0),
+      sumVisibleFinancial(customersData.value, customer => customer.amountRemaining, { showType: filters.value.showType }),
     ),
     title: 'إجمالي المبلغ المتبقي',
     color: "secondary",
@@ -285,9 +289,11 @@ function exportToExcel() {
     'سعر البيع': customer.amountTotalSales || 'لا يوجد',
     'سعر الشراء': customer.costTotalSales || 'لا يوجد',
     'القسط': customer.amountDaySales || 'لا يوجد',
-    'الواصل': customer.receiptsTotal || 'لا يوجد',
-    'الباقي': customer.amountRemaining || 'لا يوجد',
-    'نسبة التسديد': customer.receiptRateDevice !== undefined && customer.receiptRateDevice !== null ? `${customer.receiptRateDevice}%` : '0%',
+    'الواصل': shouldHidePaidRemaining(customer, { showType: filters.value.showType }) ? '—' : (customer.receiptsTotal || 'لا يوجد'),
+    'الباقي': shouldHidePaidRemaining(customer, { showType: filters.value.showType }) ? '—' : (customer.amountRemaining || 'لا يوجد'),
+    'نسبة التسديد': shouldHidePaidRemaining(customer, { showType: filters.value.showType })
+      ? '—'
+      : (customer.receiptRateDevice !== undefined && customer.receiptRateDevice !== null ? `${customer.receiptRateDevice}%` : '0%'),
     'عدد التسديدات': customer.countReceiptDevice || 'لا يوجد',
     'عدد الأيام': customer.numberOfDayDevice || 'لا يوجد',
     'تاريخ اخر تسديد': customer.lastPaymentDate ? new Date(customer.lastPaymentDate).toLocaleDateString('en-CA')   : 'لا يوجد',
@@ -1049,17 +1055,17 @@ const colSlots = {
           </template>
           <template #[colSlots.receiptsTotal]="{ item }">
             <div class="premium-amount amt-total-receipts">
-              {{ formattedNumber(item.receiptsTotal) }}
+              {{ shouldHidePaidRemaining(item, { showType: filters.showType }) ? '—' : formattedNumber(item.receiptsTotal) }}
             </div>
           </template>
           <template #[colSlots.amountRemaining]="{ item }">
             <div class="premium-amount amt-remaining">
-              {{ formattedNumber(item.amountRemaining) }}
+              {{ shouldHidePaidRemaining(item, { showType: filters.showType }) ? '—' : formattedNumber(item.amountRemaining) }}
             </div>
           </template>
           <template #[colSlots.receiptRateDevice]="{ item }">
             <div>
-              {{ item.receiptRateDevice !== undefined && item.receiptRateDevice !== null ? item.receiptRateDevice + '%' : '0%' }}
+              {{ shouldHidePaidRemaining(item, { showType: filters.showType }) ? '—' : (item.receiptRateDevice !== undefined && item.receiptRateDevice !== null ? item.receiptRateDevice + '%' : '0%') }}
             </div>
           </template>
           <template #[colSlots.countReceiptDevice]="{ item }">
@@ -2015,7 +2021,7 @@ const colSlots = {
                   الواصل
                 </VLabel>
                 <VTextField
-                  :value="formattedNumber(paymentDetails.receiptsTotal)"
+                  :value="paymentDetails.hidePaidRemaining ? '—' : formattedNumber(paymentDetails.receiptsTotal)"
                   readonly
                   prepend-inner-icon="tabler-currency-dollar"
                 />
@@ -2026,7 +2032,7 @@ const colSlots = {
                   الباقي
                 </VLabel>
                 <VTextField
-                  :value="formattedNumber(paymentDetails.amountRemaining)"
+                  :value="paymentDetails.hidePaidRemaining ? '—' : formattedNumber(paymentDetails.amountRemaining)"
                   readonly
                   prepend-inner-icon="tabler-alert-circle"
                 />

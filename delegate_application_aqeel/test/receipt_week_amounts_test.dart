@@ -32,10 +32,15 @@ void main() {
       expect(merged[0], 2500);
     });
 
-    test('ensureDayLabels falls back to Arabic اليوم', () {
-      final labels = ReceiptWeekAmounts.ensureDayLabels(['', null]);
-      expect(labels[0], 'اليوم');
+    test('ensureDayLabels prints real dates, ignoring relative labels', () {
+      // 2026-11-09 12:00 Baghdad (09:00 UTC) is a Monday.
+      final now = DateTime.utc(2026, 11, 9, 9);
+      final labels =
+          ReceiptWeekAmounts.ensureDayLabels(['اليوم', 'أمس', null], now);
       expect(labels.length, 7);
+      expect(labels[0], 'الاثنين 9/11');
+      expect(labels[1], 'الأحد 8/11');
+      expect(labels[6], 'الثلاثاء 3/11');
     });
 
     test('formatExactIqd never rounds 2500 to 3000', () {

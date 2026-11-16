@@ -2,6 +2,7 @@
 
 ## Change
 - `BE_DelegateWebApplication` `GetDelegateSelect` returns only the logged-in `DelegateID` row (no SelectDelegate siblings).
+- `GetCustomersDelegateAll` still returns that list, and also customers on a linked child list whose name contains «متوقفين», stamped with the login `DelegateID`, so the delegate can collect from them.
 - Flutter `delegate_application` removes «اختر القائمة»; auto-loads login `DelegateID`; version `1.0.39+69` force OTA.
 
 ## Impact matrix

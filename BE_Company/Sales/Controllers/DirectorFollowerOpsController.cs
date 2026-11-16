@@ -13,11 +13,68 @@ public sealed class DirectorFollowerOpsController : ControllerBase
 {
     private readonly IDirectorFollowerOpsService _ops;
     private readonly SalesDevelopmentGuard _guard;
+    private readonly IFollowerShopCaptureOverviewService _shopCapture;
 
-    public DirectorFollowerOpsController(IDirectorFollowerOpsService ops, SalesDevelopmentGuard guard)
+    public DirectorFollowerOpsController(
+        IDirectorFollowerOpsService ops,
+        SalesDevelopmentGuard guard,
+        IFollowerShopCaptureOverviewService shopCapture)
     {
         _ops = ops;
         _guard = guard;
+        _shopCapture = shopCapture;
+    }
+
+    /// <summary>Follower shop GPS + photo progress per follower-assigned list (مواقع وصور المحلات).</summary>
+    [HttpGet("shop-capture")]
+    public async Task<IActionResult> ShopCaptureOverview(CancellationToken ct)
+    {
+        var gate = Gate();
+        if (gate != null)
+        {
+            return gate;
+        }
+
+        return Ok(await _shopCapture.GetOverviewAsync(ct));
+    }
+
+    [HttpGet("shop-capture/lists/{listId:int}/customers")]
+    public async Task<IActionResult> ShopCaptureListCustomers(int listId, CancellationToken ct)
+    {
+        var gate = Gate();
+        if (gate != null)
+        {
+            return gate;
+        }
+
+        return Ok(new { items = await _shopCapture.GetListCustomersAsync(listId, ct) });
+    }
+
+    /// <summary>One customer's follower/sales shop location + photo flag (customer profile).</summary>
+    [HttpGet("shop-capture/customers/{customerId:int}")]
+    public async Task<IActionResult> ShopCaptureCustomer(int customerId, CancellationToken ct)
+    {
+        var gate = Gate();
+        if (gate != null)
+        {
+            return gate;
+        }
+
+        var row = await _shopCapture.GetCustomerAsync(customerId, ct);
+        return row == null ? NotFound(new { message = "الزبون غير موجود" }) : Ok(row);
+    }
+
+    [HttpGet("shop-capture/customers/{customerId:int}/photo")]
+    public async Task<IActionResult> ShopCapturePhoto(int customerId, CancellationToken ct)
+    {
+        var gate = Gate();
+        if (gate != null)
+        {
+            return gate;
+        }
+
+        var photo = await _shopCapture.GetPhotoAsync(customerId, ct);
+        return photo == null ? NotFound(new { message = "لا توجد صورة محل" }) : File(photo.Value.Bytes, photo.Value.ContentType);
     }
 
     [HttpGet("summaries")]

@@ -107,17 +107,25 @@ namespace BE_DelegateWebApplication.Repository
             await using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync(ct);
 
-            // Ensure customer belongs to this delegate when relationship exists.
+            // Exists-check must not use DelegateID alone: a real customer with
+            // DelegateID NULL (list not stamped) came back as "not found" and the
+            // phone then froze the whole day's queue as مرفوض.
+            var customerExists = await connection.ExecuteScalarAsync<int>(
+                new CommandDefinition(
+                    "SELECT CASE WHEN EXISTS(SELECT 1 FROM Customers WHERE CustomerID = @CustomerId) THEN 1 ELSE 0 END",
+                    new { CustomerId = dto.CustomerId },
+                    cancellationToken: ct));
+
+            if (customerExists != 1)
+            {
+                return new PaymentIdempotentResultDTO { Success = false, Message = "العميل غير موجود" };
+            }
+
             var customerDelegateId = await connection.ExecuteScalarAsync<int?>(
                 new CommandDefinition(
                     "SELECT DelegateID FROM Customers WHERE CustomerID = @CustomerId",
                     new { CustomerId = dto.CustomerId },
                     cancellationToken: ct));
-
-            if (customerDelegateId is null)
-            {
-                return new PaymentIdempotentResultDTO { Success = false, Message = "العميل غير موجود" };
-            }
 
             // Soft ownership check: prefer matching delegate; allow if customer.DelegateID null historically.
             if (customerDelegateId > 0 && customerDelegateId != authenticatedDelegateId)

@@ -521,8 +521,8 @@ class _ShopCompleteDialogState extends State<_ShopCompleteDialog> {
     try {
       final picked = await ImagePicker().pickImage(
         source: ImageSource.camera,
-        imageQuality: 85,
-        maxWidth: 1600,
+        imageQuality: 50,
+        maxWidth: 1024,
         preferredCameraDevice: CameraDevice.rear,
       );
       if (picked == null) return;

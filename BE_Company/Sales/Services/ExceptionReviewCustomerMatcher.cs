@@ -208,6 +208,11 @@ namespace BE_Company.Sales.Services
                     person = row.TargetEmployeeName.Trim();
                 }
             }
+            else if (SalesRequestSources.IsCustomerApp(sourceType))
+            {
+                label = SalesRequestSources.CustomerAppArabicLabel;
+                list = null;
+            }
             else if (string.Equals(sourceType, SalesRequestSources.NewCustomer, StringComparison.OrdinalIgnoreCase)
                      || string.Equals(sourceType, SalesRequestSources.ExistingCustomer, StringComparison.OrdinalIgnoreCase)
                      || string.IsNullOrWhiteSpace(sourceType))

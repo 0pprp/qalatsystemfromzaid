@@ -1,6 +1,7 @@
 using Dapper;
 using BE_Company.DTO;
 using BE_Company.IRepository;
+using BE_Company.Sales.Services;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using System.Data;
@@ -20,7 +21,7 @@ namespace BE_Company.Repository
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.QueryAsync<CustomersPaymentsGetDTO>("CustomersPayments_GetAll",
+                var result = (await connection.QueryAsync<CustomersPaymentsGetDTO>("CustomersPayments_GetAll",
                 new
                 {
                     FromDate = fromDate,
@@ -28,7 +29,8 @@ namespace BE_Company.Repository
                     DelegateID = delegateID,
                     TextSearch = textSearch
                 },
-                commandType: CommandType.StoredProcedure);
+                commandType: CommandType.StoredProcedure)).ToList();
+                await LegalCustomerFlagStamp.ApplyAsync(connection, result, r => r.CustomerID, (r, legal) => r.IsLegal = legal);
                 return result;
             }
         }
@@ -50,10 +52,11 @@ namespace BE_Company.Repository
             using var connection = new SqlConnection(_connectionString);
             if (fromDate == null && toDate == null)
             {
-                var result = await connection.QueryAsync<CustomersPaymentsGetDTO>(
+                var result = (await connection.QueryAsync<CustomersPaymentsGetDTO>(
                     "CustomersPayments_GetByCustomerID",
                     new { CustomerID = customerID },
-                    commandType: CommandType.StoredProcedure);
+                    commandType: CommandType.StoredProcedure)).ToList();
+                await LegalCustomerFlagStamp.ApplyAsync(connection, result, r => r.CustomerID, (r, legal) => r.IsLegal = legal);
                 return result;
             }
 
@@ -68,20 +71,23 @@ ORDER BY PaymentDate DESC;
 """;
             try
             {
-                return await connection.QueryAsync<CustomersPaymentsGetDTO>(sql, new
+                var viewed = (await connection.QueryAsync<CustomersPaymentsGetDTO>(sql, new
                 {
                     CustomerID = customerID,
                     FromDate = fromDate,
                     ToDate = toDate
-                });
+                })).ToList();
+                await LegalCustomerFlagStamp.ApplyAsync(connection, viewed, r => r.CustomerID, (r, legal) => r.IsLegal = legal);
+                return viewed;
             }
             catch (SqlException)
             {
                 // View missing on older branch DBs — fetch all via SP then filter (documented fallback).
-                var all = await connection.QueryAsync<CustomersPaymentsGetDTO>(
+                var all = (await connection.QueryAsync<CustomersPaymentsGetDTO>(
                     "CustomersPayments_GetByCustomerID",
                     new { CustomerID = customerID },
-                    commandType: CommandType.StoredProcedure);
+                    commandType: CommandType.StoredProcedure)).ToList();
+                await LegalCustomerFlagStamp.ApplyAsync(connection, all, r => r.CustomerID, (r, legal) => r.IsLegal = legal);
                 var filtered = all.AsEnumerable();
                 if (fromDate.HasValue)
                     filtered = filtered.Where(p => p.PaymentDate >= fromDate.Value);

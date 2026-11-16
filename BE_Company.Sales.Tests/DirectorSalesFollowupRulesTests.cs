@@ -55,24 +55,24 @@ public sealed class DirectorSalesFollowupRulesTests
     }
 
     [Fact]
-    public void AnonymizeLowOnly_Drops_High_And_Customer_Identity()
+    public void AnonymizeLowOnly_Keeps_Customer_And_Drops_List_Identity()
     {
         var rows = new[]
         {
             new DirectorSalesFollowupRatingRowDto
             {
                 Score = 9, Note = "ok", RatingDate = new DateTime(2026, 10, 20),
-                CustomerName = "Ali", ListName = "ListA", Kind = "auth",
+                CustomerId = 1, CustomerName = "Ali", ListName = "ListA", Kind = "auth",
             },
             new DirectorSalesFollowupRatingRowDto
             {
                 Score = 4, Note = "weak", RatingDate = new DateTime(2026, 10, 19),
-                CustomerName = "Omar", ListName = "ListB", Kind = "shop",
+                CustomerId = 22, CustomerName = "Omar", ListName = "ListB", Kind = "shop",
             },
             new DirectorSalesFollowupRatingRowDto
             {
                 Score = 2, Note = "bad", RatingDate = new DateTime(2026, 10, 18),
-                CustomerName = "Sara", Kind = "collector",
+                CustomerId = 33, CustomerName = " Sara ", Kind = "collector",
             },
         };
 
@@ -80,9 +80,10 @@ public sealed class DirectorSalesFollowupRulesTests
 
         Assert.Equal(2, low.Count);
         Assert.Equal(new[] { 4, 2 }, low.Select(r => r.Score).ToArray());
+        Assert.Equal(new[] { 22, 33 }, low.Select(r => r.CustomerId ?? 0).ToArray());
+        Assert.Equal(new[] { "Omar", "Sara" }, low.Select(r => r.CustomerName).ToArray());
         Assert.All(low, r =>
         {
-            Assert.Null(r.CustomerName);
             Assert.Null(r.ListName);
             Assert.Null(r.DelegateName);
             Assert.False(string.IsNullOrEmpty(r.Note));
@@ -140,5 +141,113 @@ public sealed class DirectorSalesFollowupRulesTests
         Assert.Equal(5, hist.Count);
         Assert.Equal(asOf.Date, hist[0].RatingDate.Date);
         Assert.Equal(asOf.Date.AddDays(-4), hist[4].RatingDate.Date);
+    }
+
+    [Fact]
+    public void BuildListSales_Counts_And_Averages_Per_List_And_Keeps_Empty_Active_Lists()
+    {
+        var asOf = new DateTime(2026, 10, 29);
+        var facts = new[]
+        {
+            new BE_Company.Sales.Rating.CustomerRatingFacts(
+                1, 10, false, false, asOf.AddDays(-40), asOf.AddDays(-1), 1000, 200, 800),
+            new BE_Company.Sales.Rating.CustomerRatingFacts(
+                2, 10, false, false, asOf.AddDays(-20), asOf.AddDays(-2), 1000, 100, 900),
+            new BE_Company.Sales.Rating.CustomerRatingFacts(
+                3, 20, false, false, asOf.AddDays(-15), asOf, 1000, 1000, 0),
+            new BE_Company.Sales.Rating.CustomerRatingFacts(
+                4, null, false, false, asOf.AddDays(-12), asOf, 500, 0, 500),
+        };
+        DirectorSalesFollowupRules.BranchListRef[] lists =
+        [
+            new(10, "السوق", true),
+            new(20, "الجمعية", true),
+            new(30, "الحي", true),
+            new(40, "متوقفة", false),
+        ];
+
+        var rows = DirectorSalesFollowupRules.BuildListSales(lists, facts, asOf);
+
+        Assert.DoesNotContain(rows, r => r.ListId == 40);
+        var market = Assert.Single(rows, r => r.ListId == 10);
+        Assert.Equal(2, market.SalesCount);
+        var expected = BE_Company.Sales.Rating.EmployeeSalesRating.Snapshot(
+            facts.Where(f => f.DelegateId == 10), asOf, usePhantomSaleDate: false);
+        Assert.Equal(expected.AverageScore, market.AverageScore);
+        Assert.Equal(expected.RatingLabel, market.RatingLabel);
+
+        var jam = Assert.Single(rows, r => r.ListId == 20);
+        Assert.Equal(1, jam.SalesCount);
+        var empty = Assert.Single(rows, r => r.ListId == 30);
+        Assert.Equal(0, empty.SalesCount);
+        Assert.Equal("", empty.RatingLabel);
+        var none = Assert.Single(rows, r => r.ListId == 0);
+        Assert.Equal("بدون قائمة", none.ListName);
+        Assert.Equal(1, none.SalesCount);
+        Assert.Equal(10, rows[0].ListId);
+    }
+
+    [Fact]
+    public void CountsAsExistingSale_Drops_Posted_Sale_Deleted_From_Branch()
+    {
+        Assert.False(DirectorSalesFollowupRules.CountsAsExistingSale(
+            customerSaleId: 90,
+            postingStatus: "Posted",
+            customerExists: true,
+            customerActive: false,
+            linkedOfficialSaleExists: false,
+            customerHasAnyOfficialSale: false));
+    }
+
+    [Fact]
+    public void CountsAsExistingSale_Keeps_Posted_Sale_That_Still_Exists()
+    {
+        Assert.True(DirectorSalesFollowupRules.CountsAsExistingSale(
+            customerSaleId: 90,
+            postingStatus: "Posted",
+            customerExists: true,
+            customerActive: true,
+            linkedOfficialSaleExists: true,
+            customerHasAnyOfficialSale: true));
+    }
+
+    [Fact]
+    public void CountsAsExistingSale_Ignores_Another_Sale_When_This_One_Was_Deleted()
+    {
+        Assert.False(DirectorSalesFollowupRules.CountsAsExistingSale(
+            customerSaleId: 90,
+            postingStatus: "Posted",
+            customerExists: true,
+            customerActive: true,
+            linkedOfficialSaleExists: false,
+            customerHasAnyOfficialSale: true));
+    }
+
+    [Fact]
+    public void CountsAsExistingSale_Keeps_Unposted_Active_Customer_And_Drops_Gone_Customer()
+    {
+        Assert.True(DirectorSalesFollowupRules.CountsAsExistingSale(
+            customerSaleId: null,
+            postingStatus: "Pending",
+            customerExists: true,
+            customerActive: true,
+            linkedOfficialSaleExists: false,
+            customerHasAnyOfficialSale: false));
+
+        Assert.False(DirectorSalesFollowupRules.CountsAsExistingSale(
+            customerSaleId: null,
+            postingStatus: "Posted",
+            customerExists: true,
+            customerActive: true,
+            linkedOfficialSaleExists: false,
+            customerHasAnyOfficialSale: false));
+
+        Assert.False(DirectorSalesFollowupRules.CountsAsExistingSale(
+            customerSaleId: null,
+            postingStatus: "Pending",
+            customerExists: false,
+            customerActive: false,
+            linkedOfficialSaleExists: false,
+            customerHasAnyOfficialSale: false));
     }
 }

@@ -268,6 +268,15 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
     );
   }
 
+  static const _binColors = [
+    Color(0xFF006879), // طلبات البيع
+    AppColors.darkGreen, // جاهز للبيع
+    Color(0xFF6750A4), // تم الكشف
+    Color(0xFF946200), // معلقة
+    AppColors.danger, // مرفوض
+    Color(0xFF1D6B50), // تم البيع
+  ];
+
   Widget _dashboardBody() {
     final searching = _homeQuery.isNotEmpty;
     final matches = searching ? _searchMatches(_homeQuery) : const <SalesWorkRequest>[];
@@ -275,26 +284,9 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
       onRefresh: _load,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.lg),
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.lg),
         children: [
-          Row(children: [
-            Image.asset('assets/icons/LogoCompany.png', width: 48, height: 52, fit: BoxFit.contain),
-            const SizedBox(width: 12),
-            const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('مساحة المبيعات', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
-              Text('تابع دوامك وطلبات زبائنك من مكان واحد', style: TextStyle(color: AppColors.muted, fontSize: 13)),
-            ])),
-          ]),
-          const SizedBox(height: 20),
-          _shiftCard(),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.pushNamed(context, '/submit-request'),
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('إرسال طلب بيع'),
-          ),
-          const SizedBox(height: 24),
-          const HomePriceBoardBanner(),
+          _trackingSection(),
           const SizedBox(height: AppSpacing.md),
           TextField(
             controller: _homeSearch,
@@ -312,17 +304,21 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
                       },
                       icon: const Icon(Icons.clear),
                     ),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadius.md)),
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                borderSide: const BorderSide(color: AppColors.line),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                borderSide: const BorderSide(color: AppColors.line),
+              ),
               isDense: true,
             ),
           ),
           const SizedBox(height: AppSpacing.md),
-          if (_loading)
-            const Padding(padding: EdgeInsets.all(24), child: CompanyLoader(label: 'جارٍ تحميل الطلبات'))
-          else if (_error != null) ...[
-            Text(_error!, style: const TextStyle(color: AppColors.danger)),
-            TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('إعادة المحاولة')),
-          ] else if (searching) ...[
+          if (searching) ...[
             Text(
               matches.isEmpty ? 'لا نتائج' : 'نتائج البحث (${matches.length})',
               style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.darkGreen),
@@ -339,42 +335,134 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
                 const SizedBox(height: AppSpacing.sm),
               ],
           ] else ...[
-            const Text('متابعة الطلبات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            const Text('اختر الحالة لعرض الطلبات وتفاصيلها', style: TextStyle(color: AppColors.muted, fontSize: 13)),
-            const SizedBox(height: 16),
-            for (var i = 0; i < _bins.length; i++) _binCard(i),
+            _shiftCard(),
+            const SizedBox(height: AppSpacing.sm),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/submit-request'),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('إرسال طلب بيع'),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            const HomePriceBoardBanner(),
           ],
         ],
       ),
     );
   }
 
-  Widget _binCard(int index) {
-    final bin = _bins[index];
-    final count = _binCount(index);
-    const colors = [AppColors.darkGreen, Color(0xFF006879), Color(0xFF6750A4),
-      Color(0xFF946200), AppColors.danger, Color(0xFF1D6B50)];
-    final color = colors[index];
-    return Card(
-      child: InkWell(
-        onTap: () => _openBin(index),
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(children: [
+  /// بطاقة متابعة الطلبات: شريط توزيع + مجموعتان (قيد العمل / النتيجة).
+  Widget _trackingSection() {
+    final counts = [for (var i = 0; i < _bins.length; i++) _binCount(i)];
+    final total = counts.fold<int>(0, (a, b) => a + b);
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppColors.line),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          const Expanded(
+            child: Text('متابعة الطلبات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          ),
+          if (!_loading && _error == null)
             Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: color.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(12)),
-              child: Icon(bin.icon, color: color, size: 24),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text('$total طلب',
+                  style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600)),
             ),
-            const SizedBox(width: 14),
-            Expanded(child: Text(bin.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600))),
-            const SizedBox(width: 8),
-            Text('$count', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: color)),
-            const SizedBox(width: 12),
-            const Icon(Icons.chevron_left_rounded, color: AppColors.muted, size: 22),
+        ]),
+        const SizedBox(height: AppSpacing.sm),
+        _distributionBar(counts, total),
+        if (_error != null) ...[
+          const SizedBox(height: AppSpacing.md),
+          Row(children: [
+            Expanded(child: Text(_error!, style: const TextStyle(color: AppColors.danger, fontSize: 13))),
+            TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh, size: 18), label: const Text('إعادة المحاولة')),
           ]),
+        ],
+        const SizedBox(height: AppSpacing.md),
+        _groupLabel('قيد العمل'),
+        Row(children: [
+          _stateTile(incomingBin, counts[incomingBin]),
+          const SizedBox(width: 8),
+          _stateTile(readyBin, counts[readyBin]),
+          const SizedBox(width: 8),
+          _stateTile(inspectedBin, counts[inspectedBin]),
+        ]),
+        const SizedBox(height: AppSpacing.sm),
+        _groupLabel('النتيجة'),
+        Row(children: [
+          _stateTile(pendingBin, counts[pendingBin]),
+          const SizedBox(width: 8),
+          _stateTile(rejectedBin, counts[rejectedBin]),
+          const SizedBox(width: 8),
+          _stateTile(soldBin, counts[soldBin]),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _distributionBar(List<int> counts, int total) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: SizedBox(
+        height: 6,
+        child: total == 0
+            ? Container(color: AppColors.line)
+            : Row(children: [
+                for (var i = 0; i < counts.length; i++)
+                  if (counts[i] > 0)
+                    Expanded(flex: counts[i], child: Container(color: _binColors[i])),
+              ]),
+      ),
+    );
+  }
+
+  Widget _groupLabel(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(text,
+            style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600)),
+      );
+
+  Widget _stateTile(int index, int count) {
+    final bin = _bins[index];
+    final active = count > 0;
+    final color = active ? _binColors[index] : AppColors.muted;
+    return Expanded(
+      child: Material(
+        color: active ? _binColors[index].withValues(alpha: 0.07) : AppColors.background,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        child: InkWell(
+          onTap: () => _openBin(index),
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(bin.icon, size: 18, color: color.withValues(alpha: active ? 1 : 0.6)),
+              const SizedBox(height: 6),
+              Text(
+                _loading ? '–' : '$count',
+                style: TextStyle(fontSize: 22, height: 1.1, fontWeight: FontWeight.w700, color: color),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                bin.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: active ? AppColors.text : AppColors.muted,
+                ),
+              ),
+            ]),
+          ),
         ),
       ),
     );
@@ -386,37 +474,52 @@ class _PendingSalesScreenState extends State<PendingSalesScreen> {
     try { stopped = Session.gpsStoppedByUser; } catch (_) {}
     final active = shift != null && shift.isActive && !stopped;
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
       decoration: BoxDecoration(
         color: const Color(0xFFF4FBF9),
         border: Border.all(color: const Color(0xFFCCE1E0)),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppRadius.md),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
-          const Icon(Icons.schedule_rounded, color: AppColors.darkGreen, size: 24),
-          const SizedBox(width: 10),
-          const Expanded(child: Text('دوام اليوم', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700))),
-          Flexible(child: Text(active ? 'أثناء الدوام' : 'غير نشط',
-              style: const TextStyle(color: AppColors.darkGreen, fontWeight: FontWeight.w600))),
-        ]),
-        const SizedBox(height: 10),
-        Text(active ? 'بدأ الدوام الساعة ${_iraqClock(shift.startedAtUtc)}' : 'ابدأ دوامك لمتابعة مهام المبيعات',
-            style: const TextStyle(color: AppColors.muted, fontSize: 13)),
-        const SizedBox(height: 14),
-        OutlinedButton(
-          onPressed: _shiftBusy ? null : (active ? _endShift : _startShift),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.darkGreen,
-            side: const BorderSide(color: Color(0xFFCCE1E0)),
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: active ? AppColors.darkGreen : AppColors.muted.withValues(alpha: 0.4),
+              shape: BoxShape.circle,
+            ),
           ),
-          child: _shiftBusy ? const CompanyLoader(size: 24) : Text(active ? 'إنهاء الدوام' : 'بدء الدوام'),
-        ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(active ? 'أثناء الدوام' : 'الدوام غير نشط',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              Text(
+                active ? 'بدأ الساعة ${_iraqClock(shift.startedAtUtc)}' : 'ابدأ دوامك لمتابعة المهام',
+                style: const TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
+            ]),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            onPressed: _shiftBusy ? null : (active ? _endShift : _startShift),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: active ? AppColors.danger : AppColors.darkGreen,
+              side: const BorderSide(color: Color(0xFFCCE1E0)),
+              backgroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              minimumSize: const Size(0, 36),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: _shiftBusy
+                ? const CompanyLoader(size: 20)
+                : Text(active ? 'إنهاء الدوام' : 'بدء الدوام'),
+          ),
+        ]),
         if (_shiftError != null) ...[
-          const SizedBox(height: 12),
-          Text(_shiftError!, style: const TextStyle(color: AppColors.danger)),
+          const SizedBox(height: 8),
+          Text(_shiftError!, style: const TextStyle(color: AppColors.danger, fontSize: 13)),
         ],
       ]),
     );

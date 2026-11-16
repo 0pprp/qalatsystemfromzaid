@@ -136,7 +136,7 @@ namespace BE_Company.Repository
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.QueryAsync<CustomersSalesGetDTO>("CustomersSales_GetAll",
+                var result = (await connection.QueryAsync<CustomersSalesGetDTO>("CustomersSales_GetAll",
                 new
                 {
                     FromDate = fromDate,
@@ -146,9 +146,41 @@ namespace BE_Company.Repository
                     ItemName = itemName,
                     SaleName = saleName
                 },
-                commandType: CommandType.StoredProcedure);
+                commandType: CommandType.StoredProcedure)).ToList();
 
+                await AttachLegalFlags(connection, result);
                 return result;
+            }
+        }
+
+        private sealed class CustomerLegalFlag
+        {
+            public int CustomerID { get; set; }
+            public bool IsLegal { get; set; }
+        }
+
+        /// <summary>
+        /// Sales rows come from View_CustomersSales, which does not include Customers.IsLegal.
+        /// The company sales list uses this flag to hide الواصل/الباقي for legal customers.
+        /// </summary>
+        private static async Task AttachLegalFlags(SqlConnection connection, List<CustomersSalesGetDTO> rows)
+        {
+            var ids = rows
+                .Where(r => r.CustomerID is > 0)
+                .Select(r => r.CustomerID!.Value)
+                .Distinct()
+                .ToArray();
+            if (ids.Length == 0)
+                return;
+
+            var flags = await connection.QueryAsync<CustomerLegalFlag>(
+                "SELECT CustomerID, CAST(ISNULL(IsLegal, 0) AS bit) AS IsLegal FROM dbo.Customers WHERE CustomerID IN @Ids",
+                new { Ids = ids });
+            var map = flags.ToDictionary(f => f.CustomerID, f => f.IsLegal);
+            foreach (var row in rows)
+            {
+                if (row.CustomerID is int id && map.TryGetValue(id, out var legal))
+                    row.IsLegal = legal;
             }
         }
 

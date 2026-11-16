@@ -43,6 +43,7 @@ namespace BE_Company.Sales.DTO
         public double? AmountTotalSales { get; set; }
         public double? ReceiptsTotal { get; set; }
         public double? AmountRemaining { get; set; }
+        public bool IsLegal { get; set; }
         public List<SalesExcelSearchSaleDTO> Sales { get; set; } = [];
     }
 
@@ -68,6 +69,7 @@ namespace BE_Company.Sales.DTO
         public double? AmountTotalSales { get; set; }
         public double? ReceiptsTotal { get; set; }
         public double? AmountRemaining { get; set; }
+        public bool IsLegal { get; set; }
     }
 
     public sealed class SalesExcelSearchSaleRow

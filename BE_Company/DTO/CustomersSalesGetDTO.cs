@@ -26,6 +26,7 @@
         public string? CityName { get; set; }
         public string? UserName { get; set; }
         public string? CustomerName { get; set; }
+        public bool? IsLegal { get; set; }
         public string? SaleName { get; set; }
         public string? PhoneNumber { get; set; }
         public string? StoreName { get; set; }

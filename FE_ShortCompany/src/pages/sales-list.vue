@@ -7,6 +7,7 @@ import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+import { shouldHidePaidRemaining, sumVisibleFinancial } from '@/composables/legalFinancialVisibility'
 
 const apiUrl = localStorage.getItem('LinkCity') // رابط الـ API
 const salesData = ref([])
@@ -349,7 +350,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar', // إجمالي الواصل
     value: formattedNumber(
-      salesData.value.reduce((sum, sale) => sum + (sale.receiptsTotal || 0), 0),
+      sumVisibleFinancial(salesData.value, sale => sale.receiptsTotal),
     ),
     title: 'إجمالي الواصل',
     color: "error",
@@ -358,7 +359,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar', // إجمالي المبلغ المتبقي
     value: formattedNumber(
-      salesData.value.reduce((sum, sale) => sum + (sale.amountRemaining || 0), 0),
+      sumVisibleFinancial(salesData.value, sale => sale.amountRemaining),
     ),
     title: 'إجمالي المبلغ المتبقي',
     color: "error",
@@ -411,8 +412,8 @@ function exportToExcel() {
     'القسط': sale.amountTotalDayDenar || 'لا يوجد',
     'خصم القسط': sale.discountAmountTotalDayDenar || 'لا يوجد',
     'القسط النهائي': sale.amountDaySalesDenar || 'لا يوجد',
-    'الواصل': sale.receiptsTotal || 'لا يوجد',
-    'الباقي': sale.amountRemaining || 'لا يوجد',
+    'الواصل': shouldHidePaidRemaining(sale) ? '—' : (sale.receiptsTotal || 'لا يوجد'),
+    'الباقي': shouldHidePaidRemaining(sale) ? '—' : (sale.amountRemaining || 'لا يوجد'),
     'عدد التسديدات': sale.countReceiptDevice || 'لا يوجد',
     'تاريخ اخر تسديد': sale.lastPaymentDate ? new Date(sale.lastPaymentDate).toLocaleDateString('en-CA') : 'لا يوجد',
     'اسم الجابي': sale.receiptName || 'لا يوجد',
@@ -924,12 +925,12 @@ const colSlots = {
           </template>
           <template #[colSlots.receiptsTotal]="{ item }">
             <div class="premium-amount amt-total-receipts">
-              {{ formattedNumber(item.receiptsTotal) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.receiptsTotal) }}
             </div>
           </template>
           <template #[colSlots.amountRemaining]="{ item }">
             <div class="premium-amount amt-remaining">
-              {{ formattedNumber(item.amountRemaining) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.amountRemaining) }}
             </div>
           </template>
           <template #[colSlots.countReceiptDevice]="{ item }">

@@ -17,6 +17,9 @@ public sealed class CollectionPaymentIntakeNoSyncPostEligibleTests
         var text = File.ReadAllText(repo);
 
         Assert.Contains("PostPaymentIdempotentAsync", text);
+        Assert.Contains(
+            "EXISTS(SELECT 1 FROM Customers WHERE CustomerID = @CustomerId)",
+            text);
         Assert.DoesNotContain("await TryPostEligibleCatchUpAsync(", text);
         Assert.DoesNotContain("CustomersPaymentsRequest_PostEligible", text);
     }

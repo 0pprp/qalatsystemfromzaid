@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace BE_SalesEmployee.Controllers;
 
-[Authorize(Policy = SalesPolicies.Director)]
+[Authorize(Policy = SalesPolicies.DirectorOrSupervisor)]
 [Route("api/sales-manager/announcements")]
 [ApiController]
 [RequestSizeLimit(12 * 1024 * 1024)]

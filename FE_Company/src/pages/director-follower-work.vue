@@ -19,9 +19,11 @@ import {
   directorFollowerOpsSalesWorkspace,
   directorFollowerOpsSetCollectionEnabled,
 } from '@/composables/directorApi'
+import FollowerShopCaptureOverview from '@/components/FollowerShopCaptureOverview.vue'
 import { useSalesBranches } from '@/composables/useSalesBranches'
 import { useToast } from '@/composables/useToast'
 import { useUserRole } from '@/composables/useUserRole'
+import { isCommitteeRole } from '@/utils/oversightRoles'
 
 defineOptions({ name: 'DirectorFollowerWork' })
 definePage({
@@ -32,7 +34,7 @@ definePage({
   },
 })
 
-const VALID_TABS = new Set(['sales', 'declining', 'notes', 'oldCustomers', 'delegateNotes', 'collection'])
+const VALID_TABS = new Set(['sales', 'declining', 'notes', 'oldCustomers', 'delegateNotes', 'collection', 'shopCapture'])
 const TAB_LABELS = {
   sales: 'مصادقة البيع',
   declining: 'المتدنية',
@@ -40,11 +42,15 @@ const TAB_LABELS = {
   oldCustomers: 'الزبائن القديمة',
   delegateNotes: 'ملاحظات المندوبين',
   collection: 'الجباية',
+  shopCapture: 'مواقع وصور المحلات',
 }
 
 /** Legacy query tab=field → oldCustomers (قانونية / زبائن قديمة). */
 function normalizeTab(raw) {
   const t = String(raw || 'sales')
+  // لجنة المراقبة has no الجباية
+  if (t === 'collection' && isCommitteeRole(localStorage.getItem('UserType')))
+    return 'sales'
   if (t === 'field' || t === 'legal')
     return 'oldCustomers'
 
@@ -273,6 +279,7 @@ function invalidateFollowerDetailCache(followerId, tabs) {
 const detailFollower = ref(null)
 const detailTab = ref('sales')
 const detailBusy = ref(false)
+const shopCaptureRef = ref(null)
 const tabLabel = computed(() => TAB_LABELS[detailTab.value] || 'عمل المتابعين')
 
 function readSavedCityValue() {
@@ -833,6 +840,8 @@ async function loadDetail({ force } = {}) {
   if (!fid || !selected.value?.value)
     return
   const tab = detailTab.value
+  if (tab === 'shopCapture')
+    return
   const cacheKey = detailCacheKey(fid, tab)
   if (!force && detailTabCache.has(cacheKey)) {
     applyCachedDetail(detailTabCache.get(cacheKey))
@@ -955,6 +964,11 @@ async function toggleCollection(list, enabled) {
 }
 
 async function refreshAll() {
+  if (detailTab.value === 'shopCapture') {
+    await shopCaptureRef.value?.reload()
+
+    return
+  }
   invalidateCityCache(cityKey())
   await loadFollowerCards({ force: true })
   if (detailOpen.value)
@@ -1065,6 +1079,7 @@ onActivated(async () => {
           class="dfw-select dfw-select-city"
         />
         <VTextField
+          v-if="detailTab !== 'shopCapture'"
           v-model="search"
           label="بحث متابع"
           density="comfortable"
@@ -1074,7 +1089,7 @@ onActivated(async () => {
           class="dfw-select dfw-select-search"
         />
         <VBtn
-          v-if="canManageFollowers"
+          v-if="canManageFollowers && detailTab !== 'shopCapture'"
           color="primary"
           variant="flat"
           prepend-icon="tabler-user-plus"
@@ -1093,244 +1108,513 @@ onActivated(async () => {
       </div>
     </div>
 
-    <div class="dfw-stats">
-      <div class="dfw-stat">
-        <span class="dfw-stat-label">المتابعون</span>
-        <span class="dfw-stat-value">{{ filteredFollowers.length }}</span>
+    <template v-if="detailTab !== 'shopCapture'">
+      <div class="dfw-stats">
+        <div class="dfw-stat">
+          <span class="dfw-stat-label">المتابعون</span>
+          <span class="dfw-stat-value">{{ filteredFollowers.length }}</span>
+        </div>
       </div>
-    </div>
 
-    <div
-      v-if="loading"
-      class="dfw-loading"
-    >
-      <VProgressCircular
-        indeterminate
-        color="primary"
-      />
-    </div>
-
-    <div
-      v-else
-      class="dfw-follower-grid"
-    >
-      <button
-        v-for="row in filteredFollowers"
-        :key="pick(row, 'followerId', 'FollowerId')"
-        type="button"
-        class="dfw-follower-card"
-        :class="{
-          'dfw-follower-card-active': Number(pick(detailFollower, 'followerId', 'FollowerId')) === Number(pick(row, 'followerId', 'FollowerId')),
-        }"
-        @click="openDetail(row, detailTab)"
-      >
-        <div class="dfw-follower-card-name">
-          <span>{{ pick(row, 'followerName', 'FollowerName') }}</span>
-          <span
-            v-if="canManageFollowers"
-            class="dfw-card-actions"
-            @click.stop
-          >
-            <VBtn
-              icon="tabler-edit"
-              size="x-small"
-              variant="text"
-              @click="openEditFollower(row, $event)"
-            />
-            <VBtn
-              icon="tabler-trash"
-              size="x-small"
-              variant="text"
-              color="error"
-              @click="deleteFollower(row, $event)"
-            />
-          </span>
-        </div>
-        <div class="dfw-follower-card-meta">
-          <div class="dfw-meta-block">
-            <span>التقييم الوهمي</span>
-            <b class="dfw-rating-with-trend">
-              {{ fmtRating(pick(row, 'phantomRating', 'PhantomRating')) }}
-              <VIcon
-                :icon="trendIcon(trendKey(row, 'ratingTrend', 'RatingTrend'))"
-                size="16"
-                :class="trendClass(trendKey(row, 'ratingTrend', 'RatingTrend'))"
-              />
-            </b>
-          </div>
-          <div class="dfw-meta-block">
-            <span>زبائن التقييم</span>
-            <b>{{ fmt(pick(row, 'ratedCustomerCount', 'RatedCustomerCount')) }}</b>
-          </div>
-        </div>
-      </button>
       <div
-        v-if="!filteredFollowers.length"
-        class="dfw-empty-block"
+        v-if="loading"
+        class="dfw-loading"
       >
-        لا يوجد متابعون لهذه المحافظة
-      </div>
-    </div>
-
-    <div
-      v-if="detailOpen"
-      id="dfw-detail"
-      class="dfw-detail"
-    >
-      <div class="dfw-detail-head">
-        <div>
-          <div class="dfw-detail-title">
-            {{ pick(detailFollower, 'followerName', 'FollowerName') || 'تفاصيل المتابع' }}
-            <span class="dfw-tab-chip">{{ tabLabel }}</span>
-          </div>
-          <div class="dfw-detail-sub">
-            غيّر القسم من السايدبار تحت عمل المتابعين
-          </div>
-        </div>
-        <VBtn
-          variant="text"
-          @click="closeDetail"
-        >
-          إغلاق التفاصيل
-        </VBtn>
+        <VProgressCircular
+          indeterminate
+          color="primary"
+        />
       </div>
 
-      <div class="dfw-detail-body">
-        <div
-          v-if="detailBusy"
-          class="dfw-loading"
+      <div
+        v-else
+        class="dfw-follower-grid"
+      >
+        <button
+          v-for="row in filteredFollowers"
+          :key="pick(row, 'followerId', 'FollowerId')"
+          type="button"
+          class="dfw-follower-card"
+          :class="{
+            'dfw-follower-card-active': Number(pick(detailFollower, 'followerId', 'FollowerId')) === Number(pick(row, 'followerId', 'FollowerId')),
+          }"
+          @click="openDetail(row, detailTab)"
         >
-          <VProgressCircular
-            indeterminate
-            color="primary"
-          />
-        </div>
-
-        <template v-else-if="detailTab === 'sales'">
-          <div class="dfw-section-label">
-            كروت القوائم
-          </div>
-          <div class="dfw-list-grid">
-            <div
-              v-for="lc in listCards"
-              :key="pick(lc, 'listId', 'ListId')"
-              class="dfw-list-card dfw-list-card-static"
+          <div class="dfw-follower-card-name">
+            <span>{{ pick(row, 'followerName', 'FollowerName') }}</span>
+            <span
+              v-if="canManageFollowers"
+              class="dfw-card-actions"
+              @click.stop
             >
-              <div class="dfw-list-card-name">
-                {{ pick(lc, 'listName', 'ListName') || `قائمة ${pick(lc, 'listId', 'ListId')}` }}
-              </div>
-              <div class="dfw-follower-card-meta">
-                <div class="dfw-meta-block">
-                  <span>التقييم الوهمي</span>
-                  <b class="dfw-rating-with-trend">
-                    {{ fmtRating(pick(lc, 'phantomRating', 'PhantomRating')) }}
-                    <VIcon
-                      :icon="trendIcon(trendKey(lc, 'ratingTrend', 'RatingTrend'))"
-                      size="16"
-                      :class="trendClass(trendKey(lc, 'ratingTrend', 'RatingTrend'))"
-                    />
-                  </b>
-                </div>
-                <div class="dfw-meta-block">
-                  <span>زبائن التقييم</span>
-                  <b>{{ fmt(pick(lc, 'ratedCustomerCount', 'RatedCustomerCount')) }}</b>
-                </div>
-              </div>
-            </div>
-            <div
-              v-if="!listCards.length"
-              class="dfw-empty-block"
-            >
-              لا قوائم مسندة
-            </div>
-          </div>
-
-          <div class="dfw-section-label mt-4">
-            كروت التقييمات
-          </div>
-          <div class="dfw-bucket-grid">
-            <button
-              v-for="rb in ratingBuckets"
-              :key="pick(rb, 'levelKey', 'LevelKey')"
-              type="button"
-              class="dfw-bucket-card"
-              :class="{ 'dfw-bucket-card-active': remainingBucket === pick(rb, 'levelKey', 'LevelKey') }"
-              @click="openRemainingBucket(pick(rb, 'levelKey', 'LevelKey'))"
-            >
-              <span>{{ pick(rb, 'label', 'Label') }}</span>
-              <b class="dfw-rating-with-trend">
-                {{ fmt(pick(rb, 'customerCount', 'CustomerCount')) }}
-                <VIcon
-                  :icon="trendIcon(trendKey(rb, 'countTrend', 'CountTrend'))"
-                  size="16"
-                  :class="trendClass(trendKey(rb, 'countTrend', 'CountTrend'))"
-                />
-              </b>
-            </button>
-          </div>
-
-          <div class="dfw-section-label mt-4">
-            كروت المتبقي
-          </div>
-          <div class="dfw-bucket-grid">
-            <button
-              type="button"
-              class="dfw-bucket-card"
-              :class="{ 'dfw-bucket-card-active': remainingBucket === 'le100' }"
-              @click="openRemainingBucket('le100')"
-            >
-              <span>باقي أقل من 100,000</span>
-              <b class="dfw-rating-with-trend">
-                {{ fmt(workBundle.remainingLe100Count) }}
-                <VIcon
-                  :icon="trendIcon(trendKey(workBundle, 'remainingLe100Trend', 'RemainingLe100Trend'))"
-                  size="16"
-                  :class="trendClass(trendKey(workBundle, 'remainingLe100Trend', 'RemainingLe100Trend'))"
-                />
-              </b>
-            </button>
-            <button
-              type="button"
-              class="dfw-bucket-card"
-              :class="{ 'dfw-bucket-card-active': remainingBucket === 'lt200' }"
-              @click="openRemainingBucket('lt200')"
-            >
-              <span>باقي من 100,000 إلى أقل من 200,000</span>
-              <b class="dfw-rating-with-trend">
-                {{ fmt(workBundle.remainingLt200Count) }}
-                <VIcon
-                  :icon="trendIcon(trendKey(workBundle, 'remainingLt200Trend', 'RemainingLt200Trend'))"
-                  size="16"
-                  :class="trendClass(trendKey(workBundle, 'remainingLt200Trend', 'RemainingLt200Trend'))"
-                />
-              </b>
-            </button>
-          </div>
-
-          <div
-            v-if="remainingBucket"
-            class="dfw-panel"
-          >
-            <div class="dfw-section-label">
-              أسماء الزبائن
-            </div>
-            <div
-              v-if="remainingBusy"
-              class="dfw-loading dfw-loading-sm"
-            >
-              <VProgressCircular
-                indeterminate
-                color="primary"
-                size="28"
+              <VBtn
+                icon="tabler-edit"
+                size="x-small"
+                variant="text"
+                @click="openEditFollower(row, $event)"
               />
+              <VBtn
+                icon="tabler-trash"
+                size="x-small"
+                variant="text"
+                color="error"
+                @click="deleteFollower(row, $event)"
+              />
+            </span>
+          </div>
+          <div class="dfw-follower-card-meta">
+            <div class="dfw-meta-block">
+              <span>التقييم الوهمي</span>
+              <b class="dfw-rating-with-trend">
+                {{ fmtRating(pick(row, 'phantomRating', 'PhantomRating')) }}
+                <VIcon
+                  :icon="trendIcon(trendKey(row, 'ratingTrend', 'RatingTrend'))"
+                  size="16"
+                  :class="trendClass(trendKey(row, 'ratingTrend', 'RatingTrend'))"
+                />
+              </b>
+            </div>
+            <div class="dfw-meta-block">
+              <span>زبائن التقييم</span>
+              <b>{{ fmt(pick(row, 'ratedCustomerCount', 'RatedCustomerCount')) }}</b>
+            </div>
+          </div>
+        </button>
+        <div
+          v-if="!filteredFollowers.length"
+          class="dfw-empty-block"
+        >
+          لا يوجد متابعون لهذه المحافظة
+        </div>
+      </div>
+
+      <div
+        v-if="detailOpen"
+        id="dfw-detail"
+        class="dfw-detail"
+      >
+        <div class="dfw-detail-head">
+          <div>
+            <div class="dfw-detail-title">
+              {{ pick(detailFollower, 'followerName', 'FollowerName') || 'تفاصيل المتابع' }}
+              <span class="dfw-tab-chip">{{ tabLabel }}</span>
+            </div>
+            <div class="dfw-detail-sub">
+              غيّر القسم من السايدبار تحت عمل المتابعين
+            </div>
+          </div>
+          <VBtn
+            variant="text"
+            @click="closeDetail"
+          >
+            إغلاق التفاصيل
+          </VBtn>
+        </div>
+
+        <div class="dfw-detail-body">
+          <div
+            v-if="detailBusy"
+            class="dfw-loading"
+          >
+            <VProgressCircular
+              indeterminate
+              color="primary"
+            />
+          </div>
+
+          <template v-else-if="detailTab === 'sales'">
+            <div class="dfw-section-label">
+              كروت القوائم
+            </div>
+            <div class="dfw-list-grid">
+              <div
+                v-for="lc in listCards"
+                :key="pick(lc, 'listId', 'ListId')"
+                class="dfw-list-card dfw-list-card-static"
+              >
+                <div class="dfw-list-card-name">
+                  {{ pick(lc, 'listName', 'ListName') || `قائمة ${pick(lc, 'listId', 'ListId')}` }}
+                </div>
+                <div class="dfw-follower-card-meta">
+                  <div class="dfw-meta-block">
+                    <span>التقييم الوهمي</span>
+                    <b class="dfw-rating-with-trend">
+                      {{ fmtRating(pick(lc, 'phantomRating', 'PhantomRating')) }}
+                      <VIcon
+                        :icon="trendIcon(trendKey(lc, 'ratingTrend', 'RatingTrend'))"
+                        size="16"
+                        :class="trendClass(trendKey(lc, 'ratingTrend', 'RatingTrend'))"
+                      />
+                    </b>
+                  </div>
+                  <div class="dfw-meta-block">
+                    <span>زبائن التقييم</span>
+                    <b>{{ fmt(pick(lc, 'ratedCustomerCount', 'RatedCustomerCount')) }}</b>
+                  </div>
+                </div>
+              </div>
+              <div
+                v-if="!listCards.length"
+                class="dfw-empty-block"
+              >
+                لا قوائم مسندة
+              </div>
+            </div>
+
+            <div class="dfw-section-label mt-4">
+              كروت التقييمات
+            </div>
+            <div class="dfw-bucket-grid">
+              <button
+                v-for="rb in ratingBuckets"
+                :key="pick(rb, 'levelKey', 'LevelKey')"
+                type="button"
+                class="dfw-bucket-card"
+                :class="{ 'dfw-bucket-card-active': remainingBucket === pick(rb, 'levelKey', 'LevelKey') }"
+                @click="openRemainingBucket(pick(rb, 'levelKey', 'LevelKey'))"
+              >
+                <span>{{ pick(rb, 'label', 'Label') }}</span>
+                <b class="dfw-rating-with-trend">
+                  {{ fmt(pick(rb, 'customerCount', 'CustomerCount')) }}
+                  <VIcon
+                    :icon="trendIcon(trendKey(rb, 'countTrend', 'CountTrend'))"
+                    size="16"
+                    :class="trendClass(trendKey(rb, 'countTrend', 'CountTrend'))"
+                  />
+                </b>
+              </button>
+            </div>
+
+            <div class="dfw-section-label mt-4">
+              كروت المتبقي
+            </div>
+            <div class="dfw-bucket-grid">
+              <button
+                type="button"
+                class="dfw-bucket-card"
+                :class="{ 'dfw-bucket-card-active': remainingBucket === 'le100' }"
+                @click="openRemainingBucket('le100')"
+              >
+                <span>باقي أقل من 100,000</span>
+                <b class="dfw-rating-with-trend">
+                  {{ fmt(workBundle.remainingLe100Count) }}
+                  <VIcon
+                    :icon="trendIcon(trendKey(workBundle, 'remainingLe100Trend', 'RemainingLe100Trend'))"
+                    size="16"
+                    :class="trendClass(trendKey(workBundle, 'remainingLe100Trend', 'RemainingLe100Trend'))"
+                  />
+                </b>
+              </button>
+              <button
+                type="button"
+                class="dfw-bucket-card"
+                :class="{ 'dfw-bucket-card-active': remainingBucket === 'lt200' }"
+                @click="openRemainingBucket('lt200')"
+              >
+                <span>باقي من 100,000 إلى أقل من 200,000</span>
+                <b class="dfw-rating-with-trend">
+                  {{ fmt(workBundle.remainingLt200Count) }}
+                  <VIcon
+                    :icon="trendIcon(trendKey(workBundle, 'remainingLt200Trend', 'RemainingLt200Trend'))"
+                    size="16"
+                    :class="trendClass(trendKey(workBundle, 'remainingLt200Trend', 'RemainingLt200Trend'))"
+                  />
+                </b>
+              </button>
+            </div>
+
+            <div
+              v-if="remainingBucket"
+              class="dfw-panel"
+            >
+              <div class="dfw-section-label">
+                أسماء الزبائن
+              </div>
+              <div
+                v-if="remainingBusy"
+                class="dfw-loading dfw-loading-sm"
+              >
+                <VProgressCircular
+                  indeterminate
+                  color="primary"
+                  size="28"
+                />
+              </div>
+              <div
+                v-else
+                class="dfw-name-grid"
+              >
+                <button
+                  v-for="(r, i) in remainingRows"
+                  :key="`rem-${i}`"
+                  type="button"
+                  class="dfw-name-card"
+                  @click="openCustomerProfile(r)"
+                >
+                  <div class="dfw-name-card-title">
+                    {{ pick(r, 'customerName', 'CustomerName') }}
+                  </div>
+                  <div class="dfw-name-card-sub">
+                    {{ pick(r, 'listName', 'ListName') || '—' }}
+                    · {{ pick(r, 'ratingLabel', 'RatingLabel') || '—' }}
+                    · متبقي {{ fmt(pick(r, 'amountRemaining', 'AmountRemaining')) }}
+                  </div>
+                </button>
+                <div
+                  v-if="!remainingRows.length"
+                  class="dfw-empty-block"
+                >
+                  لا زبائن في هذه القائمة
+                </div>
+              </div>
+            </div>
+
+            <div
+              v-if="profileRow"
+              class="dfw-profile"
+            >
+              <div class="dfw-profile-head">
+                <div class="dfw-profile-title">
+                  بروفايل الزبون — {{ pick(profileRow, 'customerName', 'CustomerName') }}
+                  <span
+                    v-if="pick(profileRow, 'authenticated', 'Authenticated') != null"
+                    class="dfw-badge"
+                    :class="salesAuthBadgeClass(profileRow)"
+                  >
+                    {{ (profileRow.authenticated ?? profileRow.Authenticated) ? 'مصادق' : 'بانتظار' }}
+                  </span>
+                  <button
+                    v-if="profileCustomerId()"
+                    type="button"
+                    class="dfw-full-profile-btn"
+                    @click="openFullCustomerProfile"
+                  >
+                    عرض بروفايل الزبون الكامل
+                  </button>
+                </div>
+                <VBtn
+                  size="small"
+                  variant="text"
+                  @click="closeProfile"
+                >
+                  إغلاق البروفايل
+                </VBtn>
+              </div>
+              <div class="dfw-profile-containers">
+                <section class="dfw-profile-box">
+                  <h3 class="dfw-profile-box-title">
+                    معلومات عامة
+                  </h3>
+                  <div class="dfw-profile-grid dfw-profile-grid-stack">
+                    <div><span>الهاتف</span><b>{{ pick(profileRow, 'phone', 'Phone') || '—' }}</b></div>
+                    <div><span>القائمة</span><b>{{ pick(profileRow, 'listName', 'ListName') || '—' }}</b></div>
+                    <div v-if="pick(profileRow, 'authenticated', 'Authenticated') != null">
+                      <span>الحالة</span>
+                      <b>{{ (profileRow.authenticated ?? profileRow.Authenticated) ? 'مصادق' : 'بانتظار' }}</b>
+                    </div>
+                    <div v-if="pick(profileRow, 'currentRatingLabel', 'CurrentRatingLabel') || pick(profileRow, 'ratingLabel', 'RatingLabel')">
+                      <span>التقييم</span>
+                      <b>{{ pick(profileRow, 'currentRatingLabel', 'CurrentRatingLabel') || pick(profileRow, 'ratingLabel', 'RatingLabel') }}</b>
+                    </div>
+                    <div v-if="pick(profileRow, 'salePrice', 'SalePrice') != null">
+                      <span>سعر البيع</span>
+                      <b>{{ fmt(pick(profileRow, 'salePrice', 'SalePrice')) }}</b>
+                    </div>
+                    <div v-if="pick(profileRow, 'saleDate', 'SaleDate')">
+                      <span>تاريخ البيع</span>
+                      <b>{{ fmtDate(pick(profileRow, 'saleDate', 'SaleDate')) }}</b>
+                    </div>
+                    <div v-if="pick(profileRow, 'dailyInstallment', 'DailyInstallment') != null">
+                      <span>القسط</span>
+                      <b>{{ fmt(pick(profileRow, 'dailyInstallment', 'DailyInstallment')) }}</b>
+                    </div>
+                    <div v-if="pick(profileRow, 'sellerName', 'SellerName')">
+                      <span>اسم البائع</span>
+                      <b>{{ pick(profileRow, 'sellerName', 'SellerName') }}</b>
+                    </div>
+                    <div v-if="pick(profileRow, 'paidAmount', 'PaidAmount') != null">
+                      <span>واصل</span>
+                      <b>{{ fmt(pick(profileRow, 'paidAmount', 'PaidAmount')) }}</b>
+                    </div>
+                    <div v-if="pick(profileRow, 'remainingAmount', 'RemainingAmount') != null || pick(profileRow, 'amountRemaining', 'AmountRemaining') != null">
+                      <span>متبقي</span>
+                      <b>{{ fmt(pick(profileRow, 'remainingAmount', 'RemainingAmount') ?? pick(profileRow, 'amountRemaining', 'AmountRemaining')) }}</b>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="dfw-profile-box">
+                  <h3 class="dfw-profile-box-title">
+                    تقييم المتابع
+                  </h3>
+                  <div class="dfw-profile-grid dfw-profile-grid-stack">
+                    <div>
+                      <span>تقييم المصادقة</span>
+                      <b>{{ pick(profileRow, 'authRating', 'AuthRating') ?? '—' }}</b>
+                    </div>
+                    <div class="dfw-profile-wide">
+                      <span>ملاحظة التقييم</span>
+                      <b>{{ pick(profileRow, 'authNote', 'AuthNote') || '—' }}</b>
+                    </div>
+                    <div>
+                      <span>قيمة بضاعة المحل</span>
+                      <b>{{ fmt(pick(profileRow, 'shopStockEstimatedValue', 'ShopStockEstimatedValue')) }}</b>
+                    </div>
+                    <div>
+                      <span>قيمة الوارد اليومي</span>
+                      <b>{{ fmt(pick(profileRow, 'estimatedDailyRevenue', 'EstimatedDailyRevenue')) }}</b>
+                    </div>
+                    <div>
+                      <span>وقت المصادقة</span>
+                      <b>{{ fmtDateTime(pick(profileRow, 'authenticatedAtUtc', 'AuthenticatedAtUtc')) }}</b>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="dfw-profile-box">
+                  <h3 class="dfw-profile-box-title">
+                    تقييم المندوب
+                  </h3>
+                  <div class="dfw-profile-grid dfw-profile-grid-stack">
+                    <div>
+                      <span>تقييم المحل</span>
+                      <b>{{ pick(profileRow, 'shopRating', 'ShopRating') ?? '—' }}</b>
+                    </div>
+                    <div class="dfw-profile-wide">
+                      <span>ملاحظة التقييم</span>
+                      <b>{{ pick(profileRow, 'shopRatingNote', 'ShopRatingNote') || '—' }}</b>
+                    </div>
+                    <div>
+                      <span>قيمة بضاعة المحل</span>
+                      <b>{{ fmt(pick(profileRow, 'delegateShopStockEstimatedValue', 'DelegateShopStockEstimatedValue')) }}</b>
+                    </div>
+                    <div>
+                      <span>قيمة الوارد اليومي</span>
+                      <b>{{ fmt(pick(profileRow, 'delegateEstimatedDailyRevenue', 'DelegateEstimatedDailyRevenue')) }}</b>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="dfw-profile-box">
+                  <h3 class="dfw-profile-box-title">
+                    تقييم موظف المبيعات
+                  </h3>
+                  <div class="dfw-profile-grid dfw-profile-grid-stack">
+                    <div>
+                      <span>قيمة الموجودات</span>
+                      <b>{{ fmt(pick(profileRow, 'employeeShopStockEstimatedValue', 'EmployeeShopStockEstimatedValue')) }}</b>
+                    </div>
+                    <div>
+                      <span>الإيراد اليومي</span>
+                      <b>{{ fmt(pick(profileRow, 'employeeEstimatedDailyRevenue', 'EmployeeEstimatedDailyRevenue')) }}</b>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div class="dfw-section-label mt-4">
+              أسماء مصادقة المبيعات
+              <span class="dfw-hint-inline">بانتظار {{ pendingSalesCount }} · مصادق {{ authenticatedSalesCount }}</span>
+            </div>
+            <div class="dfw-hint">
+              قيد الانتظار = بيع موظف مبيعات منشور ولم تُصادق بعد على قوائم هذا المتابع
+            </div>
+            <div class="dfw-name-grid">
+              <button
+                v-for="(r, i) in salesRows"
+                :key="`sale-${i}`"
+                type="button"
+                class="dfw-name-card"
+                :class="{ 'dfw-name-card-active': Number(pick(profileRow, 'customerId', 'CustomerId')) === Number(pick(r, 'customerId', 'CustomerId')) }"
+                @click="openCustomerProfile(r)"
+              >
+                <div class="dfw-name-card-title">
+                  {{ pick(r, 'customerName', 'CustomerName') }}
+                  <span
+                    class="dfw-badge"
+                    :class="salesAuthBadgeClass(r)"
+                  >
+                    {{ (r.authenticated ?? r.Authenticated) ? 'مصادق' : 'بانتظار' }}
+                  </span>
+                </div>
+                <div class="dfw-name-card-sub">
+                  {{ pick(r, 'listName', 'ListName') || '—' }}
+                  · {{ pick(r, 'sellerName', 'SellerName') || '—' }}
+                  · {{ pick(r, 'currentRatingLabel', 'CurrentRatingLabel') || '—' }}
+                  · متبقي {{ fmt(pick(r, 'remainingAmount', 'RemainingAmount')) }}
+                </div>
+              </button>
+              <div
+                v-if="!salesRows.length"
+                class="dfw-empty-block"
+              >
+                لا بيع موظف مبيعات بانتظار مصادقة، ولا مصادقات على قوائم هذا المتابع
+              </div>
+            </div>
+          </template>
+
+          <template v-else-if="detailTab === 'declining'">
+            <div class="dfw-hint">
+              مقارنة مع لقطة خلال آخر 7 أيام — هبوط درجتين (ممتاز→ضعيف، جيد→متلكئ، ضعيف→سيء) بنفس منطق تطبيق المتابع
+            </div>
+            <div class="dfw-name-grid">
+              <button
+                v-for="(r, i) in decliningRows"
+                :key="i"
+                type="button"
+                class="dfw-name-card"
+                @click="openCustomerProfile(r)"
+              >
+                <div class="dfw-name-card-title">
+                  {{ pick(r, 'customerName', 'CustomerName') }}
+                </div>
+                <div class="dfw-name-card-sub">
+                  {{ pick(r, 'fromLabel', 'FromLabel') || '—' }}
+                  → {{ pick(r, 'toLabel', 'ToLabel') || pick(r, 'ratingLabel', 'RatingLabel') || '—' }}
+                  · {{ pick(r, 'daysBetween', 'DaysBetween') ?? '—' }} يوم
+                  · {{ pick(r, 'listName', 'ListName') || '—' }}
+                </div>
+              </button>
+              <div
+                v-if="!decliningRows.length"
+                class="dfw-empty-block"
+              >
+                لا زبائن متدنية حالياً
+              </div>
             </div>
             <div
-              v-else
-              class="dfw-name-grid"
+              v-if="profileRow"
+              class="dfw-profile"
             >
+              <div class="dfw-profile-head">
+                <div class="dfw-profile-title">
+                  بروفايل الزبون — {{ pick(profileRow, 'customerName', 'CustomerName') }}
+                </div>
+                <VBtn
+                  size="small"
+                  variant="text"
+                  @click="closeProfile"
+                >
+                  إغلاق البروفايل
+                </VBtn>
+              </div>
+              <div class="dfw-profile-grid">
+                <div><span>الهاتف</span><b>{{ pick(profileRow, 'phone', 'Phone') || '—' }}</b></div>
+                <div><span>القائمة</span><b>{{ pick(profileRow, 'listName', 'ListName') || '—' }}</b></div>
+                <div><span>من</span><b>{{ pick(profileRow, 'fromLabel', 'FromLabel') || '—' }}</b></div>
+                <div><span>إلى</span><b>{{ pick(profileRow, 'toLabel', 'ToLabel') || pick(profileRow, 'ratingLabel', 'RatingLabel') || '—' }}</b></div>
+                <div><span>الأيام</span><b>{{ pick(profileRow, 'daysBetween', 'DaysBetween') ?? '—' }}</b></div>
+                <div><span>ملاحظة</span><b>{{ (profileRow.hasNote ?? profileRow.HasNote) ? 'نعم' : 'لا' }}</b></div>
+              </div>
+            </div>
+          </template>
+
+          <template v-else-if="detailTab === 'notes'">
+            <div class="dfw-name-grid">
               <button
-                v-for="(r, i) in remainingRows"
-                :key="`rem-${i}`"
+                v-for="(r, i) in noteRows"
+                :key="i"
                 type="button"
                 class="dfw-name-card"
                 @click="openCustomerProfile(r)"
@@ -1340,365 +1624,28 @@ onActivated(async () => {
                 </div>
                 <div class="dfw-name-card-sub">
                   {{ pick(r, 'listName', 'ListName') || '—' }}
-                  · {{ pick(r, 'ratingLabel', 'RatingLabel') || '—' }}
-                  · متبقي {{ fmt(pick(r, 'amountRemaining', 'AmountRemaining')) }}
+                  · {{ pick(r, 'authorName', 'AuthorName') || '—' }}
+                  · {{ fmtDateTime(pick(r, 'createdAtUtc', 'CreatedAtUtc')) }}
+                </div>
+                <div class="dfw-name-card-note">
+                  {{ pick(r, 'noteText', 'NoteText') || '—' }}
                 </div>
               </button>
               <div
-                v-if="!remainingRows.length"
+                v-if="!noteRows.length"
                 class="dfw-empty-block"
               >
-                لا زبائن في هذه القائمة
+                لا ملاحظات تقييم
               </div>
             </div>
-          </div>
-
-          <div
-            v-if="profileRow"
-            class="dfw-profile"
-          >
-            <div class="dfw-profile-head">
-              <div class="dfw-profile-title">
-                بروفايل الزبون — {{ pick(profileRow, 'customerName', 'CustomerName') }}
-                <span
-                  v-if="pick(profileRow, 'authenticated', 'Authenticated') != null"
-                  class="dfw-badge"
-                  :class="salesAuthBadgeClass(profileRow)"
-                >
-                  {{ (profileRow.authenticated ?? profileRow.Authenticated) ? 'مصادق' : 'بانتظار' }}
-                </span>
-                <button
-                  v-if="profileCustomerId()"
-                  type="button"
-                  class="dfw-full-profile-btn"
-                  @click="openFullCustomerProfile"
-                >
-                  عرض بروفايل الزبون الكامل
-                </button>
-              </div>
-              <VBtn
-                size="small"
-                variant="text"
-                @click="closeProfile"
-              >
-                إغلاق البروفايل
-              </VBtn>
-            </div>
-            <div class="dfw-profile-containers">
-              <section class="dfw-profile-box">
-                <h3 class="dfw-profile-box-title">
-                  معلومات عامة
-                </h3>
-                <div class="dfw-profile-grid dfw-profile-grid-stack">
-                  <div><span>الهاتف</span><b>{{ pick(profileRow, 'phone', 'Phone') || '—' }}</b></div>
-                  <div><span>القائمة</span><b>{{ pick(profileRow, 'listName', 'ListName') || '—' }}</b></div>
-                  <div v-if="pick(profileRow, 'authenticated', 'Authenticated') != null">
-                    <span>الحالة</span>
-                    <b>{{ (profileRow.authenticated ?? profileRow.Authenticated) ? 'مصادق' : 'بانتظار' }}</b>
-                  </div>
-                  <div v-if="pick(profileRow, 'currentRatingLabel', 'CurrentRatingLabel') || pick(profileRow, 'ratingLabel', 'RatingLabel')">
-                    <span>التقييم</span>
-                    <b>{{ pick(profileRow, 'currentRatingLabel', 'CurrentRatingLabel') || pick(profileRow, 'ratingLabel', 'RatingLabel') }}</b>
-                  </div>
-                  <div v-if="pick(profileRow, 'salePrice', 'SalePrice') != null">
-                    <span>سعر البيع</span>
-                    <b>{{ fmt(pick(profileRow, 'salePrice', 'SalePrice')) }}</b>
-                  </div>
-                  <div v-if="pick(profileRow, 'saleDate', 'SaleDate')">
-                    <span>تاريخ البيع</span>
-                    <b>{{ fmtDate(pick(profileRow, 'saleDate', 'SaleDate')) }}</b>
-                  </div>
-                  <div v-if="pick(profileRow, 'dailyInstallment', 'DailyInstallment') != null">
-                    <span>القسط</span>
-                    <b>{{ fmt(pick(profileRow, 'dailyInstallment', 'DailyInstallment')) }}</b>
-                  </div>
-                  <div v-if="pick(profileRow, 'sellerName', 'SellerName')">
-                    <span>اسم البائع</span>
-                    <b>{{ pick(profileRow, 'sellerName', 'SellerName') }}</b>
-                  </div>
-                  <div v-if="pick(profileRow, 'paidAmount', 'PaidAmount') != null">
-                    <span>واصل</span>
-                    <b>{{ fmt(pick(profileRow, 'paidAmount', 'PaidAmount')) }}</b>
-                  </div>
-                  <div v-if="pick(profileRow, 'remainingAmount', 'RemainingAmount') != null || pick(profileRow, 'amountRemaining', 'AmountRemaining') != null">
-                    <span>متبقي</span>
-                    <b>{{ fmt(pick(profileRow, 'remainingAmount', 'RemainingAmount') ?? pick(profileRow, 'amountRemaining', 'AmountRemaining')) }}</b>
-                  </div>
-                </div>
-              </section>
-
-              <section class="dfw-profile-box">
-                <h3 class="dfw-profile-box-title">
-                  تقييم المتابع
-                </h3>
-                <div class="dfw-profile-grid dfw-profile-grid-stack">
-                  <div>
-                    <span>تقييم المصادقة</span>
-                    <b>{{ pick(profileRow, 'authRating', 'AuthRating') ?? '—' }}</b>
-                  </div>
-                  <div class="dfw-profile-wide">
-                    <span>ملاحظة التقييم</span>
-                    <b>{{ pick(profileRow, 'authNote', 'AuthNote') || '—' }}</b>
-                  </div>
-                  <div>
-                    <span>قيمة بضاعة المحل</span>
-                    <b>{{ fmt(pick(profileRow, 'shopStockEstimatedValue', 'ShopStockEstimatedValue')) }}</b>
-                  </div>
-                  <div>
-                    <span>قيمة الوارد اليومي</span>
-                    <b>{{ fmt(pick(profileRow, 'estimatedDailyRevenue', 'EstimatedDailyRevenue')) }}</b>
-                  </div>
-                  <div>
-                    <span>وقت المصادقة</span>
-                    <b>{{ fmtDateTime(pick(profileRow, 'authenticatedAtUtc', 'AuthenticatedAtUtc')) }}</b>
-                  </div>
-                </div>
-              </section>
-
-              <section class="dfw-profile-box">
-                <h3 class="dfw-profile-box-title">
-                  تقييم المندوب
-                </h3>
-                <div class="dfw-profile-grid dfw-profile-grid-stack">
-                  <div>
-                    <span>تقييم المحل</span>
-                    <b>{{ pick(profileRow, 'shopRating', 'ShopRating') ?? '—' }}</b>
-                  </div>
-                  <div class="dfw-profile-wide">
-                    <span>ملاحظة التقييم</span>
-                    <b>{{ pick(profileRow, 'shopRatingNote', 'ShopRatingNote') || '—' }}</b>
-                  </div>
-                  <div>
-                    <span>قيمة بضاعة المحل</span>
-                    <b>{{ fmt(pick(profileRow, 'delegateShopStockEstimatedValue', 'DelegateShopStockEstimatedValue')) }}</b>
-                  </div>
-                  <div>
-                    <span>قيمة الوارد اليومي</span>
-                    <b>{{ fmt(pick(profileRow, 'delegateEstimatedDailyRevenue', 'DelegateEstimatedDailyRevenue')) }}</b>
-                  </div>
-                </div>
-              </section>
-
-              <section class="dfw-profile-box">
-                <h3 class="dfw-profile-box-title">
-                  تقييم موظف المبيعات
-                </h3>
-                <div class="dfw-profile-grid dfw-profile-grid-stack">
-                  <div>
-                    <span>قيمة الموجودات</span>
-                    <b>{{ fmt(pick(profileRow, 'employeeShopStockEstimatedValue', 'EmployeeShopStockEstimatedValue')) }}</b>
-                  </div>
-                  <div>
-                    <span>الإيراد اليومي</span>
-                    <b>{{ fmt(pick(profileRow, 'employeeEstimatedDailyRevenue', 'EmployeeEstimatedDailyRevenue')) }}</b>
-                  </div>
-                </div>
-              </section>
-            </div>
-          </div>
-
-          <div class="dfw-section-label mt-4">
-            أسماء مصادقة المبيعات
-            <span class="dfw-hint-inline">بانتظار {{ pendingSalesCount }} · مصادق {{ authenticatedSalesCount }}</span>
-          </div>
-          <div class="dfw-hint">
-            قيد الانتظار = بيع موظف مبيعات منشور ولم تُصادق بعد على قوائم هذا المتابع
-          </div>
-          <div class="dfw-name-grid">
-            <button
-              v-for="(r, i) in salesRows"
-              :key="`sale-${i}`"
-              type="button"
-              class="dfw-name-card"
-              :class="{ 'dfw-name-card-active': Number(pick(profileRow, 'customerId', 'CustomerId')) === Number(pick(r, 'customerId', 'CustomerId')) }"
-              @click="openCustomerProfile(r)"
-            >
-              <div class="dfw-name-card-title">
-                {{ pick(r, 'customerName', 'CustomerName') }}
-                <span
-                  class="dfw-badge"
-                  :class="salesAuthBadgeClass(r)"
-                >
-                  {{ (r.authenticated ?? r.Authenticated) ? 'مصادق' : 'بانتظار' }}
-                </span>
-              </div>
-              <div class="dfw-name-card-sub">
-                {{ pick(r, 'listName', 'ListName') || '—' }}
-                · {{ pick(r, 'sellerName', 'SellerName') || '—' }}
-                · {{ pick(r, 'currentRatingLabel', 'CurrentRatingLabel') || '—' }}
-                · متبقي {{ fmt(pick(r, 'remainingAmount', 'RemainingAmount')) }}
-              </div>
-            </button>
             <div
-              v-if="!salesRows.length"
-              class="dfw-empty-block"
+              v-if="profileRow"
+              class="dfw-profile"
             >
-              لا بيع موظف مبيعات بانتظار مصادقة، ولا مصادقات على قوائم هذا المتابع
-            </div>
-          </div>
-        </template>
-
-        <template v-else-if="detailTab === 'declining'">
-          <div class="dfw-hint">
-            مقارنة مع لقطة خلال آخر 7 أيام — هبوط درجتين (ممتاز→ضعيف، جيد→متلكئ، ضعيف→سيء) بنفس منطق تطبيق المتابع
-          </div>
-          <div class="dfw-name-grid">
-            <button
-              v-for="(r, i) in decliningRows"
-              :key="i"
-              type="button"
-              class="dfw-name-card"
-              @click="openCustomerProfile(r)"
-            >
-              <div class="dfw-name-card-title">
-                {{ pick(r, 'customerName', 'CustomerName') }}
-              </div>
-              <div class="dfw-name-card-sub">
-                {{ pick(r, 'fromLabel', 'FromLabel') || '—' }}
-                → {{ pick(r, 'toLabel', 'ToLabel') || pick(r, 'ratingLabel', 'RatingLabel') || '—' }}
-                · {{ pick(r, 'daysBetween', 'DaysBetween') ?? '—' }} يوم
-                · {{ pick(r, 'listName', 'ListName') || '—' }}
-              </div>
-            </button>
-            <div
-              v-if="!decliningRows.length"
-              class="dfw-empty-block"
-            >
-              لا زبائن متدنية حالياً
-            </div>
-          </div>
-          <div
-            v-if="profileRow"
-            class="dfw-profile"
-          >
-            <div class="dfw-profile-head">
-              <div class="dfw-profile-title">
-                بروفايل الزبون — {{ pick(profileRow, 'customerName', 'CustomerName') }}
-              </div>
-              <VBtn
-                size="small"
-                variant="text"
-                @click="closeProfile"
-              >
-                إغلاق البروفايل
-              </VBtn>
-            </div>
-            <div class="dfw-profile-grid">
-              <div><span>الهاتف</span><b>{{ pick(profileRow, 'phone', 'Phone') || '—' }}</b></div>
-              <div><span>القائمة</span><b>{{ pick(profileRow, 'listName', 'ListName') || '—' }}</b></div>
-              <div><span>من</span><b>{{ pick(profileRow, 'fromLabel', 'FromLabel') || '—' }}</b></div>
-              <div><span>إلى</span><b>{{ pick(profileRow, 'toLabel', 'ToLabel') || pick(profileRow, 'ratingLabel', 'RatingLabel') || '—' }}</b></div>
-              <div><span>الأيام</span><b>{{ pick(profileRow, 'daysBetween', 'DaysBetween') ?? '—' }}</b></div>
-              <div><span>ملاحظة</span><b>{{ (profileRow.hasNote ?? profileRow.HasNote) ? 'نعم' : 'لا' }}</b></div>
-            </div>
-          </div>
-        </template>
-
-        <template v-else-if="detailTab === 'notes'">
-          <div class="dfw-name-grid">
-            <button
-              v-for="(r, i) in noteRows"
-              :key="i"
-              type="button"
-              class="dfw-name-card"
-              @click="openCustomerProfile(r)"
-            >
-              <div class="dfw-name-card-title">
-                {{ pick(r, 'customerName', 'CustomerName') }}
-              </div>
-              <div class="dfw-name-card-sub">
-                {{ pick(r, 'listName', 'ListName') || '—' }}
-                · {{ pick(r, 'authorName', 'AuthorName') || '—' }}
-                · {{ fmtDateTime(pick(r, 'createdAtUtc', 'CreatedAtUtc')) }}
-              </div>
-              <div class="dfw-name-card-note">
-                {{ pick(r, 'noteText', 'NoteText') || '—' }}
-              </div>
-            </button>
-            <div
-              v-if="!noteRows.length"
-              class="dfw-empty-block"
-            >
-              لا ملاحظات تقييم
-            </div>
-          </div>
-          <div
-            v-if="profileRow"
-            class="dfw-profile"
-          >
-            <div class="dfw-profile-head">
-              <div class="dfw-profile-title">
-                بروفايل الزبون — {{ pick(profileRow, 'customerName', 'CustomerName') }}
-              </div>
-              <VBtn
-                size="small"
-                variant="text"
-                @click="closeProfile"
-              >
-                إغلاق البروفايل
-              </VBtn>
-            </div>
-            <div class="dfw-profile-grid">
-              <div><span>الهاتف</span><b>{{ pick(profileRow, 'phone', 'Phone') || '—' }}</b></div>
-              <div><span>القائمة</span><b>{{ pick(profileRow, 'listName', 'ListName') || '—' }}</b></div>
-              <div><span>الكاتب</span><b>{{ pick(profileRow, 'authorName', 'AuthorName') || '—' }}</b></div>
-              <div><span>الوقت</span><b>{{ fmtDateTime(pick(profileRow, 'createdAtUtc', 'CreatedAtUtc')) }}</b></div>
-              <div class="dfw-profile-wide"><span>الملاحظة</span><b>{{ pick(profileRow, 'noteText', 'NoteText') || '—' }}</b></div>
-            </div>
-          </div>
-        </template>
-
-        <template v-else-if="detailTab === 'oldCustomers'">
-          <div class="dfw-hint">
-            الزبائن القديمة (قانونية) — يرسلها مدير المبيعات إلى هذا المتابع
-          </div>
-          <div class="dfw-name-grid">
-            <button
-              v-for="(r, i) in oldCustomerRows"
-              :key="pick(r, 'id', 'Id') || i"
-              type="button"
-              class="dfw-name-card"
-              @click="openCustomerProfile(r)"
-            >
-              <div class="dfw-name-card-title">
-                {{ pick(r, 'customerName', 'CustomerName') }}
-                <span
-                  class="dfw-badge"
-                  :class="(r.isDone ?? r.IsDone) ? 'dfw-badge-on' : 'dfw-badge-warn'"
-                >
-                  {{ pick(r, 'statusLabel', 'StatusLabel') || ((r.isDone ?? r.IsDone) ? 'تمت المتابعة' : 'قيد العمل') }}
-                </span>
-              </div>
-              <div class="dfw-name-card-sub">
-                {{ pick(r, 'phone', 'Phone') || pick(r, 'address', 'Address') || '—' }}
-                · أُرسل {{ fmtDateTime(pick(r, 'createdAtUtc', 'CreatedAtUtc')) }}
-              </div>
-            </button>
-            <div
-              v-if="!oldCustomerRows.length"
-              class="dfw-empty-block"
-            >
-              لا زبائن قديمة لهذا المتابع
-            </div>
-          </div>
-          <div
-            v-if="profileRow"
-            class="dfw-profile"
-          >
-            <div class="dfw-profile-head">
-              <div class="dfw-profile-title">
-                زبون قديم — {{ pick(profileRow, 'customerName', 'CustomerName') }}
-              </div>
-              <div class="d-flex align-center gap-2">
-                <VBtn
-                  v-if="canCancelOldCustomer(profileRow)"
-                  size="small"
-                  color="error"
-                  variant="tonal"
-                  @click="openCancelLegalDialog"
-                >
-                  إلغاء
-                </VBtn>
+              <div class="dfw-profile-head">
+                <div class="dfw-profile-title">
+                  بروفايل الزبون — {{ pick(profileRow, 'customerName', 'CustomerName') }}
+                </div>
                 <VBtn
                   size="small"
                   variant="text"
@@ -1707,144 +1654,219 @@ onActivated(async () => {
                   إغلاق البروفايل
                 </VBtn>
               </div>
+              <div class="dfw-profile-grid">
+                <div><span>الهاتف</span><b>{{ pick(profileRow, 'phone', 'Phone') || '—' }}</b></div>
+                <div><span>القائمة</span><b>{{ pick(profileRow, 'listName', 'ListName') || '—' }}</b></div>
+                <div><span>الكاتب</span><b>{{ pick(profileRow, 'authorName', 'AuthorName') || '—' }}</b></div>
+                <div><span>الوقت</span><b>{{ fmtDateTime(pick(profileRow, 'createdAtUtc', 'CreatedAtUtc')) }}</b></div>
+                <div class="dfw-profile-wide"><span>الملاحظة</span><b>{{ pick(profileRow, 'noteText', 'NoteText') || '—' }}</b></div>
+              </div>
             </div>
-            <div class="dfw-profile-grid">
-              <div><span>الهاتف</span><b>{{ pick(profileRow, 'phone', 'Phone') || '—' }}</b></div>
-              <div><span>العنوان</span><b>{{ pick(profileRow, 'address', 'Address') || '—' }}</b></div>
-              <div><span>الحالة</span><b>{{ pick(profileRow, 'statusLabel', 'StatusLabel') || ((profileRow.isDone ?? profileRow.IsDone) ? 'تمت المتابعة' : 'قيد العمل') }}</b></div>
-              <div><span>أُرسل</span><b>{{ fmtDateTime(pick(profileRow, 'createdAtUtc', 'CreatedAtUtc')) }}</b></div>
-              <div><span>اكتمل</span><b>{{ fmtDateTime(pick(profileRow, 'completedAtUtc', 'CompletedAtUtc')) }}</b></div>
-              <div class="dfw-profile-wide"><span>ملاحظة</span><b>{{ pick(profileRow, 'note', 'Note') || pick(profileRow, 'completionNote', 'CompletionNote') || '—' }}</b></div>
-            </div>
-          </div>
-        </template>
+          </template>
 
-        <template v-else-if="detailTab === 'delegateNotes'">
-          <div class="dfw-name-grid">
-            <div
-              v-for="(r, i) in delegateNoteRows"
-              :key="i"
-              class="dfw-name-card dfw-name-card-static"
-            >
-              <div class="dfw-name-card-title">
-                {{ pick(r, 'listName', 'ListName') || pick(r, 'delegateId', 'DelegateId') }}
-              </div>
-              <div class="dfw-name-card-sub">
-                {{ pick(r, 'authorName', 'AuthorName') || '—' }}
-                · {{ fmtDateTime(pick(r, 'createdAtUtc', 'CreatedAtUtc')) }}
-              </div>
-              <div class="dfw-name-card-note">
-                {{ pick(r, 'noteText', 'NoteText') || '—' }}
-              </div>
+          <template v-else-if="detailTab === 'oldCustomers'">
+            <div class="dfw-hint">
+              الزبائن القديمة (قانونية) — يرسلها مدير المبيعات إلى هذا المتابع
             </div>
-            <div
-              v-if="!delegateNoteRows.length"
-              class="dfw-empty-block"
-            >
-              لا ملاحظات على المندوبين
-            </div>
-          </div>
-        </template>
-
-        <template v-else>
-          <div class="dfw-section-label">
-            قوائم المتابع — تفعيل/إيقاف الجباية
-          </div>
-          <div class="dfw-list-grid">
-            <div
-              v-for="(list, i) in collectionBundle.lists"
-              :key="i"
-              class="dfw-list-card"
-            >
-              <div class="dfw-list-card-name">
-                {{ pick(list, 'listName', 'ListName') || pick(list, 'listId', 'ListId') }}
-              </div>
-              <div class="dfw-collection-row">
-                <span>الجباية</span>
-                <VSwitch
-                  :model-value="!!(list.followerCollectionEnabled ?? list.FollowerCollectionEnabled)"
-                  :loading="toggleBusyId === Number(pick(list, 'listId', 'ListId'))"
-                  :disabled="toggleBusyId > 0"
-                  color="success"
-                  hide-details
-                  density="compact"
-                  @update:model-value="v => toggleCollection(list, v)"
-                />
-              </div>
-              <div class="dfw-name-card-sub">
-                تعيين {{ fmtDate(pick(list, 'assignedAtUtc', 'AssignedAtUtc')) }}
-              </div>
-              <div class="dfw-name-card-sub">
-                متابع يوم التفعيل: {{ fmt(pick(list, 'lastFollowerPaymentAmount', 'LastFollowerPaymentAmount')) }}
-                ({{ fmtDate(pick(list, 'lastFollowerPaymentAt', 'LastFollowerPaymentAt')) }})
-              </div>
-              <div class="dfw-name-card-sub">
-                مندوب أمس: {{ fmt(pick(list, 'lastDelegatePaymentAmount', 'LastDelegatePaymentAmount')) }}
-                ({{ fmtDate(pick(list, 'lastDelegatePaymentAt', 'LastDelegatePaymentAt')) }})
-              </div>
-            </div>
-            <div
-              v-if="!collectionBundle.lists.length"
-              class="dfw-empty-block"
-            >
-              لا قوائم مسندة لهذا المتابع
-            </div>
-          </div>
-
-          <div class="dfw-section-label mt-4">
-            دفعات الجباية
-          </div>
-          <div class="dfw-name-grid">
-            <button
-              v-for="(p, i) in collectionBundle.payments"
-              :key="i"
-              type="button"
-              class="dfw-name-card"
-              @click="openCustomerProfile(p)"
-            >
-              <div class="dfw-name-card-title">
-                {{ pick(p, 'customerName', 'CustomerName') }}
-              </div>
-              <div class="dfw-name-card-sub">
-                {{ pick(p, 'listName', 'ListName') || '—' }}
-                · {{ fmt(pick(p, 'amount', 'Amount')) }}
-                · {{ fmtDate(pick(p, 'paymentDate', 'PaymentDate')) }}
-                · {{ pick(p, 'source', 'Source') || '—' }}
-              </div>
-            </button>
-            <div
-              v-if="!collectionBundle.payments.length"
-              class="dfw-empty-block"
-            >
-              لا دفعات جباية
-            </div>
-          </div>
-          <div
-            v-if="profileRow"
-            class="dfw-profile"
-          >
-            <div class="dfw-profile-head">
-              <div class="dfw-profile-title">
-                بروفايل الزبون — {{ pick(profileRow, 'customerName', 'CustomerName') }}
-              </div>
-              <VBtn
-                size="small"
-                variant="text"
-                @click="closeProfile"
+            <div class="dfw-name-grid">
+              <button
+                v-for="(r, i) in oldCustomerRows"
+                :key="pick(r, 'id', 'Id') || i"
+                type="button"
+                class="dfw-name-card"
+                @click="openCustomerProfile(r)"
               >
-                إغلاق البروفايل
-              </VBtn>
+                <div class="dfw-name-card-title">
+                  {{ pick(r, 'customerName', 'CustomerName') }}
+                  <span
+                    class="dfw-badge"
+                    :class="(r.isDone ?? r.IsDone) ? 'dfw-badge-on' : 'dfw-badge-warn'"
+                  >
+                    {{ pick(r, 'statusLabel', 'StatusLabel') || ((r.isDone ?? r.IsDone) ? 'تمت المتابعة' : 'قيد العمل') }}
+                  </span>
+                </div>
+                <div class="dfw-name-card-sub">
+                  {{ pick(r, 'phone', 'Phone') || pick(r, 'address', 'Address') || '—' }}
+                  · أُرسل {{ fmtDateTime(pick(r, 'createdAtUtc', 'CreatedAtUtc')) }}
+                </div>
+              </button>
+              <div
+                v-if="!oldCustomerRows.length"
+                class="dfw-empty-block"
+              >
+                لا زبائن قديمة لهذا المتابع
+              </div>
             </div>
-            <div class="dfw-profile-grid">
-              <div><span>القائمة</span><b>{{ pick(profileRow, 'listName', 'ListName') || '—' }}</b></div>
-              <div><span>المبلغ</span><b>{{ fmt(pick(profileRow, 'amount', 'Amount')) }}</b></div>
-              <div><span>التاريخ</span><b>{{ fmtDate(pick(profileRow, 'paymentDate', 'PaymentDate')) }}</b></div>
-              <div><span>المصدر</span><b>{{ pick(profileRow, 'source', 'Source') || '—' }}</b></div>
+            <div
+              v-if="profileRow"
+              class="dfw-profile"
+            >
+              <div class="dfw-profile-head">
+                <div class="dfw-profile-title">
+                  زبون قديم — {{ pick(profileRow, 'customerName', 'CustomerName') }}
+                </div>
+                <div class="d-flex align-center gap-2">
+                  <VBtn
+                    v-if="canCancelOldCustomer(profileRow)"
+                    size="small"
+                    color="error"
+                    variant="tonal"
+                    @click="openCancelLegalDialog"
+                  >
+                    إلغاء
+                  </VBtn>
+                  <VBtn
+                    size="small"
+                    variant="text"
+                    @click="closeProfile"
+                  >
+                    إغلاق البروفايل
+                  </VBtn>
+                </div>
+              </div>
+              <div class="dfw-profile-grid">
+                <div><span>الهاتف</span><b>{{ pick(profileRow, 'phone', 'Phone') || '—' }}</b></div>
+                <div><span>العنوان</span><b>{{ pick(profileRow, 'address', 'Address') || '—' }}</b></div>
+                <div><span>الحالة</span><b>{{ pick(profileRow, 'statusLabel', 'StatusLabel') || ((profileRow.isDone ?? profileRow.IsDone) ? 'تمت المتابعة' : 'قيد العمل') }}</b></div>
+                <div><span>أُرسل</span><b>{{ fmtDateTime(pick(profileRow, 'createdAtUtc', 'CreatedAtUtc')) }}</b></div>
+                <div><span>اكتمل</span><b>{{ fmtDateTime(pick(profileRow, 'completedAtUtc', 'CompletedAtUtc')) }}</b></div>
+                <div class="dfw-profile-wide"><span>ملاحظة</span><b>{{ pick(profileRow, 'note', 'Note') || pick(profileRow, 'completionNote', 'CompletionNote') || '—' }}</b></div>
+              </div>
             </div>
-          </div>
-        </template>
+          </template>
+
+          <template v-else-if="detailTab === 'delegateNotes'">
+            <div class="dfw-name-grid">
+              <div
+                v-for="(r, i) in delegateNoteRows"
+                :key="i"
+                class="dfw-name-card dfw-name-card-static"
+              >
+                <div class="dfw-name-card-title">
+                  {{ pick(r, 'listName', 'ListName') || pick(r, 'delegateId', 'DelegateId') }}
+                </div>
+                <div class="dfw-name-card-sub">
+                  {{ pick(r, 'authorName', 'AuthorName') || '—' }}
+                  · {{ fmtDateTime(pick(r, 'createdAtUtc', 'CreatedAtUtc')) }}
+                </div>
+                <div class="dfw-name-card-note">
+                  {{ pick(r, 'noteText', 'NoteText') || '—' }}
+                </div>
+              </div>
+              <div
+                v-if="!delegateNoteRows.length"
+                class="dfw-empty-block"
+              >
+                لا ملاحظات على المندوبين
+              </div>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="dfw-section-label">
+              قوائم المتابع — تفعيل/إيقاف الجباية
+            </div>
+            <div class="dfw-list-grid">
+              <div
+                v-for="(list, i) in collectionBundle.lists"
+                :key="i"
+                class="dfw-list-card"
+              >
+                <div class="dfw-list-card-name">
+                  {{ pick(list, 'listName', 'ListName') || pick(list, 'listId', 'ListId') }}
+                </div>
+                <div class="dfw-collection-row">
+                  <span>الجباية</span>
+                  <VSwitch
+                    :model-value="!!(list.followerCollectionEnabled ?? list.FollowerCollectionEnabled)"
+                    :loading="toggleBusyId === Number(pick(list, 'listId', 'ListId'))"
+                    :disabled="toggleBusyId > 0"
+                    color="success"
+                    hide-details
+                    density="compact"
+                    @update:model-value="v => toggleCollection(list, v)"
+                  />
+                </div>
+                <div class="dfw-name-card-sub">
+                  تعيين {{ fmtDate(pick(list, 'assignedAtUtc', 'AssignedAtUtc')) }}
+                </div>
+                <div class="dfw-name-card-sub">
+                  متابع يوم التفعيل: {{ fmt(pick(list, 'lastFollowerPaymentAmount', 'LastFollowerPaymentAmount')) }}
+                  ({{ fmtDate(pick(list, 'lastFollowerPaymentAt', 'LastFollowerPaymentAt')) }})
+                </div>
+                <div class="dfw-name-card-sub">
+                  مندوب أمس: {{ fmt(pick(list, 'lastDelegatePaymentAmount', 'LastDelegatePaymentAmount')) }}
+                  ({{ fmtDate(pick(list, 'lastDelegatePaymentAt', 'LastDelegatePaymentAt')) }})
+                </div>
+              </div>
+              <div
+                v-if="!collectionBundle.lists.length"
+                class="dfw-empty-block"
+              >
+                لا قوائم مسندة لهذا المتابع
+              </div>
+            </div>
+
+            <div class="dfw-section-label mt-4">
+              دفعات الجباية
+            </div>
+            <div class="dfw-name-grid">
+              <button
+                v-for="(p, i) in collectionBundle.payments"
+                :key="i"
+                type="button"
+                class="dfw-name-card"
+                @click="openCustomerProfile(p)"
+              >
+                <div class="dfw-name-card-title">
+                  {{ pick(p, 'customerName', 'CustomerName') }}
+                </div>
+                <div class="dfw-name-card-sub">
+                  {{ pick(p, 'listName', 'ListName') || '—' }}
+                  · {{ fmt(pick(p, 'amount', 'Amount')) }}
+                  · {{ fmtDate(pick(p, 'paymentDate', 'PaymentDate')) }}
+                  · {{ pick(p, 'source', 'Source') || '—' }}
+                </div>
+              </button>
+              <div
+                v-if="!collectionBundle.payments.length"
+                class="dfw-empty-block"
+              >
+                لا دفعات جباية
+              </div>
+            </div>
+            <div
+              v-if="profileRow"
+              class="dfw-profile"
+            >
+              <div class="dfw-profile-head">
+                <div class="dfw-profile-title">
+                  بروفايل الزبون — {{ pick(profileRow, 'customerName', 'CustomerName') }}
+                </div>
+                <VBtn
+                  size="small"
+                  variant="text"
+                  @click="closeProfile"
+                >
+                  إغلاق البروفايل
+                </VBtn>
+              </div>
+              <div class="dfw-profile-grid">
+                <div><span>القائمة</span><b>{{ pick(profileRow, 'listName', 'ListName') || '—' }}</b></div>
+                <div><span>المبلغ</span><b>{{ fmt(pick(profileRow, 'amount', 'Amount')) }}</b></div>
+                <div><span>التاريخ</span><b>{{ fmtDate(pick(profileRow, 'paymentDate', 'PaymentDate')) }}</b></div>
+                <div><span>المصدر</span><b>{{ pick(profileRow, 'source', 'Source') || '—' }}</b></div>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
-    </div>
+    </template>
+    <FollowerShopCaptureOverview
+      v-else
+      ref="shopCaptureRef"
+      :city-value="cityKey()"
+    />
 
     <VDialog
       v-model="cancelLegalOpen"

@@ -1,5 +1,6 @@
 using BE_Company.DTO;
 using BE_Company.IRepository;
+using BE_Company.Sales.Services;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using System.Data;
@@ -58,9 +59,15 @@ namespace BE_Company.Repository
         public async Task<IEnumerable<DecisionNotificationGetDTO>?> Customers_GetDecisionNotifications()
         {
             using var connection = new SqlConnection(_connectionString);
-            return await connection.QueryAsync<DecisionNotificationGetDTO>(
+            var rows = (await connection.QueryAsync<DecisionNotificationGetDTO>(
                 "Customers_GetDecisionNotifications",
-                commandType: CommandType.StoredProcedure);
+                commandType: CommandType.StoredProcedure)).ToList();
+            await LegalCustomerFlagStamp.ApplyAsync(
+                connection,
+                rows,
+                r => r.CustomerID,
+                (r, legal) => r.IsLegal = legal);
+            return rows;
         }
 
         public async Task<bool?> Customers_ReadDecisionNotification(int? notificationID)

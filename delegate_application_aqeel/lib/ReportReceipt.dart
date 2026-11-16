@@ -107,11 +107,17 @@ class ReportReceipt {
                     0: const pw.FlexColumnWidth(2),
                     1: const pw.FlexColumnWidth(1),
                   },
-                  children: List.generate(lastSevenDays.length, (index) {
-                    return _buildRow(lastSevenDays[index],
-                        _formatNumber(lastSevenAmounts[index]),
-                        isPrice: true);
-                  }),
+                  // Index 0 is today — already shown above as "المبلغ المدفوع",
+                  // so the history table starts from yesterday.
+                  children: [
+                    for (var index = 1;
+                        index < lastSevenDays.length &&
+                            index < lastSevenAmounts.length;
+                        index++)
+                      _buildRow(lastSevenDays[index],
+                          _formatNumber(lastSevenAmounts[index]),
+                          isPrice: true),
+                  ],
                 ),
                 pw.SizedBox(height: 20),
                 pw.Text("رقم الشكاوى: $phoneNumberCompany",

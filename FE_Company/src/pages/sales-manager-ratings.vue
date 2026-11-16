@@ -7,6 +7,7 @@ import {
   smStatsRatingCustomers,
   smStatsTrend,
 } from '@/composables/salesManagerApi'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 import { useToast } from '@/composables/useToast'
 
 definePage({ meta: { layout: 'default' } })
@@ -286,6 +287,7 @@ function mapCustomerRows(list, fallbackLabel) {
     lastPaymentDate: c.lastPaymentDate ?? c.LastPaymentDate,
     amountPaid: c.amountPaid ?? c.AmountPaid ?? 0,
     amountRemaining: c.amountRemaining ?? c.AmountRemaining ?? 0,
+    isLegal: c.isLegal ?? c.IsLegal ?? false,
     amountTotal: c.amountTotal ?? c.AmountTotal ?? 0,
     ratingLabel: c.ratingLabel || c.RatingLabel || fallbackLabel,
     score: c.score ?? c.Score,
@@ -765,7 +767,7 @@ onMounted(async () => {
               <div class="customer-meta">
                 <span v-if="c.phone">{{ c.phone }}</span>
                 <span>{{ c.ratingLabel }}</span>
-                <span v-if="c.amountRemaining != null">متبقي: {{ money(c.amountRemaining) }}</span>
+                <span v-if="!shouldHidePaidRemaining(c) && c.amountRemaining != null">متبقي: {{ money(c.amountRemaining) }}</span>
               </div>
             </button>
           </div>

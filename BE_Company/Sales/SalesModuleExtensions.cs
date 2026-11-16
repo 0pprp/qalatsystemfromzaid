@@ -21,12 +21,15 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesDocumentService, SalesDocumentService>();
             services.AddScoped<ISalesShopProfileService, SalesShopProfileService>();
             services.AddScoped<ISalesCustomerDocumentService, SalesCustomerDocumentService>();
+            services.AddScoped<ISalesArchiveService, SalesArchiveService>();
+            services.AddScoped<IFollowerArchiveRequestsService, FollowerArchiveRequestsService>();
             services.AddScoped<ISalesCompleteService, SalesCompleteService>();
             services.AddScoped<ISalesPostingService, SalesPostingService>();
             services.AddScoped<ISalesPurchaseRepository, SalesPurchaseRepository>();
             services.AddScoped<ISalesPurchaseService, SalesPurchaseService>();
             services.AddScoped<ISalesExcelCustomerSearchCatalog, SalesExcelCustomerSearchCatalog>();
             services.AddScoped<ISalesExcelCustomerSearchService, SalesExcelCustomerSearchService>();
+            services.AddScoped<ICustomerPaymentLookup, CustomerPaymentLookup>();
             services.AddScoped<ISalesRequestEvaluationService, SalesRequestEvaluationService>();
             services.AddScoped<IExceptionReviewService, ExceptionReviewService>();
             services.AddScoped<SalesDraftService>();
@@ -39,6 +42,8 @@ namespace BE_Company.Sales
             services.AddScoped<ISalesRequestService, SalesRequestService>();
             services.AddScoped<ICrmSalesRequestIntakeService, CrmSalesRequestIntakeService>();
             services.AddHttpClient<ICrmSalesBoardStatusNotifier, CrmSalesBoardStatusForwarder>();
+            services.AddScoped<ICustomerAppRepository, CustomerAppRepository>();
+            services.AddScoped<ICustomerAppService, CustomerAppService>();
             services.AddScoped<Filtering.ISalesFilterRepository, Filtering.SalesFilterRepository>();
             services.AddScoped<Filtering.ISalesFilterService, Filtering.SalesFilterService>();
             services.AddScoped<IRatingDataSource, RatingDataSource>();
@@ -73,6 +78,9 @@ namespace BE_Company.Sales
             services.AddScoped<IBranchMonthStatsService, BranchMonthStatsService>();
             services.AddScoped<IDirectorFollowerOpsService, DirectorFollowerOpsService>();
             services.AddScoped<IDirectorDelegateFollowupService, DirectorDelegateFollowupService>();
+            services.AddScoped<IDelegateSalesOrdersService, DelegateSalesOrdersService>();
+            services.AddScoped<ICustomerShopLocationService, CustomerShopLocationService>();
+            services.AddScoped<IFollowerShopCaptureOverviewService, FollowerShopCaptureOverviewService>();
             services.AddScoped<IDirectorSalesFollowupService, DirectorSalesFollowupService>();
             services.AddScoped<ISalesEmployeeListDayRatingService, SalesEmployeeListDayRatingService>();
             services.AddScoped<IDirectorSummaryService, DirectorSummaryService>();

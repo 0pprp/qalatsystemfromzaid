@@ -5,11 +5,14 @@ import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUserRole } from '@/composables/useUserRole'
 import { useSalesRequestUnread, withRequestsUnreadBadge } from '@/composables/useSalesRequestUnread'
+import { ARCHIVE_MANAGER_NAV, COMMITTEE_ARCHIVE_NAV } from '@/composables/archiveFlowApi'
 
 // Components
 import Footer from '@/layouts/components/Footer.vue'
 import NavbarThemeSwitcher from '@/layouts/components/NavbarThemeSwitcher.vue'
 import NavBarNotifications from '@/layouts/components/NavBarNotifications.vue'
+import CustomerAppAlertsBell from '@/components/CustomerAppAlertsBell.vue'
+import GlobalCustomerSearch from '@/components/GlobalCustomerSearch.vue'
 import UserProfile from '@/layouts/components/UserProfile.vue'
 import NavBarI18n from '@core/components/I18n.vue'
 
@@ -43,8 +46,10 @@ function findByRouteName(items, name) {
   return null
 }
 
-const { canManageUsers, canBackup, canViewDecisions, isSalesManager, isDirector, isMonitor, canViewFollowerGps, isAdmin } = useUserRole()
+const { canManageUsers, canBackup, canViewDecisions, isSalesManager, isDirector, isMonitor, isCommittee, isArchiveManager, canManageOversight, canViewFollowerGps, isAdmin } = useUserRole()
+
 useSalesRequestUnread()
+
 
 const ratingsNavItem = {
   title: 'التقييمات',
@@ -66,23 +71,40 @@ const directorSummaryNavItem = {
 }
 
 const navItems = computed(() => {
+  if (isArchiveManager.value)
+    return ARCHIVE_MANAGER_NAV.map(i => ({ ...i }))
+
   const items = allNavItems.filter(item => {
+    if (isCommittee.value)
+      return item.title === 'متابعة المندوبين'
+        || item.title === 'متابعة السيئين'
+        || item.title === 'متابعة المبيعات'
+        || item.title === 'عمل المتابعين'
+        || item.title === 'ادارة الفرع'
+
     if (isMonitor.value)
       return item.title === 'التقييمات'
         || item.title === 'متابعة المندوبين'
+        || item.title === 'متابعة السيئين'
         || item.title === 'متابعة المبيعات'
         || item.title === 'عمل المتابعين'
         || item.title === 'إدارة المبيعات'
         || item.title === 'أسماء قانونية'
         || item.title === 'لوحة الأسعار'
+        || item.title === 'تطبيق المسوّقين'
+        || item.title === 'المروّجون أونلاين'
+        || item.title === 'الإعلانات'
+        || item.title === 'ادارة الفرع'
 
     if (isDirector.value)
       return item.title === 'التقييمات'
         || item.title === 'الملخص'
         || item.title === 'ملخص'
         || item.title === 'متابعة المندوبين'
+        || item.title === 'متابعة السيئين'
         || item.title === 'متابعة المبيعات'
         || item.title === 'عمل المتابعين'
+        || item.title === 'ادارة الفرع'
         || item.title === 'طلبات البيع'
         || item.title === 'الفيديوهات التعليمية'
         || item.title === 'الإعلانات'
@@ -90,14 +112,19 @@ const navItems = computed(() => {
         || item.title === 'مهام اللجنة'
         || item.title === 'ملاحظات التطبيقات'
         || item.title === 'التنازلات'
+        || item.title === 'تطبيق المسوّقين'
+        || item.title === 'المروّجون أونلاين'
 
     if (isSalesManager.value)
       return item.title === 'إدارة المبيعات'
 
     if (item.title === 'الدعم الفني') return false
+    if (item.title === 'ادارة الفرع') return false // المدير + المراقبين + لجنة المراقبة فقط
+    if (item.title === 'تطبيق المسوّقين') return false // المدير + المراقب فقط
+    if (item.title === 'المروّجون أونلاين') return false // المدير + المراقب فقط
     if (item.title === 'طلبات البيع') return false // يظهر للمدير فقط؛ مدير المبيعات عنده داخل إدارة المبيعات
     if (item.title === 'الفيديوهات التعليمية') return false // يظهر للمدير فقط
-    if (item.title === 'الإعلانات') return false // يظهر للمدير فقط
+    if (item.title === 'الإعلانات') return false // المدير + مسؤول المراقبين فقط
     if (item.title === 'المهام') return false // يظهر للمدير فقط
     if (item.title === 'مهام اللجنة') return false // يظهر للمدير فقط
     if (item.title === 'ملاحظات التطبيقات') return false // يظهر للمدير فقط
@@ -108,18 +135,27 @@ const navItems = computed(() => {
     if (item.title === 'النسخ الاحتياطي' && !canBackup.value) return false
     if (item.title === 'القرارات' && !canViewDecisions.value) return false
     if (item.title === 'إدارة المبيعات' && !isSalesManager.value && !isMonitor.value) return false
+
     // المحاسب: نحقن رابط التقييمات أدناه — نخفي عنصر المدير الخام (المراقب يراه أعلاه)
     if (item.title === 'التقييمات' && !isDirector.value && !isMonitor.value)
       return false
     if ((item.title === 'ملخص' || item.title === 'الملخص') && !isDirector.value)
       return false
     if (item.title === 'متابعة المتابعين' && !canViewFollowerGps.value) return false
-    if (item.title === 'متابعة المندوبين' && !isDirector.value && !isMonitor.value) return false
-    if (item.title === 'متابعة المبيعات' && !isDirector.value && !isMonitor.value) return false
+    if (item.title === 'متابعة المندوبين' && !isDirector.value && !isMonitor.value && !isCommittee.value && !isAdmin.value) return false // المحاسب الرئيسي: فرعه فقط
+    if (item.title === 'متابعة السيئين' && !isDirector.value && !isMonitor.value && !isCommittee.value && !isAdmin.value) return false
+    if (item.title === 'متابعة المبيعات' && !isDirector.value && !isMonitor.value && !isCommittee.value) return false
     if (item.title === 'لوحة الأسعار' && !isAdmin.value && !isMonitor.value) return false
 
     return true
   }).map(item => {
+    // لجنة المراقبة: no الجباية under عمل المتابعين
+    if (item.title === 'عمل المتابعين' && item.children && isCommittee.value) {
+      return {
+        ...item,
+        children: item.children.filter(c => c.title !== 'الجباية'),
+      }
+    }
     if (item.title === 'القرارات' && item.children && isAdmin.value) {
       return {
         ...item,
@@ -150,6 +186,7 @@ const navItems = computed(() => {
     if (!hasSummary) {
       const ratingsIdx = items.findIndex(i => i.title === 'التقييمات')
       const insertAt = ratingsIdx >= 0 ? ratingsIdx + 1 : 0
+
       items.splice(insertAt, 0, { ...directorSummaryNavItem })
     }
     else {
@@ -159,6 +196,14 @@ const navItems = computed(() => {
           it.title = 'الملخص'
       }
     }
+
+    if (!items.some(i => i?.to?.name === 'sales-manager-dashboard')) {
+      items.unshift({
+        title: 'نظرة عامة',
+        to: { name: 'sales-manager-dashboard' },
+        icon: { icon: 'tabler-layout-dashboard', size: '25' },
+      })
+    }
   }
 
   // المحاسب الرئيسي: ثبّت التقييمات مباشرة بعد الرئيسية + زر الفيديو التعليمي
@@ -166,6 +211,7 @@ const navItems = computed(() => {
   if (isAdmin.value) {
     const homeIdx = items.findIndex(i => i.title === 'الرئيسية')
     const insertAt = homeIdx >= 0 ? homeIdx + 1 : 0
+
     items.splice(insertAt, 0, { ...ratingsNavItem }, { ...tutorialVideoNavItem })
 
     const salesIdx = items.findIndex(i => i.title === 'المبيعات')
@@ -189,6 +235,17 @@ const navItems = computed(() => {
     }
   }
 
+  if (isCommittee.value)
+    items.push({ ...COMMITTEE_ARCHIVE_NAV })
+
+  if (canManageOversight.value && !items.some(i => i?.to?.name === 'oversight-accounts')) {
+    items.push({
+      title: 'لجان المراقبة',
+      to: { name: 'oversight-accounts' },
+      icon: { icon: 'tabler-users-group', size: '25' },
+    })
+  }
+
   try {
     return withRequestsUnreadBadge(items)
   }
@@ -205,7 +262,10 @@ const cityName = ref(localStorage.getItem('CityName'))
   <VerticalNavLayout :nav-items="navItems">
     <!-- 👉 navbar -->
     <template #navbar="{ toggleVerticalOverlayNavActive }">
-      <div class="d-flex h-100 align-center">
+      <div
+        class="d-flex h-100 align-center"
+        style="position: relative;"
+      >
         <IconBtn
           id="vertical-nav-toggle-btn"
           class="ms-n3 d-lg-none"
@@ -245,12 +305,21 @@ const cityName = ref(localStorage.getItem('CityName'))
 
         <VSpacer />
 
+        <GlobalCustomerSearch
+          v-if="isDirector || isMonitor || isCommittee"
+          class="mx-3"
+        />
+
         <NavBarI18n
           v-if="themeConfig.app.i18n.enable && themeConfig.app.i18n.langConfig?.length"
           :languages="themeConfig.app.i18n.langConfig"
           class="d-none d-md-block"
         />
         <NavbarThemeSwitcher class="me-2" />
+        <CustomerAppAlertsBell
+          v-if="isDirector || isMonitor"
+          class="me-1"
+        />
         <NavBarNotifications
           v-if="isAdmin"
           class="me-1"
@@ -268,7 +337,7 @@ const cityName = ref(localStorage.getItem('CityName'))
         @fallback="isFallbackStateActive = true"
         @resolve="isFallbackStateActive = false"
       >
-        <KeepAlive :include="['DirectorRatings', 'AccountantRatings', 'DirectorFollowerWork', 'DirectorDelegateFollowup', 'DirectorDelegateFollowupCustomers']">
+        <KeepAlive :include="['DirectorRatings', 'AccountantRatings', 'DirectorFollowerWork', 'DirectorDelegateFollowup', 'DirectorDelegateFollowupCustomers', 'DirectorBadCustomers']">
           <Component
             :is="Component"
             :key="viewRoute.meta?.keepAlive ? String(viewRoute.name || 'keep') : viewRoute.fullPath"

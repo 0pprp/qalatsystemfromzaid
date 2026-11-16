@@ -40,6 +40,7 @@ namespace BE_DelegateWebApplication.DTO
         public double? AmountTotalCostDenar { get; set; }
         public double? ReceiptsTotal { get; set; }
         public double? AmountRemaining { get; set; }
+        public bool? IsLegal { get; set; }
         public string? ItemsNames { get; set; }
     }
 }

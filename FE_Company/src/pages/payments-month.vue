@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue';
 
 import ModernStatCard from "@/components/ModernStatCard.vue";
 import * as XLSX from 'xlsx';
+import { shouldHidePaidRemaining, sumVisibleFinancial } from '@/composables/legalFinancialVisibility'
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -183,7 +184,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar', // الواصل
     value: formattedNumber(
-      monthPaymentsData.value.reduce((sum, row) => sum + (row.receiptsTotal || 0), 0),
+      sumVisibleFinancial(monthPaymentsData.value, row => row.receiptsTotal),
     ),
     title: 'الواصل',
     color: "success",
@@ -192,7 +193,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar', // الباقي
     value: formattedNumber(
-      monthPaymentsData.value.reduce((sum, row) => sum + (row.amountRemaining || 0), 0),
+      sumVisibleFinancial(monthPaymentsData.value, row => row.amountRemaining),
     ),
     title: 'الباقي',
     color: "error",
@@ -252,15 +253,15 @@ function exportToExcel() {
       'عدد الأيام': row.numberOfDayDevice || 'لا يوجد',
       'سعر البيع': row.amountTotalSales || 'لا يوجد',
       'القسط': row.amountDaySales || 'لا يوجد',
-      'الواصل': row.receiptsTotal || 'لا يوجد',
-      'الباقي': row.amountRemaining || 'لا يوجد',
-      'نسبة التسديد': row.receiptRateDevice || 'لا يوجد',
+      'الواصل': shouldHidePaidRemaining(row) ? '—' : (row.receiptsTotal || 'لا يوجد'),
+      'الباقي': shouldHidePaidRemaining(row) ? '—' : (row.amountRemaining || 'لا يوجد'),
+      'نسبة التسديد': shouldHidePaidRemaining(row) ? '—' : (row.receiptRateDevice || 'لا يوجد'),
       'عدد التسديدات': row.countReceiptDevice || 'لا يوجد',
       'تاريخ اخر تسديد': row.lastPaymentDate ? formattedDate(row.lastPaymentDate) : 'لا يوجد',
     }
 
     for (let i = 1; i <= 30; i++) {
-      exportRow[formattedDate(new Date(new Date() - i * 24 * 60 * 60 * 1000))] = row[`amount${i}`] !== undefined ? row[`amount${i}`] : 'لا يوجد'
+      exportRow[formattedDate(new Date(new Date() - i * 24 * 60 * 60 * 1000))] = shouldHidePaidRemaining(row) ? '—' : (row[`amount${i}`] !== undefined ? row[`amount${i}`] : 'لا يوجد')
     }
     
     return exportRow
@@ -426,17 +427,17 @@ for (let i = 1; i <= 30; i++) {
           </template>
           <template v-slot:[colSlots.receiptsTotal]="{ item }">
             <div class="premium-amount amt-total-receipts">
-              {{ formattedNumber(item.receiptsTotal) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.receiptsTotal) }}
             </div>
           </template>
           <template v-slot:[colSlots.amountRemaining]="{ item }">
             <div class="premium-amount amt-remaining">
-              {{ formattedNumber(item.amountRemaining) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.amountRemaining) }}
             </div>
           </template>
           <template v-slot:[colSlots.receiptRateDevice]="{ item }">
             <div>
-              {{ item.receiptRateDevice || 'لا يوجد' }}
+              {{ shouldHidePaidRemaining(item) ? '—' : (item.receiptRateDevice || 'لا يوجد') }}
             </div>
           </template>
           <template v-slot:[colSlots.countReceiptDevice]="{ item }">
@@ -456,7 +457,7 @@ for (let i = 1; i <= 30; i++) {
             v-slot:[colSlots[`amount${i}`]]="{ item }"
           >
             <div class="premium-amount amt-total-receipts">
-              {{ formattedNumber(item[`amount${i}`] !== undefined ? item[`amount${i}`] : 0) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item[`amount${i}`] !== undefined ? item[`amount${i}`] : 0) }}
             </div>
           </template>
         </VDataTable>

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:follower_application/shop_capture/approval_shop_capture.dart';
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/services/follower_media_urls.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
@@ -628,6 +629,7 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
     var note = '';
     final stockCtrl = TextEditingController();
     final dailyCtrl = TextEditingController();
+    final shopDraft = ShopCaptureDraft();
     String? localError;
     final ok = await showDialog<bool>(
       context: context,
@@ -697,6 +699,7 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
                   ),
                   style: const TextStyle(fontFamily: 'Cairo'),
                 ),
+                ShopCaptureFields(draft: shopDraft, onChanged: () => setLocal(() {})),
                 if (localError != null) ...[
                   const SizedBox(height: 8),
                   Text(localError!,
@@ -726,6 +729,11 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
                   setLocal(() => localError = 'قيمة الوارد اليومي مطلوبة');
                   return;
                 }
+                final missing = shopDraft.missing();
+                if (missing != null) {
+                  setLocal(() => localError = missing);
+                  return;
+                }
                 Navigator.pop(ctx, true);
               },
               child: const Text('اعتماد', style: TextStyle(fontFamily: 'Cairo')),
@@ -741,6 +749,7 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
     if (ok != true) return;
     try {
       final s = await _session();
+      final shopFields = await shopDraft.submit(widget.listId, _customerId);
       final uri = Uri.parse('${s['link']}Followers/PendingSales/Authenticate');
       final res = await http
           .post(
@@ -754,6 +763,7 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
               'note': note.trim().isEmpty ? null : note.trim(),
               'shopStockEstimatedValue': stock,
               'estimatedDailyRevenue': daily,
+              ...shopFields,
             }),
           )
           .timeout(const Duration(seconds: 30));
@@ -768,11 +778,13 @@ class _CustomerProfilePageState extends State<CustomerProfilePage> {
           ),
         );
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
+        final msg = '$e'.replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تعذر حفظ المصادقة', style: TextStyle(fontFamily: 'Cairo')),
+          SnackBar(
+            content: Text(msg.startsWith('HTTP') ? 'تعذر حفظ المصادقة' : msg,
+                style: const TextStyle(fontFamily: 'Cairo')),
           ),
         );
       }

@@ -203,6 +203,7 @@ public sealed class FollowerListStatsCustomerRow
     public double AmountTotalSales { get; set; }
     public double AmountDaySales { get; set; }
     public double AmountRemaining { get; set; }
+    public bool IsLegal { get; set; }
     public double? WeekPaid { get; set; }
     public double? PaidPercent { get; set; }
     public string? RatingLabel { get; set; }

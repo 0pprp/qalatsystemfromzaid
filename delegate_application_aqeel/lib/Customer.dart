@@ -38,7 +38,19 @@ class _CustomerState extends State<Customer> {
   List<Map<String, dynamic>> payments = [];
 
   bool isButtonDisabled = false;
+  // Drives the send button inside the تسديدات اليوم dialog (a separate route
+  // that page setState does not rebuild).
+  final ValueNotifier<bool> _sendingNotifier = ValueNotifier<bool>(false);
+  // Bumped whenever [payments] is reloaded so the dialog list redraws.
+  final ValueNotifier<int> _paymentsVersion = ValueNotifier<int>(0);
   String customerType = 'العملاء المستمرين';
+
+  /// Week cells and receipt totals come back null when a customer has no
+  /// payment in that slot. Casting null as num throws and the whole list stays empty.
+  double _asDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return 0;
+  }
 
   bool isContinuous(String? lastPaymentDate, String? dateSaleDevice) {
     bool isLastPaymentRecent = false;
@@ -146,20 +158,18 @@ class _CustomerState extends State<Customer> {
             '', // تحويل القيم العددية إلى نصوص إذا كانت أرقامًا
         address: client['Address'] ?? '',
         shopName: client['ShopName'] ?? '',
-        salePrice: (client['AmountTotalSales'] as num)
-            .toDouble(), // تحويل القيمة إلى double
-        receipt: (client['ReceiptsTotal'] as num)
-            .toDouble(), // تحويل القيمة إلى double
-        dailyInstallment: (client['AmountDaySales'] as num).toDouble(),
-        remaining: (client['AmountRemaining'] as num).toDouble(),
+        salePrice: _asDouble(client['AmountTotalSales']),
+        receipt: _asDouble(client['ReceiptsTotal']),
+        dailyInstallment: _asDouble(client['AmountDaySales']),
+        remaining: _asDouble(client['AmountRemaining']),
         itemsNames: client['ItemsNames'] ?? '',
-        amount1: (client['Amount1'] as num).toDouble(),
-        amount2: (client['Amount2'] as num).toDouble(),
-        amount3: (client['Amount3'] as num).toDouble(),
-        amount4: (client['Amount4'] as num).toDouble(),
-        amount5: (client['Amount5'] as num).toDouble(),
-        amount6: (client['Amount6'] as num).toDouble(),
-        amount7: (client['Amount7'] as num).toDouble(),
+        amount1: _asDouble(client['Amount1']),
+        amount2: _asDouble(client['Amount2']),
+        amount3: _asDouble(client['Amount3']),
+        amount4: _asDouble(client['Amount4']),
+        amount5: _asDouble(client['Amount5']),
+        amount6: _asDouble(client['Amount6']),
+        amount7: _asDouble(client['Amount7']),
         phoneNumberCompany: client['PhoneNumberCompany']?.toString() ??
             '', // تحويل القيم العددية إلى نصوص
         countReceiptDevice: client['CountReceiptDevice']?.toString() ?? '',
@@ -202,20 +212,18 @@ class _CustomerState extends State<Customer> {
                     '', // تحويل القيم العددية إلى نصوص إذا كانت أرقامًا
                 address: client['Address'] ?? '',
                 shopName: client['ShopName'] ?? '',
-                salePrice: (client['AmountTotalSales'] as num)
-                    .toDouble(), // تحويل القيمة إلى double
-                receipt: (client['ReceiptsTotal'] as num)
-                    .toDouble(), // تحويل القيمة إلى double
-                dailyInstallment: (client['AmountDaySales'] as num).toDouble(),
-                remaining: (client['AmountRemaining'] as num).toDouble(),
+                salePrice: _asDouble(client['AmountTotalSales']),
+                receipt: _asDouble(client['ReceiptsTotal']),
+                dailyInstallment: _asDouble(client['AmountDaySales']),
+                remaining: _asDouble(client['AmountRemaining']),
                 itemsNames: client['ItemsNames'] ?? '',
-                amount1: (client['Amount1'] as num).toDouble(),
-                amount2: (client['Amount2'] as num).toDouble(),
-                amount3: (client['Amount3'] as num).toDouble(),
-                amount4: (client['Amount4'] as num).toDouble(),
-                amount5: (client['Amount5'] as num).toDouble(),
-                amount6: (client['Amount6'] as num).toDouble(),
-                amount7: (client['Amount7'] as num).toDouble(),
+                amount1: _asDouble(client['Amount1']),
+                amount2: _asDouble(client['Amount2']),
+                amount3: _asDouble(client['Amount3']),
+                amount4: _asDouble(client['Amount4']),
+                amount5: _asDouble(client['Amount5']),
+                amount6: _asDouble(client['Amount6']),
+                amount7: _asDouble(client['Amount7']),
                 phoneNumberCompany: client['PhoneNumberCompany']?.toString() ??
                     '', // تحويل القيم العددية إلى نصوص
                 countReceiptDevice:
@@ -236,6 +244,8 @@ class _CustomerState extends State<Customer> {
 
   // حساب مبلغ وعدد التسديدات
   Future<void> _calculatePayments(int delegateId) async {
+    // Synced rows are already on the server; drop any left by 1.0.2.
+    await deletePayments(delegateId);
     final db = await DatabaseHelper().database;
     final List<Map<String, dynamic>> payments = await db.query(
       'CustomerPayment',
@@ -480,7 +490,10 @@ class _CustomerState extends State<Customer> {
               centerTitle: true,
               elevation: 0,
             ),
-            body: StatefulBuilder(
+            body: ValueListenableBuilder<int>(
+              // Rebuild the dialog whenever the payments list is reloaded.
+              valueListenable: _paymentsVersion,
+              builder: (_, __, ___) => StatefulBuilder(
               builder: (context, setState) {
                 // StatefulBuilder للسماح بتحديث الواجهة
                 return Padding(
@@ -689,7 +702,10 @@ class _CustomerState extends State<Customer> {
                               ],
                             ),
                             const SizedBox(height: 10),
-                            SizedBox(
+                            ValueListenableBuilder<bool>(
+                              valueListenable: _sendingNotifier,
+                              builder: (context, isButtonDisabled, _) =>
+                                  SizedBox(
                               width: double.infinity,
                               child: ElevatedButton.icon(
                                 onPressed: isButtonDisabled
@@ -723,6 +739,7 @@ class _CustomerState extends State<Customer> {
                                             BorderRadius.circular(12))),
                               ),
                             ),
+                            ),
                           ],
                         ),
                       ),
@@ -743,6 +760,7 @@ class _CustomerState extends State<Customer> {
                   ),
                 );
               },
+            ),
             ),
           ),
         );
@@ -927,7 +945,8 @@ class _CustomerState extends State<Customer> {
       where: 'DelegateId = ?',
       whereArgs: [delegateId],
     );
-    setState(() {});
+    _paymentsVersion.value++;
+    if (mounted) setState(() {});
   }
 
   Future<void> sendPaymentsToAPI(int delegateId) async {
@@ -935,47 +954,44 @@ class _CustomerState extends State<Customer> {
     String linkDelegate = prefs.getString('LinkDelegate') ?? '0';
     final db = await DatabaseHelper().database;
 
+    // Retry everything not yet confirmed — including rows an earlier build
+    // parked as AwaitingSession / Syncing, which were never retried before.
     final pending = await db.query(
       'CustomerPayment',
-      where:
-          'DelegateId = ? AND (SyncStatus IS NULL OR SyncStatus = ? OR SyncStatus = ?)',
-      whereArgs: [delegateId, 'PendingSync', 'SyncFailed'],
+      where: "DelegateId = ? AND (SyncStatus IS NULL OR SyncStatus = '' OR "
+          "SyncStatus IN ('PendingSync', 'SyncFailed', 'AwaitingSession', 'Syncing'))",
+      whereArgs: [delegateId],
     );
     if (pending.isEmpty) return;
 
-    // Prefer idempotent endpoint when ClientPaymentId present; fallback to multi.
+    // Aqeel servers: always use the multi endpoint. PostPaymentIdempotent
+    // needs AsyncId + a UUID ClientPaymentId (legacy-local-N rows fail) and
+    // books the payment under the logged-in delegate instead of the row's list.
+    final uri = Uri.parse(
+        '${linkDelegate}CustomersPaymentsRequests/PostSelectPaymentCustomerTemporaryMulti');
     var allOk = true;
     for (final payment in pending) {
-      final clientPaymentId =
-          (payment['ClientPaymentId']?.toString() ?? '').trim();
       final body = {
         "CustomerId": payment['CustomerId'],
         "DelegateId": payment['DelegateId'],
         "Amount": payment['Amount'],
         "Location": payment['Location'],
-        if (clientPaymentId.isNotEmpty) "ClientPaymentId": clientPaymentId,
-        if (payment['CreatedAtUtc'] != null)
-          "CreatedAtUtc": payment['CreatedAtUtc'],
       };
 
       try {
-        final uri = clientPaymentId.isNotEmpty
-            ? Uri.parse(
-                '${linkDelegate}CustomersPaymentsRequests/PostPaymentIdempotent')
-            : Uri.parse(
-                '${linkDelegate}CustomersPaymentsRequests/PostSelectPaymentCustomerTemporaryMulti');
-        final response = await http.post(
-          uri,
-          headers: {"Content-Type": "application/json"},
-          body: clientPaymentId.isNotEmpty
-              ? jsonEncode(body)
-              : jsonEncode([body]),
-        );
+        final response = await http
+            .post(
+              uri,
+              headers: {"Content-Type": "application/json"},
+              body: jsonEncode([body]),
+            )
+            .timeout(const Duration(seconds: 45));
 
         if (response.statusCode == 200 || response.statusCode == 201) {
-          await db.update(
+          // Server has it — remove from the phone (duplicate check ignores
+          // synced rows anyway, so nothing depends on keeping them).
+          await db.delete(
             'CustomerPayment',
-            {'SyncStatus': 'Synced', 'SyncError': null},
             where: 'id = ?',
             whereArgs: [payment['id']],
           );
@@ -1034,31 +1050,43 @@ class _CustomerState extends State<Customer> {
     );
   }
 
+  void _setSending(bool value) {
+    _sendingNotifier.value = value;
+    if (mounted) {
+      setState(() => isButtonDisabled = value);
+    } else {
+      isButtonDisabled = value;
+    }
+  }
+
   Future<void> _sendPayments(BuildContext context) async {
+    // Clear rows already confirmed by the server (left behind by 1.0.2).
+    await deletePayments(int.parse(selectedRepresentative!));
     await fetchPayments(
         int.parse(selectedRepresentative!)); // جلب التسديدات أولاً
 
     if (!mounted) return;
 
     if (payments.isNotEmpty) {
-      setState(() {
-        isButtonDisabled = true; // تعطيل الزر عند البدء
-      });
+      if (_sendingNotifier.value) return;
+      _setSending(true); // تعطيل الزر عند البدء
+      try {
       var connectivityResult = await (Connectivity().checkConnectivity());
       if (!connectivityResult.contains(ConnectivityResult.none)) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('انتظر لحين ارسال التسديدات')),
         );
-        await Future.delayed(const Duration(seconds: 5));
-        if (!mounted) return;
         await sendPaymentsToAPI(
             int.parse(selectedRepresentative!)); // إرسال التسديدات إلى الـ API
         if (!mounted) return;
-        setState(() {
-          isButtonDisabled = false;
-        });
+        _setSending(false);
+        await fetchPayments(int.parse(selectedRepresentative!));
+        if (!mounted) return;
+        await _calculatePayments(int.parse(selectedRepresentative!));
+        if (!mounted || !context.mounted) return;
         final unresolved = await DatabaseHelper().countUnresolvedPayments();
+        if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -1078,6 +1106,19 @@ class _CustomerState extends State<Customer> {
           const SnackBar(
               content: Text('لا يمكن إرسال التسديدات بدون اتصال بالإنترنت')),
         );
+      }
+      } catch (e) {
+        debugPrint('Send payments failed: $e');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('تعذر إرسال التسديدات، حاول مرة أخرى',
+                    style: TextStyle(fontFamily: 'Cairo'))),
+          );
+        }
+      } finally {
+        // Always release the button — even on error or early return.
+        _setSending(false);
       }
     } else {
       if (!mounted) return;

@@ -1,9 +1,30 @@
 import axios from 'axios'
 import { getAuthHeaders } from '@/services/tokenService'
 import { salesGatewayBase } from '@/composables/useSalesBranches'
+import { isCommitteeRole, readAllowedCities } from '@/utils/oversightRoles'
 
 function base() {
   return `${salesGatewayBase()}director/`
+}
+
+/** المحاسب الرئيسي: متابعة المندوبين على فرعه المحدد فقط (LinkCity + توكن الفرع، بدون البوابة). */
+export function isMainAccountantUser() {
+  return String(localStorage.getItem('UserType') || '').trim() === 'محاسب رئيسي'
+}
+
+function accountantBranchRoot() {
+  const link = String(localStorage.getItem('LinkCity') || '').trim()
+
+  return link.endsWith('/') ? link : `${link}/`
+}
+
+async function accountantFollowupGet(path, { timeoutMs } = {}) {
+  const { data } = await axios.get(`${accountantBranchRoot()}${path}`, {
+    headers: getAuthHeaders(),
+    timeout: timeoutMs ?? 30000,
+  })
+
+  return data
 }
 
 export async function directorGet(path, { timeoutMs } = {}) {
@@ -41,11 +62,99 @@ export async function directorGetBlob(path, { timeoutMs } = {}) {
   return data
 }
 
+const CITIES_CACHE_KEY = 'director-gateway-cities-cache'
+
+function citiesCacheKey() {
+  return `${CITIES_CACHE_KEY}:${localStorage.getItem('UserType') || ''}`
+}
+
+/** Last gateway branch list for this role (instant first paint; committee re-filtered by its branches). */
+export function directorCitiesCached() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(citiesCacheKey()) || '[]')
+    if (!Array.isArray(rows))
+      return []
+    if (!isCommitteeRole(localStorage.getItem('UserType')))
+      return rows
+    const allowed = new Set(readAllowedCities())
+
+    return rows.filter(r => allowed.has(String(r?.value ?? r?.Value ?? '').trim()))
+  }
+  catch {
+    return []
+  }
+}
+
+let citiesInflight = null
+
 export async function directorCities() {
-  return directorGet('cities')
+  // Both متابعة pages (and nav switches) share one in-flight request.
+  if (citiesInflight)
+    return citiesInflight
+  citiesInflight = directorGet('cities')
+    .then(rows => {
+      try {
+        if (Array.isArray(rows) && rows.length)
+          localStorage.setItem(citiesCacheKey(), JSON.stringify(rows))
+      }
+      catch { /* ignore quota */ }
+
+      return rows
+    })
+    .finally(() => { citiesInflight = null })
+
+  return citiesInflight
 }
 
 /** Monitor «لوحة الأسعار» — CRUD on gateway. */
+export async function oversightCommittees() {
+  return directorGet('oversight/committees')
+}
+
+export async function oversightCreateCommittee(body) {
+  const { data } = await axios.post(`${base()}oversight/committees`, body, {
+    headers: getAuthHeaders(),
+    timeout: 30000,
+  })
+  return data
+}
+
+export async function oversightSetBranches(id, cityValues) {
+  const { data } = await axios.put(`${base()}oversight/committees/${id}/branches`, { cityValues }, {
+    headers: getAuthHeaders(),
+    timeout: 30000,
+  })
+  return data
+}
+
+export async function oversightDeleteCommittee(id) {
+  const { data } = await axios.delete(`${base()}oversight/committees/${id}`, {
+    headers: getAuthHeaders(),
+  })
+
+  return data
+}
+
+export async function oversightAccounts() {
+  return directorGet('oversight/accounts')
+}
+
+export async function oversightCreateAccount(body) {
+  const { data } = await axios.post(`${base()}oversight/accounts`, body, {
+    headers: getAuthHeaders(),
+    timeout: 30000,
+  })
+  return data
+}
+
+export async function oversightDeleteAccount(id) {
+  const { data } = await axios.delete(`${base()}oversight/accounts/${id}`, {
+    headers: getAuthHeaders(),
+    timeout: 30000,
+  })
+  return data
+}
+
 export async function directorPriceBoardList(cityValue) {
   const params = new URLSearchParams()
   if (cityValue)
@@ -257,6 +366,15 @@ export async function directorStatsBranchMonth(cityValue) {
 }
 
 export async function directorStatsListPaymentsSum({ cityValue, listId, fromDate, toDate }) {
+  if (isMainAccountantUser()) {
+    const p = new URLSearchParams({ listId: String(listId) })
+    if (fromDate)
+      p.set('fromDate', fromDate)
+    if (toDate)
+      p.set('toDate', toDate)
+
+    return accountantFollowupGet(`accountant/delegate-followup/list-payments-sum?${p}`, { timeoutMs: 60000 })
+  }
   const params = new URLSearchParams()
   params.set('cityValue', cityValue)
   params.set('listId', String(listId))
@@ -313,24 +431,47 @@ export async function directorStatsRatingCustomers({
   return directorGet(`stats/rating-customers?${params}`, { timeoutMs: 120000 })
 }
 
+/** مسؤول الارشيف reads the same read-only profile through api/archive-flow (the director routes refuse it). */
+function profileBase() {
+  return String(localStorage.getItem('UserType') || '').trim() === 'مسؤول الارشيف' ? '../archive-flow/' : ''
+}
+
 export function directorCustomerProfilePath(city, customerId) {
-  return `customers/${encodeURIComponent(city)}/${customerId}/profile`
+  return `${profileBase()}customers/${encodeURIComponent(city)}/${customerId}/profile`
 }
 
 export function directorCustomerNotesPath(city, customerId) {
-  return `customers/${encodeURIComponent(city)}/${customerId}/notes`
+  return `${profileBase()}customers/${encodeURIComponent(city)}/${customerId}/notes`
 }
 
 export function directorSaleShopImagePath(city, saleId) {
-  return `sales/${encodeURIComponent(city)}/${saleId}/shop-image`
+  return `${profileBase()}sales/${encodeURIComponent(city)}/${saleId}/shop-image`
 }
 
 export function directorCustomerDocumentFilePath(city, documentId) {
-  return `customer-documents/${encodeURIComponent(city)}/${documentId}/file`
+  return `${profileBase()}customer-documents/${encodeURIComponent(city)}/${documentId}/file`
 }
 
 function opsCityParams(cityValue) {
   return new URLSearchParams({ cityValue: String(cityValue || '') })
+}
+
+/** عمل المتابعين — مواقع وصور المحلات: تقدم كل قائمة مسندة لمتابع. */
+export async function directorFollowerOpsShopCapture({ cityValue } = {}) {
+  return directorGet(`followers/ops/shop-capture?${opsCityParams(cityValue)}`, { timeoutMs: 180000 })
+}
+
+export async function directorFollowerOpsShopCaptureList({ cityValue, listId } = {}) {
+  return directorGet(`followers/ops/shop-capture/lists/${listId}/customers?${opsCityParams(cityValue)}`, { timeoutMs: 180000 })
+}
+
+/** موقع وصورة محل زبون واحد (بروفايل الزبون). */
+export async function directorFollowerOpsShopCaptureCustomer({ cityValue, customerId } = {}) {
+  return directorGet(`followers/ops/shop-capture/customers/${customerId}?${opsCityParams(cityValue)}`, { timeoutMs: 60000 })
+}
+
+export async function directorFollowerOpsShopCapturePhoto({ cityValue, customerId } = {}) {
+  return directorGetBlob(`followers/ops/shop-capture/customers/${customerId}/photo?${opsCityParams(cityValue)}`, { timeoutMs: 120000 })
 }
 
 /** عمل المتابعين — ملخص أكشنز (بدون فترة) */
@@ -421,26 +562,91 @@ export async function directorFollowerOpsSetCollectionEnabled({ cityValue, listI
   return data
 }
 
+/** In-memory (per tab) last lists per branch — shown instantly while a fresh copy loads. */
+const delegateListsCache = new Map()
+
 /** متابعة المندوبين — قوائم نشطة (آخر تسديد ≤ 40 يوماً) */
 export async function directorDelegateFollowupLists({ cityValue } = {}) {
-  return directorGet(`delegate-followup/lists?${opsCityParams(cityValue)}`, { timeoutMs: 180000 })
+  const rows = isMainAccountantUser()
+    ? await accountantFollowupGet('accountant/delegate-followup/lists', { timeoutMs: 180000 })
+    : await directorGet(`delegate-followup/lists?${opsCityParams(cityValue)}`, { timeoutMs: 180000 })
+  if (Array.isArray(rows))
+    delegateListsCache.set(String(cityValue || ''), rows)
+
+  return rows
+}
+
+
+export function directorDelegateFollowupListsCached(cityValue) {
+  return delegateListsCache.get(String(cityValue || '')) || null
 }
 
 export async function directorDelegateFollowupListSummary({ cityValue, listId } = {}) {
+  if (isMainAccountantUser())
+    return accountantFollowupGet(`accountant/delegate-followup/lists/${listId}/summary`, { timeoutMs: 120000 })
   return directorGet(
     `delegate-followup/lists/${listId}/summary?${opsCityParams(cityValue)}`,
     { timeoutMs: 120000 },
   )
 }
 
+/** Navbar «بحث الزبائن» — across every branch the caller may see (committee: its branches). */
+export async function directorGlobalCustomerSearch(q, { signal, cityValue, includeFinished = false } = {}) {
+  const params = { q, includeFinished }
+  if (cityValue)
+    params.cityValue = cityValue
+  const { data } = await axios.get(`${base()}delegate-followup/customers/search`, {
+    params,
+    headers: getAuthHeaders(),
+    timeout: 30000,
+    signal,
+  })
+
+  return Array.isArray(data) ? data : []
+}
+
 export async function directorDelegateFollowupListCustomers({ cityValue, listId } = {}) {
+  if (isMainAccountantUser())
+    return accountantFollowupGet(`accountant/delegate-followup/lists/${listId}/customers`, { timeoutMs: 180000 })
   return directorGet(
     `delegate-followup/lists/${listId}/customers?${opsCityParams(cityValue)}`,
     { timeoutMs: 180000 },
   )
 }
 
+/** طلبات بيع مندوب القائمة — كل الطلبات + المبيعات/المرفوضة/التقييمات/المبيعات الجديدة */
+export async function directorDelegateFollowupListSalesOrders({ cityValue, listId } = {}) {
+  if (isMainAccountantUser())
+    return accountantFollowupGet(`accountant/delegate-followup/lists/${listId}/sales-orders`, { timeoutMs: 180000 })
+  return directorGet(
+    `delegate-followup/lists/${listId}/sales-orders?${opsCityParams(cityValue)}`,
+    { timeoutMs: 180000 },
+  )
+}
+
+/** خريطة القوائم — موقع محل كل زبون غير مصفر (GPS المبيعات أو تقديري من مواقع التسديد) */
+export async function directorDelegateFollowupListLocations({ cityValue, listId } = {}) {
+  if (isMainAccountantUser())
+    return accountantFollowupGet(`accountant/delegate-followup/lists/${listId}/locations`, { timeoutMs: 180000 })
+  return directorGet(
+    `delegate-followup/lists/${listId}/locations?${opsCityParams(cityValue)}`,
+    { timeoutMs: 180000 },
+  )
+}
+
+/** Every recent payment GPS point of one customer (kind: shop | office | other). */
+export async function directorDelegateFollowupCustomerPaymentLocations({ cityValue, listId, customerId } = {}) {
+  if (isMainAccountantUser())
+    return accountantFollowupGet(`accountant/delegate-followup/lists/${listId}/customers/${customerId}/payment-locations`, { timeoutMs: 180000 })
+  return directorGet(
+    `delegate-followup/lists/${listId}/customers/${customerId}/payment-locations?${opsCityParams(cityValue)}`,
+    { timeoutMs: 180000 },
+  )
+}
+
 export async function directorDelegateFollowupPayments({ cityValue, customerId } = {}) {
+  if (isMainAccountantUser())
+    return accountantFollowupGet(`CustomersPayments/CustomersPayments_GetByCustomerID/${customerId}`, { timeoutMs: 60000 })
   return directorGet(
     `delegate-followup/payments/${customerId}?${opsCityParams(cityValue)}`,
     { timeoutMs: 60000 },
@@ -457,9 +663,12 @@ export async function directorDelegateFollowupCreatePayment({ cityValue, payload
   return data
 }
 
-export async function directorDelegateFollowupGetBoardOperatorRating({ cityValue, listId } = {}) {
+export async function directorDelegateFollowupGetBoardOperatorRating({ cityValue, listId, slot } = {}) {
+  if (isMainAccountantUser())
+    return accountantFollowupGet(`accountant/delegate-followup/lists/${listId}/board-operator-rating?slot=accountant`, { timeoutMs: 30000 })
+  const slotParam = slot === 'accountant' ? '&slot=accountant' : ''
   return directorGet(
-    `delegate-followup/lists/${listId}/board-operator-rating?${opsCityParams(cityValue)}`,
+    `delegate-followup/lists/${listId}/board-operator-rating?${opsCityParams(cityValue)}${slotParam}`,
     { timeoutMs: 30000 },
   )
 }
@@ -470,9 +679,19 @@ export async function directorDelegateFollowupUpsertBoardOperatorRating({
   score,
   note,
 } = {}) {
+  // المحاسب الرئيسي → «تقييم المحاسب الرئيسي» on his branch; everyone else → «تقييم لجنة المراقبة».
+  if (isMainAccountantUser()) {
+    const { data } = await axios.post(
+      `${accountantBranchRoot()}accountant/delegate-followup/lists/${listId}/board-operator-rating`,
+      { score, note: note || null, slot: 'accountant' },
+      { headers: getAuthHeaders(), timeout: 30000 },
+    )
+
+    return data
+  }
   const { data } = await axios.post(
     `${base()}delegate-followup/lists/${listId}/board-operator-rating?${opsCityParams(cityValue)}`,
-    { score, note: note || null },
+    { score, note: note || null, slot: 'head' },
     { headers: getAuthHeaders(), timeout: 30000 },
   )
 

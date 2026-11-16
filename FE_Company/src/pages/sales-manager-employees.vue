@@ -8,6 +8,7 @@ import {
   smGet,
   smGetEmployees,
 } from '@/composables/salesManagerApi'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 import { createRequestGeneration } from '@/utils/provinceCatalog'
 
 const router = useRouter()
@@ -225,6 +226,7 @@ async function openBucket(bucket) {
       lastPaymentDate: c.lastPaymentDate ?? c.LastPaymentDate,
       amountPaid: c.amountPaid ?? c.AmountPaid ?? 0,
       amountRemaining: c.amountRemaining ?? c.AmountRemaining ?? 0,
+      isLegal: c.isLegal ?? c.IsLegal ?? false,
       amountTotal: c.amountTotal ?? c.AmountTotal ?? 0,
       ratingLabel: c.ratingLabel || c.RatingLabel || bucket.label,
     }))
@@ -540,8 +542,8 @@ onMounted(load)
               <div class="customer-meta">
                 <span>تاريخ البيع: {{ formatDay(c.dateSale) }}</span>
                 <span>آخر تسديد: {{ formatDay(c.lastPaymentDate) }}</span>
-                <span>واصل: {{ formatMoney(c.amountPaid) }}</span>
-                <span>متبقي: {{ formatMoney(c.amountRemaining) }}</span>
+                <span>واصل: {{ shouldHidePaidRemaining(c) ? '—' : formatMoney(c.amountPaid) }}</span>
+                <span>متبقي: {{ shouldHidePaidRemaining(c) ? '—' : formatMoney(c.amountRemaining) }}</span>
               </div>
             </button>
           </div>

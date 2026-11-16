@@ -1,18 +1,29 @@
 import 'package:delegate_application/services/today_payments_logic.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Documents: when collection is blocked, UI must treat submit as "not saved"
-/// and clear «جاري حفظ التسديد» — never leave the dialog spinner forever.
+/// Documents: a refused collection is not a save. The dialog must leave
+/// «جاري حفظ التسديد» and, for a prior unsynced row, offer إرسال التسديدات.
 void main() {
   test('blocked collection means submit did not save (clear spinner)', () {
-    final blocked = TodayPaymentsLogic.blocksNewCollection(
+    final block = TodayPaymentsLogic.classifyCollection(
       customerId: 42,
       delegateId: 10,
       localPayments: const [],
       ledgerHasBusinessDay: true,
     );
-    expect(blocked, isTrue);
-    const saved = false; // _addPayment returns false when blocked
+    expect(block.isBlocked, isTrue);
+    expect(block.kind, CollectionBlockKind.alreadyCollected);
+    const saved = false; // AddPaymentResult.saved is false when blocked
     expect(saved, isFalse);
+  });
+
+  test('unsynced leftover is the waiting-to-send case shown on the dialog', () {
+    final block = CollectionBlock.fromFlags(
+      ledgerHasBusinessDay: false,
+      hasPaymentOnBusinessDay: false,
+      hasUnsyncedPayment: true,
+    );
+    expect(block.kind, CollectionBlockKind.waitingToSend);
+    expect(block.message, contains('إرسال التسديدات'));
   });
 }

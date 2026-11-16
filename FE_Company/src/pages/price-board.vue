@@ -21,7 +21,8 @@ definePage({
 const apiUrl = localStorage.getItem('LinkCity')
 const toast = useToast()
 const { isAdmin, isMonitor } = useUserRole()
-const canWrite = computed(() => isMonitor.value)
+const canEditPrices = computed(() => isMonitor.value)
+const canWrite = canEditPrices
 
 const rows = ref([])
 const loading = ref(false)
@@ -98,7 +99,7 @@ const fmtDate = raw => {
 }
 
 async function loadCities() {
-  if (!isMonitor.value)
+  if (!canEditPrices.value)
     return
   citiesLoading.value = true
   try {
@@ -116,7 +117,7 @@ async function loadCities() {
 async function fetchRows() {
   loading.value = true
   try {
-    if (isMonitor.value) {
+    if (canEditPrices.value) {
       const data = await directorPriceBoardList(filterCity.value || undefined)
       rows.value = Array.isArray(data) ? data : []
     }
@@ -216,7 +217,7 @@ async function removeRow(row) {
 }
 
 watch(filterCity, () => {
-  if (isMonitor.value)
+  if (canEditPrices.value)
     fetchRows()
 })
 
@@ -244,7 +245,7 @@ onMounted(async () => {
       </div>
       <div class="d-flex flex-wrap ga-2">
         <VSelect
-          v-if="isMonitor"
+          v-if="canEditPrices"
           v-model="filterCity"
           :items="[{ title: 'كل المحافظات', value: '' }, ...cityItems]"
           :loading="citiesLoading"

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using BE_SalesEmployee.DelegatedManager.Models;
 using BE_SalesEmployee.DelegatedManager.Services;
 using BE_SalesEmployee.Sales.Authorization;
+using BE_SalesEmployee.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -38,7 +39,7 @@ public sealed class PriceBoardController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = SalesPolicies.Monitor)]
+    [Authorize(Policy = SalesPolicies.PriceBoardEditor)]
     public async Task<IActionResult> Create([FromBody] UpsertPriceBoardRequest? body, CancellationToken ct)
     {
         body ??= new UpsertPriceBoardRequest();
@@ -57,7 +58,7 @@ public sealed class PriceBoardController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Policy = SalesPolicies.Monitor)]
+    [Authorize(Policy = SalesPolicies.PriceBoardEditor)]
     public async Task<IActionResult> Update(int id, [FromBody] UpsertPriceBoardRequest? body, CancellationToken ct)
     {
         body ??= new UpsertPriceBoardRequest();
@@ -77,7 +78,7 @@ public sealed class PriceBoardController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
-    [Authorize(Policy = SalesPolicies.Monitor)]
+    [Authorize(Policy = SalesPolicies.PriceBoardEditor)]
     public async Task<IActionResult> Delete(int id, CancellationToken ct)
     {
         var (ok, error) = await _service.DeleteAsync(id, ct);

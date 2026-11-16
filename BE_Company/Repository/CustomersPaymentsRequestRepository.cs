@@ -1,5 +1,6 @@
 ﻿using BE_Company.DTO;
 using BE_Company.IRepository;
+using BE_Company.Sales.Services;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
@@ -20,13 +21,14 @@ namespace BE_Company.Repository
         {
             using (var connection = new SqlConnection(_connectionString))
             {
-                var result = await connection.QueryAsync<CustomersPaymentsRequestGetDTO>("CustomersPaymentsRequest_GetAll",
+                var result = (await connection.QueryAsync<CustomersPaymentsRequestGetDTO>("CustomersPaymentsRequest_GetAll",
                 new
                 {
                     CustomerName = customerName,
                     DelegateID = delegateID
                 },
-                commandType: CommandType.StoredProcedure);
+                commandType: CommandType.StoredProcedure)).ToList();
+                await LegalCustomerFlagStamp.ApplyAsync(connection, result, r => r.CustomerID, (r, legal) => r.IsLegal = legal);
                 return result;
             }
         }

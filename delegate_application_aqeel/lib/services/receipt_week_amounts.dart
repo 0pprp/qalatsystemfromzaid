@@ -15,14 +15,28 @@ class ReceiptWeekAmounts {
     'قبل 6 أيام',
   ];
 
-  /// Ensures 7 display labels; prefers DateWeek dates when present, else Arabic.
-  static List<String> ensureDayLabels(List<String?>? raw) {
-    final out = <String>[];
-    for (var i = 0; i < 7; i++) {
-      final v = (raw != null && i < raw.length) ? (raw[i] ?? '').trim() : '';
-      out.add(v.isNotEmpty ? v : arabicDayLabels[i]);
-    }
-    return out;
+  static const _arabicWeekdays = <String>[
+    'الاثنين', // DateTime.monday == 1
+    'الثلاثاء',
+    'الأربعاء',
+    'الخميس',
+    'الجمعة',
+    'السبت',
+    'الأحد',
+  ];
+
+  /// Printed label for the day [daysAgo] before today's Iraq business day,
+  /// e.g. «الأحد 9/11».
+  static String dateLabel(int daysAgo, [DateTime? utcNow]) {
+    final d = IraqDate.businessDate(utcNow).subtract(Duration(days: daysAgo));
+    return '${_arabicWeekdays[d.weekday - 1]} ${d.day}/${d.month}';
+  }
+
+  /// Always 7 real date labels (index 0 = today), computed on the phone.
+  /// [raw] (DateWeek from the server) is ignored: Aqeel servers / stale syncs
+  /// left relative labels («أمس», «قبل يومين»…) or dates from an older day.
+  static List<String> ensureDayLabels(List<String?>? raw, [DateTime? utcNow]) {
+    return [for (var i = 0; i < 7; i++) dateLabel(i, utcNow)];
   }
 
   static List<double> ensureAmounts(List<double?>? raw) {

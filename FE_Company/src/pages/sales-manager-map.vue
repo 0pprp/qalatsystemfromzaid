@@ -1,7 +1,7 @@
 <script setup>
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import mapboxgl from 'mapbox-gl'
+import mapboxgl from '@/utils/mapbox'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import SalesBranchFilter from '@/components/SalesBranchFilter.vue'
 import { branchRowKey, locationStatusLabel, smGetLiveLocations } from '@/composables/salesManagerApi'

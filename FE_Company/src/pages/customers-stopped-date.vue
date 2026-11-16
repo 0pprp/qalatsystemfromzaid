@@ -5,6 +5,7 @@ import ModernStatCard from "@/components/ModernStatCard.vue"
 import axios from 'axios'
 import { computed, ref } from 'vue'
 import * as XLSX from 'xlsx'
+import { shouldHidePaidRemaining, sumVisibleFinancial } from '@/composables/legalFinancialVisibility'
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -96,7 +97,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar',
     value: formattedNumber(
-      customersData.value.reduce((sum, customer) => sum + (customer.receiptsTotal || 0), 0),
+      sumVisibleFinancial(customersData.value, customer => customer.receiptsTotal),
     ),
     title: 'إجمالي الواصل',
     color: "error",
@@ -105,7 +106,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar',
     value: formattedNumber(
-      customersData.value.reduce((sum, customer) => sum + (customer.amountRemaining || 0), 0),
+      sumVisibleFinancial(customersData.value, customer => customer.amountRemaining),
     ),
     title: 'إجمالي المبلغ المتبقي',
     color: "secondary",
@@ -162,8 +163,8 @@ function exportToExcel() {
     'سعر البيع': customer.amountTotalSales || 0,
     'سعر الشراء': customer.costTotalSales || 0,
     'القسط': customer.amountDaySales || 0,
-    'الواصل': customer.receiptsTotal || 0,
-    'الباقي': customer.amountRemaining || 0,
+    'الواصل': shouldHidePaidRemaining(customer) ? '—' : (customer.receiptsTotal || 0),
+    'الباقي': shouldHidePaidRemaining(customer) ? '—' : (customer.amountRemaining || 0),
     'نسبة التسديد': customer.receiptRateDevice || 'لا يوجد',
     'عدد التسديدات': customer.countReceiptDevice || 0,
     'عدد الأيام': customer.numberOfDayDevice || 0,
@@ -303,12 +304,12 @@ function exportToExcel() {
           </template>
           <template v-slot:item.receiptsTotal="{ item }">
             <div class="premium-amount amt-total-receipts">
-              {{ formattedNumber(item.receiptsTotal) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.receiptsTotal) }}
             </div>
           </template>
           <template v-slot:item.amountRemaining="{ item }">
             <div class="premium-amount amt-remaining">
-              {{ formattedNumber(item.amountRemaining) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.amountRemaining) }}
             </div>
           </template>
           <template v-slot:item.receiptRateDevice="{ item }">

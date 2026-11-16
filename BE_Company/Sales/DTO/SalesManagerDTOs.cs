@@ -139,6 +139,146 @@ namespace BE_Company.Sales.DTO
         public int SalesToday { get; set; }
         public int PendingSales { get; set; }
         public int NewSalesRequests { get; set; }
+        public int Year { get; set; }
+        public int Month { get; set; }
+        public int DaysInMonth { get; set; }
+        public string CityValue { get; set; } = string.Empty;
+        public string CityName { get; set; } = string.Empty;
+        /// <summary>Completed official sales in the month. Deleted sales are excluded.</summary>
+        public int MonthSalesCount { get; set; }
+        public decimal MonthSalePrice { get; set; }
+        /// <summary>Payments since each sale, capped at that sale price. Not every cash receipt in the month.</summary>
+        public decimal MonthCollected { get; set; }
+        public decimal CollectedPercent { get; set; }
+        public int PreviousMonthSalesCount { get; set; }
+        public decimal PreviousMonthSalePrice { get; set; }
+        public decimal? SalesCountGrowthPercent { get; set; }
+        public decimal? SalePriceGrowthPercent { get; set; }
+        public decimal AverageSalePrice { get; set; }
+        public decimal MonthDownPayment { get; set; }
+        public int MonthItemQuantity { get; set; }
+        public int OrdersCreated { get; set; }
+        public int OrdersConverted { get; set; }
+        public int OrdersFinished { get; set; }
+        public int OrdersRejected { get; set; }
+        public int OrdersOpen { get; set; }
+        public int OrdersPending { get; set; }
+        public int OrdersUnassigned { get; set; }
+        public decimal OrderConversionPercent { get; set; }
+        /// <summary>Official month sales whose customer has an app payment rating.</summary>
+        public int ScoredSalesCount { get; set; }
+        public int UnscoredSalesCount { get; set; }
+        public int ExcellentSales { get; set; }
+        public int GoodSales { get; set; }
+        public int WeakSales { get; set; }
+        public int LaggingSales { get; set; }
+        public int BadSales { get; set; }
+        public int HighScoreSales { get; set; }
+        public int LowScoreSales { get; set; }
+        public decimal ScoreSum { get; set; }
+        public decimal? AverageSaleScore { get; set; }
+        public List<SalesOverviewDayDTO> Daily { get; set; } = [];
+        public List<SalesOverviewItemDTO> Items { get; set; } = [];
+        public List<SalesOverviewCategoryDTO> Categories { get; set; } = [];
+        public List<SalesOverviewPersonDTO> Recommenders { get; set; } = [];
+        public List<SalesOverviewPersonDTO> Sellers { get; set; } = [];
+        public List<SalesOverviewScoreDTO> SaleScores { get; set; } = [];
+        public List<SalesOverviewStatusDTO> OrderStatuses { get; set; } = [];
+        public string? OverviewError { get; set; }
+    }
+
+    public sealed class SalesOverviewDayDTO
+    {
+        public int Day { get; set; }
+        public int SalesCount { get; set; }
+        public decimal SalePrice { get; set; }
+    }
+
+    public sealed class SalesOverviewItemDTO
+    {
+        public string ItemName { get; set; } = string.Empty;
+        public string Category { get; set; } = string.Empty;
+        public int Quantity { get; set; }
+        public int SalesCount { get; set; }
+        public decimal SalePrice { get; set; }
+    }
+
+    public sealed class SalesOverviewCategoryDTO
+    {
+        public string Category { get; set; } = string.Empty;
+        public int Quantity { get; set; }
+        public int SalesCount { get; set; }
+        public decimal SalePrice { get; set; }
+    }
+
+    public sealed class SalesOverviewPersonDTO
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Role { get; set; } = string.Empty;
+        public int SalesCount { get; set; }
+        public decimal SalePrice { get; set; }
+        public int ScoredSales { get; set; }
+        public int HighScores { get; set; }
+        public int LowScores { get; set; }
+        public int ExcellentSales { get; set; }
+        public int GoodSales { get; set; }
+        public int WeakSales { get; set; }
+        public int LaggingSales { get; set; }
+        public int BadSales { get; set; }
+        public decimal ScoreSum { get; set; }
+        public decimal? AverageScore { get; set; }
+    }
+
+    public sealed class SalesOverviewScoreDTO
+    {
+        public string Label { get; set; } = string.Empty;
+        public int Score { get; set; }
+        public int Count { get; set; }
+        public decimal SalePrice { get; set; }
+    }
+
+    public sealed class SalesOverviewStatusDTO
+    {
+        public string Status { get; set; } = string.Empty;
+        public int Count { get; set; }
+    }
+
+    public sealed class SalesDayDetailDTO
+    {
+        public int Year { get; set; }
+        public int Month { get; set; }
+        public int Day { get; set; }
+        public string CityValue { get; set; } = string.Empty;
+        public string CityName { get; set; } = string.Empty;
+        public int SalesCount { get; set; }
+        public decimal SalePrice { get; set; }
+        public decimal AverageSalePrice { get; set; }
+        public decimal DownPayment { get; set; }
+        public int ItemQuantity { get; set; }
+        public int OrdersAdded { get; set; }
+        public int OrdersCompleted { get; set; }
+        public int OrdersRejected { get; set; }
+        public List<SalesDayPersonDTO> Sellers { get; set; } = [];
+        public List<SalesDayPersonDTO> Creators { get; set; } = [];
+        public List<SalesDayAgentDTO> Agents { get; set; } = [];
+        public List<SalesOverviewStatusDTO> OrderStatuses { get; set; } = [];
+        public List<SalesOverviewItemDTO> Items { get; set; } = [];
+        public string? DayError { get; set; }
+    }
+
+    public sealed class SalesDayPersonDTO
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Role { get; set; } = string.Empty;
+        public int Count { get; set; }
+        public decimal SalePrice { get; set; }
+    }
+
+    public sealed class SalesDayAgentDTO
+    {
+        public string Name { get; set; } = string.Empty;
+        public int Orders { get; set; }
+        public List<SalesOverviewStatusDTO> Statuses { get; set; } = [];
     }
 
     public sealed class SalesLiveLocationDTO

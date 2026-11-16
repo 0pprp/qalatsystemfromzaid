@@ -411,7 +411,9 @@ function exportToExcel() {
     'الباقي': shouldHidePaidRemaining(customer, { showType: filters.value.showType })
       ? '—'
       : (customer.amountRemaining || 'لا يوجد'),
-    'نسبة التسديد': customer.receiptRateDevice !== undefined && customer.receiptRateDevice !== null ? `${customer.receiptRateDevice}%` : '0%',
+    'نسبة التسديد': shouldHidePaidRemaining(customer, { showType: filters.value.showType })
+      ? '—'
+      : (customer.receiptRateDevice !== undefined && customer.receiptRateDevice !== null ? `${customer.receiptRateDevice}%` : '0%'),
     'عدد التسديدات': customer.countReceiptDevice || 'لا يوجد',
     'عدد الأيام': customer.numberOfDayDevice || 'لا يوجد',
     'تاريخ اخر تسديد': customer.lastPaymentDate ? new Date(customer.lastPaymentDate).toLocaleDateString('en-CA')   : 'لا يوجد',
@@ -1281,7 +1283,7 @@ onMounted(() => {
           </template>
           <template #item.receiptRateDevice="{ item }">
             <div>
-              {{ item.receiptRateDevice !== undefined && item.receiptRateDevice !== null ? item.receiptRateDevice + '%' : '0%' }}
+              {{ shouldHidePaidRemaining(item, { showType: filters.showType }) ? '—' : (item.receiptRateDevice !== undefined && item.receiptRateDevice !== null ? item.receiptRateDevice + '%' : '0%') }}
             </div>
           </template>
           <template #item.countReceiptDevice="{ item }">

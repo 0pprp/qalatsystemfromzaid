@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:follower_application/shop_capture/approval_shop_capture.dart';
 import 'package:follower_application/config/app_env.dart';
 import 'package:follower_application/ui/app_safe_scaffold.dart';
 import 'package:follower_application/utils/AppTheme.dart';
@@ -74,6 +75,7 @@ class _PendingSalesPageState extends State<PendingSalesPage> {
     var note = '';
     final stockCtrl = TextEditingController();
     final dailyCtrl = TextEditingController();
+    final shopDraft = ShopCaptureDraft();
     String? localError;
     final ok = await showDialog<bool>(
       context: context,
@@ -153,6 +155,7 @@ class _PendingSalesPageState extends State<PendingSalesPage> {
                   ),
                   style: const TextStyle(fontFamily: 'Cairo'),
                 ),
+                ShopCaptureFields(draft: shopDraft, onChanged: () => setLocal(() {})),
                 if (localError != null) ...[
                   const SizedBox(height: 8),
                   Text(localError!,
@@ -182,6 +185,11 @@ class _PendingSalesPageState extends State<PendingSalesPage> {
                   setLocal(() => localError = 'قيمة الوارد اليومي مطلوبة');
                   return;
                 }
+                final missing = shopDraft.missing();
+                if (missing != null) {
+                  setLocal(() => localError = missing);
+                  return;
+                }
                 Navigator.pop(ctx, true);
               },
               child: const Text('اعتماد', style: TextStyle(fontFamily: 'Cairo')),
@@ -198,6 +206,10 @@ class _PendingSalesPageState extends State<PendingSalesPage> {
 
     try {
       final s = await _session();
+      final shopFields = await shopDraft.submit(
+        int.tryParse('${item['listId'] ?? item['ListId'] ?? 0}') ?? 0,
+        int.tryParse('${item['customerId'] ?? item['CustomerId'] ?? 0}') ?? 0,
+      );
       final uri = Uri.parse('${s['link']}Followers/PendingSales/Authenticate');
       final res = await http
           .post(
@@ -211,6 +223,7 @@ class _PendingSalesPageState extends State<PendingSalesPage> {
               'note': note.trim().isEmpty ? null : note.trim(),
               'shopStockEstimatedValue': stock,
               'estimatedDailyRevenue': daily,
+              ...shopFields,
             }),
           )
           .timeout(const Duration(seconds: 30));

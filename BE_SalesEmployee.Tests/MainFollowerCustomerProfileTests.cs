@@ -139,7 +139,11 @@ public sealed class MainFollowerCustomerProfileTests
             Task.FromResult<(int, object?)>((501, null));
         public Task<(int Status, object? Body)> ExcelSearchAsync(GatewayUser user, string? cityValue, string jsonBody, CancellationToken ct) =>
             Task.FromResult<(int, object?)>((501, null));
-        public Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct) =>
+        public Task<(int Status, object? Body)> DashboardAsync(
+            GatewayUser user, string? cityValue, CancellationToken ct, int? year = null, int? month = null) =>
+            Task.FromResult<(int, object?)>((501, null));
+        public Task<(int Status, object? Body)> DashboardDayAsync(
+            GatewayUser user, string? cityValue, CancellationToken ct, int? year, int? month, int? day) =>
             Task.FromResult<(int, object?)>((501, null));
         public Task<(int Status, object? Body)> EvaluateAcrossBranchesAsync(GatewayUser user, string jsonBody, CancellationToken ct) =>
             Task.FromResult<(int, object?)>((501, null));

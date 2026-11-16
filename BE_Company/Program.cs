@@ -16,7 +16,10 @@ builder.Services.ConfigureJwt(builder.Configuration);
 builder.Services.AddCustomCors(builder.Configuration);
 builder.Services.AddSingleton<IPortalTokenRevocationStore, MemoryPortalTokenRevocationStore>();
 builder.Services.AddSingleton<PortalAccessService>();
-builder.Services.AddControllers()
+builder.Services.AddControllers(o =>
+    {
+        o.Filters.Add(new BE_Company.Sales.Services.LegalCustomerAmountResultFilter());
+    })
     .AddJsonOptions(o =>
     {
         o.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;

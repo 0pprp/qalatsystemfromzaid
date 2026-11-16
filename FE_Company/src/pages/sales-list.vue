@@ -8,6 +8,7 @@ import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+import { shouldHidePaidRemaining, sumVisibleFinancial } from '@/composables/legalFinancialVisibility'
 
 const toast = useToast()
 const apiUrl = localStorage.getItem('LinkCity') // رابط الـ API
@@ -352,18 +353,18 @@ const totals = computed(() => [
     gradient: "linear-gradient(135deg, #667db6 0%, #0082c8 100%, #0082c8 100%, #667db6 100%)",
   },
   {
-    icon: 'tabler-currency-dollar', // إجمالي الواصل
+    icon: 'tabler-currency-dollar', // إجمالي الواصل — يستثني القانونية لغير المحاسب الرئيسي
     value: formattedNumber(
-      salesData.value.reduce((sum, sale) => sum + (sale.receiptsTotal || 0), 0),
+      sumVisibleFinancial(salesData.value, sale => sale.receiptsTotal),
     ),
     title: 'إجمالي الواصل',
     color: "error",
     gradient: "linear-gradient(135deg, #FF416C 0%, #FF4B2B 100%)",
   },
   {
-    icon: 'tabler-currency-dollar', // إجمالي المبلغ المتبقي
+    icon: 'tabler-currency-dollar', // إجمالي المبلغ المتبقي — يستثني القانونية لغير المحاسب الرئيسي
     value: formattedNumber(
-      salesData.value.reduce((sum, sale) => sum + (sale.amountRemaining || 0), 0),
+      sumVisibleFinancial(salesData.value, sale => sale.amountRemaining),
     ),
     title: 'إجمالي المبلغ المتبقي',
     color: "error",
@@ -452,8 +453,8 @@ function exportToExcel() {
     'القسط': sale.amountTotalDayDenar || 'لا يوجد',
     'خصم القسط': sale.discountAmountTotalDayDenar || 'لا يوجد',
     'القسط النهائي': sale.amountDaySalesDenar || 'لا يوجد',
-    'الواصل': sale.receiptsTotal || 'لا يوجد',
-    'الباقي': sale.amountRemaining || 'لا يوجد',
+    'الواصل': shouldHidePaidRemaining(sale) ? '—' : (sale.receiptsTotal || 'لا يوجد'),
+    'الباقي': shouldHidePaidRemaining(sale) ? '—' : (sale.amountRemaining || 'لا يوجد'),
     'عدد التسديدات': sale.countReceiptDevice || 'لا يوجد',
     'تاريخ اخر تسديد': sale.lastPaymentDate ? new Date(sale.lastPaymentDate).toLocaleDateString('en-CA') : 'لا يوجد',
     'اسم الجابي': sale.receiptName || 'لا يوجد',
@@ -963,12 +964,12 @@ const onNumberInput = e => {
           </template>
           <template #item.receiptsTotal="{ item }">
             <div class="premium-amount amt-total-receipts">
-              {{ formattedNumber(item.receiptsTotal) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.receiptsTotal) }}
             </div>
           </template>
           <template #item.amountRemaining="{ item }">
             <div class="premium-amount amt-remaining">
-              {{ formattedNumber(item.amountRemaining) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.amountRemaining) }}
             </div>
           </template>
           <template #item.countReceiptDevice="{ item }">

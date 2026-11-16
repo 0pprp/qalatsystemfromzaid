@@ -33,6 +33,7 @@ public sealed class FollowerCollectionCustomerDto
     public double AmountDaySales { get; set; }
     public double AmountRemaining { get; set; }
     public double ReceiptsTotal { get; set; }
+    public bool IsLegal { get; set; }
     public string? CountReceiptDevice { get; set; }
     public int NumberOfDayPayment { get; set; }
     public string? ItemsNames { get; set; }
@@ -113,6 +114,7 @@ SELECT
     CAST(ISNULL(vc.AmountDaySales, 0) AS FLOAT) AS AmountDaySales,
     CAST(ISNULL(vc.AmountRemaining, 0) AS FLOAT) AS AmountRemaining,
     CAST(ISNULL(vc.ReceiptsTotal, 0) AS FLOAT) AS ReceiptsTotal,
+    CAST(ISNULL(c.IsLegal, 0) AS BIT) AS IsLegal,
     CAST(ISNULL(vc.CountReceiptDevice, 0) AS NVARCHAR(32)) AS CountReceiptDevice,
     CAST(ISNULL(vc.NumberOfDayPayment, 0) AS INT) AS NumberOfDayPayment,
     ISNULL(vc.ItemsNames, N'') AS ItemsNames,

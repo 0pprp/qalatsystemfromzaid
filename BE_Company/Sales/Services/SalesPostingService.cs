@@ -9,29 +9,23 @@ namespace BE_Company.Sales.Services
     public sealed class SalesPostingService : ISalesPostingService
     {
         private readonly ISalesCompleteRepository _complete;
-        private readonly IIraqClock _clock;
         private readonly ILogger<SalesPostingService> _logger;
 
         public SalesPostingService(
             ISalesCompleteRepository complete,
-            IIraqClock clock,
             ILogger<SalesPostingService> logger)
         {
             _complete = complete;
-            _clock = clock;
             _logger = logger;
         }
 
         public Task PostSaleAsync(int saleId, CancellationToken ct) =>
             _complete.PostToMainSystemAsync(saleId, ct);
 
+        // Sales post immediately on completion; this sweep only retries
+        // rows whose immediate post failed or never ran (e.g. a crash).
         public async Task<int> PostDueSalesAsync(CancellationToken ct)
         {
-            if (!SalesPostingRules.IsPostingWindow(_clock))
-            {
-                return 0;
-            }
-
             var ids = await _complete.ListUnpostedCompletedSaleIdsAsync(ct);
             var posted = 0;
             foreach (var saleId in ids)

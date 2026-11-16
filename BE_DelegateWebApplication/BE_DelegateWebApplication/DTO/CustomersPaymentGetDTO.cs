@@ -24,6 +24,7 @@ namespace BE_DelegateWebApplication.DTO
         public string? BoxName { get; set; }
         public string? DelegateName { get; set; }
         public double? AmountDenar { get; set; }
+        public bool? IsLegal { get; set; }
         public int? CityId { get; set; }
         public string? CityName { get; set; }
     }
