@@ -37,6 +37,32 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
+class AddPaymentResult {
+  final bool saved;
+  final CollectionBlock block;
+  final String? validationMessage;
+
+  const AddPaymentResult.saved()
+      : saved = true,
+        block = CollectionBlock.none,
+        validationMessage = null;
+
+  const AddPaymentResult.blocked(this.block)
+      : saved = false,
+        validationMessage = null;
+
+  const AddPaymentResult.rejected(this.validationMessage)
+      : saved = false,
+        block = CollectionBlock.none;
+
+  const AddPaymentResult.aborted()
+      : saved = false,
+        block = CollectionBlock.none,
+        validationMessage = null;
+
+  String? get message => block.message ?? validationMessage;
+}
+
 class Customer extends StatefulWidget {
   const Customer({super.key, this.embedded = false});
 
@@ -524,13 +550,13 @@ class CustomerPageState extends State<Customer> {
     await DatabaseHelper().deleteDuplicateClientPaymentIds();
   }
 
-  Future<void> _sendPendingPaymentsFromCustomers() async {
-    if (_sendingPayments) return;
+  Future<ManualPaymentSyncResult?> _sendPendingPaymentsFromCustomers() async {
+    if (_sendingPayments) return null;
     setState(() => _sendingPayments = true);
     try {
       final result =
           await PaymentSyncService.instance.sendPendingPaymentsNow();
-      if (!mounted) return;
+      if (!mounted) return result;
       final message = result.summaryMessage();
       final successColor = result.isCompleteSuccess ||
           (result.outcome == ManualPaymentSyncOutcome.nothingPending &&
@@ -542,7 +568,7 @@ class CustomerPageState extends State<Customer> {
           backgroundColor:
               successColor ? Colors.teal.shade700 : Colors.orange.shade800,
           behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 6),
+          duration: Duration(seconds: successColor ? 4 : 8),
         ),
       );
       if (result.outcome == ManualPaymentSyncOutcome.uploaded ||
@@ -553,6 +579,7 @@ class CustomerPageState extends State<Customer> {
           await _refreshDayPaymentTotals(id);
         }
       }
+      return result;
     } finally {
       if (mounted) setState(() => _sendingPayments = false);
     }
@@ -561,17 +588,17 @@ class CustomerPageState extends State<Customer> {
 // دالة لإضافة التسديد
   bool _paymentSubmitting = false;
 
-  /// Returns `true` when the payment was saved and the dialog was closed.
-  /// Returns `false` on validation/block so the caller can clear «جاري…».
-  Future<bool> _addPayment(
+  /// Saved payments pop the dialog. A block or validation failure leaves it
+  /// open so the caller can clear «جاري حفظ التسديد» — never snackbar through
+  /// the dialog context (that rebuild left the spinner stuck).
+  Future<AddPaymentResult> _addPayment(
       Client client, double amount, BuildContext context) async {
-    if (_paymentSubmitting) return false;
+    if (_paymentSubmitting) return const AddPaymentResult.aborted();
     _paymentSubmitting = true;
     try {
     final amountError = PaymentValidation.validateAmount(amount);
     if (amountError != null) {
-      _showMessage(amountError, context);
-      return false;
+      return AddPaymentResult.rejected(amountError);
     }
 
     final db = await DatabaseHelper().database;
@@ -583,30 +610,20 @@ class CustomerPageState extends State<Customer> {
       whereArgs: [client.customerId, selectedRepresentative],
     );
 
-    if (!mounted) return false;
+    if (!mounted) return const AddPaymentResult.aborted();
 
     final ledgerHas = await BusinessDayCollectionStore.hasCustomerOnBusinessDay(
       customerId: client.customerId,
       delegateId: delegateId,
     );
-    if (TodayPaymentsLogic.blocksNewCollection(
+    final block = TodayPaymentsLogic.classifyCollection(
       customerId: client.customerId,
       delegateId: delegateId,
       localPayments: existingPayment,
       ledgerHasBusinessDay: ledgerHas,
-    )) {
-      _showMessage(
-        ledgerHas ||
-                TodayPaymentsLogic.hasPaymentOnBusinessDay(
-                  customerId: client.customerId,
-                  delegateId: delegateId,
-                  localPayments: existingPayment,
-                )
-            ? 'لا يمكن التسديد مرة أخرى لهذا العميل'
-            : 'يوجد تسديد سابق بانتظار الإرسال لهذا العميل — اضغط إرسال التسديدات أولاً',
-        context,
-      );
-      return false;
+    );
+    if (block.isBlocked) {
+      return AddPaymentResult.blocked(block);
     }
     String? currentLocation = await _getCurrentLocation();
     final clientPaymentId = const Uuid().v4();
@@ -740,20 +757,10 @@ class CustomerPageState extends State<Customer> {
       await _calculatePayments(reloadDelegateId);
     }());
 
-    return true;
+    return const AddPaymentResult.saved();
     } finally {
       _paymentSubmitting = false;
     }
-  }
-
-// دالة لإظهار الرسائل
-  void _showMessage(String message, BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: const TextStyle(fontFamily: 'Cairo')),
-        duration: const Duration(seconds: 3),
-      ),
-    );
   }
 
   Widget _buildCustomerSectionHeader({
@@ -1319,190 +1326,27 @@ class CustomerPageState extends State<Customer> {
       if (pendingShopEval == null || !mounted) return;
     }
 
-    final amountController =
-        TextEditingController(text: client.dailyInstallment.toInt().toString());
-
     if (!mounted) return;
-    await showDialog(
+    final listId = int.tryParse(selectedRepresentative?.toString() ?? '') ?? 0;
+    await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
-        var dialogSubmitting = false;
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: Dialog(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            backgroundColor: Theme.of(dialogContext).dialogTheme.backgroundColor ??
-                Theme.of(dialogContext).cardColor,
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'إضافة تسديد',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontFamily: 'Cairo',
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(dialogContext).textTheme.bodyLarge?.color,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    'أدخل مبلغ التسديد:',
-                    style: TextStyle(
-                      fontFamily: 'Cairo',
-                      fontSize: 14,
-                      color: Theme.of(dialogContext).hintColor,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: amountController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [ThousandsSeparatorInputFormatter()],
-                    enabled: !dialogSubmitting,
-                    style: const TextStyle(fontFamily: 'Cairo'),
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: Theme.of(dialogContext).cardColor,
-                      hintText: 'المبلغ',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      prefixIcon: const Icon(Icons.attach_money,
-                          color: AppTheme.primaryColor),
-                    ),
-                  ),
-                  if (dialogSubmitting) ...[
-                    const SizedBox(height: 16),
-                    const LinearProgressIndicator(),
-                    const SizedBox(height: 8),
-                    Text(
-                      pendingShopEval != null
-                          ? 'جاري حفظ التقييم والتسديد...'
-                          : 'جاري حفظ التسديد...',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontFamily: 'Cairo',
-                        fontSize: 13,
-                        color: Theme.of(dialogContext).hintColor,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 25),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: (_paymentSubmitting || dialogSubmitting)
-                              ? null
-                              : () async {
-                            final amount =
-                                ThousandsSeparatorInputFormatter.parseMoney(
-                                      amountController.text,
-                                    ) ??
-                                    0.0;
-                            final err = PaymentValidation.validateAmount(amount);
-                            if (err != null) {
-                              _showMessage(err, dialogContext);
-                              return;
-                            }
-                            setDialogState(() => dialogSubmitting = true);
-                            try {
-                            if (pendingShopEval != null) {
-                              final listId = int.tryParse(
-                                      selectedRepresentative?.toString() ??
-                                          '') ??
-                                  0;
-                              final evalErr =
-                                  await FirstCollectionEvalService.submit(
-                                customerId: client.customerId,
-                                listId: listId,
-                                eval: pendingShopEval!,
-                                saleAmount: client.salePrice,
-                              );
-                              if (evalErr != null) {
-                                if (dialogContext.mounted) {
-                                  _showMessage(evalErr, dialogContext);
-                                  setDialogState(
-                                      () => dialogSubmitting = false);
-                                }
-                                return;
-                              }
-                            }
-                            // Pops dialog on success; false = blocked/validation
-                            // (must clear spinner — previously hung forever).
-                            final saved = await _addPayment(
-                                client, amount, dialogContext);
-                            if (!saved && dialogContext.mounted) {
-                              setDialogState(() => dialogSubmitting = false);
-                            }
-                            } catch (_) {
-                              if (dialogContext.mounted) {
-                                setDialogState(() => dialogSubmitting = false);
-                              }
-                              rethrow;
-                            }
-                          },
-                          icon: const Icon(Icons.check_circle_outline,
-                              color: Colors.white),
-                          label: Text(
-                              dialogSubmitting ? 'جاري...' : 'تسديد',
-                              style: const TextStyle(
-                                  fontFamily: 'Cairo', color: Colors.white)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.primaryColor,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () {
-                            // Always allow dismiss — never trap user on spinner.
-                            Navigator.pop(dialogContext);
-                          },
-                          icon: Icon(Icons.cancel_outlined,
-                              color: Theme.of(dialogContext).colorScheme.error),
-                          label: Text('إلغاء',
-                              style: TextStyle(
-                                  fontFamily: 'Cairo',
-                                  color: Theme.of(dialogContext)
-                                      .colorScheme
-                                      .error)),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            side: BorderSide(
-                                color:
-                                    Theme.of(dialogContext).colorScheme.error),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
+        return _CollectPaymentDialog(
+          client: client,
+          listId: listId,
+          initialAmountText: client.dailyInstallment.toInt().toString(),
+          pendingShopEval: pendingShopEval,
+          onSave: (amount, saveContext) =>
+              _addPayment(client, amount, saveContext),
+          onSendPending: _sendPendingPaymentsFromCustomers,
+          onWaitingToSend: () {
+            if (!mounted) return;
+            setState(() => _panelExpanded = true);
           },
         );
       },
     );
-    amountController.dispose();
   }
 
   Widget _buildListsMessage({
@@ -1941,6 +1785,315 @@ class CustomerPageState extends State<Customer> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+enum _CollectPhase { idle, saving, sending }
+
+/// Payment dialog state lives here, not in a [StatefulBuilder] closure.
+/// A snackbar used to rebuild the dialog route and leave «جاري حفظ التسديد»
+/// stuck after a waiting-to-send block.
+class _CollectPaymentDialog extends StatefulWidget {
+  const _CollectPaymentDialog({
+    required this.client,
+    required this.listId,
+    required this.initialAmountText,
+    required this.pendingShopEval,
+    required this.onSave,
+    required this.onSendPending,
+    required this.onWaitingToSend,
+  });
+
+  final Client client;
+  final int listId;
+  final String initialAmountText;
+  final ShopEvaluationResult? pendingShopEval;
+  final Future<AddPaymentResult> Function(
+    double amount,
+    BuildContext dialogContext,
+  ) onSave;
+  final Future<ManualPaymentSyncResult?> Function() onSendPending;
+  final VoidCallback onWaitingToSend;
+
+  @override
+  State<_CollectPaymentDialog> createState() => _CollectPaymentDialogState();
+}
+
+class _CollectPaymentDialogState extends State<_CollectPaymentDialog> {
+  late final TextEditingController _amountController;
+  bool _submitting = false;
+  bool _waitingToSend = false;
+  bool _evalSaved = false;
+  _CollectPhase _phase = _CollectPhase.idle;
+  String? _inlineMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _amountController = TextEditingController(text: widget.initialAmountText);
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final amount =
+        ThousandsSeparatorInputFormatter.parseMoney(_amountController.text) ??
+            0.0;
+    final err = PaymentValidation.validateAmount(amount);
+    if (err != null) {
+      setState(() {
+        _submitting = false;
+        _inlineMessage = err;
+        _waitingToSend = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _submitting = true;
+      _phase = _CollectPhase.saving;
+      _inlineMessage = null;
+      _waitingToSend = false;
+    });
+    try {
+      final eval = widget.pendingShopEval;
+      if (eval != null && !_evalSaved) {
+        final evalErr = await FirstCollectionEvalService.submit(
+          customerId: widget.client.customerId,
+          listId: widget.listId,
+          eval: eval,
+          saleAmount: widget.client.salePrice,
+        );
+        if (!mounted) return;
+        if (evalErr != null) {
+          setState(() {
+            _submitting = false;
+            _phase = _CollectPhase.idle;
+            _inlineMessage = evalErr;
+          });
+          return;
+        }
+        _evalSaved = true;
+      }
+
+      final result = await widget.onSave(amount, context);
+      if (!mounted) return;
+      if (result.saved) return;
+      final waiting = result.block.kind == CollectionBlockKind.waitingToSend;
+      if (waiting) widget.onWaitingToSend();
+      setState(() {
+        _submitting = false;
+        _phase = _CollectPhase.idle;
+        _waitingToSend = waiting;
+        _inlineMessage = result.message ?? 'تعذر حفظ التسديد. حاول مرة أخرى';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _phase = _CollectPhase.idle;
+        _inlineMessage = 'تعذر حفظ التسديد. حاول مرة أخرى';
+      });
+    }
+  }
+
+  bool _sendClearedQueue(ManualPaymentSyncResult? result) {
+    if (result == null) return false;
+    if (result.outcome == ManualPaymentSyncOutcome.uploaded ||
+        result.outcome == ManualPaymentSyncOutcome.partial) {
+      return true;
+    }
+    return result.outcome == ManualPaymentSyncOutcome.nothingPending &&
+        result.permanentFailures == 0;
+  }
+
+  Future<void> _sendThenCollect() async {
+    setState(() {
+      _submitting = true;
+      _phase = _CollectPhase.sending;
+      _inlineMessage = null;
+    });
+    ManualPaymentSyncResult? result;
+    try {
+      result = await widget.onSendPending();
+    } catch (_) {
+      result = null;
+    }
+    if (!mounted) return;
+    if (!_sendClearedQueue(result)) {
+      setState(() {
+        _submitting = false;
+        _phase = _CollectPhase.idle;
+        _waitingToSend = true;
+        _inlineMessage =
+            result?.summaryMessage() ?? 'تعذر إرسال التسديدات. حاول مرة أخرى';
+      });
+      return;
+    }
+    setState(() => _submitting = false);
+    await _save();
+  }
+
+  String get _progressLabel {
+    if (_phase == _CollectPhase.sending) return 'جاري إرسال التسديدات...';
+    if (widget.pendingShopEval != null && !_evalSaved) {
+      return 'جاري حفظ التقييم والتسديد...';
+    }
+    return 'جاري حفظ التسديد...';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final waitingAction = _waitingToSend && !_submitting;
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: Theme.of(context).dialogTheme.backgroundColor ??
+            Theme.of(context).cardColor,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'إضافة تسديد',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontFamily: 'Cairo',
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).textTheme.bodyLarge?.color,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'أدخل مبلغ التسديد:',
+                style: TextStyle(
+                  fontFamily: 'Cairo',
+                  fontSize: 14,
+                  color: Theme.of(context).hintColor,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _amountController,
+                keyboardType: TextInputType.number,
+                inputFormatters: [ThousandsSeparatorInputFormatter()],
+                enabled: !_submitting,
+                style: const TextStyle(fontFamily: 'Cairo'),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: Theme.of(context).cardColor,
+                  hintText: 'المبلغ',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  prefixIcon: const Icon(Icons.attach_money,
+                      color: AppTheme.primaryColor),
+                ),
+              ),
+              if (_submitting) ...[
+                const SizedBox(height: 16),
+                const LinearProgressIndicator(),
+                const SizedBox(height: 8),
+                Text(
+                  _progressLabel,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 13,
+                    color: Theme.of(context).hintColor,
+                  ),
+                ),
+              ] else if (_inlineMessage != null) ...[
+                const SizedBox(height: 16),
+                SelectableText(
+                  _inlineMessage!,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 12,
+                    height: 1.45,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 25),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _submitting
+                          ? null
+                          : (waitingAction ? _sendThenCollect : _save),
+                      icon: Icon(
+                        waitingAction
+                            ? Icons.cloud_upload_rounded
+                            : Icons.check_circle_outline,
+                        color: Colors.white,
+                      ),
+                      label: Text(
+                        _submitting
+                            ? (_phase == _CollectPhase.sending
+                                ? 'جاري الإرسال...'
+                                : 'جاري...')
+                            : (waitingAction ? 'إرسال التسديدات' : 'تسديد'),
+                        style: const TextStyle(
+                          fontFamily: 'Cairo',
+                          color: Colors.white,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: waitingAction
+                            ? Colors.teal.shade700
+                            : AppTheme.primaryColor,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                      },
+                      icon: Icon(Icons.cancel_outlined,
+                          color: Theme.of(context).colorScheme.error),
+                      label: Text(
+                        'إلغاء',
+                        style: TextStyle(
+                          fontFamily: 'Cairo',
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: BorderSide(
+                            color: Theme.of(context).colorScheme.error),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

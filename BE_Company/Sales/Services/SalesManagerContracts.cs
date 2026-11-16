@@ -124,6 +124,12 @@ namespace BE_Company.Sales.Services
         public const string Follower = "Follower";
         public const string Delegate = "Delegate";
         public const string Crm = "Crm";
+        /// <summary>Field agents' app (BE_CustomerApp) via the gateway CRM intake. Never relayed to the old CRM.</summary>
+        public const string CustomerApp = "CustomerApp";
+        public const string CustomerAppArabicLabel = "المروج";
+
+        public static bool IsCustomerApp(string? source) =>
+            string.Equals(source, CustomerApp, StringComparison.OrdinalIgnoreCase);
 
         public static bool IsEmployeeSubmitted(string? source) =>
             string.Equals(source, EmployeeSubmitted, StringComparison.OrdinalIgnoreCase);
@@ -241,13 +247,15 @@ namespace BE_Company.Sales.Services
             string? q,
             int skip,
             int take,
-            CancellationToken ct);
-        Task<Dictionary<string, int>> CountManagerTabsAsync(CancellationToken ct);
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null);
+        Task<Dictionary<string, int>> CountManagerTabsAsync(CancellationToken ct, SalesRequestBoardFilter? filter = null);
         Task<(IReadOnlyList<SalesRequestDTO> Items, int Total)> ListDeletedPageAsync(
             string? q,
             int skip,
             int take,
-            CancellationToken ct);
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null);
         Task<IReadOnlyList<SalesRequestDTO>> ListDeletedAsync(CancellationToken ct);
         Task UpdateAsync(SalesRequestDTO row, CancellationToken ct);
         Task<int> CountByStatusAsync(string status, CancellationToken ct);
@@ -280,12 +288,14 @@ namespace BE_Company.Sales.Services
             string? q,
             int page,
             int pageSize,
-            CancellationToken ct);
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null);
         Task<SalesRequestManagerListPageDTO> ListDeletedForManagerPageAsync(
             string? q,
             int page,
             int pageSize,
-            CancellationToken ct);
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null);
         Task<IReadOnlyList<SalesRequestDTO>> ListEmployeeSubmittedAsync(CancellationToken ct);
         Task<int> CountUnreadEmployeeSubmittedAsync(CancellationToken ct);
         Task<SalesRequestDTO> MarkReadAsync(SalesIdentity manager, int id, CancellationToken ct);
@@ -358,6 +368,14 @@ namespace BE_Company.Sales.Services
         Task<SalesDraftDTO?> GetSaleAsync(int saleId, CancellationToken ct);
         Task<int> CountSalesTodayAsync(int employeeId, DateTime fromUtc, DateTime toUtc, CancellationToken ct);
         Task<int> CountPendingSalesAsync(int? employeeId, CancellationToken ct);
+        Task<IReadOnlyList<SalesSourceDirectoryPerson>> ListSourceDirectoryAsync(CancellationToken ct);
+    }
+
+    public sealed class SalesSourceDirectoryPerson
+    {
+        public string Role { get; set; } = "";
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
     }
 
     public sealed class SalesManagerEmployeeRow

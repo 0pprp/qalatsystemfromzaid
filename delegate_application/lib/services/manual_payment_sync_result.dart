@@ -29,12 +29,16 @@ class ManualPaymentSyncResult {
     this.remainingRetryable = 0,
     this.permanentFailures = 0,
     this.remainingPending = 0,
+    this.rejectionReason,
   });
 
   final ManualPaymentSyncOutcome outcome;
   final int uploadedCount;
   final int remainingRetryable;
   final int permanentFailures;
+
+  /// First distinct server/local reason still blocking rows, when known.
+  final String? rejectionReason;
 
   /// Backward-compatible alias: retryable unresolved count.
   final int remainingPending;
@@ -54,14 +58,20 @@ class ManualPaymentSyncResult {
         return 'جاري إرسال التسديدات حالياً — انتظر قليلاً';
       case ManualPaymentSyncOutcome.nothingPending:
         if (permanentFailures > 0) {
-          return 'لا توجد تسديدات قابلة للإرسال، لكن يوجد $permanentFailures مرفوضاً يحتاج مراجعة';
+          return 'لا توجد تسديدات قابلة للإرسال، لكن يوجد $permanentFailures مرفوضاً يحتاج مراجعة$_reasonSuffix';
         }
         return 'لا توجد تسديدات بانتظار الإرسال';
       case ManualPaymentSyncOutcome.uploaded:
       case ManualPaymentSyncOutcome.partial:
       case ManualPaymentSyncOutcome.failed:
-        return 'تم التأكيد: $uploadedCount — قابل لإعادة المحاولة: $remainingRetryable — مرفوض نهائياً: $permanentFailures';
+        return 'تم التأكيد: $uploadedCount — قابل لإعادة المحاولة: $remainingRetryable — مرفوض نهائياً: $permanentFailures$_reasonSuffix';
     }
+  }
+
+  String get _reasonSuffix {
+    final reason = rejectionReason?.trim() ?? '';
+    if (reason.isEmpty) return '';
+    return '\n$reason';
   }
 
   static const offlineMessage = 'يجب الحصول على انترنت لارسال التسديدات';

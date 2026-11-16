@@ -1,6 +1,6 @@
 <script setup>
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import mapboxgl from 'mapbox-gl'
+import mapboxgl from '@/utils/mapbox'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { smGet, followerApiPath, smGetFollowers } from '@/composables/salesManagerApi'
 import { MAPBOX_TOKEN } from '@/composables/mapboxToken'

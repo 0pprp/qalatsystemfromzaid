@@ -9,6 +9,15 @@ import 'package:sales_employee_application/utils/iraq_time.dart';
 import 'package:sales_employee_application/utils/sales_format.dart';
 
 class ApiSalesRepository implements SalesRepository {
+  /// Camera cache names (`scaled_<uuid>….jpg`) are long and useless on disk.
+  /// The branch stores the shop photo as `shop.jpg` from the extension only.
+  static String _shopUploadName(String fileName) {
+    final lower = fileName.trim().toLowerCase();
+    if (lower.endsWith('.png')) return 'shop.png';
+    if (lower.endsWith('.webp')) return 'shop.webp';
+    return 'shop.jpg';
+  }
+
   List<Map<String, dynamic>> _maps(dynamic raw) {
     if (raw is List) {
       return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
@@ -140,7 +149,7 @@ class ApiSalesRepository implements SalesRepository {
       final raw = await ApiClient.postMultipart(
         'sales/$saleId/shop-image',
         bytes: bytes,
-        fileName: fileName,
+        fileName: _shopUploadName(fileName),
       );
       if (raw is Map) {
         return '${raw['shopImageKey'] ?? raw['ShopImageKey'] ?? ''}';

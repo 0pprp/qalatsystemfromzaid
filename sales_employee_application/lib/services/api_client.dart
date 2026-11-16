@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -131,20 +132,41 @@ class ApiClient {
 
   static Future<dynamic> postMultipart(
     String path, {
-    required List<int> bytes,
-    required String fileName,
+    List<int>? bytes,
+    String fileName = 'upload.jpg',
     String field = 'file',
+    List<({List<int> bytes, String fileName})>? files,
+    Map<String, String>? fields,
   }) async {
     final request = http.MultipartRequest('POST', _uri(path));
     final token = Session.token;
     if (token != null && token.isNotEmpty) {
       request.headers['Authorization'] = 'Bearer $token';
     }
-    request.files.add(http.MultipartFile.fromBytes(field, bytes, filename: fileName));
-    final streamed = await request.send().timeout(const Duration(seconds: 60));
-    final response = await http.Response.fromStream(streamed);
-    await _throwIfFailed(response);
-    return _decode(response);
+    if (fields != null) {
+      request.fields.addAll(fields);
+    }
+    if (bytes != null && bytes.isNotEmpty) {
+      request.files.add(http.MultipartFile.fromBytes(field, bytes, filename: fileName));
+    }
+    for (final file in files ?? const <({List<int> bytes, String fileName})>[]) {
+      if (file.bytes.isEmpty) continue;
+      request.files.add(http.MultipartFile.fromBytes('files', file.bytes, filename: file.fileName));
+    }
+    // Own client so a dead keep-alive in the shared pool cannot stall the upload
+    // until the timeout. Branch links such as الحلة drop idle sockets silently.
+    request.persistentConnection = false;
+    final client = http.Client();
+    try {
+      final streamed = await client.send(request).timeout(const Duration(seconds: 180));
+      final response = await http.Response.fromStream(streamed).timeout(const Duration(seconds: 60));
+      await _throwIfFailed(response);
+      return _decode(response);
+    } on TimeoutException {
+      throw ApiException('انتهت مهلة رفع الصورة. تحقق من الإنترنت ثم أعد المحاولة.');
+    } finally {
+      client.close();
+    }
   }
 
   static Future<List<int>> getBytes(String path) async {

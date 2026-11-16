@@ -407,50 +407,58 @@ class _SaleScreenState extends State<SaleScreen> {
   bool get _fromKnownSource => _fromRequest != null || _picked != null;
 
   Future<void> _next() async {
+    if (_saving) return;
     if (_fromRequest == null) {
       _toast('لا يمكن إنشاء بيع بدون طلب مبيعات');
       return;
     }
-    if (_step == _stepShop) {
-      if (!_validateShop()) return;
-      final ok = await _persistProgress();
-      if (!ok) return;
-    }
-    if (_step == _stepCustomer) {
-      if (!_validateCustomer()) return;
-      await _loadStock();
-      final ok = await _persistProgress();
-      if (!ok) return;
-    }
-    if (_step == _stepProducts && !_qty.values.any((q) => q > 0)) {
-      _toast('أضف مادة واحدة على الأقل');
-      return;
-    }
-    if (_step == _stepProducts) {
-      _applyPriceDefaults();
-      final ok = await _persistProgress();
-      if (!ok) return;
-    }
-    if (_step == _stepPrices) {
-      final daily = _parsedOrNull(_installment) ?? _defaultDaily;
-      final total = _parsedOrNull(_totalPrice) ?? _defaultTotal;
-      if (total <= 0) {
-        _toast('سعر البيع الكلي يجب أن يكون أكبر من صفر');
+    final waitsOnNetwork = _step == _stepShop || _step == _stepCustomer || _step == _stepProducts;
+    if (waitsOnNetwork) setState(() => _saving = true);
+    try {
+      if (_step == _stepShop) {
+        if (!_validateShop()) return;
+        final ok = await _persistProgress();
+        if (!ok) return;
+      }
+      if (_step == _stepCustomer) {
+        if (!_validateCustomer()) return;
+        await _loadStock();
+        final ok = await _persistProgress();
+        if (!ok) return;
+      }
+      if (_step == _stepProducts && !_qty.values.any((q) => q > 0)) {
+        _toast('أضف مادة واحدة على الأقل');
         return;
       }
-      if (daily <= 0) {
-        _toast('القسط اليومي غير متوفر لهذه المواد. أدخل القسط اليومي.');
-        return;
+      if (_step == _stepProducts) {
+        _applyPriceDefaults();
+        final ok = await _persistProgress();
+        if (!ok) return;
       }
-      final ceiling = _fromRequest?.maxSalePrice;
-      if (ceiling != null && ceiling > 0 && total > ceiling) {
-        _toast('سعر البيع يتجاوز الحد الأقصى المسموح (${MoneyFormat.iqd(ceiling)})');
-        return;
+      if (_step == _stepPrices) {
+        final daily = _parsedOrNull(_installment) ?? _defaultDaily;
+        final total = _parsedOrNull(_totalPrice) ?? _defaultTotal;
+        if (total <= 0) {
+          _toast('سعر البيع الكلي يجب أن يكون أكبر من صفر');
+          return;
+        }
+        if (daily <= 0) {
+          _toast('القسط اليومي غير متوفر لهذه المواد. أدخل القسط اليومي.');
+          return;
+        }
+        final ceiling = _fromRequest?.maxSalePrice;
+        if (ceiling != null && ceiling > 0 && total > ceiling) {
+          _toast('سعر البيع يتجاوز الحد الأقصى المسموح (${MoneyFormat.iqd(ceiling)})');
+          return;
+        }
+        final ok = await _createDraftAndPreview();
+        if (!ok) return;
       }
-      final ok = await _createDraftAndPreview();
-      if (!ok) return;
+      if (!mounted) return;
+      setState(() => _step++);
+    } finally {
+      if (waitsOnNetwork && mounted) setState(() => _saving = false);
     }
-    setState(() => _step++);
   }
 
   bool _validateCustomer() {
@@ -583,7 +591,7 @@ class _SaleScreenState extends State<SaleScreen> {
       if (!silent) _toast(e.message);
       return false;
     } catch (e) {
-      if (!silent) _toast(e.toString().replaceFirst('Exception: ', ''));
+      if (!silent) _toast(_toastText(e));
       return false;
     }
   }
@@ -730,7 +738,7 @@ class _SaleScreenState extends State<SaleScreen> {
       return false;
     } catch (e, st) {
       debugPrint('sale preview failed: $e\n$st');
-      _toast(e.toString());
+      _toast(_toastText(e));
       return false;
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -840,8 +848,8 @@ class _SaleScreenState extends State<SaleScreen> {
     try {
       final picked = await ImagePicker().pickImage(
         source: ImageSource.camera,
-        imageQuality: 85,
-        maxWidth: 1600,
+        imageQuality: 50,
+        maxWidth: 1024,
         preferredCameraDevice: CameraDevice.rear,
       );
       if (picked == null) return;
@@ -1001,6 +1009,14 @@ class _SaleScreenState extends State<SaleScreen> {
     });
   }
 
+  String _toastText(Object error) {
+    final raw = error.toString();
+    if (raw.contains('TimeoutException') || raw.contains('Future not completed')) {
+      return 'انتهت مهلة الاتصال. تحقق من الإنترنت ثم أعد المحاولة.';
+    }
+    return raw.replaceFirst('Exception: ', '');
+  }
+
   void _toast(String m) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
   }
@@ -1064,10 +1080,17 @@ class _SaleScreenState extends State<SaleScreen> {
                         child: ElevatedButton(
                           onPressed: _saving ? null : (_step < _lastStep ? _next : _completeSale),
                           child: _saving
-                              ? const SizedBox(
-                                  height: 22,
-                                  width: 22,
-                                  child: CompanyLoader(size: 22),
+                              ? const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    SizedBox(
+                                      height: 22,
+                                      width: 22,
+                                      child: CompanyLoader(size: 22),
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text('جاري الحفظ'),
+                                  ],
                                 )
                               : Text(_step < _lastStep ? 'التالي' : 'تم البيع'),
                         ),

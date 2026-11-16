@@ -53,7 +53,36 @@ namespace BE_SalesEmployee.Services
 
         public string CreateMonitorToken(string userName, out DateTime expiration)
         {
-            return CreateCentralRoleToken(userName, "المراقب", "كل المحافظات", out expiration);
+            return CreateCentralRoleToken(userName, "مسؤول المراقبين", "كل المحافظات", out expiration);
+        }
+
+        public string CreateOversightToken(
+            string userName,
+            string userType,
+            IReadOnlyList<string>? cities,
+            out DateTime expiration)
+        {
+            var claims = new List<Claim>
+            {
+                new("UserID", "0"),
+                new("UserName", userName),
+                new("UserType", userType),
+                new("CityLink", ""),
+                new("CityName", cities is { Count: > 0 } ? "فروع اللجنة" : "كل المحافظات"),
+                new("CityValue", ""),
+                new(CentralClaim, "true")
+            };
+            if (cities is { Count: > 0 })
+                claims.Add(new Claim(AllowedFilterCitiesClaim, string.Join(',', cities)));
+            var credentials = new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_key)),
+                SecurityAlgorithms.HmacSha256);
+            expiration = DateTime.UtcNow.AddHours(24);
+            var token = new JwtSecurityToken(
+                claims: claims,
+                expires: expiration,
+                signingCredentials: credentials);
+            return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
         /// <summary>

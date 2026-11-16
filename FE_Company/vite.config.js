@@ -238,6 +238,18 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: path => path.replace(/^\/sales-gw/, ''),
       },
+      // BE_CustomerApp (تطبيق الزبون) — admin API
+      // BE_PromotersApp (المروّجون أونلاين) — admin API
+      '/promoters-app/': {
+        target: 'http://127.0.0.1:5430',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/promoters-app/, ''),
+      },
+      '/customer-app/': {
+        target: 'http://127.0.0.1:5380',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/customer-app/, ''),
+      },
     },
     watch: {
       ignored: ['**/typed-router.d.ts', '**/auto-imports.d.ts', '**/components.d.ts', '**/.eslintrc-auto-import.json'],

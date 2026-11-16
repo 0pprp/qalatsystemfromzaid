@@ -6,6 +6,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import ModernStatCard from "@/components/ModernStatCard.vue"
 import * as XLSX from 'xlsx'
+import { shouldHidePaidRemaining, sumVisibleFinancial } from '@/composables/legalFinancialVisibility'
 
 // رابط الـ API
 const apiUrl = localStorage.getItem('LinkCity')
@@ -83,7 +84,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar',
     value: formattedNumber(
-      followData.value.reduce((sum, row) => sum + (row.receiptsTotal || 0), 0),
+      sumVisibleFinancial(followData.value, row => row.receiptsTotal),
     ),
     title: 'الواصل',
     color: 'success',
@@ -92,7 +93,7 @@ const totals = computed(() => [
   {
     icon: 'tabler-currency-dollar',
     value: formattedNumber(
-      followData.value.reduce((sum, row) => sum + (row.amountRemaining || 0), 0),
+      sumVisibleFinancial(followData.value, row => row.amountRemaining),
     ),
     title: 'الباقي',
     color: 'error',
@@ -147,8 +148,8 @@ function exportToExcel() {
     'عدد الأيام': row.numberOfDayDevice || 'لا يوجد',
     'سعر البيع': row.amountTotalSales || 'لا يوجد',
     'القسط': row.amountDaySales || 'لا يوجد',
-    'الواصل': row.receiptsTotal || 'لا يوجد',
-    'الباقي': row.amountRemaining || 'لا يوجد',
+    'الواصل': shouldHidePaidRemaining(row) ? '—' : (row.receiptsTotal || 'لا يوجد'),
+    'الباقي': shouldHidePaidRemaining(row) ? '—' : (row.amountRemaining || 'لا يوجد'),
     'عدد التسديدات': row.countReceiptDevice || 'لا يوجد',
     'تاريخ اخر تسديد': row.lastPaymentDate ? formattedDate(row.lastPaymentDate) : 'لا يوجد',
     'مبلغ التسديد': row.amountReceipt || 'لا يوجد',
@@ -320,12 +321,12 @@ const colSlots = {
           </template>
           <template v-slot:[colSlots.receiptsTotal]="{ item }">
             <div class="premium-amount amt-total-receipts">
-              {{ formattedNumber(item.receiptsTotal) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.receiptsTotal) }}
             </div>
           </template>
           <template v-slot:[colSlots.amountRemaining]="{ item }">
             <div class="premium-amount amt-remaining">
-              {{ formattedNumber(item.amountRemaining) }}
+              {{ shouldHidePaidRemaining(item) ? '—' : formattedNumber(item.amountRemaining) }}
             </div>
           </template>
           <template v-slot:[colSlots.countReceiptDevice]="{ item }">

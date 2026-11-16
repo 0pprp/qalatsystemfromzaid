@@ -144,7 +144,12 @@ SELECT {topClause}Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetE
  CustomerName, CustomerPhone, CustomerProvince, CustomerAddress, Notes, MaxSalePrice, Status,
  CreatedAtUtc, ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
  AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc,
- SaleRequestType, SourceListId, ExternalCrmOrderUuid,
+ CASE
+   WHEN UPPER(LTRIM(RTRIM(ISNULL(SaleRequestType, N'')))) = N'OLD' OR LTRIM(RTRIM(ISNULL(SaleRequestType, N''))) = N'مبيع قديم' THEN N'Old'
+   WHEN UPPER(LTRIM(RTRIM(ISNULL(SaleRequestType, N'')))) = N'NEW' OR LTRIM(RTRIM(ISNULL(SaleRequestType, N''))) = N'مبيع جديد' THEN N'New'
+   WHEN ISNULL(ExistingCustomerId, 0) > 0 THEN N'Old'
+   ELSE NULLIF(LTRIM(RTRIM(SaleRequestType)), N'')
+ END AS SaleRequestType, SourceListId, ExternalCrmOrderUuid,
  FilterStatus, FilteredByUserId, FilterNote, FilterRejectReason, FilteredAtUtc,
  ISNULL(IsDeleted, 0) AS IsDeleted, DeletedAtUtc, DeletedByUserId, DeletedByName, DeleteReason,
  ExceptionHoldStatus, ActiveExceptionId
@@ -196,40 +201,43 @@ ORDER BY CreatedAtUtc DESC";
             string? q,
             int skip,
             int take,
-            CancellationToken ct)
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null)
         {
             skip = Math.Max(0, skip);
-            take = Math.Clamp(take <= 0 ? 40 : take, 1, 100);
+            var maxTake = filter is { IsActive: true } ? 500 : 100;
+            take = Math.Clamp(take <= 0 ? 40 : take, 1, maxTake);
             var tabKey = NormalizeTab(tab);
             var like = NormalizeSearch(q);
             var emp = targetEmployeeId is > 0 ? targetEmployeeId : null;
 
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
-            var args = new
+            var args = BoardArgs(new
             {
                 Tab = tabKey,
                 TargetEmployeeId = emp,
                 Q = like,
                 Skip = skip,
                 Take = take
-            };
+            }, filter);
 
+            var sqlTimeout = filter is { IsActive: true } ? 40 : 30;
             var total = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
-                "SELECT COUNT(1) FROM dbo.SalesRequests R WHERE " + ManagerListWhereSql,
-                args, cancellationToken: ct));
+                "SELECT COUNT(1) FROM dbo.SalesRequests R WHERE " + ManagerListWhereSql + BoardFilterSql(filter),
+                args, commandTimeout: sqlTimeout, cancellationToken: ct));
 
             var items = (await connection.QueryAsync<SalesRequestDTO>(new CommandDefinition(
                 ManagerListSelectSql + @"
-WHERE " + ManagerListWhereSql + @"
+WHERE " + ManagerListWhereSql + BoardFilterSql(filter) + @"
 ORDER BY R.CreatedAtUtc DESC
 OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;",
-                args, cancellationToken: ct))).ToList();
+                args, commandTimeout: sqlTimeout, cancellationToken: ct))).ToList();
 
             return (items, total);
         }
 
-        public async Task<Dictionary<string, int>> CountManagerTabsAsync(CancellationToken ct)
+        public async Task<Dictionary<string, int>> CountManagerTabsAsync(CancellationToken ct, SalesRequestBoardFilter? filter = null)
         {
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
@@ -266,7 +274,11 @@ SELECT
   SUM(CASE WHEN ISNULL(R.IsDeleted, 0) = 0 AND NOT " + SqlIsHeldUnassigned + @" AND R.Status = N'Rejected' THEN 1 ELSE 0 END) AS Rejected,
   SUM(CASE WHEN ISNULL(R.IsDeleted, 0) = 0 AND NOT " + SqlIsHeldUnassigned + @" AND R.Status = N'Completed' THEN 1 ELSE 0 END) AS Sold,
   SUM(CASE WHEN ISNULL(R.IsDeleted, 0) = 1 THEN 1 ELSE 0 END) AS Deleted
-FROM dbo.SalesRequests R;",
+FROM dbo.SalesRequests R
+WHERE 1 = 1
+" + BoardFilterSql(filter),
+                BoardArgs(new { }, filter),
+                commandTimeout: filter is { IsActive: true } ? 40 : 30,
                 cancellationToken: ct));
 
             return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
@@ -289,26 +301,31 @@ FROM dbo.SalesRequests R;",
             string? q,
             int skip,
             int take,
-            CancellationToken ct)
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null)
         {
             skip = Math.Max(0, skip);
-            take = Math.Clamp(take <= 0 ? 40 : take, 1, 100);
+            var maxTake = filter is { IsActive: true } ? 500 : 100;
+            take = Math.Clamp(take <= 0 ? 40 : take, 1, maxTake);
             var like = NormalizeSearch(q);
             var cs = RequireConnection();
             await using var connection = new SqlConnection(cs);
-            var args = new { Q = like, Skip = skip, Take = take };
+            var args = BoardArgs(new { Q = like, Skip = skip, Take = take }, filter);
+            var sqlTimeout = filter is { IsActive: true } ? 40 : 30;
             var total = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
 SELECT COUNT(1) FROM dbo.SalesRequests R
 WHERE ISNULL(R.IsDeleted, 0) = 1
-  AND (@Q IS NULL OR R.CustomerName LIKE @Q OR R.CustomerPhone LIKE @Q OR CAST(R.Id AS NVARCHAR(20)) LIKE @Q);",
-                args, cancellationToken: ct));
+  AND (@Q IS NULL OR R.CustomerName LIKE @Q OR R.CustomerPhone LIKE @Q OR CAST(R.Id AS NVARCHAR(20)) LIKE @Q)
+" + BoardFilterSql(filter) + ";",
+                args, commandTimeout: sqlTimeout, cancellationToken: ct));
             var items = (await connection.QueryAsync<SalesRequestDTO>(new CommandDefinition(
                 ManagerListSelectSql + @"
 WHERE ISNULL(R.IsDeleted, 0) = 1
   AND (@Q IS NULL OR R.CustomerName LIKE @Q OR R.CustomerPhone LIKE @Q OR CAST(R.Id AS NVARCHAR(20)) LIKE @Q)
+" + BoardFilterSql(filter) + @"
 ORDER BY R.DeletedAtUtc DESC, R.CreatedAtUtc DESC
 OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;",
-                args, cancellationToken: ct))).ToList();
+                args, commandTimeout: sqlTimeout, cancellationToken: ct))).ToList();
             return (items, total);
         }
 
@@ -321,6 +338,17 @@ OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;",
                     or "prepared" or "inspected" or "pending" or "rejected" or "sold" => key,
                 _ => "all"
             };
+        }
+
+        /// <summary>Omit the director clause until a date or source is chosen, so the default board matches the unfiltered list.</summary>
+        private static string BoardFilterSql(SalesRequestBoardFilter? filter) =>
+            SalesRequestBoardFilter.SqlFor(filter);
+
+        private static DynamicParameters BoardArgs(object query, SalesRequestBoardFilter? filter)
+        {
+            var parameters = new DynamicParameters(query);
+            parameters.AddDynamicParams(SalesRequestBoardFilter.Parameters(filter));
+            return parameters;
         }
 
         private static string? NormalizeSearch(string? q)
@@ -361,7 +389,12 @@ SELECT R.Id, R.CreatedByUserId, R.CreatedByName, R.CreatedByUserType, R.TargetEm
  ) AS LastStatusAtUtc,
  R.ViewedAtUtc, R.ProcessingAtUtc, R.ConvertedToSaleId, R.CompletedAtUtc, R.RejectedAtUtc, R.RejectionReason,
  R.AssignedAtUtc, R.AssignedByUserId, R.AssignedByName, R.PendingNote, R.PreparedForSaleNote, R.ReturnNote, R.ManagerReadAtUtc,
- R.SaleRequestType, R.SourceListId, R.ExternalCrmOrderUuid,
+ CASE
+   WHEN UPPER(LTRIM(RTRIM(ISNULL(R.SaleRequestType, N'')))) IN (N'OLD', N'OLD SALE') OR LTRIM(RTRIM(ISNULL(R.SaleRequestType, N''))) = N'مبيع قديم' THEN N'Old'
+   WHEN UPPER(LTRIM(RTRIM(ISNULL(R.SaleRequestType, N'')))) = N'NEW' OR LTRIM(RTRIM(ISNULL(R.SaleRequestType, N''))) = N'مبيع جديد' THEN N'New'
+   WHEN ISNULL(R.ExistingCustomerId, 0) > 0 THEN N'Old'
+   ELSE NULLIF(LTRIM(RTRIM(R.SaleRequestType)), N'')
+ END AS SaleRequestType, R.SourceListId, R.ExternalCrmOrderUuid,
  R.FilterStatus, R.FilteredByUserId, R.FilterNote, R.FilterRejectReason, R.FilteredAtUtc,
  ISNULL(R.IsDeleted, 0) AS IsDeleted, R.DeletedAtUtc, R.DeletedByUserId, R.DeletedByName, R.DeleteReason,
  R.ExceptionHoldStatus, R.ActiveExceptionId
@@ -600,7 +633,12 @@ SELECT Id, CreatedByUserId, CreatedByName, CreatedByUserType, TargetEmployeeId, 
  ) AS LastStatusAtUtc,
  ViewedAtUtc, ProcessingAtUtc, ConvertedToSaleId, CompletedAtUtc, RejectedAtUtc, RejectionReason,
  AssignedAtUtc, AssignedByUserId, AssignedByName, PendingNote, PreparedForSaleNote, ReturnNote, ManagerReadAtUtc,
- SaleRequestType, SourceListId, ExternalCrmOrderUuid,
+ CASE
+   WHEN UPPER(LTRIM(RTRIM(ISNULL(SaleRequestType, N'')))) = N'OLD' OR LTRIM(RTRIM(ISNULL(SaleRequestType, N''))) = N'مبيع قديم' THEN N'Old'
+   WHEN UPPER(LTRIM(RTRIM(ISNULL(SaleRequestType, N'')))) = N'NEW' OR LTRIM(RTRIM(ISNULL(SaleRequestType, N''))) = N'مبيع جديد' THEN N'New'
+   WHEN ISNULL(ExistingCustomerId, 0) > 0 THEN N'Old'
+   ELSE NULLIF(LTRIM(RTRIM(SaleRequestType)), N'')
+ END AS SaleRequestType, SourceListId, ExternalCrmOrderUuid,
  FilterStatus, FilteredByUserId, FilterNote, FilterRejectReason, FilteredAtUtc,
  ISNULL(IsDeleted, 0) AS IsDeleted, DeletedAtUtc, DeletedByUserId, DeletedByName, DeleteReason,
  ExceptionHoldStatus, ActiveExceptionId

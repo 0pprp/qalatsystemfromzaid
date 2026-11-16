@@ -1,3 +1,4 @@
+using BE_Company.Sales.Rating;
 using BE_Company.Sales.Services;
 using Xunit;
 
@@ -73,6 +74,37 @@ public sealed class DirectorDelegateFollowupRulesTests
     public void IsRequiredDueEligible_ExcludesZeroAndLegal(double remaining, bool isLegal, bool expected) =>
         Assert.Equal(expected, DirectorDelegateFollowupRules.IsRequiredDueEligible(remaining, isLegal));
 
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    [InlineData(2, true)]
+    [InlineData(3, false)]
+    public void KeepSettledCustomer_Stays_For_Two_Days_After_Last_Payment(int daysAgo, bool expected)
+    {
+        var asOf = new DateTime(2026, 10, 29);
+        var facts = new CustomerRatingFacts(
+            CustomerId: 1,
+            DelegateId: 6,
+            IsLegal: false,
+            IsFakeSale: false,
+            DateSaleDevice: asOf.AddDays(-40),
+            LastPaymentDate: asOf.AddDays(-daysAgo),
+            AmountTotalSales: 100_000,
+            ReceiptsTotal: 100_000,
+            AmountRemaining: 0);
+        Assert.Equal(expected, DirectorDelegateFollowupRules.KeepSettledCustomer(facts, asOf));
+    }
+
+    [Fact]
+    public void KeepSettledCustomer_Ignores_Open_Balance_And_Never_Sold()
+    {
+        var asOf = new DateTime(2026, 10, 29);
+        var open = new CustomerRatingFacts(2, 6, false, false, asOf.AddDays(-10), asOf, 100_000, 50_000, 50_000);
+        var neverSold = new CustomerRatingFacts(3, 6, false, false, null, asOf, 0, 0, 0);
+        Assert.False(DirectorDelegateFollowupRules.KeepSettledCustomer(open, asOf));
+        Assert.False(DirectorDelegateFollowupRules.KeepSettledCustomer(neverSold, asOf));
+    }
+
     [Fact]
     public void SumRequiredDueInstallment_SkipsLegalAndZeroRemaining()
     {
@@ -100,11 +132,22 @@ public sealed class DirectorDelegateFollowupRulesTests
     [Fact]
     public void LastNCalendarDaysEndingYesterday_ReturnsThirtyDescendingFromYesterday()
     {
-        var asOf = new DateTime(2026, 10, 24);
+        var asOf = new DateTime(2026, 10, 25);
         var days = DirectorDelegateFollowupRules.LastNCalendarDaysEndingYesterday(asOf, 30);
         Assert.Equal(30, days.Count);
-        Assert.Equal(new DateTime(2026, 10, 23), days[0]);
-        Assert.Equal(new DateTime(2026, 9, 24), days[29]);
+        Assert.Equal(new DateTime(2026, 10, 24), days[0]);
+        Assert.Equal(new DateTime(2026, 9, 25), days[29]);
+    }
+
+    [Theory]
+    [InlineData(2026, 10, 31, 2026, 10, 29)] // Saturday -> Thursday, Friday skipped
+    [InlineData(2026, 11, 1, 2026, 10, 31)] // Sunday -> Saturday
+    [InlineData(2026, 10, 30, 2026, 10, 29)] // Friday -> Thursday
+    [InlineData(2026, 10, 29, 2026, 10, 28)] // Thursday -> Wednesday
+    public void ReportedYesterday_SkipsFriday(int y, int m, int d, int ey, int em, int ed)
+    {
+        var asOf = new DateTime(y, m, d);
+        Assert.Equal(new DateTime(ey, em, ed), DirectorDelegateFollowupRules.ReportedYesterday(asOf));
     }
 
     [Theory]
@@ -114,6 +157,51 @@ public sealed class DirectorDelegateFollowupRulesTests
     [InlineData(-1, false)]
     public void IsValidBoardOperatorScore(int score, bool expected) =>
         Assert.Equal(expected, DirectorDelegateFollowupRules.IsValidBoardOperatorScore(score));
+
+    [Fact]
+    public void BoardOperatorRatingDate_IsYesterday_AndSkipsFriday()
+    {
+        Assert.Equal(new DateTime(2026, 10, 28), DirectorDelegateFollowupRules.BoardOperatorRatingDate(new DateTime(2026, 10, 29)));
+        Assert.Equal(new DateTime(2026, 10, 29), DirectorDelegateFollowupRules.BoardOperatorRatingDate(new DateTime(2026, 10, 31)));
+    }
+
+    [Fact]
+    public void BoardOperatorEntryDate_IsToday()
+    {
+        var asOf = new DateTime(2026, 10, 29, 18, 30, 0);
+        Assert.Equal(new DateTime(2026, 10, 29), DirectorDelegateFollowupRules.BoardOperatorEntryDate(asOf));
+    }
+
+    [Theory]
+    [InlineData(6, null, false)]
+    [InlineData(6, "  ", false)]
+    [InlineData(6, "تأخر", true)]
+    [InlineData(7, null, true)]
+    [InlineData(7, "", true)]
+    [InlineData(10, null, true)]
+    [InlineData(0, "ملاحظة", true)]
+    public void ValidateBoardOperatorNote_RequiresNoteAtSixAndBelow(int score, string? note, bool ok)
+    {
+        var error = DirectorDelegateFollowupRules.ValidateBoardOperatorNote(score, note);
+        Assert.Equal(ok, error is null);
+    }
+
+    [Fact]
+    public void CountDistinctPayers_CountsCustomersNotPayments()
+    {
+        var day = new DateTime(2026, 10, 28);
+        (int CustomerId, DateTime PaymentDate, double Amount)[] rows =
+        [
+            (1, day, 1000),
+            (1, day, 500),
+            (2, day, 0),
+            (3, day.AddDays(-1), 800),
+            (4, day, 200),
+            (9, day, 50),
+        ];
+        var ids = new HashSet<int> { 1, 2, 3, 4 };
+        Assert.Equal(2, DirectorDelegateFollowupRules.CountDistinctPayers(rows, ids, day));
+    }
 
     [Fact]
     public void CollectedHistoryDays_IsThirty() =>

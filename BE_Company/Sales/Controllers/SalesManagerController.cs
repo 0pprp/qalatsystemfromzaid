@@ -82,11 +82,29 @@ namespace BE_Company.Sales.Controllers
         }
 
         [HttpGet("dashboard")]
-        public async Task<IActionResult> Dashboard(CancellationToken ct)
+        public async Task<IActionResult> Dashboard([FromQuery] int? year, [FromQuery] int? month, CancellationToken ct)
         {
             var gate = await GateAsync(ct);
             if (gate != null) return gate;
-            return Ok(await _query.DashboardAsync(ct));
+            return Ok(await _query.DashboardAsync(year, month, ct));
+        }
+
+        [HttpGet("dashboard/day")]
+        public async Task<IActionResult> DashboardDay(
+            [FromQuery] int? year,
+            [FromQuery] int? month,
+            [FromQuery] int? day,
+            CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            var dto = await _query.DayAsync(year, month, day, ct);
+            if (dto.DayError == "التاريخ غير صحيح.")
+            {
+                return BadRequest(new { message = dto.DayError });
+            }
+
+            return Ok(dto);
         }
 
         [HttpGet("employees")]
@@ -100,6 +118,15 @@ namespace BE_Company.Sales.Controllers
             var rows = await _query.ListEmployeesAsync(shiftStatus, locationStatus, ct);
             await _stats.AttachEmployeeLatestRatingsAsync(rows, ct);
             return Ok(rows);
+        }
+
+        /// <summary>Names only for the director source filter. No ratings and no live GPS.</summary>
+        [HttpGet("source-directory")]
+        public async Task<IActionResult> SourceDirectory(CancellationToken ct)
+        {
+            var gate = await GateAsync(ct);
+            if (gate != null) return gate;
+            return Ok(await _query.ListSourceDirectoryAsync(ct));
         }
 
         /// <summary>Active sales lists (delegates) for main-follower committee reviews.</summary>
@@ -537,6 +564,11 @@ namespace BE_Company.Sales.Controllers
             [FromQuery] int? page,
             [FromQuery] int pageSize = 40,
             [FromQuery] string? q = null,
+            [FromQuery] string? from = null,
+            [FromQuery] string? to = null,
+            [FromQuery] string? sources = null,
+            [FromQuery] string? people = null,
+            [FromQuery] string? sourceFilter = null,
             CancellationToken ct = default)
         {
             var gate = await GateAsync(ct);
@@ -545,7 +577,8 @@ namespace BE_Company.Sales.Controllers
             // Paged path for FE board; legacy callers without page still get capped list.
             if (page is > 0)
             {
-                return Ok(await _requests.ListDeletedForManagerPageAsync(q, page.Value, pageSize, ct));
+                var filter = SalesRequestBoardFilter.Parse(from, to, sources, people, sourceFilter);
+                return Ok(await _requests.ListDeletedForManagerPageAsync(q, page.Value, pageSize, ct, filter));
             }
 
             var rows = await _requests.ListDeletedForManagerAsync(ct);
@@ -562,6 +595,11 @@ namespace BE_Company.Sales.Controllers
             [FromQuery] int pageSize = 40,
             [FromQuery] string? tab = null,
             [FromQuery] string? q = null,
+            [FromQuery] string? from = null,
+            [FromQuery] string? to = null,
+            [FromQuery] string? sources = null,
+            [FromQuery] string? people = null,
+            [FromQuery] string? sourceFilter = null,
             CancellationToken ct = default)
         {
             var gate = await GateAsync(ct);
@@ -573,12 +611,13 @@ namespace BE_Company.Sales.Controllers
                 _ = cityValue;
                 _ = status;
                 _ = date;
-                return Ok(await _requests.ListForManagerPageAsync(tab, employeeId, q, page.Value, pageSize, ct));
+                var filter = SalesRequestBoardFilter.Parse(from, to, sources, people, sourceFilter);
+                return Ok(await _requests.ListForManagerPageAsync(tab, employeeId, q, page.Value, pageSize, ct, filter));
             }
 
-            DateTime? from = date?.Date;
-            DateTime? to = from?.AddDays(1);
-            var rows = await _requests.ListForManagerAsync(status, employeeId, from, to, ct);
+            DateTime? legacyFrom = date?.Date;
+            DateTime? legacyTo = legacyFrom?.AddDays(1);
+            var rows = await _requests.ListForManagerAsync(status, employeeId, legacyFrom, legacyTo, ct);
             if (!string.IsNullOrWhiteSpace(cityValue))
             {
                 rows = rows.Where(r => string.Equals(r.CityValue, cityValue, StringComparison.OrdinalIgnoreCase)).ToList();

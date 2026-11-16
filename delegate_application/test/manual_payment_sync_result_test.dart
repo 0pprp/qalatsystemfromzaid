@@ -28,4 +28,14 @@ void main() {
     );
     expect(r.summaryMessage(), contains('مرفوضاً'));
   });
+
+  test('rejection reason is shown with the stuck count', () {
+    const r = ManualPaymentSyncResult(
+      outcome: ManualPaymentSyncOutcome.nothingPending,
+      permanentFailures: 27,
+      rejectionReason: 'العميل غير موجود',
+    );
+    expect(r.summaryMessage(), contains('27'));
+    expect(r.summaryMessage(), contains('العميل غير موجود'));
+  });
 }

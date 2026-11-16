@@ -53,12 +53,17 @@ builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerSaleAuthS
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IDelegateFirstCollectionEvalService, BE_DelegateWebApplication.Services.DelegateFirstCollectionEvalService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerListStatsService, BE_DelegateWebApplication.Services.FollowerListStatsService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerListCardsService, BE_DelegateWebApplication.Services.FollowerListCardsService>();
+builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerShopCaptureService, BE_DelegateWebApplication.Services.FollowerShopCaptureService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerDeclineService, BE_DelegateWebApplication.Services.FollowerDeclineService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerCollectionPaymentService, BE_DelegateWebApplication.Services.FollowerCollectionPaymentService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerDelegateDayRatingService, BE_DelegateWebApplication.Services.FollowerDelegateDayRatingService>();
+builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerArchiveRequestsService, BE_DelegateWebApplication.Services.FollowerArchiveRequestsService>();
 
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(o =>
+{
+    o.Filters.Add(new BE_DelegateWebApplication.Services.LegalCustomerAmountResultFilter());
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddProblemDetails();

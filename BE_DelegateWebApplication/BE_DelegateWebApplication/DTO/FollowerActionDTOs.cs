@@ -148,6 +148,7 @@ namespace BE_DelegateWebApplication.DTO
         public double? AmountDaySales { get; set; }
         public double? AmountRemaining { get; set; }
         public double? ReceiptsTotal { get; set; }
+        public bool IsLegal { get; set; }
         public double? AmountReceverDay { get; set; }
         public string? ItemsNames { get; set; }
         public DateTime? DateSaleDevice { get; set; }

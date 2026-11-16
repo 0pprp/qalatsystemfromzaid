@@ -28,36 +28,35 @@ namespace BE_Company.Sales.Tests
             UserType = SalesRoles.UserTypeSalesEmployee
         };
 
-        [Fact]
-        public void PostingWindow_StartsAt16Iraq_NotShiftCutoff()
-        {
-            Assert.Equal(TimeSpan.FromHours(16), SalesPostingRules.PostingTimeIraq);
-            Assert.Equal(TimeSpan.FromHours(3), IraqTimeService.CutoffTime);
-            Assert.False(SalesPostingRules.IsPostingWindow(MorningIraqUtc));
-            Assert.False(SalesPostingRules.IsPostingWindow(JustBeforePostingUtc));
-            Assert.True(SalesPostingRules.IsPostingWindow(PostingStartUtc));
-            Assert.True(SalesPostingRules.IsPostingWindow(EveningIraqUtc));
-        }
-
-        [Fact]
-        public async Task Complete_At10Iraq_IsCompletedPending_AndDoesNotPostMainSystem()
+        [Theory]
+        [MemberData(nameof(AnyTimeOfDay))]
+        public async Task Complete_AtAnyTime_PostsMainSystemImmediately(DateTime utcNow)
         {
             var repo = Seed();
-            var clock = new FakeClock { UtcNow = MorningIraqUtc };
-            var posting = CreatePosting(repo, clock);
+            repo.Sales[10].CustomerId = 42;
+            var clock = new FakeClock { UtcNow = utcNow };
+            var posting = CreatePosting(repo);
             var svc = CreateComplete(repo, posting, clock);
 
             var result = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
 
             Assert.Equal(SalesStatuses.Completed, result.Status);
-            Assert.Equal(SalesPostingStatuses.Pending, repo.Sales[10].PostingStatus);
-            Assert.Null(repo.Sales[10].PostedAtUtc);
-            Assert.Empty(repo.Payments);
-            Assert.Null(repo.Sales[10].DownPaymentCustomerPaymentId);
-            Assert.Equal(0, repo.MainPostingCount);
-            Assert.Equal(3, repo.MainStock[5]);
+            Assert.Equal(SalesPostingStatuses.Posted, repo.Sales[10].PostingStatus);
+            Assert.NotNull(repo.Sales[10].PostedAtUtc);
+            Assert.Equal(1, repo.MainPostingCount);
+            Assert.Equal(2, repo.MainStock[5]);
+            Assert.Single(repo.Payments);
             Assert.Equal(0, await posting.PostDueSalesAsync(CancellationToken.None));
         }
+
+        public static IEnumerable<object[]> AnyTimeOfDay() =>
+        [
+            [MorningIraqUtc],
+            [JustBeforePostingUtc],
+            [PostingStartUtc],
+            [EveningIraqUtc],
+            [IraqTimeService.ToUtcFromIraq(new DateTime(2026, 9, 7, 1, 30, 0))]
+        ];
 
         [Fact]
         public async Task Complete_DeductsEmployeeStockImmediately()
@@ -65,7 +64,7 @@ namespace BE_Company.Sales.Tests
             var repo = Seed();
             repo.Stock[5] = 3;
             var clock = new FakeClock { UtcNow = MorningIraqUtc };
-            var svc = CreateComplete(repo, CreatePosting(repo, clock), clock);
+            var svc = CreateComplete(repo, CreatePosting(repo), clock);
 
             await svc.CompleteAsync(10, Identity(), CancellationToken.None);
 
@@ -75,41 +74,19 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task Complete_Before16_DoesNotChangeMainWarehouse()
-        {
-            var repo = Seed();
-            var clock = new FakeClock { UtcNow = MorningIraqUtc };
-            var posting = CreatePosting(repo, clock);
-            var svc = CreateComplete(repo, posting, clock);
-
-            await svc.CompleteAsync(10, Identity(), CancellationToken.None);
-            await posting.PostDueSalesAsync(CancellationToken.None);
-
-            Assert.Equal(3, repo.MainStock[5]);
-            Assert.Equal(0, repo.MainPostingCount);
-            Assert.Equal(SalesPostingStatuses.Pending, repo.Sales[10].PostingStatus);
-        }
-
-        [Fact]
-        public async Task After16_PostsPendingSaleOnce_AndRecordsDownPayment()
+        public async Task Morning_PostsSaleOnce_AndRecordsDownPayment()
         {
             var repo = Seed();
             repo.Sales[10].CustomerId = 42;
             repo.Sales[10].OverrideDownPayment = 200000;
             repo.Sales[10].DownPayment = 200000;
             var clock = new FakeClock { UtcNow = MorningIraqUtc };
-            var posting = CreatePosting(repo, clock);
+            var posting = CreatePosting(repo);
             var svc = CreateComplete(repo, posting, clock);
 
             await svc.CompleteAsync(10, Identity(), CancellationToken.None);
-            Assert.Empty(repo.Payments);
-            Assert.Equal(3, repo.MainStock[5]);
-
-            clock.UtcNow = EveningIraqUtc;
-            var posted = await posting.PostDueSalesAsync(CancellationToken.None);
             var again = await posting.PostDueSalesAsync(CancellationToken.None);
 
-            Assert.Equal(1, posted);
             Assert.Equal(0, again);
             Assert.Equal(SalesStatuses.Completed, repo.Sales[10].Status);
             Assert.Equal(SalesPostingStatuses.Posted, repo.Sales[10].PostingStatus);
@@ -125,32 +102,13 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task Complete_After16_PostsImmediately()
-        {
-            var repo = Seed();
-            repo.Sales[10].CustomerId = 42;
-            repo.Sales[10].DownPayment = 200000;
-            var clock = new FakeClock { UtcNow = EveningIraqUtc };
-            var posting = CreatePosting(repo, clock);
-            var svc = CreateComplete(repo, posting, clock);
-
-            var result = await svc.CompleteAsync(10, Identity(), CancellationToken.None);
-
-            Assert.Equal(SalesStatuses.Completed, result.Status);
-            Assert.Equal(SalesPostingStatuses.Posted, repo.Sales[10].PostingStatus);
-            Assert.Equal(1, repo.MainPostingCount);
-            Assert.Equal(2, repo.MainStock[5]);
-            Assert.Single(repo.Payments);
-        }
-
-        [Fact]
         public async Task Retry_DoesNotRepeatSaleStockOrReceipt()
         {
             var repo = Seed();
             repo.Sales[10].CustomerId = 42;
             repo.Sales[10].DownPayment = 200000;
             var clock = new FakeClock { UtcNow = EveningIraqUtc };
-            var posting = CreatePosting(repo, clock);
+            var posting = CreatePosting(repo);
             repo.FailMainPosting = true;
 
             await CreateComplete(repo, posting, clock)
@@ -177,22 +135,23 @@ namespace BE_Company.Sales.Tests
         }
 
         [Fact]
-        public async Task RestartAfter16_PicksUpPendingAndCompletes()
+        public async Task Worker_PicksUpLeftoverPendingSale_AtAnyTime()
         {
             var repo = Seed();
             repo.Sales[10].CustomerId = 42;
             repo.Sales[10].OverrideDownPayment = 150000;
             repo.Sales[10].DownPayment = 150000;
             var morning = new FakeClock { UtcNow = MorningIraqUtc };
-            await CreateComplete(repo, CreatePosting(repo, morning), morning)
+            // No posting service: simulates a sale completed before this change
+            // (or a crash before the immediate post) that is still Pending.
+            await new SalesCompleteService(repo, new FakeDraftRepository(), new FakeDocumentService(), clock: morning)
                 .CompleteAsync(10, Identity(), CancellationToken.None);
 
             Assert.Equal(SalesPostingStatuses.Pending, repo.Sales[10].PostingStatus);
             Assert.Empty(repo.Payments);
             Assert.Equal(3, repo.MainStock[5]);
 
-            var evening = new FakeClock { UtcNow = EveningIraqUtc };
-            var restarted = CreatePosting(repo, evening);
+            var restarted = CreatePosting(repo);
             var posted = await restarted.PostDueSalesAsync(CancellationToken.None);
 
             Assert.Equal(1, posted);
@@ -213,7 +172,7 @@ namespace BE_Company.Sales.Tests
             repo.RequestNames[8] = "كرار كاظم حسن";
             repo.OfficialCustomers[42] = "كرار كاظم";
             var clock = new FakeClock { UtcNow = EveningIraqUtc };
-            var posting = CreatePosting(repo, clock);
+            var posting = CreatePosting(repo);
 
             await CreateComplete(repo, posting, clock)
                 .CompleteAsync(10, Identity(), CancellationToken.None);
@@ -232,7 +191,7 @@ namespace BE_Company.Sales.Tests
             repo.Sales[10].CustomerId = 42;
             repo.Sales[10].DownPayment = 200000;
             var clock = new FakeClock { UtcNow = EveningIraqUtc };
-            var posting = CreatePosting(repo, clock);
+            var posting = CreatePosting(repo);
 
             Assert.Equal(0, await posting.PostDueSalesAsync(CancellationToken.None));
             Assert.Empty(repo.Payments);
@@ -240,8 +199,8 @@ namespace BE_Company.Sales.Tests
             Assert.Equal(3, repo.MainStock[5]);
         }
 
-        private static SalesPostingService CreatePosting(FakeCompleteRepository repo, FakeClock clock) =>
-            new(repo, clock, NullLogger<SalesPostingService>.Instance);
+        private static SalesPostingService CreatePosting(FakeCompleteRepository repo) =>
+            new(repo, NullLogger<SalesPostingService>.Instance);
 
         private static SalesCompleteService CreateComplete(
             FakeCompleteRepository repo,

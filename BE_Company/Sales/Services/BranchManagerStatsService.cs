@@ -1311,25 +1311,8 @@ WHERE EmployeeId = @EmployeeId
                     }
                 }
 
-                var requestsExists = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
-                    "SELECT CASE WHEN OBJECT_ID(N'dbo.SalesRequests', N'U') IS NULL THEN 0 ELSE 1 END",
-                    cancellationToken: ct));
-                if (requestsExists == 1)
-                {
-                    var fromRequests = await connection.QueryAsync<int>(new CommandDefinition(@"
-SELECT DISTINCT ExistingCustomerId
-FROM dbo.SalesRequests
-WHERE TargetEmployeeId = @EmployeeId
-  AND Status = N'Completed'
-  AND ExistingCustomerId IS NOT NULL
-  AND ExistingCustomerId > 0;",
-                        new { EmployeeId = employeeId }, cancellationToken: ct));
-                    foreach (var id in fromRequests)
-                    {
-                        ids.Add(id);
-                    }
-                }
-
+                // SalesRequests.ExistingCustomerId is the customer's previous account, not this
+                // employee's sale — a re-sale posts a new CustomerID carried by the draft above.
                 return ids.ToList();
             }
             catch

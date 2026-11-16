@@ -132,6 +132,15 @@ class _FollowerHomeShellState extends State<FollowerHomeShell> {
                   },
                 ),
                 ListTile(
+                  leading: const Icon(Icons.inventory_2_outlined),
+                  title: const Text('أرشيف الزبائن',
+                      style: TextStyle(fontFamily: 'Cairo')),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/ArchiveRequests');
+                  },
+                ),
+                ListTile(
                   leading: const Icon(Icons.bar_chart),
                   title: const Text('الإحصائيات', style: TextStyle(fontFamily: 'Cairo')),
                   onTap: () {

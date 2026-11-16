@@ -43,7 +43,11 @@ public sealed class DirectorController : ControllerBase
     public async Task<IActionResult> Cities(CancellationToken ct)
     {
         var branches = await _aggregator.BranchesAsync(ct);
-        return Ok(branches.Select(b => new
+        var actor = TokenService.FromPrincipal(User);
+        var visible = SalesRoles.IsCommittee(actor.UserType)
+            ? branches.Where(b => actor.AllowsFilterCity(b.Value))
+            : branches;
+        return Ok(visible.Select(b => new
         {
             value = b.Value,
             name = b.Name,
@@ -654,6 +658,50 @@ public sealed class DirectorController : ControllerBase
         return StatusCode(status, payload);
     }
 
+    /// <summary>عمل المتابعين — مواقع وصور المحلات (follower shop GPS + photo progress).</summary>
+    [HttpGet("followers/ops/shop-capture")]
+    public Task<IActionResult> FollowerOpsShopCapture([FromQuery] string? cityValue, CancellationToken ct) =>
+        ForwardFollowerOps(cityValue, "sales-manager/director-follower-ops/shop-capture", ct);
+
+    [HttpGet("followers/ops/shop-capture/lists/{listId:int}/customers")]
+    public Task<IActionResult> FollowerOpsShopCaptureList(int listId, [FromQuery] string? cityValue, CancellationToken ct) =>
+        ForwardFollowerOps(cityValue, $"sales-manager/director-follower-ops/shop-capture/lists/{listId}/customers", ct);
+
+    [HttpGet("followers/ops/shop-capture/customers/{customerId:int}")]
+    public Task<IActionResult> FollowerOpsShopCaptureCustomer(int customerId, [FromQuery] string? cityValue, CancellationToken ct) =>
+        ForwardFollowerOps(cityValue, $"sales-manager/director-follower-ops/shop-capture/customers/{customerId}", ct);
+
+    [HttpGet("followers/ops/shop-capture/customers/{customerId:int}/photo")]
+    public async Task<IActionResult> FollowerOpsShopCapturePhoto(int customerId, [FromQuery] string? cityValue, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+        {
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+        }
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetFileAsync(
+            actor, cityValue, $"sales-manager/director-follower-ops/shop-capture/customers/{customerId}/photo", ct);
+        if (payload is ValueTuple<byte[], string> file)
+        {
+            return File(file.Item1, string.IsNullOrWhiteSpace(file.Item2) ? "image/jpeg" : file.Item2);
+        }
+
+        return StatusCode(status, payload ?? new { message = "لا توجد صورة محل." });
+    }
+
+    private async Task<IActionResult> ForwardFollowerOps(string? cityValue, string companyPath, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+        {
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+        }
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(actor, cityValue, companyPath, ct);
+        return StatusCode(status, payload);
+    }
+
     [HttpGet("followers/ops/follower-cards")]
     public async Task<IActionResult> FollowerOpsFollowerCards(
         [FromQuery] string? cityValue,
@@ -903,6 +951,32 @@ public sealed class DirectorController : ControllerBase
         return StatusCode(status, payload);
     }
 
+    /// <summary>
+    /// Navbar «بحث الزبائن»: fans out to every branch in the caller's scope
+    /// (committee → its branches only, via ScopeToCommittee), or one branch when cityValue is set.
+    /// </summary>
+    [HttpGet("delegate-followup/customers/search")]
+    public async Task<IActionResult> DelegateFollowupCustomerSearch(
+        [FromQuery] string? q,
+        [FromQuery] string? cityValue,
+        [FromQuery] bool includeFinished,
+        CancellationToken ct)
+    {
+        var query = (q ?? "").Trim();
+        if (query.Length < 2)
+        {
+            return BadRequest(new { message = "اكتب حرفين على الأقل للبحث" });
+        }
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetAsync(
+            actor,
+            string.IsNullOrWhiteSpace(cityValue) ? null : cityValue.Trim(),
+            $"sales-manager/director-delegate-followup/customers/search?q={Uri.EscapeDataString(query)}&take=25&includeFinished={(includeFinished ? "true" : "false")}",
+            ct);
+        return StatusCode(status, payload);
+    }
+
     [HttpGet("delegate-followup/lists/{listId:int}/summary")]
     public async Task<IActionResult> DelegateFollowupListSummary(
         int listId,
@@ -937,8 +1011,9 @@ public sealed class DirectorController : ControllerBase
         return StatusCode(status, payload);
     }
 
-    [HttpGet("delegate-followup/lists/{listId:int}/board-operator-rating")]
-    public async Task<IActionResult> DelegateFollowupGetBoardOperatorRating(
+    /// <summary>«طلبات بيع المندوب» for one list (orders, outcomes, evaluations, new-customer sales).</summary>
+    [HttpGet("delegate-followup/lists/{listId:int}/sales-orders")]
+    public async Task<IActionResult> DelegateFollowupListSalesOrders(
         int listId,
         [FromQuery] string? cityValue,
         CancellationToken ct)
@@ -950,9 +1025,66 @@ public sealed class DirectorController : ControllerBase
 
         var actor = TokenService.FromPrincipal(User);
         var (status, payload) = await _aggregator.GetOneAsync(
+            actor, cityValue, $"sales-manager/director-delegate-followup/lists/{listId}/sales-orders", ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("delegate-followup/lists/{listId:int}/locations")]
+    public async Task<IActionResult> DelegateFollowupListLocations(
+        int listId,
+        [FromQuery] string? cityValue,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+        {
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+        }
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor, cityValue, $"sales-manager/director-delegate-followup/lists/{listId}/locations", ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("delegate-followup/lists/{listId:int}/customers/{customerId:int}/payment-locations")]
+    public async Task<IActionResult> DelegateFollowupCustomerPaymentLocations(
+        int listId,
+        int customerId,
+        [FromQuery] string? cityValue,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+        {
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+        }
+
+        var actor = TokenService.FromPrincipal(User);
+        var (status, payload) = await _aggregator.GetOneAsync(
+            actor, cityValue,
+            $"sales-manager/director-delegate-followup/lists/{listId}/customers/{customerId}/payment-locations", ct);
+        return StatusCode(status, payload);
+    }
+
+    [HttpGet("delegate-followup/lists/{listId:int}/board-operator-rating")]
+    public async Task<IActionResult> DelegateFollowupGetBoardOperatorRating(
+        int listId,
+        [FromQuery] string? cityValue,
+        [FromQuery] string? slot,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cityValue))
+        {
+            return BadRequest(new { message = "يجب تحديد المحافظة." });
+        }
+
+        var actor = TokenService.FromPrincipal(User);
+        var slotQuery = string.Equals(slot, "assistant", StringComparison.OrdinalIgnoreCase)
+            ? "?slot=assistant"
+            : "";
+        var (status, payload) = await _aggregator.GetOneAsync(
             actor,
             cityValue,
-            $"sales-manager/director-delegate-followup/lists/{listId}/board-operator-rating",
+            $"sales-manager/director-delegate-followup/lists/{listId}/board-operator-rating{slotQuery}",
             ct);
         return StatusCode(status, payload);
     }
@@ -976,6 +1108,11 @@ public sealed class DirectorController : ControllerBase
 
         var actor = TokenService.FromPrincipal(User);
         var json = System.Text.Json.JsonSerializer.Serialize(body);
+        // «تقييم المحاسب الرئيسي» is written on the branch by the accountant only; every gateway
+        // rater (both committee members, director, monitor) writes «تقييم لجنة المراقبة» (head).
+        if (ReadRatingSlot(json) == "accountant")
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "تقييم المحاسب الرئيسي متاح للمحاسب الرئيسي فقط" });
+        json = WithCommitteeSlot(json);
         var (status, payload) = await _aggregator.PostAsync(
             actor,
             cityValue,
@@ -983,6 +1120,47 @@ public sealed class DirectorController : ControllerBase
             json,
             ct);
         return StatusCode(status, payload);
+    }
+
+    private static string ReadRatingSlot(string json)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            foreach (var name in new[] { "slot", "Slot", "raterSlot", "RaterSlot" })
+            {
+                if (doc.RootElement.TryGetProperty(name, out var prop) && prop.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    var value = prop.GetString()?.Trim();
+                    if (string.Equals(value, "accountant", StringComparison.OrdinalIgnoreCase))
+                        return "accountant";
+                }
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return "head";
+        }
+        return "head";
+    }
+
+    /// <summary>Forces slot=head so legacy "assistant" clients land on the shared committee score.</summary>
+    public static string WithCommitteeSlot(string json)
+    {
+        try
+        {
+            var node = JsonNode.Parse(json) as JsonObject;
+            if (node is null)
+                return json;
+            foreach (var name in new[] { "Slot", "raterSlot", "RaterSlot" })
+                node.Remove(name);
+            node["slot"] = "head";
+            return node.ToJsonString();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return json;
+        }
     }
 
     // —— متابعة المبيعات (موظفو المبيعات) ——

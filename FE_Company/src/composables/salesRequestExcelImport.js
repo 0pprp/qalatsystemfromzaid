@@ -42,7 +42,29 @@ export function excelHeaderKey(value) {
     return 'province'
   if (['العنوان', 'address'].includes(t))
     return 'address'
-  if (['نوع المبيع', 'نوع البيع', 'saletype', 'sale type'].includes(t))
+  // The Excel «نوع المبيع» column is the product the customer wants; it is stored in notes as
+  // «نوع المبيع: …» and shown as «المنتج» (salesRequestProduct.js). Sheets often label that column
+  // «المنتج» / «المادة» / «الصنف»; before these were accepted the product was silently dropped.
+  if ([
+    'نوع المبيع',
+    'نوع البيع',
+    'نوع الطلب',
+    'المنتج',
+    'منتج',
+    'المنتج المطلوب',
+    'المادة',
+    'ماده',
+    'المادة المطلوبة',
+    'الصنف',
+    'صنف',
+    'البضاعة',
+    'saletype',
+    'sale type',
+    'product',
+    'product name',
+    'productname',
+    'item',
+  ].map(foldAr).includes(t))
     return 'saleType'
 
   return ''
@@ -82,10 +104,13 @@ export function parseSalesRequestExcel(buffer, { XLSX, resolveCity }) {
     throw new Error('الملف فارغ')
 
   const map = {}
+  const ignoredColumns = []
   ;(rows[0] || []).forEach((header, index) => {
     const key = excelHeaderKey(header)
     if (key && map[key] == null)
       map[key] = index
+    else if (String(header ?? '').trim())
+      ignoredColumns.push(String(header).trim())
   })
   if (map.name == null)
     throw new Error('عمود اسم الزبون مطلوب في الصف الأول')
@@ -138,5 +163,5 @@ export function parseSalesRequestExcel(buffer, { XLSX, resolveCity }) {
     })
   }
 
-  return { total, valid, errors }
+  return { total, valid, errors, ignoredColumns, hasSaleTypeColumn: map.saleType != null }
 }

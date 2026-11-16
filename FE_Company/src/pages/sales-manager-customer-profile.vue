@@ -34,20 +34,32 @@ import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 import { formatIraqDate } from '@/composables/iraqDate'
 import { saleDisplayDocuments, saleDocumentTitle } from '@/composables/saleDocuments'
 import ShopLocationLink from '@/components/ShopLocationLink.vue'
+import CustomerShopCaptureCard from '@/components/CustomerShopCaptureCard.vue'
 import { useToast } from '@/composables/useToast'
 import { IRAQ_MOBILE_ERROR, iraqPhoneValidator, isIraqMobile, normalizeIraqPhone } from '@core/utils/validators'
 
 const toast = useToast()
 const route = useRoute()
 const router = useRouter()
-const { isDirector, isAdmin, isMonitor } = useUserRole()
+const { isDirector: isDirectorRole, isMonitor, isArchiveManager } = useUserRole()
+
+// مسؤول الارشيف gets the director's read-only view.
+const isDirector = computed(() => isDirectorRole.value || isArchiveManager.value)
 /** المدير عرض فقط؛ المراقب يعمل مثل مدير المبيعات */
 const readOnly = computed(() => isDirector.value)
-/** Accountant/director: hide الواصل/الباقي for legal customers (SM keeps full amounts). */
-const hideLegalPaidRemaining = computed(() =>
-  (isDirector.value || isAdmin.value)
-  && shouldHidePaidRemaining(profile.value),
-)
+
+/** Follower shop GPS + photo come from director routes (director / monitor only). */
+const showShopCapture = computed(() => isDirectorRole.value || isMonitor.value)
+
+/** Newest sale's shop photo (sales app), shown next to the follower's photo. */
+const latestSalesShopUrl = computed(() => {
+  const ids = Object.keys(shopUrls.value).map(Number).filter(Number.isFinite).sort((a, b) => b - a)
+
+  return ids.length ? shopUrls.value[ids[0]] : ''
+})
+
+/** القانونية: الواصل/الباقي مخفيان عن الجميع ما عدا المحاسب الرئيسي. */
+const hideLegalPaidRemaining = computed(() => shouldHidePaidRemaining(profile.value))
 const loading = ref(false)
 const profile = ref(null)
 const sharedNotes = ref([])
@@ -333,6 +345,19 @@ function goBack() {
 
     return
   }
+  if (returnTo === 'director-bad-customers') {
+    const city = String(route.query.cityValue || '').trim()
+    const listId = String(route.query.listId || '').trim()
+    router.push({
+      path: '/director-bad-customers',
+      query: {
+        ...(city ? { city } : {}),
+        ...(listId ? { listId } : {}),
+      },
+    })
+
+    return
+  }
   if (returnTo === 'director-sales-followup') {
     const city = String(route.query.cityValue || '').trim()
     const employeeId = String(route.query.employeeId || '').trim()
@@ -356,7 +381,7 @@ function goBack() {
 
     return
   }
-  router.push(isDirector.value ? '/director-ratings' : '/sales-manager-requests')
+  router.push(isArchiveManager.value ? '/archive-requests' : isDirector.value ? '/director-ratings' : '/sales-manager-requests')
 }
 
 function shopFieldEval(source) {
@@ -649,6 +674,13 @@ onUnmounted(() => {
         </VRow>
       </VCard>
 
+      <CustomerShopCaptureCard
+        v-if="showShopCapture"
+        :city-value="pick(profile, 'cityValue', 'CityValue') || cityValue"
+        :customer-id="pick(profile, 'customerId', 'CustomerId') || customerId"
+        :sales-photo-url="latestSalesShopUrl"
+      />
+
       <VCard class="mb-6 pa-6">
         <h5 class="mb-4">
           ملاحظات الزبون
@@ -826,7 +858,7 @@ onUnmounted(() => {
               :key="pick(row, 'customerPaymentId', 'CustomerPaymentId') || pick(row, 'paymentDate', 'PaymentDate')"
             >
               <td>{{ formatIraqDate(pick(row, 'paymentDate', 'PaymentDate')) || '—' }}</td>
-              <td>{{ money(pick(row, 'amount', 'Amount')) }}</td>
+              <td>{{ hideLegalPaidRemaining ? '—' : money(pick(row, 'amount', 'Amount')) }}</td>
               <td>{{ pick(row, 'boundNumber', 'BoundNumber') || '—' }}</td>
               <td>{{ pick(row, 'note', 'Note', 'itemsNames', 'ItemsNames') || '—' }}</td>
             </tr>

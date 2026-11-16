@@ -97,3 +97,7 @@ Publish*.bat
 *.apk
 *.aab
 *.ipa
+
+# Runtime data (oversight accounts with passwords)
+BE_SalesEmployee/App_Data/
+PromoterApps/*/backend/*/App_Data/

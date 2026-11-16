@@ -200,12 +200,19 @@ WHERE ClientPaymentId IS NULL OR TRIM(ClientPaymentId) = '';
     final db = await database;
     final owner = ownerAsyncId.trim();
     if (owner.isEmpty) return 0;
-    return db.rawUpdate('''
+    final released = await db.rawUpdate('''
 UPDATE CustomerPayment
 SET SyncStatus = 'PendingSync', SyncError = NULL, PermanentFailure = 0
 WHERE SyncStatus = 'AwaitingSession'
   AND (OwnerAsyncId IS NULL OR OwnerAsyncId = '' OR OwnerAsyncId = ?)
 ''', [owner]);
+    final expired = await db.rawUpdate('''
+UPDATE CustomerPayment
+SET SyncStatus = 'PendingSync', SyncError = NULL, PermanentFailure = 0
+WHERE SyncError = 'SESSION_EXPIRED'
+  AND (OwnerAsyncId IS NULL OR OwnerAsyncId = '' OR OwnerAsyncId = ?)
+''', [owner]);
+    return released + expired;
   }
 
   /// Unresolved financial rows that must not be wiped on logout.

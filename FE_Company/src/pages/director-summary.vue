@@ -39,8 +39,98 @@ const yearItems = computed(() => {
   return [y - 1, y, y + 1].map(v => ({ title: String(v), value: v }))
 })
 
-const branches = computed(() => matrix.value?.branches || [])
+const BRANCH_PREF_KEY = 'qalaa.directorSummary.branches'
+
+function readBranchPref() {
+  try {
+    const raw = localStorage.getItem(BRANCH_PREF_KEY)
+    if (raw == null || raw === '' || raw === 'null')
+      return null
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed))
+      return null
+
+    return parsed.map(v => String(v))
+  }
+  catch {
+    return null
+  }
+}
+
+const allBranches = computed(() => matrix.value?.branches || [])
+
+/** null = every branch, including ones added later. An array is an explicit pick. */
+const selectedCityValues = ref(readBranchPref())
+
+const branches = computed(() => {
+  const all = allBranches.value
+  const picked = selectedCityValues.value
+  if (picked == null)
+    return all
+  const set = new Set(picked)
+
+  return all.filter(b => set.has(String(b.cityValue)))
+})
+
 const daysInMonth = computed(() => matrix.value?.daysInMonth || 31)
+
+const allBranchesSelected = computed(() =>
+  allBranches.value.length > 0 && branches.value.length === allBranches.value.length,
+)
+
+const branchButtonLabel = computed(() => {
+  const total = allBranches.value.length
+  const shown = branches.value.length
+  if (!total)
+    return 'الفروع'
+  if (shown === total)
+    return 'كل الفروع'
+
+  return `الفروع (${shown})`
+})
+
+function persistBranchPref() {
+  if (selectedCityValues.value == null)
+    localStorage.removeItem(BRANCH_PREF_KEY)
+  else
+    localStorage.setItem(BRANCH_PREF_KEY, JSON.stringify(selectedCityValues.value))
+}
+
+function branchOn(branch) {
+  if (selectedCityValues.value == null)
+    return true
+
+  return selectedCityValues.value.includes(String(branch.cityValue))
+}
+
+function setBranch(branch, on) {
+  const id = String(branch.cityValue)
+  const current = selectedCityValues.value == null
+    ? allBranches.value.map(b => String(b.cityValue))
+    : [...selectedCityValues.value]
+  const next = new Set(current)
+  if (on)
+    next.add(id)
+  else
+    next.delete(id)
+
+  const allIds = allBranches.value.map(b => String(b.cityValue))
+  if (allIds.length && allIds.every(x => next.has(x)))
+    selectedCityValues.value = null
+  else
+    selectedCityValues.value = allIds.filter(x => next.has(x))
+  persistBranchPref()
+}
+
+function selectAllBranches() {
+  selectedCityValues.value = null
+  persistBranchPref()
+}
+
+function clearBranches() {
+  selectedCityValues.value = []
+  persistBranchPref()
+}
 
 const allBoxesGrandTotal = computed(() =>
   branches.value.reduce((sum, b) => sum + Number(b.boxTotalAmountDenar || 0), 0),
@@ -65,6 +155,22 @@ function cellTotal(branch, day) {
 function dayRowTotal(day) {
   return branches.value.reduce((sum, b) => sum + cellTotal(b, day), 0)
 }
+
+const columnTotals = computed(() => {
+  const map = {}
+  const lastDay = Number(daysInMonth.value) || 0
+  for (const branch of branches.value) {
+    let sum = 0
+    for (let day = 1; day <= lastDay; day++)
+      sum += cellTotal(branch, day)
+    map[branch.cityValue] = sum
+  }
+  return map
+})
+
+const tableGrandTotal = computed(() =>
+  Object.values(columnTotals.value).reduce((sum, n) => sum + Number(n || 0), 0),
+)
 
 async function loadMatrix() {
   loading.value = true
@@ -178,6 +284,56 @@ onMounted(loadMatrix)
           hide-details
           class="ds-select ds-select-sm"
         />
+        <VMenu
+          :close-on-content-click="false"
+          location="bottom end"
+        >
+          <template #activator="{ props }">
+            <VBtn
+              v-bind="props"
+              class="ds-branch-btn"
+              variant="outlined"
+              prepend-icon="tabler-map-pin"
+              :disabled="!allBranches.length"
+            >
+              {{ branchButtonLabel }}
+            </VBtn>
+          </template>
+          <VCard class="ds-branch-menu">
+            <div class="ds-branch-actions">
+              <VBtn
+                size="small"
+                variant="text"
+                class="ds-branch-action"
+                @click="selectAllBranches"
+              >
+                تحديد الكل
+              </VBtn>
+              <VBtn
+                size="small"
+                variant="text"
+                class="ds-branch-action"
+                @click="clearBranches"
+              >
+                إلغاء التحديد
+              </VBtn>
+            </div>
+            <VDivider />
+            <div class="ds-branch-list">
+              <VCheckbox
+                v-for="b in allBranches"
+                :key="`pick-${b.cityValue}`"
+                :model-value="branchOn(b)"
+                :label="b.name"
+                density="compact"
+                hide-details
+                color="#0f766e"
+                class="ds-branch-check"
+                @update:model-value="on => setBranch(b, on)"
+              />
+            </div>
+          </VCard>
+        </VMenu>
         <VBtn
           class="ds-refresh"
           :loading="loading"
@@ -232,7 +388,7 @@ onMounted(loadMatrix)
               icon="tabler-database"
               size="18"
             />
-            <span>القاصة الكلية</span>
+            <span>{{ allBranchesSelected ? 'القاصة الكلية' : 'مجموع المحدد' }}</span>
           </div>
           <div class="ds-card-body">
             <div class="ds-metric">
@@ -303,9 +459,33 @@ onMounted(loadMatrix)
               </td>
             </tr>
           </tbody>
+          <tfoot>
+            <tr>
+              <td class="ds-td ds-td-day ds-td-foot">
+                المجموع
+              </td>
+              <td
+                v-for="b in branches"
+                :key="`sum-${b.cityValue}`"
+                class="ds-td ds-td-amount ds-td-foot"
+              >
+                {{ fmt(columnTotals[b.cityValue]) }}
+              </td>
+              <td class="ds-td ds-td-sum ds-td-foot">
+                {{ fmt(tableGrandTotal) }}
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </template>
+
+    <div
+      v-else-if="!loading && allBranches.length"
+      class="ds-empty"
+    >
+      لم يتم اختيار أي فرع. افتح «الفروع» وحدد ما تريد عرضه.
+    </div>
 
     <div
       v-else-if="!loading"
@@ -493,6 +673,50 @@ onMounted(loadMatrix)
   box-shadow: 0 6px 16px rgba(15, 118, 110, 0.25);
 }
 
+.ds-branch-btn {
+  background: #fff !important;
+  color: var(--ds-teal) !important;
+  border-color: #d7ebe8 !important;
+  font-weight: 700;
+  letter-spacing: 0;
+  min-block-size: 44px;
+  border-radius: 12px;
+}
+
+.ds-branch-menu {
+  inline-size: 280px;
+  max-inline-size: 92vw;
+}
+
+.ds-branch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.ds-branch-action {
+  color: var(--ds-teal) !important;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.ds-branch-list {
+  max-block-size: 360px;
+  overflow: auto;
+  padding: 6px 10px 10px;
+}
+
+.ds-branch-check {
+  margin: 0;
+}
+
+.ds-branch-check :deep(.v-label) {
+  font-weight: 700;
+  opacity: 1;
+}
+
 .ds-cards-scroll {
   display: flex;
   gap: 12px;
@@ -670,6 +894,33 @@ onMounted(loadMatrix)
 
 .ds-td-amount.is-clickable:hover {
   background: #eef8f6;
+}
+
+.ds-td-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  font-weight: 800;
+  background: #fff7ed;
+  box-shadow: 0 -2px 0 #f6c97a;
+}
+
+.ds-td-day.ds-td-foot {
+  z-index: 7;
+  background: #d9efec;
+  color: var(--ds-teal);
+  box-shadow: -3px 0 8px rgba(15, 118, 110, 0.08), 0 -2px 0 #b7ddd8;
+}
+
+.ds-td-amount.ds-td-foot {
+  color: var(--ds-ink);
+  cursor: default;
+}
+
+.ds-td-sum.ds-td-foot {
+  z-index: 7;
+  background: #ffd899;
+  box-shadow: 3px 0 8px rgba(217, 119, 6, 0.1), 0 -2px 0 #f6c97a;
 }
 
 .ds-td-sum {

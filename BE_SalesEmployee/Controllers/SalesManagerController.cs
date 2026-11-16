@@ -33,10 +33,27 @@ namespace BE_SalesEmployee.Controllers
         }
 
         [HttpGet("dashboard")]
-        public async Task<IActionResult> Dashboard([FromQuery] string? cityValue, CancellationToken ct)
+        public async Task<IActionResult> Dashboard(
+            [FromQuery] string? cityValue,
+            [FromQuery] int? year,
+            [FromQuery] int? month,
+            CancellationToken ct)
         {
             var user = TokenService.FromPrincipal(User);
-            var (status, payload) = await _aggregator.DashboardAsync(user, cityValue, ct);
+            var (status, payload) = await _aggregator.DashboardAsync(user, cityValue, ct, year, month);
+            return StatusCode(status, payload);
+        }
+
+        [HttpGet("dashboard/day")]
+        public async Task<IActionResult> DashboardDay(
+            [FromQuery] string? cityValue,
+            [FromQuery] int? year,
+            [FromQuery] int? month,
+            [FromQuery] int? day,
+            CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var (status, payload) = await _aggregator.DashboardDayAsync(user, cityValue, ct, year, month, day);
             return StatusCode(status, payload);
         }
 
@@ -65,6 +82,11 @@ namespace BE_SalesEmployee.Controllers
         [HttpGet("delegates")]
         public Task<IActionResult> Delegates([FromQuery] string? cityValue, CancellationToken ct) =>
             ListAsync(cityValue, "sales-manager/delegates", ct);
+
+        /// <summary>Director source filter: names only, every province.</summary>
+        [HttpGet("source-directory")]
+        public Task<IActionResult> SourceDirectory([FromQuery] string? cityValue, CancellationToken ct) =>
+            ListAsync(cityValue, "sales-manager/source-directory", ct);
 
         /// <summary>Sales Manager Followers tab — mirrors /employees routing (cityValue picks one branch).</summary>
         [HttpGet("followers")]
@@ -375,6 +397,11 @@ namespace BE_SalesEmployee.Controllers
             [FromQuery] int pageSize = 40,
             [FromQuery] string? tab = null,
             [FromQuery] string? q = null,
+            [FromQuery] string? from = null,
+            [FromQuery] string? to = null,
+            [FromQuery] string? sources = null,
+            [FromQuery] string? people = null,
+            [FromQuery] string? sourceFilter = null,
             CancellationToken ct = default)
         {
             if (page is > 0)
@@ -384,7 +411,12 @@ namespace BE_SalesEmployee.Controllers
                     ("page", page.Value.ToString()),
                     ("pageSize", pageSize.ToString()),
                     ("tab", tab),
-                    ("q", q));
+                    ("q", q),
+                    ("from", from),
+                    ("to", to),
+                    ("sources", sources),
+                    ("people", people),
+                    ("sourceFilter", sourceFilter));
                 // الكل: soft fan-out (~2s). محافظة واحدة: direct proxy.
                 if (string.IsNullOrWhiteSpace(cityValue))
                 {
@@ -394,7 +426,7 @@ namespace BE_SalesEmployee.Controllers
                     return StatusCode(httpStatus, payload);
                 }
 
-                return await OneAsync(cityValue, path, ct);
+                return await OneAsync(cityValue, SalesRequestPeopleQuery.RewritePath(path, cityValue), ct);
             }
 
             var legacy = Query(
@@ -414,6 +446,11 @@ namespace BE_SalesEmployee.Controllers
             [FromQuery] int? page,
             [FromQuery] int pageSize = 40,
             [FromQuery] string? q = null,
+            [FromQuery] string? from = null,
+            [FromQuery] string? to = null,
+            [FromQuery] string? sources = null,
+            [FromQuery] string? people = null,
+            [FromQuery] string? sourceFilter = null,
             CancellationToken ct = default)
         {
             if (page is > 0)
@@ -421,7 +458,12 @@ namespace BE_SalesEmployee.Controllers
                 var path = "sales-manager/sales-requests/deleted" + Query(
                     ("page", page.Value.ToString()),
                     ("pageSize", pageSize.ToString()),
-                    ("q", q));
+                    ("q", q),
+                    ("from", from),
+                    ("to", to),
+                    ("sources", sources),
+                    ("people", people),
+                    ("sourceFilter", sourceFilter));
                 if (string.IsNullOrWhiteSpace(cityValue))
                 {
                     var user = TokenService.FromPrincipal(User);
@@ -430,7 +472,7 @@ namespace BE_SalesEmployee.Controllers
                     return StatusCode(httpStatus, payload);
                 }
 
-                return await OneAsync(cityValue, path, ct);
+                return await OneAsync(cityValue, SalesRequestPeopleQuery.RewritePath(path, cityValue), ct);
             }
 
             return await ListAsync(cityValue, "sales-manager/sales-requests/deleted", ct);

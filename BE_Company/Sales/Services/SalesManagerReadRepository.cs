@@ -16,6 +16,33 @@ namespace BE_Company.Sales.Services
             _clock = clock;
         }
 
+        public async Task<IReadOnlyList<SalesSourceDirectoryPerson>> ListSourceDirectoryAsync(CancellationToken ct)
+        {
+            var cs = RequireConnection();
+            await using var connection = new SqlConnection(cs);
+            var rows = await connection.QueryAsync<SalesSourceDirectoryPerson>(new CommandDefinition(@"
+SELECT N'delegate' AS Role, d.DelegateID AS Id, d.DelegateName AS Name
+FROM dbo.Delegates d
+WHERE ISNULL(d.DelegateState, 1) <> 0
+  AND d.DelegateID > 0
+  AND NULLIF(LTRIM(RTRIM(d.DelegateName)), N'') IS NOT NULL
+UNION ALL
+SELECT N'follower', u.UserID, u.UserName
+FROM dbo.Users u
+WHERE ISNULL(u.UserState, 1) = 1
+  AND (u.UserType = N'متابع' OR u.UserType LIKE N'متابع%')
+  AND u.UserID > 0
+  AND NULLIF(LTRIM(RTRIM(u.UserName)), N'') IS NOT NULL
+UNION ALL
+SELECT N'employee', u.UserID, u.UserName
+FROM dbo.Users u
+WHERE u.UserType = N'موظف مبيعات'
+  AND u.UserID > 0
+  AND NULLIF(LTRIM(RTRIM(u.UserName)), N'') IS NOT NULL
+ORDER BY Name", cancellationToken: ct));
+            return rows.ToList();
+        }
+
         public async Task<IReadOnlyList<SalesManagerEmployeeRow>> ListEmployeesAsync(CancellationToken ct)
         {
             var cs = RequireConnection();

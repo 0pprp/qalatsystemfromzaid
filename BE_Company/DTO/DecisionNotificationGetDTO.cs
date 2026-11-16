@@ -7,6 +7,7 @@ namespace BE_Company.DTO
         public bool? IsRead { get; set; }
         public DateTime? CreatedDate { get; set; }
         public int? CustomerID { get; set; }
+        public bool? IsLegal { get; set; }
         public string? DecisionType { get; set; }
         public double? WeekPaid { get; set; }
         public double? PaidPercent { get; set; }

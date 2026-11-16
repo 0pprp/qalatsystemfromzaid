@@ -47,6 +47,8 @@ public sealed class DirectorDelegateFollowupDayRatingDto
     public string Label { get; set; } = "";
     public int? BoardOperatorScore { get; set; }
     public string? BoardOperatorNote { get; set; }
+    /// <summary>Who saved that day's board score (لجنة المراقبة / المحاسب الرئيسي).</summary>
+    public string? BoardOperatorRatedBy { get; set; }
 }
 
 public sealed class DirectorDelegateFollowupConversionFromDto
@@ -101,6 +103,10 @@ public sealed class DirectorDelegateFollowupTierMoneyDto
     /// <summary>Required due installment for this tier (non-zeroed excl. legal).</summary>
     public double RequiredDue { get; set; }
     public double CollectedYesterday { get; set; }
+    /// <summary>Non-legal customers currently in this tier.</summary>
+    public int CustomerCount { get; set; }
+    /// <summary>How many of <see cref="CustomerCount"/> paid yesterday.</summary>
+    public int PayersYesterday { get; set; }
     public IReadOnlyList<DirectorDelegateFollowupDayAmountDto> CollectedLast30Days { get; set; } =
         Array.Empty<DirectorDelegateFollowupDayAmountDto>();
 }
@@ -119,6 +125,7 @@ public sealed class DirectorDelegateFollowupUpsertBoardOperatorRatingRequest
 {
     public int Score { get; set; }
     public string? Note { get; set; }
+    public string? Slot { get; set; }
 }
 
 public sealed class DirectorDelegateFollowupListSummaryDto
@@ -178,6 +185,8 @@ public sealed class DirectorDelegateFollowupListSummaryDto
         Array.Empty<DirectorDelegateFollowupDayRatingDto>();
     public IReadOnlyList<DirectorDelegateFollowupDayRatingDto> BoardOperatorLast30Days { get; set; } =
         Array.Empty<DirectorDelegateFollowupDayRatingDto>();
+    public IReadOnlyList<DirectorDelegateFollowupDayRatingDto> AccountantBoardOperatorLast30Days { get; set; } =
+        Array.Empty<DirectorDelegateFollowupDayRatingDto>();
     public IReadOnlyList<DirectorDelegateFollowupDayRatingDto> FollowerCommitteeLast30Days { get; set; } =
         Array.Empty<DirectorDelegateFollowupDayRatingDto>();
     public IReadOnlyList<DirectorDelegateFollowupDayRatingDto> SupervisionCommitteeLast30Days { get; set; } =
@@ -187,7 +196,14 @@ public sealed class DirectorDelegateFollowupListSummaryDto
 
     public DirectorDelegateFollowupConversionDto Conversion { get; set; } = new();
 
+    /// <summary>Yesterday's supervision score, shown on the card.</summary>
     public DirectorDelegateFollowupBoardOperatorRatingDto? BoardOperatorRating { get; set; }
+    /// <summary>Today's supervision score, used to prefill the rating form.</summary>
+    public DirectorDelegateFollowupBoardOperatorRatingDto? BoardOperatorRatingToday { get; set; }
+    /// <summary>تقييم المحاسب الرئيسي — yesterday's score (slot "accountant").
+    /// BoardOperatorRating is تقييم لجنة المراقبة (both committee members).</summary>
+    public DirectorDelegateFollowupBoardOperatorRatingDto? AccountantBoardOperatorRating { get; set; }
+    public DirectorDelegateFollowupBoardOperatorRatingDto? AccountantBoardOperatorRatingToday { get; set; }
     /// <summary>Latest follower day rating (0–10) after إنهاء الجباية.</summary>
     public DirectorDelegateFollowupBoardOperatorRatingDto? FollowerCommitteeRating { get; set; }
     /// <summary>Latest BM visit rating (0–10) before مغادرة الفرع.</summary>
@@ -199,6 +215,22 @@ public sealed class DirectorDelegateFollowupListSummaryDto
     public int ActiveCustomerCount { get; set; }
     public int ActiveCustomerCountWeekAgo { get; set; }
     public string ActiveCountTrend { get; set; } = DirectorFollowerOpsTrendRules.Flat;
+}
+
+/// <summary>One hit in the navbar «بحث الزبائن» (director / supervisors / committee).</summary>
+public sealed class DirectorCustomerSearchHitDto
+{
+    public int CustomerID { get; set; }
+    public string CustomerName { get; set; } = "";
+    public string? PhoneNumber { get; set; }
+    public int? ListId { get; set; }
+    public string? ListName { get; set; }
+    public double AmountRemaining { get; set; }
+    /// <summary>True when nothing is left to pay (مصفر).</summary>
+    public bool IsFinished { get; set; }
+    public bool IsLegal { get; set; }
+    /// <summary>ممتاز / جيد / … — empty for finished customers.</summary>
+    public string RatingLabel { get; set; } = "";
 }
 
 /// <summary>
@@ -246,10 +278,11 @@ public interface IDirectorDelegateFollowupService
     Task<IReadOnlyList<DirectorDelegateFollowupListCardDto>> GetActiveListsAsync(CancellationToken ct);
     Task<DirectorDelegateFollowupListSummaryDto?> GetListSummaryAsync(int listId, CancellationToken ct);
     Task<IReadOnlyList<DirectorDelegateFollowupCustomerDto>> GetListCustomersAsync(int listId, CancellationToken ct);
+    Task<IReadOnlyList<DirectorCustomerSearchHitDto>> SearchCustomersAsync(string query, int take, bool includeFinished, CancellationToken ct);
     Task<DirectorDelegateFollowupBoardOperatorRatingDto?> GetBoardOperatorRatingAsync(
-        int listId, DateTime? ratingDate, CancellationToken ct);
+        int listId, DateTime? ratingDate, CancellationToken ct, string? raterSlot = null);
     Task<(bool Ok, string? Error, DirectorDelegateFollowupBoardOperatorRatingDto? Row)> UpsertBoardOperatorRatingAsync(
-        int listId, int score, string? note, string? ratedByUserName, CancellationToken ct);
+        int listId, int score, string? note, string? ratedByUserName, CancellationToken ct, string? raterSlot = null);
 
     /// <summary>BM visit ratings mirrored into company for the board card.</summary>
     Task<(bool Ok, string? Error)> UpsertSupervisionRatingsAsync(
@@ -304,7 +337,7 @@ public sealed class DirectorDelegateFollowupService : IDirectorDelegateFollowupS
                 ListName = row.ListName,
                 RealRating = real.AverageScore,
                 RealRatingLabel = real.RatingLabel,
-                NonZeroedCustomerCount = facts.Count,
+                NonZeroedCustomerCount = facts.Count(f => !f.IsLegal),
                 LastPaymentDate = row.LastPaymentDate
             });
         }
@@ -333,15 +366,24 @@ public sealed class DirectorDelegateFollowupService : IDirectorDelegateFollowupS
             return null;
         }
 
-        var openBalance = await LoadOpenBalanceFactsAsync([listId], ct);
+        var listFacts = await LoadListFactsAsync([listId], ct);
+        var openBalance = listFacts.Where(f => f.AmountRemaining > 0).ToList();
+        // Keep a customer who just finished paying on the tier cards for two days,
+        // so yesterday's collection still lands in a tier.
+        var tierCohort = listFacts
+            .Where(f => f.AmountRemaining > 0 || DirectorDelegateFollowupRules.KeepSettledCustomer(f, asOf))
+            .ToList();
         var daySales = await LoadAmountDaySalesForListAsync(listId, ct);
         var real = EmployeeSalesRating.Snapshot(openBalance, asOf, usePhantomSaleDate: false);
         var weekReal = EmployeeSalesRating.Snapshot(openBalance, weekAgo, usePhantomSaleDate: false);
+        // القانونية stays out of the board counts and tier drill-down.
+        var visibleBalance = openBalance.Where(f => !f.IsLegal).ToList();
+        var visibleReal = EmployeeSalesRating.Snapshot(visibleBalance, asOf, usePhantomSaleDate: false);
         var remainingBands = DirectorDelegateFollowupRules.CountRemainingBands(
-            openBalance.Select(f => f.AmountRemaining));
+            visibleBalance.Select(f => f.AmountRemaining));
 
         var rated = CustomerRatingCalculator
-            .EvaluateMany(openBalance, asOf, usePhantomSaleDate: false)
+            .EvaluateMany(tierCohort, asOf, usePhantomSaleDate: false)
             .GroupBy(r => r.CustomerId)
             .ToDictionary(g => g.Key, g => g.First());
 
@@ -363,7 +405,10 @@ public sealed class DirectorDelegateFollowupService : IDirectorDelegateFollowupS
         if (ratingFrom < rangeFrom)
             rangeFrom = ratingFrom;
 
-        var paymentRows = await LoadCollectedPaymentRowsAsync(listId, rangeFrom, historyTo, ct);
+        var legalIds = tierCohort.Where(f => f.IsLegal).Select(f => f.CustomerId).ToHashSet();
+        var paymentRows = (await LoadCollectedPaymentRowsAsync(listId, rangeFrom, historyTo, ct))
+            .Where(p => !legalIds.Contains(p.CustomerId))
+            .ToList();
 
         var paymentsByDay = paymentRows
             .GroupBy(p => p.PaymentDate.Date)
@@ -423,19 +468,18 @@ public sealed class DirectorDelegateFollowupService : IDirectorDelegateFollowupS
             };
         }).ToList();
 
-        var boardOpByDay = await LoadBoardOperatorRatingsRangeAsync(listId, historyFrom, asOf, ct);
-        var boardOpLast30 = historyDays.Select(d =>
+        var boardOpByDay = await LoadBoardOperatorRatingsRangeAsync(listId, historyFrom, asOf, ct, BoardOperatorSlotHead);
+        var accountantByDay = await LoadBoardOperatorRatingsRangeAsync(listId, historyFrom, asOf, ct, BoardOperatorSlotAccountant);
+        var boardOpLast30 = new List<DirectorDelegateFollowupDayRatingDto>(historyDays.Count + 1)
         {
-            boardOpByDay.TryGetValue(d.Date, out var row);
-            return new DirectorDelegateFollowupDayRatingDto
-            {
-                Date = d,
-                Score = row?.Score ?? 0,
-                Label = row is null ? "" : $"{row.Score}/10",
-                BoardOperatorScore = row?.Score,
-                BoardOperatorNote = row?.Note
-            };
-        }).ToList();
+            BoardOperatorHistoryDay(asOf.Date, boardOpByDay)
+        };
+        boardOpLast30.AddRange(historyDays.Select(d => BoardOperatorHistoryDay(d, boardOpByDay)));
+        var accountantLast30 = new List<DirectorDelegateFollowupDayRatingDto>(historyDays.Count + 1)
+        {
+            BoardOperatorHistoryDay(asOf.Date, accountantByDay)
+        };
+        accountantLast30.AddRange(historyDays.Select(d => BoardOperatorHistoryDay(d, accountantByDay)));
 
         string StatusFor(CustomerRatingFacts f, DateTime day)
         {
@@ -564,11 +608,14 @@ public sealed class DirectorDelegateFollowupService : IDirectorDelegateFollowupS
             CustomerRatingLabels.Rejected,
             CustomerRatingLabels.Bad,
         };
+        var yesterday = DirectorDelegateFollowupRules.ReportedYesterday(asOf);
         var tierMoney = new List<DirectorDelegateFollowupTierMoneyDto>(tierLabels.Length);
         foreach (var label in tierLabels)
         {
-            var tierFacts = openBalance.Where(f =>
-                labelByCustomer.TryGetValue(f.CustomerId, out var lb) && lb == label).ToList();
+            var tierFacts = tierCohort.Where(f =>
+                !f.IsLegal
+                && labelByCustomer.TryGetValue(f.CustomerId, out var lb)
+                && lb == label).ToList();
 
             var tierDue = DirectorDelegateFollowupRules.SumRequiredDueInstallment(
                 tierFacts.Select(f =>
@@ -590,14 +637,24 @@ public sealed class DirectorDelegateFollowupService : IDirectorDelegateFollowupS
             {
                 Label = label,
                 RequiredDue = tierDue,
-                CollectedYesterday = TierDay(asOf.AddDays(-1)),
+                CollectedYesterday = TierDay(yesterday),
+                CustomerCount = tierFacts.Count,
+                PayersYesterday = DirectorDelegateFollowupRules.CountDistinctPayers(
+                    paymentRows, tierIds, yesterday),
                 CollectedLast30Days = historyDays
                     .Select(d => new DirectorDelegateFollowupDayAmountDto { Date = d, Amount = TierDay(d) })
                     .ToList()
             });
         }
 
-        var boardOp = await GetBoardOperatorRatingAsync(listId, asOf, ct);
+        var boardOp = await GetBoardOperatorRatingAsync(
+            listId, DirectorDelegateFollowupRules.BoardOperatorRatingDate(asOf), ct, BoardOperatorSlotHead);
+        var boardOpToday = await GetBoardOperatorRatingAsync(
+            listId, DirectorDelegateFollowupRules.BoardOperatorEntryDate(asOf), ct, BoardOperatorSlotHead);
+        var accountantOp = await GetBoardOperatorRatingAsync(
+            listId, DirectorDelegateFollowupRules.BoardOperatorRatingDate(asOf), ct, BoardOperatorSlotAccountant);
+        var accountantOpToday = await GetBoardOperatorRatingAsync(
+            listId, DirectorDelegateFollowupRules.BoardOperatorEntryDate(asOf), ct, BoardOperatorSlotAccountant);
 
         var followerRows = await LoadFollowerDayRatingsAsync(listId, historyFrom, asOf, ct);
         var supervisionRows = await LoadSupervisionDayRatingsAsync(listId, historyFrom, asOf, ct);
@@ -619,18 +676,18 @@ public sealed class DirectorDelegateFollowupService : IDirectorDelegateFollowupS
             RealRatingWeekAgo = weekReal.AverageScore,
             RatingTrend = DirectorFollowerOpsTrendRules.ComputeScoreTrend(
                 real.AverageScore, weekReal.AverageScore),
-            NonZeroedCustomerCount = openBalance.Count,
+            NonZeroedCustomerCount = visibleBalance.Count,
             LegalCustomerCount = openBalance.Count(f => f.IsLegal),
-            ExcellentCount = real.ExcellentCount,
-            GoodCount = real.GoodCount,
-            WeakCount = real.WeakCount,
-            LaggingCount = real.RejectedCount,
-            BadCount = real.BadCount,
+            ExcellentCount = visibleReal.ExcellentCount,
+            GoodCount = visibleReal.GoodCount,
+            WeakCount = visibleReal.WeakCount,
+            LaggingCount = visibleReal.RejectedCount,
+            BadCount = visibleReal.BadCount,
             RemainingLt100Count = remainingBands.Lt100k,
             Remaining100To200Count = remainingBands.From100To200k,
             RemainingGe100Count = remainingBands.Ge100k,
             RequiredDueToday = requiredDue,
-            CollectedYesterday = DayAmount(asOf.AddDays(-1)),
+            CollectedYesterday = DayAmount(yesterday),
             CollectedLastFriday = DayAmount(lastFriday),
             LastFridayDate = lastFriday,
             CollectedLast30Days = last30,
@@ -638,11 +695,15 @@ public sealed class DirectorDelegateFollowupService : IDirectorDelegateFollowupS
             TierMoney = tierMoney,
             RealRatingLast30Days = realRatingLast30,
             BoardOperatorLast30Days = boardOpLast30,
+            AccountantBoardOperatorLast30Days = accountantLast30,
             FollowerCommitteeLast30Days = DirectorInputRatingSlots.BuildLast30Days(followerRows, historyDays),
             SupervisionCommitteeLast30Days = DirectorInputRatingSlots.BuildLast30Days(supervisionRows, historyDays),
             SalesDelegateLast30Days = DirectorInputRatingSlots.BuildLast30Days(salesRows, historyDays),
             Conversion = conversion,
             BoardOperatorRating = boardOp,
+            BoardOperatorRatingToday = boardOpToday,
+            AccountantBoardOperatorRating = accountantOp,
+            AccountantBoardOperatorRatingToday = accountantOpToday,
             FollowerCommitteeRating = followerToday,
             SupervisionCommitteeRating = supervisionToday,
             SalesDelegateRating = salesToday,
@@ -717,22 +778,164 @@ public sealed class DirectorDelegateFollowupService : IDirectorDelegateFollowupS
         return result;
     }
 
+    /// <summary>Arabic letter variants folded in SQL (same set on both sides of LIKE).</summary>
+    private const string FoldedName =
+        "REPLACE(REPLACE(REPLACE(REPLACE(ISNULL(C.CustomerName, N''), N'أ', N'ا'), N'إ', N'ا'), N'آ', N'ا'), N'ى', N'ي')";
+
+    private static string FoldArabic(string value) =>
+        value.Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا').Replace('ى', 'ي');
+
+    private sealed class SearchRow
+    {
+        public int CustomerID { get; set; }
+        public string? CustomerName { get; set; }
+        public string? PhoneNumber { get; set; }
+        public int? DelegateID { get; set; }
+        public string? DelegateName { get; set; }
+    }
+
+    public async Task<IReadOnlyList<DirectorCustomerSearchHitDto>> SearchCustomersAsync(
+        string query, int take, bool includeFinished, CancellationToken ct)
+    {
+        var q = (query ?? "").Trim();
+        if (q.Length < 2)
+        {
+            return [];
+        }
+
+        take = Math.Clamp(take, 1, 50);
+        // Finished (مصفر) customers are dropped after the payoff check, so over-fetch candidates.
+        var candidates = includeFinished ? take : Math.Min(take * 4, 200);
+
+        // Lean lookup: Customers + Delegates only (no per-customer totals for the whole branch).
+        // Every word must appear in the name; a digits-only query also matches the phone.
+        var words = FoldArabic(q)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Take(5)
+            .ToList();
+        var digits = new string(q.Where(char.IsDigit).ToArray());
+        var args = new DynamicParameters();
+        args.Add("Take", candidates);
+        args.Add("Prefix", EscapeLike(words[0]) + "%");
+        var nameConds = new List<string>();
+        for (var i = 0; i < words.Count; i++)
+        {
+            args.Add($"W{i}", "%" + EscapeLike(words[i]) + "%");
+            nameConds.Add($"{FoldedName} LIKE @W{i} ESCAPE '!'");
+        }
+
+        var where = "(" + string.Join(" AND ", nameConds) + ")";
+        if (digits.Length >= 4 && digits.Length == q.Replace(" ", "").Length)
+        {
+            args.Add("Phone", "%" + digits + "%");
+            where += " OR C.PhoneNumber LIKE @Phone";
+        }
+
+        var sql = $@"
+SELECT TOP (@Take)
+    C.CustomerID, C.CustomerName, C.PhoneNumber, C.DelegateID,
+    LTRIM(RTRIM(ISNULL(D.DelegateName, N''))) AS DelegateName
+FROM dbo.Customers C
+LEFT JOIN dbo.Delegates D ON D.DelegateID = C.DelegateID
+WHERE C.CustomerState = 1 AND ({where})
+ORDER BY CASE WHEN {FoldedName} LIKE @Prefix ESCAPE '!' THEN 0 ELSE 1 END, C.CustomerName;";
+
+        List<SearchRow> rows;
+        await using (var connection = new SqlConnection(RequireCs()))
+        {
+            rows = (await connection.QueryAsync<SearchRow>(new CommandDefinition(
+                    sql, args, commandTimeout: 15, cancellationToken: ct)))
+                .Where(r => r.CustomerID > 0)
+                .GroupBy(r => r.CustomerID)
+                .Select(g => g.First())
+                .ToList();
+        }
+
+        if (rows.Count == 0)
+        {
+            return [];
+        }
+
+        var asOf = IraqToday();
+        var ids = rows.Select(r => r.CustomerID).ToList();
+        var facts = (await _rating.GetFactsByCustomerIdsAsync(ids, ct))
+            .Select(f => f with { RatingEquationFactor = 1.0 })
+            .ToList();
+        var factsById = facts.GroupBy(f => f.CustomerId).ToDictionary(g => g.Key, g => g.First());
+        var ratedById = CustomerRatingCalculator
+            .EvaluateMany(facts.Where(f => f.AmountRemaining > 0).ToList(), asOf, usePhantomSaleDate: false)
+            .GroupBy(r => r.CustomerId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var hits = rows.Select(r =>
+        {
+            factsById.TryGetValue(r.CustomerID, out var fact);
+            ratedById.TryGetValue(r.CustomerID, out var rated);
+            var remaining = fact?.AmountRemaining ?? 0;
+            var finished = remaining <= 0;
+            var listId = r.DelegateID ?? fact?.DelegateId;
+            return new DirectorCustomerSearchHitDto
+            {
+                CustomerID = r.CustomerID,
+                CustomerName = r.CustomerName ?? "",
+                PhoneNumber = r.PhoneNumber,
+                ListId = listId,
+                ListName = string.IsNullOrWhiteSpace(r.DelegateName)
+                    ? (listId is > 0 ? $"قائمة {listId}" : null)
+                    : r.DelegateName,
+                AmountRemaining = remaining,
+                IsFinished = finished,
+                IsLegal = fact?.IsLegal == true,
+                RatingLabel = finished || rated is null ? "" : CustomerRatingLabels.FromLevel(rated.Level),
+            };
+        });
+
+        return hits
+            .Where(h => includeFinished || !h.IsFinished)
+            .Take(take)
+            .ToList();
+    }
+
+    private static string EscapeLike(string value) =>
+        value.Replace("!", "!!").Replace("%", "!%").Replace("_", "!_").Replace("[", "![");
+
+    /// <summary>تقييم لجنة المراقبة — written by both committee members (and المدير/المراقب).</summary>
+    public const string BoardOperatorSlotHead = "head";
+    /// <summary>Legacy مساعد مسؤول لجنة المراقبة rows (before 2026-11-15); read only, as committee fallback.</summary>
+    public const string BoardOperatorSlotAssistant = "assistant";
+    /// <summary>تقييم المحاسب الرئيسي — written by the branch main accountant only.</summary>
+    public const string BoardOperatorSlotAccountant = "accountant";
+
+    /// <summary>"accountant" stays accountant; anything else (incl. legacy "assistant") is the committee slot.</summary>
+    public static string NormalizeBoardOperatorSlot(string? slot) =>
+        string.Equals(slot?.Trim(), BoardOperatorSlotAccountant, StringComparison.OrdinalIgnoreCase)
+            ? BoardOperatorSlotAccountant
+            : BoardOperatorSlotHead;
+
+    /// <summary>Committee reads also see legacy assistant rows; a head row wins on the same day.</summary>
+    public static string[] BoardOperatorReadSlots(string slot) =>
+        slot == BoardOperatorSlotHead
+            ? new[] { BoardOperatorSlotHead, BoardOperatorSlotAssistant }
+            : new[] { slot };
+
     public async Task<DirectorDelegateFollowupBoardOperatorRatingDto?> GetBoardOperatorRatingAsync(
-        int listId, DateTime? ratingDate, CancellationToken ct)
+        int listId, DateTime? ratingDate, CancellationToken ct, string? raterSlot = null)
     {
         if (listId <= 0)
             return null;
 
-        var day = (ratingDate ?? IraqToday()).Date;
+        var slot = NormalizeBoardOperatorSlot(raterSlot);
+        var day = (ratingDate ?? DirectorDelegateFollowupRules.BoardOperatorRatingDate(IraqToday())).Date;
         await EnsureBoardOperatorRatingsTableAsync(ct);
         var cs = RequireCs();
         await using var connection = new SqlConnection(cs);
         var row = await connection.QueryFirstOrDefaultAsync<BoardOpRow>(
             new CommandDefinition(@"
-SELECT ListId, RatingDate, Score, Note, RatedByUserName
+SELECT TOP 1 ListId, RatingDate, Score, Note, RatedByUserName
 FROM dbo.DirectorBoardOperatorListRatings
-WHERE ListId = @ListId AND RatingDate = @RatingDate;",
-                new { ListId = listId, RatingDate = day },
+WHERE ListId = @ListId AND RatingDate = @RatingDate AND RaterSlot IN @RaterSlots
+ORDER BY CASE WHEN RaterSlot = @RaterSlot THEN 0 ELSE 1 END;",
+                new { ListId = listId, RatingDate = day, RaterSlot = slot, RaterSlots = BoardOperatorReadSlots(slot) },
                 cancellationToken: ct));
 
         if (row is null)
@@ -767,14 +970,18 @@ WHERE ListId = @ListId AND RatingDate = @RatingDate;",
 
     public async Task<(bool Ok, string? Error, DirectorDelegateFollowupBoardOperatorRatingDto? Row)>
         UpsertBoardOperatorRatingAsync(
-            int listId, int score, string? note, string? ratedByUserName, CancellationToken ct)
+            int listId, int score, string? note, string? ratedByUserName, CancellationToken ct, string? raterSlot = null)
     {
         if (listId <= 0)
             return (false, "معرّف القائمة غير صالح", null);
         if (!DirectorDelegateFollowupRules.IsValidBoardOperatorScore(score))
             return (false, "التقييم يجب أن يكون بين 0 و 10", null);
+        var noteError = DirectorDelegateFollowupRules.ValidateBoardOperatorNote(score, note);
+        if (noteError != null)
+            return (false, noteError, null);
 
-        var day = IraqToday();
+        var slot = NormalizeBoardOperatorSlot(raterSlot);
+        var day = DirectorDelegateFollowupRules.BoardOperatorEntryDate(IraqToday());
         var cleanNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
         if (cleanNote is { Length: > 500 })
             cleanNote = cleanNote[..500];
@@ -784,26 +991,27 @@ WHERE ListId = @ListId AND RatingDate = @RatingDate;",
         await using var connection = new SqlConnection(cs);
         await connection.ExecuteAsync(new CommandDefinition(@"
 MERGE dbo.DirectorBoardOperatorListRatings AS t
-USING (SELECT @ListId AS ListId, @RatingDate AS RatingDate) AS s
-ON t.ListId = s.ListId AND t.RatingDate = s.RatingDate
+USING (SELECT @ListId AS ListId, @RatingDate AS RatingDate, @RaterSlot AS RaterSlot) AS s
+ON t.ListId = s.ListId AND t.RatingDate = s.RatingDate AND t.RaterSlot = s.RaterSlot
 WHEN MATCHED THEN UPDATE SET
   Score = @Score,
   Note = @Note,
   RatedByUserName = @RatedByUserName,
   CreatedAtUtc = SYSUTCDATETIME()
-WHEN NOT MATCHED THEN INSERT (ListId, RatingDate, Score, Note, RatedByUserName, CreatedAtUtc)
-VALUES (@ListId, @RatingDate, @Score, @Note, @RatedByUserName, SYSUTCDATETIME());",
+WHEN NOT MATCHED THEN INSERT (ListId, RatingDate, RaterSlot, Score, Note, RatedByUserName, CreatedAtUtc)
+VALUES (@ListId, @RatingDate, @RaterSlot, @Score, @Note, @RatedByUserName, SYSUTCDATETIME());",
             new
             {
                 ListId = listId,
                 RatingDate = day,
+                RaterSlot = slot,
                 Score = score,
                 Note = cleanNote,
                 RatedByUserName = string.IsNullOrWhiteSpace(ratedByUserName) ? null : ratedByUserName.Trim()
             },
             cancellationToken: ct));
 
-        var row = await GetBoardOperatorRatingAsync(listId, day, ct);
+        var row = await GetBoardOperatorRatingAsync(listId, day, ct, slot);
         return (true, null, row);
     }
 
@@ -915,9 +1123,18 @@ FROM dbo.Delegates WHERE DelegateID = @ListId;",
             return [];
         }
 
+        var facts = await LoadListFactsAsync(listIds, ct);
+        return facts.Where(f => f.AmountRemaining > 0).ToList();
+    }
+
+    private async Task<List<CustomerRatingFacts>> LoadListFactsAsync(
+        IReadOnlyList<int> listIds, CancellationToken ct)
+    {
+        if (listIds.Count == 0)
+            return [];
+
         var facts = await _rating.GetFactsByListIdsAsync(listIds, ct);
         return facts
-            .Where(f => f.AmountRemaining > 0)
             .Select(f => f with { RatingEquationFactor = 1.0 })
             .ToList();
     }
@@ -1244,21 +1461,62 @@ BEGIN
   CREATE TABLE dbo.DirectorBoardOperatorListRatings (
     ListId INT NOT NULL,
     RatingDate DATE NOT NULL,
+    RaterSlot NVARCHAR(20) NOT NULL CONSTRAINT DF_DirectorBoardOp_Slot DEFAULT N'head',
     Score INT NOT NULL,
     Note NVARCHAR(500) NULL,
     RatedByUserName NVARCHAR(100) NULL,
     CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_DirectorBoardOp_Created DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT PK_DirectorBoardOperatorListRatings PRIMARY KEY (ListId, RatingDate)
+    CONSTRAINT PK_DirectorBoardOperatorListRatings PRIMARY KEY (ListId, RatingDate, RaterSlot)
   );
+END
+IF COL_LENGTH(N'dbo.DirectorBoardOperatorListRatings', N'RaterSlot') IS NULL
+BEGIN
+  ALTER TABLE dbo.DirectorBoardOperatorListRatings
+    ADD RaterSlot NVARCHAR(20) NOT NULL CONSTRAINT DF_DirectorBoardOp_Slot DEFAULT N'head';
+END
+DECLARE @pk sysname;
+SELECT @pk = kc.name
+FROM sys.key_constraints kc
+WHERE kc.parent_object_id = OBJECT_ID(N'dbo.DirectorBoardOperatorListRatings')
+  AND kc.[type] = 'PK';
+IF @pk IS NOT NULL AND NOT EXISTS (
+  SELECT 1
+  FROM sys.index_columns ic
+  JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+  JOIN sys.indexes i ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+  WHERE i.is_primary_key = 1
+    AND ic.object_id = OBJECT_ID(N'dbo.DirectorBoardOperatorListRatings')
+    AND c.name = N'RaterSlot')
+BEGIN
+  DECLARE @drop nvarchar(400) = N'ALTER TABLE dbo.DirectorBoardOperatorListRatings DROP CONSTRAINT ' + QUOTENAME(@pk);
+  EXEC sp_executesql @drop;
+  ALTER TABLE dbo.DirectorBoardOperatorListRatings
+    ADD CONSTRAINT PK_DirectorBoardOperatorListRatings PRIMARY KEY (ListId, RatingDate, RaterSlot);
 END", cancellationToken: ct));
     }
 
+    private static DirectorDelegateFollowupDayRatingDto BoardOperatorHistoryDay(
+        DateTime day, IReadOnlyDictionary<DateTime, BoardOpRow> byDay)
+    {
+        byDay.TryGetValue(day.Date, out var row);
+        return new DirectorDelegateFollowupDayRatingDto
+        {
+            Date = day.Date,
+            Score = row?.Score ?? 0,
+            Label = row is null ? "" : $"{row.Score}/10",
+            BoardOperatorScore = row?.Score,
+            BoardOperatorNote = row?.Note,
+            BoardOperatorRatedBy = row?.RatedByUserName
+        };
+    }
+
     private async Task<Dictionary<DateTime, BoardOpRow>> LoadBoardOperatorRatingsRangeAsync(
-        int listId, DateTime fromDate, DateTime toDate, CancellationToken ct)
+        int listId, DateTime fromDate, DateTime toDate, CancellationToken ct, string? raterSlot = null)
     {
         var map = new Dictionary<DateTime, BoardOpRow>();
         if (listId <= 0)
             return map;
+        var slot = NormalizeBoardOperatorSlot(raterSlot);
 
         try
         {
@@ -1270,9 +1528,19 @@ SELECT ListId, RatingDate, Score, Note, RatedByUserName
 FROM dbo.DirectorBoardOperatorListRatings
 WHERE ListId = @ListId
   AND RatingDate >= @FromDate
-  AND RatingDate <= @ToDate;",
-                new { ListId = listId, FromDate = fromDate.Date, ToDate = toDate.Date },
+  AND RatingDate <= @ToDate
+  AND RaterSlot IN @RaterSlots
+ORDER BY CASE WHEN RaterSlot = @RaterSlot THEN 1 ELSE 0 END;",
+                new
+                {
+                    ListId = listId,
+                    FromDate = fromDate.Date,
+                    ToDate = toDate.Date,
+                    RaterSlot = slot,
+                    RaterSlots = BoardOperatorReadSlots(slot),
+                },
                 cancellationToken: ct));
+            // Primary-slot rows come last, so they replace legacy rows of the same day.
             foreach (var row in rows)
                 map[row.RatingDate.Date] = row;
         }

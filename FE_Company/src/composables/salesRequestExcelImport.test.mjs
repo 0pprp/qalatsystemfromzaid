@@ -92,3 +92,29 @@ test('parseSalesRequestExcel rejects unknown province without Najaf fallback', (
   assert.match(result.errors[0].message, /غير معروفة/)
   assert.doesNotMatch(result.errors[0].message, /فلتر/)
 })
+
+test('product column headers map to saleType so the product is kept', () => {
+  for (const header of ['نوع المبيع', 'المنتج', 'المنتج المطلوب', 'المادة', 'الماده', 'الصنف', 'نوع الطلب', 'Product', 'product_name'])
+    assert.equal(excelHeaderKey(header), 'saleType', header)
+})
+
+test('parseSalesRequestExcel keeps the product from a «المنتج» column', () => {
+  const matrix = [
+    ['اسم الزبون', 'الهاتف', 'المحافظة', 'العنوان', 'المنتج'],
+    ['أ', '07801111111', 'النجف', 'كوفة', 'ثلاجة'],
+  ]
+  const result = parseSalesRequestExcel(matrix, { XLSX: fakeXlsx(matrix), resolveCity })
+  assert.equal(result.valid[0].saleType, 'ثلاجة')
+  assert.equal(result.hasSaleTypeColumn, true)
+  assert.deepEqual(result.ignoredColumns, [])
+})
+
+test('parseSalesRequestExcel reports columns it ignores', () => {
+  const matrix = [
+    ['اسم الزبون', 'الهاتف', 'المحافظة', 'ملاحظات اخرى'],
+    ['أ', '07801111111', 'النجف', 'x'],
+  ]
+  const result = parseSalesRequestExcel(matrix, { XLSX: fakeXlsx(matrix), resolveCity })
+  assert.equal(result.hasSaleTypeColumn, false)
+  assert.deepEqual(result.ignoredColumns, ['ملاحظات اخرى'])
+})

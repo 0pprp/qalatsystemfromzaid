@@ -2,6 +2,129 @@ import 'package:delegate_application/utils/iraq_date.dart';
 
 enum TodayPaymentFilter { all, paid, unpaid }
 
+/// Why «تسديد» was refused before a row was written.
+enum CollectionBlockKind { none, alreadyCollected, waitingToSend }
+
+class CollectionBlock {
+  final CollectionBlockKind kind;
+  final String? message;
+
+  const CollectionBlock._(this.kind, this.message);
+
+  static const none = CollectionBlock._(CollectionBlockKind.none, null);
+
+  static const alreadyCollectedMessage = 'لا يمكن التسديد مرة أخرى لهذا العميل';
+
+  static const waitingToSendMessage =
+      'يوجد تسديد سابق بانتظار الإرسال لهذا العميل — اضغط إرسال التسديدات أولاً';
+
+  bool get isBlocked => kind != CollectionBlockKind.none;
+
+  static CollectionBlock fromFlags({
+    required bool ledgerHasBusinessDay,
+    required bool hasPaymentOnBusinessDay,
+    required bool hasUnsyncedPayment,
+  }) {
+    if (ledgerHasBusinessDay || hasPaymentOnBusinessDay) {
+      return const CollectionBlock._(
+        CollectionBlockKind.alreadyCollected,
+        alreadyCollectedMessage,
+      );
+    }
+    if (hasUnsyncedPayment) {
+      return const CollectionBlock._(
+        CollectionBlockKind.waitingToSend,
+        waitingToSendMessage,
+      );
+    }
+    return none;
+  }
+
+  /// Headline plus one block of facts per local row, so a photo of the dialog
+  /// shows why this customer cannot be collected.
+  static CollectionBlock detailed({
+    required CollectionBlockKind kind,
+    required String headline,
+    List<Map<String, dynamic>> rows = const [],
+    String? extraLine,
+  }) {
+    final lines = <String>[headline];
+    if (extraLine != null && extraLine.trim().isNotEmpty) {
+      lines.add(extraLine.trim());
+    }
+    if (rows.isEmpty && extraLine == null) {
+      return CollectionBlock._(kind, headline);
+    }
+    for (var i = 0; i < rows.length && i < 3; i++) {
+      lines.add('');
+      if (rows.length > 1) {
+        lines.add('تسديد ${i + 1}:');
+      } else {
+        lines.add('تفاصيل التسديد العالق:');
+      }
+      lines.addAll(_factLines(rows[i]));
+    }
+    if (rows.length > 3) {
+      lines.add('');
+      lines.add('وتسديدات أخرى: ${rows.length - 3}');
+    }
+    return CollectionBlock._(kind, lines.join('\n'));
+  }
+
+  static List<String> _factLines(Map<String, dynamic> row) {
+    final status = row['SyncStatus']?.toString();
+    final error = row['SyncError']?.toString().trim() ?? '';
+    final created = row['CreatedAtUtc']?.toString() ?? '';
+    final clientPaymentId = row['ClientPaymentId']?.toString().trim() ?? '';
+    return [
+      'المبلغ: ${_formatAmount(row['Amount'])}',
+      'تاريخ الحفظ: ${IraqDate.formatIraqDateTime(created).isEmpty ? 'غير معروف' : IraqDate.formatIraqDateTime(created)}',
+      'الوقت المخزن: ${created.isEmpty ? 'فارغ' : created}',
+      'الحالة: ${_statusLabel(status)}',
+      'رمز الحالة: ${status == null || status.isEmpty ? 'فارغ' : status}',
+      'مرفوض نهائياً: ${TodayPaymentsLogic.isPermanentFailureFlag(row['PermanentFailure']) ? 'نعم' : 'لا'}',
+      'سبب الرفض: ${error.isEmpty ? 'لا يوجد' : error}',
+      'رقم العميل: ${row['CustomerId'] ?? 'فارغ'}',
+      'رقم القائمة: ${row['DelegateId'] ?? 'فارغ'}',
+      'معرّف التسديد: ${clientPaymentId.isEmpty ? 'فارغ' : clientPaymentId}',
+    ];
+  }
+
+  static String _statusLabel(String? status) {
+    switch (status) {
+      case null:
+      case '':
+        return 'بدون حالة';
+      case 'PendingSync':
+        return 'بانتظار الإرسال';
+      case 'Syncing':
+        return 'جاري الإرسال ولم يكتمل';
+      case 'SyncFailed':
+        return 'فشل الإرسال';
+      case 'Synced':
+        return 'تم الإرسال';
+      case 'AwaitingSession':
+        return 'بانتظار إعادة تسجيل الدخول';
+      default:
+        return status;
+    }
+  }
+
+  static String _formatAmount(dynamic value) {
+    final raw = value?.toString().replaceAll(',', '') ?? '';
+    final amount = double.tryParse(raw);
+    if (amount == null) return 'غير معروف';
+    final digits = amount.round().abs().toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) buffer.write(',');
+      buffer.write(digits[i]);
+    }
+    if (amount < 0) return '-$buffer';
+    return buffer.toString();
+  }
+}
+
 enum TodayPaymentStatus { paid, unpaid }
 
 /// Pure helpers for «تسديدات اليوم».
@@ -90,24 +213,134 @@ class TodayPaymentsLogic {
     });
   }
 
+  /// Server rejects CreatedAtUtc older than this ([CollectionPaymentRules.MaxPastSkew]).
+  static const Duration maxUploadAge = Duration(days: 30);
+
+  static const tooOldToUploadMessage = 'وقت إنشاء التسديد قديم جدًا';
+
+  static bool isPermanentFailureFlag(dynamic value) {
+    if (value == null) return false;
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final text = value.toString().trim().toLowerCase();
+    return text == '1' || text == 'true';
+  }
+
+  /// True when the server will never accept this historical row.
+  static bool isBeyondUploadWindow(String? createdAtUtc, [DateTime? utcNow]) {
+    if (createdAtUtc == null || createdAtUtc.trim().isEmpty) return false;
+    try {
+      final created = DateTime.parse(createdAtUtc.trim()).toUtc();
+      final now = (utcNow ?? DateTime.now()).toUtc();
+      return now.difference(created) > maxUploadAge;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Hard rejects and expired rows. «إرسال التسديدات» must not revive them,
+  /// and they must not freeze a later collection.
+  static bool isTerminalUnuploadableError(String? error) {
+    final text = error?.trim() ?? '';
+    if (text.isEmpty) return false;
+    if (text == 'OWNER_MISMATCH') return true;
+    if (text.contains('2,000') || text.contains('2000')) return true;
+    if (text.contains('فارغًا') || text.contains('فارغا')) return true;
+    if (text.contains('معرف العميل غير صالح')) return true;
+    if (text.contains('قديم')) return true;
+    return false;
+  }
+
+  /// Unsynced rows still worth uploading block a second collection.
+  /// A row the server will never take (older than 30 days, or a terminal
+  /// reject) does not — otherwise that customer can never pay again.
+  static bool unsyncedRowBlocksCollection(
+    Map<String, dynamic> payment, {
+    DateTime? utcNow,
+  }) {
+    if (isBeyondUploadWindow(payment['CreatedAtUtc']?.toString(), utcNow)) {
+      return false;
+    }
+    if (isPermanentFailureFlag(payment['PermanentFailure']) &&
+        isTerminalUnuploadableError(payment['SyncError']?.toString())) {
+      return false;
+    }
+    final status = payment['SyncStatus']?.toString();
+    return status == null ||
+        status.isEmpty ||
+        status == 'PendingSync' ||
+        status == 'SyncFailed' ||
+        status == 'Syncing';
+  }
+
   /// Unsynced rows (any calendar day) block a second collection until upload
   /// finishes — stops day-23 pending + day-25 re-collect duplicates.
   static bool hasUnsyncedPayment({
     required int customerId,
     required int delegateId,
     required List<Map<String, dynamic>> localPayments,
+    DateTime? utcNow,
   }) {
     return localPayments.any((p) {
       final cid = int.tryParse(p['CustomerId']?.toString() ?? '') ?? 0;
       final did = int.tryParse(p['DelegateId']?.toString() ?? '') ?? 0;
       if (cid != customerId || did != delegateId) return false;
-      final status = p['SyncStatus']?.toString();
-      return status == null ||
-          status.isEmpty ||
-          status == 'PendingSync' ||
-          status == 'SyncFailed' ||
-          status == 'Syncing';
+      return unsyncedRowBlocksCollection(p, utcNow: utcNow);
     });
+  }
+
+  /// Why a new collection is refused, so the dialog can leave «جاري حفظ…»
+  /// and offer «إرسال التسديدات» instead of spinning forever.
+  static List<Map<String, dynamic>> _rowsForCustomerDelegate({
+    required int customerId,
+    required int delegateId,
+    required List<Map<String, dynamic>> localPayments,
+  }) {
+    return localPayments.where((p) {
+      final cid = int.tryParse(p['CustomerId']?.toString() ?? '') ?? 0;
+      final did = int.tryParse(p['DelegateId']?.toString() ?? '') ?? 0;
+      return cid == customerId && did == delegateId;
+    }).toList();
+  }
+
+  static CollectionBlock classifyCollection({
+    required int customerId,
+    required int delegateId,
+    required List<Map<String, dynamic>> localPayments,
+    bool ledgerHasBusinessDay = false,
+    DateTime? utcNow,
+  }) {
+    final owned = _rowsForCustomerDelegate(
+      customerId: customerId,
+      delegateId: delegateId,
+      localPayments: localPayments,
+    );
+    final onDay = owned
+        .where((p) =>
+            IraqDate.isCreatedOnIraqDay(p['CreatedAtUtc']?.toString(), utcNow))
+        .toList();
+    if (ledgerHasBusinessDay || onDay.isNotEmpty) {
+      return CollectionBlock.detailed(
+        kind: CollectionBlockKind.alreadyCollected,
+        headline: CollectionBlock.alreadyCollectedMessage,
+        rows: onDay,
+        extraLine: onDay.isEmpty
+            ? 'السبب: سجل يوم العمل على الجهاز يقول إن هذا العميل سُدّد اليوم، ولا يوجد صف ظاهر في قائمة الإرسال.'
+            : 'السبب: يوجد تسديد محفوظ لهذا العميل في يوم العمل الحالي.',
+      );
+    }
+    final waiting = owned
+        .where((p) => unsyncedRowBlocksCollection(p, utcNow: utcNow))
+        .toList();
+    if (waiting.isNotEmpty) {
+      return CollectionBlock.detailed(
+        kind: CollectionBlockKind.waitingToSend,
+        headline: CollectionBlock.waitingToSendMessage,
+        rows: waiting,
+        extraLine: 'السبب: هذا التسديد ما زال على الجهاز ولم يُقبل على الخادم.',
+      );
+    }
+    return CollectionBlock.none;
   }
 
   /// Block re-collection when local day payment, durable ledger, or unsynced
@@ -119,20 +352,13 @@ class TodayPaymentsLogic {
     bool ledgerHasBusinessDay = false,
     DateTime? utcNow,
   }) {
-    if (ledgerHasBusinessDay) return true;
-    if (hasPaymentOnBusinessDay(
+    return classifyCollection(
       customerId: customerId,
       delegateId: delegateId,
       localPayments: localPayments,
+      ledgerHasBusinessDay: ledgerHasBusinessDay,
       utcNow: utcNow,
-    )) {
-      return true;
-    }
-    return hasUnsyncedPayment(
-      customerId: customerId,
-      delegateId: delegateId,
-      localPayments: localPayments,
-    );
+    ).isBlocked;
   }
 
   static List<Map<String, dynamic>> filterPaymentsOnBusinessDay(

@@ -1,3 +1,5 @@
+using BE_Company.Sales.Rating;
+
 namespace BE_Company.Sales.Services;
 
 /// <summary>
@@ -12,6 +14,13 @@ public static class DirectorDelegateFollowupRules
     public const int CollectedHistoryDays = 30;
     public const int BoardOperatorScoreMin = 0;
     public const int BoardOperatorScoreMax = 10;
+    /// <summary>Scores below this (6 and under) require a note.</summary>
+    public const int BoardOperatorNoteRequiredBelow = 7;
+    /// <summary>
+    /// A customer who finished paying stays on the tier cards through this many days
+    /// after the last payment (the payment day itself counts as day 0).
+    /// </summary>
+    public const int SettledCustomerKeepDays = 2;
 
     /// <summary>Same IQD bands as <see cref="DirectorFollowerOpsService"/>.</summary>
     public const double RemainingBand100k = 100_000;
@@ -35,6 +44,21 @@ public static class DirectorDelegateFollowupRules
     /// </summary>
     public static bool IsRequiredDueEligible(double amountRemaining, bool isLegal) =>
         amountRemaining > 0 && !isLegal;
+
+    /// <summary>
+    /// Finished customers stay in the tier totals until two days after the last payment.
+    /// Open balances are not handled here.
+    /// </summary>
+    public static bool KeepSettledCustomer(CustomerRatingFacts facts, DateTime asOf)
+    {
+        if (facts.AmountRemaining != 0 || facts.AmountTotalSales <= 0)
+            return false;
+        if (facts.LastPaymentDate is not DateTime paid)
+            return false;
+        var paidOn = paid.Date;
+        var today = asOf.Date;
+        return paidOn <= today && paidOn >= today.AddDays(-SettledCustomerKeepDays);
+    }
 
     public static double SumRequiredDueInstallment(
         IEnumerable<(double AmountDaySales, double AmountRemaining, bool IsLegal)> rows)
@@ -62,12 +86,24 @@ public static class DirectorDelegateFollowupRules
         return d.AddDays(-daysBack);
     }
 
+    /// <summary>
+    /// Day this page reports as yesterday. Friday is not a reporting day,
+    /// so Saturday reports Thursday.
+    /// </summary>
+    public static DateTime ReportedYesterday(DateTime asOf)
+    {
+        var day = asOf.Date.AddDays(-1);
+        if (day.DayOfWeek == DayOfWeek.Friday)
+            day = day.AddDays(-1);
+        return day;
+    }
+
     public static IReadOnlyList<DateTime> LastNCalendarDaysEndingYesterday(DateTime asOf, int days)
     {
         if (days <= 0)
             return [];
 
-        var yesterday = asOf.Date.AddDays(-1);
+        var yesterday = ReportedYesterday(asOf);
         var list = new List<DateTime>(days);
         for (var i = 0; i < days; i++)
             list.Add(yesterday.AddDays(-i));
@@ -178,6 +214,45 @@ public static class DirectorDelegateFollowupRules
 
     public static bool IsValidBoardOperatorScore(int score) =>
         score >= BoardOperatorScoreMin && score <= BoardOperatorScoreMax;
+
+    /// <summary>Date shown on the supervision card: reported yesterday in Baghdad (Friday skipped).</summary>
+    public static DateTime BoardOperatorRatingDate(DateTime asOf) => ReportedYesterday(asOf);
+
+    /// <summary>Date the supervision form saves: today in Baghdad.</summary>
+    public static DateTime BoardOperatorEntryDate(DateTime asOf) => asOf.Date;
+
+    public static bool BoardOperatorNoteIsRequired(int score) =>
+        score < BoardOperatorNoteRequiredBelow;
+
+    /// <summary>Null when the note is acceptable. Scores of 6 and below need a non-empty note.</summary>
+    public static string? ValidateBoardOperatorNote(int score, string? note)
+    {
+        if (!BoardOperatorNoteIsRequired(score))
+            return null;
+        if (string.IsNullOrWhiteSpace(note))
+            return "الملاحظة إلزامية عندما يكون التقييم 6 أو أقل";
+        return null;
+    }
+
+    /// <summary>Distinct customers in <paramref name="customerIds"/> with a positive payment on <paramref name="day"/>.</summary>
+    public static int CountDistinctPayers(
+        IEnumerable<(int CustomerId, DateTime PaymentDate, double Amount)> rows,
+        IReadOnlySet<int> customerIds,
+        DateTime day)
+    {
+        var paid = new HashSet<int>();
+        var target = day.Date;
+        foreach (var row in rows)
+        {
+            if (row.Amount <= 0 || row.PaymentDate.Date != target)
+                continue;
+            if (!customerIds.Contains(row.CustomerId))
+                continue;
+            paid.Add(row.CustomerId);
+        }
+
+        return paid.Count;
+    }
 
     public static bool IsRemainingLt100k(double amountRemaining) =>
         amountRemaining > 0 && amountRemaining < RemainingBand100k;

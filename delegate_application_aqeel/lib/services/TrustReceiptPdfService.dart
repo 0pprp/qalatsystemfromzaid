@@ -41,14 +41,19 @@ class TrustReceiptPdfService {
   }
 
   static String _f(dynamic s) => s?.toString() ?? '';
-  static String _dd(dynamic d) => d != null ? (d is String ? d.substring(0, 10) : d.toString().substring(0, 10)) : '';
+  static String _dd(dynamic d) {
+    if (d == null) return '';
+    final s = d is String ? d : d.toString();
+    if (s.length >= 10) return s.substring(0, 10);
+    return s;
+  }
 
   // ──────────────────── PAGE 1: عقد بيع ────────────────────
   static pw.Widget _buildContractPage(
       pw.Context _, Map<String, dynamic> d, pw.ImageProvider? logo) {
-    final s = const pw.TextStyle(fontSize: 10.5, height: 1.65);
-    final sb = const pw.TextStyle(fontSize: 10.5, height: 1.65, fontWeight: pw.FontWeight.bold);
-    final title = const pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold);
+    final s = pw.TextStyle(fontSize: 10.5, height: 1.65);
+    final sb = pw.TextStyle(fontSize: 10.5, height: 1.65, fontWeight: pw.FontWeight.bold);
+    final title = pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold);
 
     return pw.Container(
       padding: const pw.EdgeInsets.all(14),
@@ -113,7 +118,7 @@ class TrustReceiptPdfService {
 
   static pw.Widget _sig(String label, String val) {
     return pw.SizedBox(width: 85, child: pw.Column(children: [
-      pw.Text(label, style: const pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
+      pw.Text(label, style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
       pw.SizedBox(height: 25),
       pw.Text(val.isNotEmpty ? val : "..................", style: const pw.TextStyle(fontSize: 8), textAlign: pw.TextAlign.center),
     ]));
@@ -121,7 +126,7 @@ class TrustReceiptPdfService {
 
   static pw.Widget _r(String label, String value) {
     return pw.Row(children: [
-      pw.Text(label, style: const pw.TextStyle(fontSize: 10.5, fontWeight: pw.FontWeight.bold)),
+      pw.Text(label, style: pw.TextStyle(fontSize: 10.5, fontWeight: pw.FontWeight.bold)),
       pw.SizedBox(width: 6),
       pw.Expanded(child: pw.Text(value, style: const pw.TextStyle(fontSize: 10.5))),
     ]);
@@ -130,9 +135,9 @@ class TrustReceiptPdfService {
   // ──────────────────── PAGE 2: وصل أمانة ────────────────────
   static pw.Widget _buildTrustReceiptPage(
       pw.Context _, Map<String, dynamic> d, pw.ImageProvider? logo) {
-    final s = const pw.TextStyle(fontSize: 12, height: 2.0);
-    final sb = const pw.TextStyle(fontSize: 12, height: 2.0, fontWeight: pw.FontWeight.bold);
-    final title = const pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold);
+    final s = pw.TextStyle(fontSize: 12, height: 2.0);
+    final sb = pw.TextStyle(fontSize: 12, height: 2.0, fontWeight: pw.FontWeight.bold);
+    final title = pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold);
 
     return pw.Container(
       padding: const pw.EdgeInsets.all(14),
@@ -191,7 +196,7 @@ class TrustReceiptPdfService {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 5),
       child: pw.Row(children: [
-        pw.Text(label, style: const pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+        pw.Text(label, style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
         pw.SizedBox(width: 8),
         pw.Expanded(child: pw.Text(value, style: const pw.TextStyle(fontSize: 12))),
       ]),

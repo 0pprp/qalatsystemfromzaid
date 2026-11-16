@@ -82,10 +82,12 @@ namespace BE_Company.Sales.Tests
             string? q,
             int skip,
             int take,
-            CancellationToken ct)
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null)
         {
             IEnumerable<SalesRequestDTO> query = Rows.Where(r => !r.IsDeleted
-                && !(SalesExceptionHoldStatuses.IsHeld(r.ExceptionHoldStatus) && r.TargetEmployeeId <= 0));
+                && !(SalesExceptionHoldStatuses.IsHeld(r.ExceptionHoldStatus) && r.TargetEmployeeId <= 0)
+                && (filter == null || filter.Matches(r)));
             if (targetEmployeeId is > 0)
                 query = query.Where(r => r.TargetEmployeeId == targetEmployeeId);
             if (!string.IsNullOrWhiteSpace(q))
@@ -119,10 +121,11 @@ namespace BE_Company.Sales.Tests
             return Task.FromResult<(IReadOnlyList<SalesRequestDTO>, int)>((page, list.Count));
         }
 
-        public Task<Dictionary<string, int>> CountManagerTabsAsync(CancellationToken ct)
+        public Task<Dictionary<string, int>> CountManagerTabsAsync(CancellationToken ct, SalesRequestBoardFilter? filter = null)
         {
             var active = Rows.Where(r => !r.IsDeleted
-                && !(SalesExceptionHoldStatuses.IsHeld(r.ExceptionHoldStatus) && r.TargetEmployeeId <= 0)).ToList();
+                && !(SalesExceptionHoldStatuses.IsHeld(r.ExceptionHoldStatus) && r.TargetEmployeeId <= 0)
+                && (filter == null || filter.Matches(r))).ToList();
             return Task.FromResult(new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
             {
                 ["all"] = active.Count,
@@ -137,7 +140,7 @@ namespace BE_Company.Sales.Tests
                 ["pending"] = active.Count(r => r.Status == "Pending"),
                 ["rejected"] = active.Count(r => r.Status == "Rejected"),
                 ["sold"] = active.Count(r => r.Status == "Completed"),
-                ["deleted"] = Rows.Count(r => r.IsDeleted),
+                ["deleted"] = Rows.Count(r => r.IsDeleted && (filter == null || filter.Matches(r))),
             });
         }
 
@@ -145,9 +148,10 @@ namespace BE_Company.Sales.Tests
             string? q,
             int skip,
             int take,
-            CancellationToken ct)
+            CancellationToken ct,
+            SalesRequestBoardFilter? filter = null)
         {
-            IEnumerable<SalesRequestDTO> query = Rows.Where(r => r.IsDeleted);
+            IEnumerable<SalesRequestDTO> query = Rows.Where(r => r.IsDeleted && (filter == null || filter.Matches(r)));
             if (!string.IsNullOrWhiteSpace(q))
             {
                 var needle = q.Trim('%');
@@ -241,6 +245,9 @@ namespace BE_Company.Sales.Tests
         public List<SalesShiftDTO> Shifts { get; } = [];
         public List<SalesDraftDTO> Sales { get; } = [];
         public List<SalesManagerRoutePointDTO> Route { get; } = [];
+
+        public Task<IReadOnlyList<SalesSourceDirectoryPerson>> ListSourceDirectoryAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SalesSourceDirectoryPerson>>([]);
 
         public Task<IReadOnlyList<SalesManagerEmployeeRow>> ListEmployeesAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SalesManagerEmployeeRow>>(Employees);

@@ -6,6 +6,7 @@ export default [
   },
   {
     title: 'التقييمات',
+
     // Explicit empty query → hub cards (not last ?city=)
     to: { name: 'director-ratings', query: {} },
     icon: { icon: 'tabler-chart-histogram', size: '25' },
@@ -23,6 +24,15 @@ export default [
       return { name: 'director-delegate-followup', query: city ? { city } : {} }
     },
     icon: { icon: 'tabler-users', size: '25' },
+  },
+  {
+    title: 'متابعة السيئين',
+    to: () => {
+      const city = String(localStorage.getItem('director-bad-customers-city') || '').trim()
+
+      return { name: 'director-bad-customers', query: city ? { city } : {} }
+    },
+    icon: { icon: 'tabler-user-exclamation', size: '25' },
   },
   {
     title: 'متابعة المبيعات',
@@ -91,6 +101,16 @@ export default [
         },
         icon: { icon: 'tabler-cash', size: '22' },
       },
+      {
+        title: 'مواقع وصور المحلات',
+        to: () => {
+          const city = String(localStorage.getItem('director-follower-work-city') || '').trim()
+
+          return { name: 'director-follower-work', query: { tab: 'shopCapture', ...(city ? { city } : {}) } }
+        },
+        icon: { icon: 'tabler-map-pin', size: '22' },
+      },
+
       // FollowerRoutesInMonitorWork_V1 — moved from accountant «متابعة المتابعين»
       {
         title: 'الموقع المباشر',
@@ -251,7 +271,6 @@ export default [
     title: 'إدارة المبيعات',
     icon: { icon: 'tabler-map-pin', size: '25' },
     children: [
-      { title: 'نظرة عامة', to: { name: 'sales-manager-dashboard' }, icon: { icon: 'tabler-layout-dashboard', size: '22' } },
       { title: 'موظفين المبيعات', to: { name: 'sales-manager-employees' }, icon: { icon: 'tabler-users', size: '22' } },
       { title: 'الموقع المباشر', to: { name: 'sales-manager-map' }, icon: { icon: 'tabler-map', size: '22' } },
       { title: 'المسارات', to: { name: 'sales-manager-routes' }, icon: { icon: 'tabler-route', size: '22' } },
@@ -259,6 +278,31 @@ export default [
       { title: 'ملخص المبيعات', to: { name: 'sales-manager-sales-summary' }, icon: { icon: 'tabler-chart-bar', size: '22' } },
       { title: 'القانونية', to: { name: 'sales-manager-legal-followups' }, icon: { icon: 'tabler-gavel', size: '22' } },
       { title: 'طلبات البيع', to: { name: 'sales-manager-requests' }, icon: { icon: 'tabler-send', size: '22' } },
+    ],
+  },
+  {
+    title: 'تطبيق المسوّقين',
+    icon: { icon: 'tabler-device-mobile', size: '25' },
+    children: [
+      { title: 'نظرة عامة', to: { name: 'customer-app-overview' }, icon: { icon: 'tabler-layout-dashboard', size: '22' } },
+      { title: 'المسوّقون', to: { name: 'customer-app-agents' }, icon: { icon: 'tabler-user-check', size: '22' } },
+      { title: 'دوام المسوّقين', to: { name: 'customer-app-attendance' }, icon: { icon: 'tabler-map-pin-check', size: '22' } },
+      { title: 'المحلات المثبّتة', to: { name: 'customer-app-prospects' }, icon: { icon: 'tabler-map-pin-plus', size: '22' } },
+      { title: 'الأهداف اليومية', to: { name: 'customer-app-targets' }, icon: { icon: 'tabler-target-arrow', size: '22' } },
+      { title: 'إعدادات التطبيق', to: { name: 'customer-app-settings' }, icon: { icon: 'tabler-settings', size: '22' } },
+    ],
+  },
+  {
+    title: 'المروّجون أونلاين',
+    icon: { icon: 'tabler-world-share', size: '25' },
+    children: [
+      { title: 'نظرة عامة', to: { name: 'promoters-app-overview' }, icon: { icon: 'tabler-layout-dashboard', size: '22' } },
+      { title: 'المروّجون', to: { name: 'promoters-app-users' }, icon: { icon: 'tabler-users-group', size: '22' } },
+      { title: 'المنتجات والعمولات', to: { name: 'promoters-app-products' }, icon: { icon: 'tabler-package', size: '22' } },
+      { title: 'طلبات المروّجين', to: { name: 'promoters-app-orders' }, icon: { icon: 'tabler-shopping-cart', size: '22' } },
+      { title: 'طلبات السحب', to: { name: 'promoters-app-payouts' }, icon: { icon: 'tabler-wallet', size: '22' } },
+      { title: 'المواد التسويقية', to: { name: 'promoters-app-materials' }, icon: { icon: 'tabler-photo-video', size: '22' } },
+      { title: 'الإعدادات', to: { name: 'promoters-app-settings' }, icon: { icon: 'tabler-settings', size: '22' } },
     ],
   },
   {

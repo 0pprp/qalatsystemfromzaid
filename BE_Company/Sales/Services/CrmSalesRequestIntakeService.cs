@@ -14,6 +14,10 @@ public sealed class CrmSalesRequestIntakeRequest
     public string? CustomerAddress { get; set; }
     public string? Notes { get; set; }
     public string? ProductName { get; set; }
+    /// <summary>Optional. "CustomerApp" = BE_CustomerApp order; empty/other = CRM (default).</summary>
+    public string? Source { get; set; }
+    /// <summary>CustomerApp only: the field agent (المروج) who made the order.</summary>
+    public string? SubmittedByName { get; set; }
 }
 
 public sealed class CrmSalesRequestIntakeResult
@@ -98,31 +102,33 @@ public sealed class CrmSalesRequestIntakeService : ICrmSalesRequestIntakeService
         }
 
         var actor = BuildGatewayManager();
+        var source = CrmIntakeSourceProfile.Resolve(request.Source);
+        var createdByName = source.CreatedByNameFor(request.SubmittedByName);
         SalesPhoneNormalizer.RequireValidIfPresent(request.CustomerPhone);
         var phone = string.IsNullOrWhiteSpace(request.CustomerPhone)
             ? null
             : SalesPhoneNormalizer.ForStorage(request.CustomerPhone);
 
         var notes = string.IsNullOrWhiteSpace(request.Notes)
-            ? (string.IsNullOrWhiteSpace(request.ProductName) ? null : $"منتج CRM: {request.ProductName.Trim()}")
+            ? (string.IsNullOrWhiteSpace(request.ProductName) ? null : $"{source.ProductNoteLabel}: {request.ProductName.Trim()}")
             : request.Notes.Trim();
         if (!string.IsNullOrWhiteSpace(request.ProductName)
             && !string.IsNullOrWhiteSpace(request.Notes)
             && !notes!.Contains(request.ProductName.Trim(), StringComparison.Ordinal))
         {
-            notes = $"{notes}\nمنتج CRM: {request.ProductName.Trim()}";
+            notes = $"{notes}\n{source.ProductNoteLabel}: {request.ProductName.Trim()}";
         }
 
         var row = new SalesRequestDTO
         {
             CreatedByUserId = 0,
-            CreatedByName = "قسم التسويق",
-            CreatedByUserType = SalesRequestSources.Crm,
+            CreatedByName = createdByName,
+            CreatedByUserType = source.CreatedByUserType,
             TargetEmployeeId = 0,
             TargetEmployeeName = null,
             CityValue = actor.BranchId,
             CityName = actor.BranchName,
-            CustomerSourceType = SalesRequestSources.Crm,
+            CustomerSourceType = source.CustomerSourceType,
             ExternalCrmOrderUuid = request.CrmOrderUuid,
             CustomerName = name,
             CustomerPhone = phone,
@@ -163,8 +169,8 @@ public sealed class CrmSalesRequestIntakeService : ICrmSalesRequestIntakeService
             Event = SalesRequestEvents.Created,
             Status = saved.Status,
             ActorUserId = 0,
-            ActorName = "قسم التسويق",
-            ActorType = SalesRequestSources.Crm,
+            ActorName = createdByName,
+            ActorType = source.CreatedByUserType,
             Note = saved.Notes,
             CreatedAtUtc = _clock.UtcNow
         }, ct);
@@ -186,7 +192,7 @@ public sealed class CrmSalesRequestIntakeService : ICrmSalesRequestIntakeService
         var hasMatch = CrmSalesBoardMatchGate.ShouldBlockAutoAssign(programHasMatch, boardHasMatch);
 
         var autoAssigned = false;
-        if (!hasMatch)
+        if (!hasMatch && source.AutoAssign)
         {
             var peers = (await _employees.ListActiveSalesEmployeesAsync(ct))
                 .Where(e => e.EmployeeId > 0)
@@ -215,16 +221,20 @@ public sealed class CrmSalesRequestIntakeService : ICrmSalesRequestIntakeService
             saved = await _repo.GetByIdAsync(saved.Id, ct) ?? saved;
         }
 
-        await _statusNotifier.NotifyAsync(
-            new CrmSalesBoardStatusNotification
-            {
-                CrmOrderUuid = request.CrmOrderUuid,
-                SalesRequestId = saved.Id,
-                CityValue = saved.CityValue,
-                BoardStatus = "Processing",
-                RejectReason = null
-            },
-            ct);
+        // CustomerApp rows are polled by BE_CustomerApp; only real CRM rows go back to the old CRM.
+        if (source.NotifyCrmBoard)
+        {
+            await _statusNotifier.NotifyAsync(
+                new CrmSalesBoardStatusNotification
+                {
+                    CrmOrderUuid = request.CrmOrderUuid,
+                    SalesRequestId = saved.Id,
+                    CityValue = saved.CityValue,
+                    BoardStatus = "Processing",
+                    RejectReason = null
+                },
+                ct);
+        }
 
         return new CrmSalesRequestIntakeResult
         {

@@ -21,6 +21,7 @@ namespace BE_SalesEmployee.Controllers
         private readonly IGlobalCustomerSearchService _search;
         private readonly IHubContext<BE_SalesEmployee.Hubs.SalesTrackingHub> _hub;
         private readonly ISalesEmployeeAppBlockStore _appBlocks;
+        private readonly ArchiveRecipientsService _archiveRecipients;
 
         public SalesController(
             BranchProxyService proxy,
@@ -28,8 +29,10 @@ namespace BE_SalesEmployee.Controllers
             SalesDevelopmentGuard guard,
             IGlobalCustomerSearchService search,
             IHubContext<BE_SalesEmployee.Hubs.SalesTrackingHub> hub,
-            ISalesEmployeeAppBlockStore appBlocks)
+            ISalesEmployeeAppBlockStore appBlocks,
+            ArchiveRecipientsService archiveRecipients)
         {
+            _archiveRecipients = archiveRecipients;
             _proxy = proxy;
             _cities = cities;
             _guard = guard;
@@ -609,6 +612,111 @@ namespace BE_SalesEmployee.Controllers
                 cityName = user.CityName
             });
         }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("archive")]
+        public Task<IActionResult> Archive(CancellationToken ct) =>
+            ProxyAssigned("sales/archive", HttpMethod.Get, null, ct);
+
+        /// <summary>مسؤول / مساعد مسؤول لجنة المراقبة of the agent's branch — who may receive the archive.</summary>
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("archive/recipients")]
+        public async Task<IActionResult> ArchiveRecipients(CancellationToken ct)
+        {
+            var user = TokenService.FromPrincipal(User);
+            var rows = await _archiveRecipients.ForCityAsync(user.CityValue, ct);
+            return Ok(new { recipients = rows.Select(r => new { name = r.Name, role = r.Role }) });
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("archive/{bundleId:int}")]
+        public Task<IActionResult> ArchiveBundle(int bundleId, CancellationToken ct) =>
+            ProxyAssigned($"sales/archive/{bundleId}", HttpMethod.Get, null, ct);
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpPost("archive/{bundleId:int}/send")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit(64_000_000)]
+        [RequestFormLimits(MultipartBodyLengthLimit = 64_000_000)]
+        public async Task<IActionResult> SendArchive(int bundleId, CancellationToken ct)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var sender = TokenService.FromPrincipal(User);
+            var recipient = Request.Form["recipientName"].ToString().Trim();
+            var allowed = await _archiveRecipients.ForCityAsync(sender.CityValue, ct);
+            if (allowed.All(r => !string.Equals(r.Name, recipient, StringComparison.Ordinal)))
+            {
+                return BadRequest(new
+                {
+                    message = recipient.Length == 0
+                        ? "حدّث التطبيق ثم اختر مسؤول لجنة المراقبة أو مساعده الذي سيستلم الأرشيف."
+                        : "المستلم المختار ليس مسؤول لجنة المراقبة أو مساعده لفرعك."
+                });
+            }
+
+            try
+            {
+                using var form = new MultipartFormDataContent();
+                form.Add(new StringContent(recipient), "recipientName");
+                foreach (var upload in Request.Form.Files.Where(f => f.Length > 0))
+                {
+                    await MultipartProxyContent.AddAsync(form, upload, "files", ct);
+                }
+
+                form.Add(new StringContent(Request.Form["intermediateName"].ToString()), "intermediateName");
+                form.Add(new StringContent(Request.Form["intermediatePhone"].ToString()), "intermediatePhone");
+                form.Add(new StringContent(Request.Form["note"].ToString()), "note");
+                return await ProxyAssigned($"sales/archive/{bundleId}/send", HttpMethod.Post, form, ct);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "تعذر إرسال الأرشيف.",
+                    detail = ex.GetType().Name
+                });
+            }
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("archive/{bundleId:int}/photo")]
+        public Task<IActionResult> ArchivePhoto(int bundleId, CancellationToken ct) =>
+            ArchivePhoto(bundleId, ct, null);
+
+        private async Task<IActionResult> ArchivePhoto(int bundleId, CancellationToken ct, int? photoId)
+        {
+            var blocked = await BlockIfNotDemo(ct);
+            if (blocked != null)
+            {
+                return blocked;
+            }
+
+            var user = TokenService.FromPrincipal(User);
+            var relative = photoId is > 0
+                ? $"sales/archive/{bundleId}/photos/{photoId}"
+                : $"sales/archive/{bundleId}/photo";
+            using var response = await _proxy.SendAuthorizedAsync(
+                user.CityLink, relative, HttpMethod.Get, user.BranchToken, null, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(ct);
+                return StatusCode((int)response.StatusCode, string.IsNullOrWhiteSpace(error) ? null : BranchProxyService.TryParseJson(error));
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+            return File(bytes, contentType);
+        }
+
+        [Authorize(Policy = SalesPolicies.SalesEmployee)]
+        [HttpGet("archive/{bundleId:int}/photos/{photoId:int}")]
+        public Task<IActionResult> ArchivePhotoById(int bundleId, int photoId, CancellationToken ct) =>
+            ArchivePhoto(bundleId, ct, photoId > 0 ? photoId : null);
 
         private async Task<ActionResult?> BlockIfNotDemo(CancellationToken ct)
         {

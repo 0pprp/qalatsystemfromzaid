@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:sales_employee_application/screens/archive_screen.dart';
 import 'package:sales_employee_application/screens/pending_sales_screen.dart';
 import 'package:sales_employee_application/screens/submitted_requests_screen.dart';
 import 'package:sales_employee_application/tracking/shift_tracking_controller.dart';
 import 'package:sales_employee_application/utils/app_theme.dart';
 
-/// Bottom tabs: home (inbox bins) + submitted sales-request history.
+/// Bottom tabs: home, submitted sales-request history, and the paper archive.
 class MainShellScreen extends StatefulWidget {
   const MainShellScreen({super.key});
 
@@ -14,6 +15,7 @@ class MainShellScreen extends StatefulWidget {
 
 class _MainShellScreenState extends State<MainShellScreen> with WidgetsBindingObserver {
   int _index = 0;
+  final _archiveKey = GlobalKey<ArchiveScreenState>();
 
   @override
   void initState() {
@@ -40,14 +42,20 @@ class _MainShellScreenState extends State<MainShellScreen> with WidgetsBindingOb
     return Scaffold(
       body: IndexedStack(
         index: _index,
-        children: const [
-          PendingSalesScreen(),
-          _SubmittedTabHost(),
+        children: [
+          const PendingSalesScreen(),
+          const _SubmittedTabHost(),
+          ArchiveScreen(key: _archiveKey),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        onDestinationSelected: (i) {
+          setState(() => _index = i);
+          if (i == 2) {
+            _archiveKey.currentState?.reload();
+          }
+        },
         indicatorColor: AppColors.darkGreen.withValues(alpha: 0.15),
         destinations: const [
           NavigationDestination(
@@ -59,6 +67,11 @@ class _MainShellScreenState extends State<MainShellScreen> with WidgetsBindingOb
             icon: Icon(Icons.history_outlined),
             selectedIcon: Icon(Icons.history, color: AppColors.darkGreen),
             label: 'سجل طلبات المبيع',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.inventory_2_outlined),
+            selectedIcon: Icon(Icons.inventory_2, color: AppColors.darkGreen),
+            label: 'الارشيف',
           ),
         ],
       ),

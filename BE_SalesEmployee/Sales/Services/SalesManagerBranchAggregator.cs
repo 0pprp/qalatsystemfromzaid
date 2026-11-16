@@ -27,7 +27,19 @@ namespace BE_SalesEmployee.Sales.Services
         Task<(int Status, object? Body)> SendContentAsync(GatewayUser user, string cityValue, string companyPath, HttpMethod method, HttpContent? content, CancellationToken ct, string? actorRole = null);
         Task<(int Status, object? Body)> SearchCustomersAsync(GatewayUser user, string? query, string? cityValue, CancellationToken ct);
         Task<(int Status, object? Body)> ExcelSearchAsync(GatewayUser user, string? cityValue, string jsonBody, CancellationToken ct);
-        Task<(int Status, object? Body)> DashboardAsync(GatewayUser user, string? cityValue, CancellationToken ct);
+        Task<(int Status, object? Body)> DashboardAsync(
+            GatewayUser user,
+            string? cityValue,
+            CancellationToken ct,
+            int? year = null,
+            int? month = null);
+        Task<(int Status, object? Body)> DashboardDayAsync(
+            GatewayUser user,
+            string? cityValue,
+            CancellationToken ct,
+            int? year,
+            int? month,
+            int? day);
         Task<(int Status, object? Body)> EvaluateAcrossBranchesAsync(GatewayUser user, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> EvaluationHitsAcrossBranchesAsync(GatewayUser user, string jsonBody, CancellationToken ct);
         Task<(int Status, object? Body)> TransferProvinceAsync(
@@ -56,7 +68,7 @@ namespace BE_SalesEmployee.Sales.Services
         }
 
         public Task<IReadOnlyList<AdminCity>> BranchesAsync(CancellationToken ct) =>
-            GetTargetsAsync(null, ct);
+            GetTargetsAsync(null, null, ct);
 
         public async Task<(int Status, object? Body)> GetAsync(
             GatewayUser user,
@@ -64,7 +76,7 @@ namespace BE_SalesEmployee.Sales.Services
             string companyPath,
             CancellationToken ct)
         {
-            var targets = await GetTargetsAsync(cityValue, ct);
+            var targets = await GetTargetsAsync(user, cityValue, ct);
             if (targets.Count == 0)
             {
                 return (200, Array.Empty<object>());
@@ -81,12 +93,13 @@ namespace BE_SalesEmployee.Sales.Services
             // Cheap lists: soft first-paint (~1s).
             // Employees/followers: MUST wait for every province — soft-cut after the first
             // city with data previously dropped slow branches (incomplete follower list).
-            var longList = NeedsLongBranchTimeout(companyPath);
-            var perBranch = longList ? FanoutSoftDeadline.LongListBranchTimeout : FanoutSoftDeadline.MultiBranchTimeout;
+            // Source directory: names only, so wait for every province but cap each branch at 8s.
+            var waitForEveryBranch = FanoutWaitsForEveryBranch(companyPath);
+            var perBranch = FanoutPerBranchTimeout(companyPath);
             var tasks = targets
                 .Select(city => FetchArrayAsync(user, city, companyPath, perBranch, ct))
                 .ToList();
-            if (longList)
+            if (waitForEveryBranch)
             {
                 var mergedLong = await FanoutSoftDeadline.CollectAsync(
                     tasks,
@@ -114,7 +127,7 @@ namespace BE_SalesEmployee.Sales.Services
             string companyPath,
             CancellationToken ct)
         {
-            var targets = await GetTargetsAsync(cityValue, ct);
+            var targets = await GetTargetsAsync(user, cityValue, ct);
             var total = 0;
             var failed = new System.Collections.Concurrent.ConcurrentBag<string>();
             var succeeded = 0;
@@ -161,7 +174,7 @@ namespace BE_SalesEmployee.Sales.Services
             string jsonBody,
             CancellationToken ct)
         {
-            var targets = await GetTargetsAsync(cityValue, ct);
+            var targets = await GetTargetsAsync(user, cityValue, ct);
             if (targets.Count == 0)
             {
                 return (400, new { message = "لا توجد محافظة للإرسال." });
@@ -243,7 +256,7 @@ namespace BE_SalesEmployee.Sales.Services
             string companyPath,
             CancellationToken ct)
         {
-            var targets = await GetTargetsAsync(null, ct);
+            var targets = await GetTargetsAsync(user, null, ct);
             if (targets.Count == 0)
             {
                 return (200, Array.Empty<object>());
@@ -278,7 +291,7 @@ namespace BE_SalesEmployee.Sales.Services
         {
             page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize <= 0 ? 40 : pageSize, 1, 100);
-            var targets = await GetTargetsAsync(null, ct);
+            var targets = await GetTargetsAsync(user, null, ct);
             if (targets.Count == 0)
             {
                 return (200, new
@@ -293,11 +306,24 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             // Smaller per-branch page keeps الكل under 2s across ~17 WAN hops.
+            // A director filter must keep every province's matches. Taking 40 from each
+            // province and then keeping only 40 overall drops the rest, including orders
+            // that belong on the first page.
+            var filtered = HasDirectorBoardFilter(companyPath);
+            if (filtered)
+            {
+                return await MergeFilteredPagesAsync(user, companyPath, targets, page, pageSize, ct);
+            }
+
             var perBranchSize = Math.Clamp(Math.Max(pageSize, 12), 12, 24);
             var path = AppendOrReplaceQuery(companyPath, ("page", page.ToString()), ("pageSize", perBranchSize.ToString()));
-            var perBranchTimeout = FanoutSoftDeadline.MultiBranchTimeout;
             var tasks = targets
-                .Select(city => FetchPagedObjectAsync(user, city, path, perBranchTimeout, ct))
+                .Select(city => FetchPagedObjectAsync(
+                    user,
+                    city,
+                    SalesRequestPeopleQuery.RewritePath(path, city.Value),
+                    FanoutSoftDeadline.MultiBranchTimeout,
+                    ct))
                 .ToList();
 
             var pages = await FanoutSoftDeadline.CollectAsync(
@@ -350,6 +376,90 @@ namespace BE_SalesEmployee.Sales.Services
                 ["page"] = page,
                 ["pageSize"] = pageSize,
                 ["hasMore"] = hasMore || (page * pageSize < total),
+                ["tabCounts"] = ToTabCountsObject(tabCounts)
+            };
+            return (200, root);
+        }
+
+        /// <summary>
+        /// Filtered الكل: each province returns its own newest matches, then this method pages the merged list.
+        /// One province page of 500 already contains the global first pages,
+        /// because the newest N overall are inside each province's newest N.
+        /// </summary>
+        private async Task<(int Status, object? Body)> MergeFilteredPagesAsync(
+            GatewayUser user,
+            string companyPath,
+            IReadOnlyList<AdminCity> targets,
+            int page,
+            int pageSize,
+            CancellationToken ct)
+        {
+            const int batch = 500;
+            var depth = Math.Clamp(page * pageSize, batch, batch * 4);
+            var branchPages = (depth + batch - 1) / batch;
+            var items = new List<JsonObject>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var total = 0;
+            var tabCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var branchPage = 1; branchPage <= branchPages; branchPage++)
+            {
+                var path = AppendOrReplaceQuery(
+                    companyPath,
+                    ("page", branchPage.ToString()),
+                    ("pageSize", batch.ToString()));
+                var tasks = targets
+                    .Select(city => FetchPagedObjectAsync(
+                        user,
+                        city,
+                        SalesRequestPeopleQuery.RewritePath(path, city.Value),
+                        TimeSpan.FromSeconds(40),
+                        ct))
+                    .ToList();
+                var pages = await FanoutSoftDeadline.CollectAsync(
+                    tasks,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    hasData: static _ => false,
+                    flatten: p => p == null ? Array.Empty<JsonObject>() : new[] { p },
+                    ct);
+                foreach (var pageObj in pages)
+                {
+                    if (branchPage == 1)
+                    {
+                        total += ReadIntProp(pageObj, "total", "Total");
+                        MergeTabCounts(tabCounts, pageObj["tabCounts"] as JsonObject ?? pageObj["TabCounts"] as JsonObject);
+                    }
+
+                    var arr = pageObj["items"] as JsonArray ?? pageObj["Items"] as JsonArray;
+                    if (arr == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var node in arr.OfType<JsonObject>())
+                    {
+                        var key = (node["cityValue"]?.ToString() ?? node["CityValue"]?.ToString() ?? "")
+                            + ":"
+                            + (node["id"]?.ToString() ?? node["Id"]?.ToString() ?? "");
+                        if (seen.Add(key))
+                        {
+                            items.Add(node);
+                        }
+                    }
+                }
+            }
+
+            var ordered = items.OrderByDescending(ReadCreatedAt).ToList();
+            var realTotal = Math.Max(total, ordered.Count);
+            var skip = Math.Max(0, (page - 1) * pageSize);
+            var slice = ordered.Skip(skip).Take(pageSize).Select(n => (JsonNode)n.DeepClone()).ToArray();
+            var root = new JsonObject
+            {
+                ["items"] = new JsonArray(slice),
+                ["total"] = realTotal,
+                ["page"] = page,
+                ["pageSize"] = pageSize,
+                ["hasMore"] = skip + slice.Length < realTotal,
                 ["tabCounts"] = ToTabCountsObject(tabCounts)
             };
             return (200, root);
@@ -682,7 +792,7 @@ namespace BE_SalesEmployee.Sales.Services
                 return (400, new { message = "حدد المحافظة للبحث." });
             }
 
-            var targets = await GetTargetsAsync(cityValue, ct);
+            var targets = await GetTargetsAsync(user, cityValue, ct);
             if (targets.Count == 0)
             {
                 return (400, new { message = "المحافظة غير موجودة." });
@@ -718,7 +828,7 @@ namespace BE_SalesEmployee.Sales.Services
             string jsonBody,
             CancellationToken ct)
         {
-            var targets = await GetTargetsAsync(cityValue, ct);
+            var targets = await GetTargetsAsync(user, cityValue, ct);
             if (targets.Count == 0)
             {
                 return (400, new { message = string.IsNullOrWhiteSpace(cityValue) ? "لا توجد محافظات للبحث." : "المحافظة غير موجودة." });
@@ -806,64 +916,144 @@ namespace BE_SalesEmployee.Sales.Services
         public async Task<(int Status, object? Body)> DashboardAsync(
             GatewayUser user,
             string? cityValue,
-            CancellationToken ct)
+            CancellationToken ct,
+            int? year = null,
+            int? month = null)
         {
-            var targets = await GetTargetsAsync(cityValue, ct);
+            var targets = (await GetTargetsAsync(user, cityValue, ct))
+                .Where(city => !SalesOverviewBranches.IsExcluded(city.Name, city.Database, city.Link))
+                .ToList();
             if (targets.Count == 0 && !string.IsNullOrWhiteSpace(cityValue))
             {
                 return (400, new { message = "المحافظة غير موجودة." });
             }
 
-            var totals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            var query = new List<string>();
+            if (year is >= 2000 and <= 2100)
             {
-                ["employeesOnShift"] = 0,
-                ["employeesOffShift"] = 0,
-                ["liveLocations"] = 0,
-                ["salesToday"] = 0,
-                ["pendingSales"] = 0,
-                ["newSalesRequests"] = 0
-            };
+                query.Add($"year={year.Value}");
+            }
 
-            var ok = 0;
+            if (month is >= 1 and <= 12)
+            {
+                query.Add($"month={month.Value}");
+            }
+
+            var path = "sales-manager/dashboard" + (query.Count == 0 ? "" : "?" + string.Join("&", query));
+            var branches = new List<(string CityValue, string CityName, JsonObject Body)>();
+            var failed = new List<string>();
             string? lastError = null;
             await Task.WhenAll(targets.Select(async city =>
             {
                 try
                 {
                     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    cts.CancelAfter(BranchTimeout);
+                    cts.CancelAfter(TimeSpan.FromSeconds(25));
                     using var response = await _proxy.SendManagerAsync(
-                        city.Link, "sales-manager/dashboard", HttpMethod.Get, null, user.UserName, cts.Token);
+                        city.Link, path, HttpMethod.Get, null, user.UserName, cts.Token);
                     var raw = await response.Content.ReadAsStringAsync(ct);
                     if (!response.IsSuccessStatusCode)
                     {
-                        lastError = $"تعذر تحميل نظرة عامة من {city.Name}.";
+                        lock (failed)
+                        {
+                            failed.Add(city.Name);
+                            lastError = $"تعذر تحميل نظرة عامة من {city.Name}.";
+                        }
+
                         return;
                     }
 
-                    using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
-                    lock (totals)
+                    var body = JsonNode.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw) as JsonObject ?? new JsonObject();
+                    lock (branches)
                     {
-                        foreach (var key in totals.Keys.ToList())
-                        {
-                            totals[key] += ReadInt(doc.RootElement, key);
-                        }
-
-                        ok++;
+                        branches.Add((city.Value, city.Name, body));
                     }
                 }
                 catch (Exception ex)
                 {
-                    lastError = ex.Message;
+                    lock (failed)
+                    {
+                        failed.Add(city.Name);
+                        lastError = ex.Message;
+                    }
                 }
             }));
 
-            if (targets.Count > 0 && ok == 0)
+            if (targets.Count > 0 && branches.Count == 0)
             {
                 return (502, new { message = string.IsNullOrWhiteSpace(lastError) ? "تعذر تحميل نظرة عامة." : lastError });
             }
 
-            return (200, totals);
+            return (200, SalesDashboardMerger.Merge(branches, failed));
+        }
+
+        public async Task<(int Status, object? Body)> DashboardDayAsync(
+            GatewayUser user,
+            string? cityValue,
+            CancellationToken ct,
+            int? year,
+            int? month,
+            int? day)
+        {
+            if (year is not (>= 2000 and <= 2100) || month is not (>= 1 and <= 12) || day is not (>= 1 and <= 31))
+            {
+                return (400, new { message = "التاريخ غير صحيح." });
+            }
+
+            var targets = (await GetTargetsAsync(user, cityValue, ct))
+                .Where(city => !SalesOverviewBranches.IsExcluded(city.Name, city.Database, city.Link))
+                .ToList();
+            if (targets.Count == 0 && !string.IsNullOrWhiteSpace(cityValue))
+            {
+                return (400, new { message = "المحافظة غير موجودة." });
+            }
+
+            var path = $"sales-manager/dashboard/day?year={year.Value}&month={month.Value}&day={day.Value}";
+            var branches = new List<(string CityValue, string CityName, JsonObject Body)>();
+            var failed = new List<string>();
+            string? lastError = null;
+            await Task.WhenAll(targets.Select(async city =>
+            {
+                try
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(TimeSpan.FromSeconds(25));
+                    using var response = await _proxy.SendManagerAsync(
+                        city.Link, path, HttpMethod.Get, null, user.UserName, cts.Token);
+                    var raw = await response.Content.ReadAsStringAsync(ct);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        lock (failed)
+                        {
+                            failed.Add(city.Name);
+                            lastError = $"تعذر تحميل يوم {city.Name}.";
+                        }
+
+                        return;
+                    }
+
+                    var body = JsonNode.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw) as JsonObject ?? new JsonObject();
+                    lock (branches)
+                    {
+                        branches.Add((city.Value, city.Name, body));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lock (failed)
+                    {
+                        failed.Add(city.Name);
+                        lastError = ex.Message;
+                    }
+                }
+            }));
+
+            if (targets.Count > 0 && branches.Count == 0)
+            {
+                return (502, new { message = string.IsNullOrWhiteSpace(lastError) ? "تعذر تحميل اليوم." : lastError });
+            }
+
+            return (200, SalesDayDetailMerger.Merge(branches, failed));
         }
 
         public async Task<(int Status, object? Body)> EvaluateAcrossBranchesAsync(
@@ -1055,27 +1245,28 @@ namespace BE_SalesEmployee.Sales.Services
                     });
                 }
 
+                // Nodes read from body/source already belong to those objects; System.Text.Json throws
+                // "The node already has a parent" if they are re-attached, so every copied value is cloned.
                 var accept = new JsonObject
                 {
                     ["fromRequestId"] = requestId,
                     ["fromCityValue"] = fromCity.Value,
                     ["fromCityName"] = fromCity.Name,
-                    ["customerName"] = body?["customerName"] ?? body?["CustomerName"]
-                                       ?? source["customerName"] ?? source["CustomerName"],
-                    ["customerPhone"] = body?["customerPhone"] ?? body?["CustomerPhone"]
-                                        ?? source["customerPhone"] ?? source["CustomerPhone"],
+                    ["customerName"] = CloneFirst(body?["customerName"], body?["CustomerName"],
+                                       source["customerName"], source["CustomerName"]),
+                    ["customerPhone"] = CloneFirst(body?["customerPhone"], body?["CustomerPhone"],
+                                        source["customerPhone"], source["CustomerPhone"]),
                     ["customerProvince"] = toCityName ?? toCity.Name,
-                    ["customerAddress"] = body?["customerAddress"] ?? body?["CustomerAddress"]
-                                         ?? source["customerAddress"] ?? source["CustomerAddress"],
-                    ["notes"] = body?["notes"] ?? body?["Notes"]
-                                ?? source["notes"] ?? source["Notes"],
-                    ["customerSourceType"] = source["customerSourceType"] ?? source["CustomerSourceType"],
-                    ["existingCustomerId"] = source["existingCustomerId"] ?? source["ExistingCustomerId"],
-                    ["customerSourceCityValue"] = source["customerSourceCityValue"] ?? source["CustomerSourceCityValue"],
-                    ["saleRequestType"] = source["saleRequestType"] ?? source["SaleRequestType"],
-                    ["sourceListId"] = source["sourceListId"] ?? source["SourceListId"],
-                    ["createdByName"] = source["createdByName"] ?? source["CreatedByName"],
-                    ["createdByUserType"] = source["createdByUserType"] ?? source["CreatedByUserType"],
+                    ["customerAddress"] = CloneFirst(body?["customerAddress"], body?["CustomerAddress"],
+                                          source["customerAddress"], source["CustomerAddress"]),
+                    ["notes"] = CloneFirst(body?["notes"], body?["Notes"], source["notes"], source["Notes"]),
+                    ["customerSourceType"] = CloneFirst(source["customerSourceType"], source["CustomerSourceType"]),
+                    ["existingCustomerId"] = CloneFirst(source["existingCustomerId"], source["ExistingCustomerId"]),
+                    ["customerSourceCityValue"] = CloneFirst(source["customerSourceCityValue"], source["CustomerSourceCityValue"]),
+                    ["saleRequestType"] = CloneFirst(source["saleRequestType"], source["SaleRequestType"]),
+                    ["sourceListId"] = CloneFirst(source["sourceListId"], source["SourceListId"]),
+                    ["createdByName"] = CloneFirst(source["createdByName"], source["CreatedByName"]),
+                    ["createdByUserType"] = CloneFirst(source["createdByUserType"], source["CreatedByUserType"]),
                     ["cityName"] = toCityName ?? toCity.Name
                 };
 
@@ -1376,10 +1567,22 @@ namespace BE_SalesEmployee.Sales.Services
             }
         }
 
-        private async Task<IReadOnlyList<AdminCity>> GetTargetsAsync(string? cityValue, CancellationToken ct)
+        private async Task<IReadOnlyList<AdminCity>> GetTargetsAsync(GatewayUser? user, string? cityValue, CancellationToken ct)
         {
             var cities = await _cities.GetSalesBranchesAsync(ct);
-            return SalesBranchResolver.ResolveTargets(cities, cityValue);
+            var targets = SalesBranchResolver.ResolveTargets(cities, cityValue);
+            return ScopeToCommittee(user, targets);
+        }
+
+        /// <summary>
+        /// Committee roles only ever reach their committee's branches — including «الكل» fan-outs.
+        /// A committee with no branches gets nothing (fail closed).
+        /// </summary>
+        public static IReadOnlyList<AdminCity> ScopeToCommittee(GatewayUser? user, IReadOnlyList<AdminCity> targets)
+        {
+            if (user is null || !BE_SalesEmployee.Sales.Authorization.SalesRoles.IsCommittee(user.UserType))
+                return targets;
+            return targets.Where(city => user.AllowsFilterCity(city.Value)).ToList();
         }
 
         /// <summary>
@@ -1433,6 +1636,67 @@ namespace BE_SalesEmployee.Sales.Services
                 || companyPath.Contains("download", StringComparison.OrdinalIgnoreCase);
         }
 
+        public static bool HasDirectorBoardFilter(string? companyPath)
+        {
+            if (string.IsNullOrWhiteSpace(companyPath))
+            {
+                return false;
+            }
+
+            var qIndex = companyPath.IndexOf('?', StringComparison.Ordinal);
+            if (qIndex < 0)
+            {
+                return false;
+            }
+
+            foreach (var pair in companyPath[(qIndex + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var kv = pair.Split('=', 2);
+                if (kv.Length != 2)
+                {
+                    continue;
+                }
+
+                var name = Uri.UnescapeDataString(kv[0]);
+                var value = Uri.UnescapeDataString(kv[1]);
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                if (name.Equals("from", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("to", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("sources", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("people", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("sourceFilter", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Names-only director filter. Wait for every province; each branch is a short SQL read.</summary>
+        public static bool IsSourceDirectory(string? companyPath) =>
+            !string.IsNullOrWhiteSpace(companyPath)
+            && companyPath.Contains("source-directory", StringComparison.OrdinalIgnoreCase);
+
+        public static bool FanoutWaitsForEveryBranch(string? companyPath) =>
+            IsSourceDirectory(companyPath) || NeedsLongBranchTimeout(companyPath ?? "");
+
+        public static TimeSpan FanoutPerBranchTimeout(string? companyPath)
+        {
+            if (IsSourceDirectory(companyPath))
+            {
+                return BranchTimeout;
+            }
+
+            return NeedsLongBranchTimeout(companyPath ?? "")
+                ? FanoutSoftDeadline.LongListBranchTimeout
+                : FanoutSoftDeadline.MultiBranchTimeout;
+        }
+
         /// <summary>
         /// Paths that routinely exceed the default 8s single-branch CancelAfter
         /// (rating / summary / متابعة المندوبين).
@@ -1453,7 +1717,11 @@ namespace BE_SalesEmployee.Sales.Services
                 || companyPath.Contains("rating-trend", StringComparison.OrdinalIgnoreCase)
                 || companyPath.Contains("rating-customers", StringComparison.OrdinalIgnoreCase)
                 || companyPath.Contains("/profile", StringComparison.OrdinalIgnoreCase)
-                || companyPath.Contains("customers/profile", StringComparison.OrdinalIgnoreCase))
+                || companyPath.Contains("customers/profile", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("branch-oversight/", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("CustomerDecisions/WeakWeekPayers", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("CustomerDecisions/Decisions", StringComparison.OrdinalIgnoreCase)
+                || companyPath.Contains("CustomersPayments_GetAll", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
@@ -1579,6 +1847,20 @@ namespace BE_SalesEmployee.Sales.Services
             }
 
             return 0;
+        }
+
+        /// <summary>First non-null node, detached (deep-cloned) so it can be added to another JsonObject.</summary>
+        private static JsonNode? CloneFirst(params JsonNode?[] candidates)
+        {
+            foreach (var node in candidates)
+            {
+                if (node is not null)
+                {
+                    return node.DeepClone();
+                }
+            }
+
+            return null;
         }
 
         private static int? ReadNullableIntNode(JsonObject? obj, params string[] names)

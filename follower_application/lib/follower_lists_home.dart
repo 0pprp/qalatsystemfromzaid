@@ -9,6 +9,7 @@ import 'package:follower_application/services/follower_assigned_tasks_service.da
 import 'package:follower_application/services/follower_list_cards_cache.dart';
 import 'package:follower_application/services/follower_tracking_repository.dart';
 import 'package:follower_application/services/follower_warm_cache.dart';
+import 'package:follower_application/shop_capture/shop_capture_lists_strip.dart';
 import 'package:follower_application/tracking/follower_shift_debug.dart';
 import 'package:follower_application/tracking/shift_gate_coordinator.dart';
 import 'package:follower_application/tracking/shift_tracking_controller.dart';
@@ -44,6 +45,13 @@ class _FollowerListsHomeState extends State<FollowerListsHome> {
   WorkShift? _activeShift;
   late final ShiftTrackingController _tracking;
   List<Map<String, dynamic>> _cards = [];
+  final ValueNotifier<int> _shopCaptureRefresh = ValueNotifier<int>(0);
+
+  @override
+  void dispose() {
+    _shopCaptureRefresh.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -360,7 +368,10 @@ class _FollowerListsHomeState extends State<FollowerListsHome> {
     final monthTrend = _majorityTrend('monthTrend');
 
     return RefreshIndicator(
-      onRefresh: () => _loadCards(silent: false),
+      onRefresh: () {
+        _shopCaptureRefresh.value++;
+        return _loadCards(silent: false);
+      },
       color: AppTheme.primaryColor,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -415,6 +426,8 @@ class _FollowerListsHomeState extends State<FollowerListsHome> {
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          ShopCaptureListsStrip(refresh: _shopCaptureRefresh),
           const SizedBox(height: 12),
           const AnnouncementsBanner(),
           const SizedBox(height: 12),

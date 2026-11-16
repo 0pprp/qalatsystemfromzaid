@@ -11,6 +11,7 @@ namespace BE_Company.Sales.Services
         private readonly IIraqClock _clock;
         private readonly SalesManagerTrackingOptions _options;
         private readonly IConfiguration _configuration;
+        private readonly SalesDevelopmentGuard? _guard;
 
         public SalesManagerQueryService(
             ISalesManagerReadRepository read,
@@ -18,7 +19,8 @@ namespace BE_Company.Sales.Services
             ISalesDraftRepository drafts,
             IIraqClock clock,
             SalesManagerTrackingOptions options,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            SalesDevelopmentGuard? guard = null)
         {
             _read = read;
             _requests = requests;
@@ -26,7 +28,11 @@ namespace BE_Company.Sales.Services
             _clock = clock;
             _options = options;
             _configuration = configuration;
+            _guard = guard;
         }
+
+        public Task<IReadOnlyList<SalesSourceDirectoryPerson>> ListSourceDirectoryAsync(CancellationToken ct) =>
+            _read.ListSourceDirectoryAsync(ct);
 
         public async Task<IReadOnlyList<SalesManagerEmployeeDTO>> ListEmployeesAsync(
             string? shiftStatus,
@@ -156,7 +162,7 @@ namespace BE_Company.Sales.Services
         public Task<SalesDraftDTO?> GetSaleAsync(int saleId, CancellationToken ct) =>
             _read.GetSaleAsync(saleId, ct);
 
-        public async Task<SalesManagerDashboardDTO> DashboardAsync(CancellationToken ct)
+        public async Task<SalesManagerDashboardDTO> DashboardAsync(int? year, int? month, CancellationToken ct)
         {
             await _drafts.EnsureSchemaAsync(ct);
             await _requests.EnsureSchemaAsync(ct);
@@ -170,7 +176,8 @@ namespace BE_Company.Sales.Services
 
             var utc = _clock.UtcNow;
             var sales = await _read.ListSalesAsync(null, SalesStatuses.Completed, windowStart, utc, ct);
-            return new SalesManagerDashboardDTO
+            var (cityValue, cityName) = BranchLabel();
+            var dto = new SalesManagerDashboardDTO
             {
                 EmployeesOnShift = employees.Count(e => e.ShiftStatus == SalesShiftStatuses.Active),
                 EmployeesOffShift = employees.Count(e => e.ShiftStatus != SalesShiftStatuses.Active),
@@ -179,8 +186,40 @@ namespace BE_Company.Sales.Services
                 SalesToday = sales.Count(s =>
                     string.Equals(s.Status, SalesStatuses.Completed, StringComparison.OrdinalIgnoreCase)),
                 PendingSales = await _requests.CountByStatusAsync(SalesRequestStatuses.Pending, ct),
-                NewSalesRequests = await _requests.CountByStatusAsync(SalesRequestStatuses.New, ct)
+                NewSalesRequests = await _requests.CountByStatusAsync(SalesRequestStatuses.New, ct),
+                CityValue = cityValue,
+                CityName = cityName
             };
+            if (_guard != null)
+            {
+                await new SalesOverviewQuery(_guard).FillAsync(dto, year, month, IraqTimeService.IraqNow(_clock), ct);
+            }
+            else
+            {
+                var y = year ?? 0;
+                var m = month ?? 0;
+                SalesOverviewMath.NormalizePeriod(ref y, ref m, IraqTimeService.IraqNow(_clock), out _, out _, out _, out var days);
+                dto.Year = y;
+                dto.Month = m;
+                dto.DaysInMonth = days;
+            }
+
+            return dto;
+        }
+
+        public async Task<SalesDayDetailDTO> DayAsync(int? year, int? month, int? day, CancellationToken ct)
+        {
+            var iraqNow = IraqTimeService.IraqNow(_clock);
+            if (_guard == null)
+            {
+                return new SalesDayDetailDTO { DayError = "لا يوجد اتصال بقاعدة الفرع." };
+            }
+
+            var dto = await new SalesOverviewDayQuery(_guard).FillAsync(year, month, day, iraqNow, ct);
+            var (cityValue, cityName) = BranchLabel();
+            dto.CityValue = cityValue;
+            dto.CityName = cityName;
+            return dto;
         }
 
         private async Task<SalesManagerEmployeeDTO> MapEmployeeAsync(

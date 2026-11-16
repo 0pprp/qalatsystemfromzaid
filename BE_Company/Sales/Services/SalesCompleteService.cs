@@ -32,6 +32,7 @@ namespace BE_Company.Sales.Services
         private readonly ISalesPricingService _pricing;
         private readonly ISalesPostingService? _posting;
         private readonly IIraqClock? _clock;
+        private readonly ISalesArchiveService? _archive;
 
         public SalesCompleteService(
             ISalesCompleteRepository complete,
@@ -42,7 +43,8 @@ namespace BE_Company.Sales.Services
             ISalesInventoryService? inventory = null,
             ISalesPricingService? pricing = null,
             ISalesPostingService? posting = null,
-            IIraqClock? clock = null)
+            IIraqClock? clock = null,
+            ISalesArchiveService? archive = null)
         {
             _complete = complete;
             _drafts = drafts;
@@ -53,6 +55,7 @@ namespace BE_Company.Sales.Services
             _pricing = pricing ?? new SalesPricingService();
             _posting = posting;
             _clock = clock;
+            _archive = archive;
         }
 
         public Task<SalesCompleteResponseDTO> CompleteAsync(int saleId, SalesIdentity identity, CancellationToken ct) =>
@@ -135,7 +138,7 @@ namespace BE_Company.Sales.Services
                 // Completing the sale must not roll back because request status failed.
             }
 
-            if (_posting != null && _clock != null && SalesPostingRules.IsPostingWindow(_clock))
+            if (_posting != null)
             {
                 try
                 {
@@ -144,6 +147,18 @@ namespace BE_Company.Sales.Services
                 catch
                 {
                     // Completed stays visible; the worker retries Failed/Pending rows.
+                }
+            }
+
+            if (_archive != null && tx.Sale.CompletedAt != null)
+            {
+                try
+                {
+                    await _archive.RecordCompletedSaleAsync(tx.Sale, ct);
+                }
+                catch
+                {
+                    // The sale is already committed. Opening the archive backfills any missing row.
                 }
             }
 

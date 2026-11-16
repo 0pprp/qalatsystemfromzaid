@@ -12,6 +12,7 @@ import {
 import { useSalesBranches } from '@/composables/useSalesBranches'
 import { useToast } from '@/composables/useToast'
 import { useUserRole } from '@/composables/useUserRole'
+import { shouldHidePaidRemaining } from '@/composables/legalFinancialVisibility'
 
 defineOptions({ name: 'DirectorSalesFollowup' })
 definePage({
@@ -28,7 +29,7 @@ const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 const { branches, fetchCities } = useSalesBranches()
-const { isDirectorOrMonitor } = useUserRole()
+const { canOpenOversightBoards } = useUserRole()
 
 const gatewayCities = ref([])
 const cityValue = ref('')
@@ -45,6 +46,7 @@ const tableVisible = ref(false)
 const tableFilter = ref('all')
 const searchText = ref('')
 const focusMode = ref(false)
+const showZeroLists = ref(false)
 
 const appBlocked = ref(false)
 const appBlockBusy = ref(false)
@@ -64,6 +66,9 @@ const convRows = ref([])
 const namesDialog = ref(false)
 const namesTitle = ref('')
 const namesRows = ref([])
+const listCustomersDialog = ref(false)
+const listCustomersTitle = ref('')
+const listCustomersRows = ref([])
 
 const RATING_BUCKETS = [
   { key: 'ممتاز', label: 'ممتاز' },
@@ -181,6 +186,14 @@ function ratingColor(label) {
   return 'primary'
 }
 
+function fmtScore(n) {
+  const v = Number(n)
+  if (!Number.isFinite(v))
+    return '—'
+
+  return v.toFixed(2)
+}
+
 function fmtNum(n) {
   const v = Number(n)
   if (!Number.isFinite(v))
@@ -216,6 +229,7 @@ function sortByLastPaymentDesc(rows) {
 function normCustomer(row) {
   return {
     customerID: Number(row.customerID ?? row.CustomerID ?? 0),
+    delegateID: Number(row.delegateID ?? row.DelegateID ?? 0),
     customerName: row.customerName ?? row.CustomerName ?? '',
     phantomRatingLabel: String(row.phantomRatingLabel ?? row.PhantomRatingLabel ?? row.realRatingLabel ?? row.RealRatingLabel ?? ''),
     isLegal: Boolean(row.isLegal ?? row.IsLegal ?? false),
@@ -357,12 +371,12 @@ function exportCellValue(row, key) {
   case 'dateSaleDevice': return fmtDate(row.dateSaleDevice)
   case 'amountTotalSales': return row.amountTotalSales ?? 'لا يوجد'
   case 'amountDaySales': return row.amountDaySales ?? 'لا يوجد'
-  case 'receiptsTotal': return row.receiptsTotal ?? 'لا يوجد'
-  case 'amountRemaining': return row.amountRemaining ?? 'لا يوجد'
+  case 'receiptsTotal': return shouldHidePaidRemaining(row) ? '—' : (row.receiptsTotal ?? 'لا يوجد')
+  case 'amountRemaining': return shouldHidePaidRemaining(row) ? '—' : (row.amountRemaining ?? 'لا يوجد')
   case 'lastPaymentDate': return fmtDate(row.lastPaymentDate)
-  case 'lastPaymentAmount': return row.lastPaymentAmount ?? 'لا يوجد'
+  case 'lastPaymentAmount': return shouldHidePaidRemaining(row) ? '—' : (row.lastPaymentAmount ?? 'لا يوجد')
   case 'receiptRateDevice':
-    return row.receiptRateDevice != null ? `${row.receiptRateDevice}%` : '0%'
+    return shouldHidePaidRemaining(row) ? '—' : (row.receiptRateDevice != null ? `${row.receiptRateDevice}%` : '0%')
   case 'countReceiptDevice': return row.countReceiptDevice ?? 'لا يوجد'
   case 'numberOfDayDevice': return row.numberOfDayDevice ?? 'لا يوجد'
   case 'address': return row.address || 'لا يوجد'
@@ -465,6 +479,41 @@ const zeroedCount = computed(() => {
   const fromApi = pick(detail.value, 'zeroedCustomerCount', 'ZeroedCustomerCount')
   return fromApi != null && Number.isFinite(Number(fromApi)) ? Number(fromApi) : 0
 })
+
+const listSales = computed(() => {
+  const rows = pick(detail.value, 'listSales', 'ListSales') || []
+  if (!Array.isArray(rows))
+    return []
+
+  return rows.map(r => ({
+    listId: Number(pick(r, 'listId', 'ListId') || 0),
+    listName: String(pick(r, 'listName', 'ListName') || '—'),
+    salesCount: Number(pick(r, 'salesCount', 'SalesCount') || 0),
+    averageScore: Number(pick(r, 'averageScore', 'AverageScore') || 0),
+    ratingLabel: String(pick(r, 'ratingLabel', 'RatingLabel') || ''),
+  }))
+})
+
+const visibleListSales = computed(() =>
+  showZeroLists.value
+    ? listSales.value
+    : listSales.value.filter(row => row.salesCount > 0))
+
+function customersForList(listId) {
+  const target = Number(listId || 0)
+  return (customers.value || [])
+    .filter(c => {
+      const id = Number(c.delegateID || 0)
+      return target === 0 ? id <= 0 : id === target
+    })
+    .sort((a, b) => String(a.customerName || '').localeCompare(String(b.customerName || ''), 'ar'))
+}
+
+function openListCustomers(row) {
+  listCustomersTitle.value = row?.listName || 'القائمة'
+  listCustomersRows.value = customersForList(row?.listId)
+  listCustomersDialog.value = true
+}
 
 const systemHistory = computed(() => {
   const rows = pick(detail.value, 'systemRatingHistory', 'SystemRatingHistory') || []
@@ -589,6 +638,30 @@ function applyDetailPayload(d) {
   const rows = pick(d, 'customers', 'Customers') || []
   customers.value = (Array.isArray(rows) ? rows : []).map(normCustomer).filter(c => c.customerID > 0)
   // Don't force table open — focus mode controls visibility
+}
+
+function ratingCustomerId(row) {
+  const id = Number(pick(row, 'customerId', 'CustomerId') || 0)
+  return Number.isFinite(id) && id > 0 ? id : 0
+}
+
+function ratingCustomerName(row) {
+  const name = String(pick(row, 'customerName', 'CustomerName') || '').trim()
+  const id = ratingCustomerId(row)
+  return name || (id ? `#${id}` : 'زبون غير معروف')
+}
+
+function openRatedCustomer(row) {
+  const customerID = ratingCustomerId(row)
+  if (!customerID) {
+    toast.warning('لا يمكن فتح بروفايل هذا الزبون')
+    return
+  }
+  openCustomerProfile({
+    customerID,
+    customerName: ratingCustomerName(row),
+    phoneNumber: '',
+  })
 }
 
 function openHistDialog(kind) {
@@ -724,7 +797,7 @@ watch(cityValue, async (v) => {
 })
 
 onMounted(async () => {
-  if (!isDirectorOrMonitor.value) {
+  if (!canOpenOversightBoards.value) {
     toast.error('غير مصرح')
     return
   }
@@ -872,7 +945,7 @@ onMounted(async () => {
                   {{ followerBuckets.low.length }}
                 </div>
                 <div class="text-caption text-medium-emphasis mt-1">
-                  اضغط لعرض الدرجة والسبب والتاريخ
+                  اضغط لعرض الزبون والدرجة والسبب والتاريخ
                 </div>
               </button>
 
@@ -889,7 +962,7 @@ onMounted(async () => {
                   {{ collectorBuckets.low.length }}
                 </div>
                 <div class="text-caption text-medium-emphasis mt-1">
-                  اضغط لعرض الدرجة والسبب والتاريخ
+                  اضغط لعرض الزبون والدرجة والسبب والتاريخ
                 </div>
               </button>
 
@@ -912,6 +985,59 @@ onMounted(async () => {
               </button>
             </div>
           </Transition>
+
+          <section class="line-box mt-2">
+            <div class="d-flex flex-wrap align-center justify-space-between gap-2">
+              <h3 class="line-box__title mb-0">
+                مبيعاته حسب القائمة
+              </h3>
+              <VSwitch
+                v-model="showZeroLists"
+                color="primary"
+                density="compact"
+                hide-details
+                label="إظهار القوائم بدون مبيعات"
+              />
+            </div>
+            <p class="muted kpi-hint">
+              عدد مبيعات هذا المندوب في كل قائمة بالمحافظة، ومتوسط تقييم مبيعاته في تلك القائمة — اضغط القائمة لعرض الأسماء
+            </p>
+            <div
+              v-if="!visibleListSales.length"
+              class="sub-card__empty"
+            >
+              لا توجد قوائم بمبيعات. فعّل «إظهار القوائم بدون مبيعات» لرؤية بقية قوائم المحافظة.
+            </div>
+            <div
+              v-else
+              class="sub-grid"
+            >
+              <button
+                v-for="row in visibleListSales"
+                :key="`list-sales-${row.listId}`"
+                type="button"
+                class="sub-card sub-card--click"
+                :class="{ 'sub-card--zero-list': row.salesCount === 0 }"
+                @click="openListCustomers(row)"
+              >
+                <span class="sub-card__label">{{ row.listName }}</span>
+                <strong class="sub-card__value">{{ row.salesCount }}</strong>
+                <small>عدد المبيعات</small>
+                <small v-if="row.salesCount > 0">
+                  <VChip
+                    size="x-small"
+                    :color="ratingColor(row.ratingLabel)"
+                  >
+                    {{ row.ratingLabel || '—' }} ({{ fmtScore(row.averageScore) }})
+                  </VChip>
+                </small>
+                <small
+                  v-else
+                  class="muted"
+                >لا مبيعات</small>
+              </button>
+            </div>
+          </section>
 
           <section class="line-box mt-2 sf-customers-box">
             <h3 class="line-box__title">
@@ -1096,16 +1222,16 @@ onMounted(async () => {
                 <span class="dfu-cell-nowrap">{{ fmtNum(item.amountDaySales) }}</span>
               </template>
               <template #item.amountRemaining="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtNum(item.amountRemaining) }}</span>
+                <span class="dfu-cell-nowrap">{{ shouldHidePaidRemaining(item) ? '—' : fmtNum(item.amountRemaining) }}</span>
               </template>
               <template #item.receiptsTotal="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtNum(item.receiptsTotal) }}</span>
+                <span class="dfu-cell-nowrap">{{ shouldHidePaidRemaining(item) ? '—' : fmtNum(item.receiptsTotal) }}</span>
               </template>
               <template #item.amountTotalSales="{ item }">
                 <span class="dfu-cell-nowrap">{{ fmtNum(item.amountTotalSales) }}</span>
               </template>
               <template #item.lastPaymentAmount="{ item }">
-                <span class="dfu-cell-nowrap">{{ fmtNum(item.lastPaymentAmount) }}</span>
+                <span class="dfu-cell-nowrap">{{ shouldHidePaidRemaining(item) ? '—' : fmtNum(item.lastPaymentAmount) }}</span>
               </template>
               <template #item.lastPaymentDate="{ item }">
                 <span class="dfu-cell-nowrap">{{ fmtDate(item.lastPaymentDate) }}</span>
@@ -1147,7 +1273,7 @@ onMounted(async () => {
                 >{{ item.notes || '—' }}</span>
               </template>
               <template #item.receiptRateDevice="{ item }">
-                <span class="dfu-cell-nowrap">{{ item.receiptRateDevice != null ? `${item.receiptRateDevice}%` : '—' }}</span>
+                <span class="dfu-cell-nowrap">{{ shouldHidePaidRemaining(item) ? '—' : (item.receiptRateDevice != null ? `${item.receiptRateDevice}%` : '—') }}</span>
               </template>
               <template #item.countReceiptDevice="{ item }">
                 <span class="dfu-cell-nowrap">{{ item.countReceiptDevice ?? '—' }}</span>
@@ -1218,6 +1344,53 @@ onMounted(async () => {
     </VDialog>
 
     <VDialog
+      v-model="listCustomersDialog"
+      max-width="520"
+    >
+      <VCard>
+        <VCardTitle>{{ listCustomersTitle }}</VCardTitle>
+        <VCardText>
+          <p class="muted mb-3">
+            {{ listCustomersRows.length }} زبون — اضغط الاسم لفتح البروفايل
+          </p>
+          <div
+            v-if="!listCustomersRows.length"
+            class="sub-card__empty"
+          >
+            لا زبائن لهذا المندوب في هذه القائمة
+          </div>
+          <ul
+            v-else
+            class="hist-list hist-list--lg"
+          >
+            <li
+              v-for="c in listCustomersRows"
+              :key="c.customerID"
+            >
+              <button
+                type="button"
+                class="list-customer-link"
+                @click="openCustomerProfile(c)"
+              >
+                {{ c.customerName || `#${c.customerID}` }}
+              </button>
+              <small class="muted">{{ c.isLegal ? 'قانونية' : (c.phantomRatingLabel || '—') }}</small>
+            </li>
+          </ul>
+        </VCardText>
+        <VCardActions>
+          <VSpacer />
+          <VBtn
+            variant="text"
+            @click="listCustomersDialog = false"
+          >
+            إغلاق
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+
+    <VDialog
       v-model="namesDialog"
       max-width="480"
     >
@@ -1257,7 +1430,7 @@ onMounted(async () => {
 
     <VDialog
       v-model="histDialog"
-      max-width="640"
+      :max-width="histMode === 'low' ? 760 : 640"
     >
       <VCard>
         <VCardTitle>{{ histTitle }}</VCardTitle>
@@ -1289,9 +1462,18 @@ onMounted(async () => {
             </div>
             <div
               v-for="(row, i) in histLow"
-              :key="`hl-${i}`"
+              :key="`hl-${ratingCustomerId(row)}-${i}`"
               class="hist-row"
             >
+              <button
+                v-if="ratingCustomerId(row)"
+                type="button"
+                class="hist-customer-link"
+                @click="openRatedCustomer(row)"
+              >
+                {{ ratingCustomerName(row) }}
+              </button>
+              <span v-else>{{ ratingCustomerName(row) }}</span>
               <strong>{{ pick(row, 'score', 'Score') }}/10</strong>
               <span class="text-medium-emphasis">{{ pick(row, 'note', 'Note') || 'بدون سبب' }}</span>
               <span class="text-caption">{{ fmtDate(pick(row, 'ratingDate', 'RatingDate')) }}</span>
@@ -1492,11 +1674,23 @@ onMounted(async () => {
 .warn-text { color: rgb(var(--v-theme-warning)); }
 .hist-row {
   display: grid;
-  gap: 0.1rem;
-  padding-block: 0.35rem;
+  gap: 0.15rem;
+  padding-block: 0.55rem;
   border-block-end: 1px solid rgba(var(--v-theme-on-surface), 0.06);
-  font-size: 0.82rem;
+  font-size: 0.9rem;
 }
+.hist-customer-link {
+  justify-self: start;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: rgb(var(--v-theme-primary));
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  text-align: start;
+}
+.hist-customer-link:hover { text-decoration: underline; }
 .muted { color: rgba(var(--v-theme-on-surface), 0.62); }
 .table-hint { margin: 0 0 8px; font-size: 0.8rem; }
 .table-panel {
@@ -1569,6 +1763,18 @@ onMounted(async () => {
   font-weight: 600;
   max-width: 14rem;
 }
+.sub-card--zero-list { opacity: 0.72; }
+.list-customer-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: rgb(var(--v-theme-primary));
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: start;
+}
+.list-customer-link:hover { text-decoration: underline; }
 .sub-card--zeroed {
   background: rgba(13, 115, 119, 0.08);
   border-color: rgba(13, 115, 119, 0.3);

@@ -171,6 +171,12 @@ namespace BE_Company.Repository
                     CustomerID = customerID,
                 },
                 commandType: CommandType.StoredProcedure);
+                if (result?.CustomerID is int id)
+                {
+                    result.IsLegal = await connection.QuerySingleOrDefaultAsync<bool>(
+                        "SELECT CAST(ISNULL(IsLegal, 0) AS bit) FROM dbo.Customers WHERE CustomerID = @Id",
+                        new { Id = id });
+                }
                 return result;
             }
         }

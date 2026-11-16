@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import {
   directorCities,
+  directorCitiesCached,
   directorDelegateFollowupListCustomers,
   directorDelegateFollowupListSummary,
   directorDelegateFollowupLists,
@@ -29,9 +30,16 @@ const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 const { branches, fetchCities } = useSalesBranches()
-const { isDirectorOrMonitor } = useUserRole()
+const { canOpenOversightBoards, isAdmin } = useUserRole()
 
-const gatewayCities = ref([])
+/** المحاسب الرئيسي: فرعه المحدد فقط (LinkCity) — بدون اختيار محافظة. */
+const canOpenBoard = computed(() => canOpenOversightBoards.value || isAdmin.value)
+
+function accountantCityKey() {
+  return String(localStorage.getItem('CityName') || '').trim() || 'branch'
+}
+
+const gatewayCities = ref(directorCitiesCached())
 const listsBusy = ref(false)
 const listCards = ref([])
 const summaryBusy = ref(false)
@@ -124,10 +132,8 @@ const selectedListName = computed(() => {
 
 const filterCaption = computed(() => {
   const f = statusFilter.value
-  if (!f || f === 'all')
+  if (!f || f === 'all' || f === 'legal')
     return ''
-  if (f === 'legal')
-    return 'عرض: قانونية'
 
   return `عرض: ${f}`
 })
@@ -159,16 +165,13 @@ function sortByLastPaymentDesc(rows) {
 const statusFilterItems = [
   { title: 'الكل', value: 'all' },
   ...RATING_BUCKETS.map(b => ({ title: b.label, value: b.key })),
-  { title: 'قانونية', value: 'legal' },
 ]
 
 const filteredCustomers = computed(() => {
-  let rows = customers.value
+  let rows = customers.value.filter(c => !c.isLegal)
   const f = statusFilter.value
-  if (f === 'legal')
-    rows = rows.filter(c => c.isLegal)
-  else if (f && f !== 'all')
-    rows = rows.filter(c => !c.isLegal && c.phantomRatingLabel === f)
+  if (f && f !== 'all' && f !== 'legal')
+    rows = rows.filter(c => c.phantomRatingLabel === f)
 
   const q = searchText.value.trim().toLowerCase()
   if (q) {
@@ -503,6 +506,15 @@ function normListCard(row) {
 }
 
 async function ensureCityQuery() {
+  if (isAdmin.value) {
+    const own = accountantCityKey()
+    if (cityKey() !== own) {
+      const sameList = !route.query.city ? route.query : {}
+      await router.replace({ query: { ...sameList, city: own } })
+    }
+
+    return own
+  }
   const q = cityKey()
   if (q) {
     localStorage.setItem(CITY_STORAGE_KEY, q)
@@ -551,15 +563,15 @@ async function backToLists() {
   listPaymentsDialog.value = false
 }
 
+/** Both branch sources in parallel; cached names stay on screen meanwhile (and on failure). */
 async function loadCities() {
-  try {
-    await fetchCities()
-    const rows = await directorCities()
-    gatewayCities.value = Array.isArray(rows) ? rows : []
-  }
-  catch {
-    gatewayCities.value = []
-  }
+  await Promise.allSettled([
+    fetchCities(),
+    directorCities().then(rows => {
+      if (Array.isArray(rows))
+        gatewayCities.value = rows
+    }),
+  ])
 }
 
 async function loadLists() {
@@ -639,7 +651,7 @@ async function loadListDetail({ force = false } = {}) {
     })
   const custP = directorDelegateFollowupListCustomers({ cityValue: city, listId })
     .then(async cust => {
-      customers.value = (Array.isArray(cust) ? cust : []).map(normCustomer).filter(c => c.customerID > 0)
+      customers.value = (Array.isArray(cust) ? cust : []).map(normCustomer).filter(c => c.customerID > 0 && !c.isLegal)
       detailCacheKey.value = cacheKey
       customersBusy.value = false
       await nextTick()
@@ -788,7 +800,7 @@ async function openPaymentsList(item) {
 watch(
   () => [route.name, route.path, route.query.city, route.query.listId],
   async () => {
-    if (!isDirectorOrMonitor.value || !isFollowupRouteActive())
+    if (!canOpenBoard.value || !isFollowupRouteActive())
       return
     await ensureCityQuery()
     if (!cityKey() || selectedListId.value <= 0) {
@@ -807,12 +819,13 @@ watch(filteredCustomers, async () => {
 })
 
 onMounted(async () => {
-  if (!isDirectorOrMonitor.value)
+  if (!canOpenBoard.value)
     return
-  await loadCities()
+  if (!isAdmin.value)
+    void loadCities() // don't block the table on branch names
   await ensureCityQuery()
   const qFilter = String(route.query.filter || '').trim()
-  if (qFilter)
+  if (qFilter && qFilter !== 'legal')
     statusFilter.value = qFilter
   if (cityKey() && selectedListId.value > 0)
     await loadListDetail()

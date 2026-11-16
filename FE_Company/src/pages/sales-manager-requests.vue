@@ -21,6 +21,7 @@ import {
   smGet,
   smGetBlob,
   smGetEmployees,
+  smGetFollowers,
   smPost,
   smPut,
   withCityQuery,
@@ -29,13 +30,19 @@ import {
 import { saleDisplayDocuments, saleDocumentTitle } from '@/composables/saleDocuments'
 import { canManagerRejectRequest } from '@/utils/salesManagerRejectRules'
 import {
+  findClosingLumpPayments,
+  isClosingLumpRow,
+  isFinishedAccount,
+  notesFromHit,
+} from '@/utils/closingLumpPayments'
+import {
   countDuplicateRequests,
   findDuplicateRequests,
 } from '@/utils/salesRequestDuplicateSearch'
 import { capEvaluationRows, createCityListCache } from '@/utils/salesRequestsListCache'
 import ShopLocationLink from '@/components/ShopLocationLink.vue'
 import { isDemo } from '@/composables/useCities'
-import { useSalesBranches } from '@/composables/useSalesBranches'
+import { isCentralSalesManager, useSalesBranches } from '@/composables/useSalesBranches'
 import { useUserRole } from '@/composables/useUserRole'
 import { useToast } from '@/composables/useToast'
 import { markAllSalesRequestsRead, refreshSalesRequestUnread, salesRequestUnreadCount } from '@/composables/useSalesRequestUnread'
@@ -56,6 +63,8 @@ import {
   settlementDaysDisplay,
 } from '@/composables/salesRequestEvaluationMap'
 import { parseSalesRequestExcel } from '@/composables/salesRequestExcelImport'
+import { notesWithoutProduct, requestProduct } from '@/composables/salesRequestProduct'
+import { caListAgents, caPaged } from '@/composables/customerAppApi'
 import { normalizeIraqPhone } from '@core/utils/validators'
 
 const toast = useToast()
@@ -149,7 +158,8 @@ const requestDupPanels = ref({})
 const listLoading = ref(false)
 const loadingMore = ref(false)
 const listPage = ref(1)
-const listPageSize = 40
+/** 20 per page keeps the first paint fast; «تحميل المزيد» fetches the next 20. */
+const listPageSize = 20
 const listTotal = ref(0)
 const hasMore = ref(false)
 const serverTabCounts = ref({})
@@ -267,36 +277,47 @@ function isEmployeeSubmitted(row) {
 
 function isFollowerSubmitted(row) {
   const source = pick(row, 'customerSourceType', 'CustomerSourceType')
-  const role = pick(row, 'createdByUserType', 'CreatedByUserType')
-  return source === 'Follower' || role === 'Follower' || role === 'متابع'
+  const role = String(pick(row, 'createdByUserType', 'CreatedByUserType') || '')
+  return source === 'Follower' || role === 'Follower' || role.startsWith('متابع')
 }
 
 function isDelegateSubmitted(row) {
   const source = pick(row, 'customerSourceType', 'CustomerSourceType')
-  const role = pick(row, 'createdByUserType', 'CreatedByUserType')
-  return source === 'Delegate' || role === 'مندوب' || role === 'Delegate'
+  const role = String(pick(row, 'createdByUserType', 'CreatedByUserType') || '')
+  return source === 'Delegate' || role === 'Delegate' || (role.includes('مندوب') && !role.includes('موظف'))
 }
 
 function isCrmSubmitted(row) {
   const source = pick(row, 'customerSourceType', 'CustomerSourceType')
-  const role = pick(row, 'createdByUserType', 'CreatedByUserType')
-  return source === 'Crm' || role === 'Crm'
+  const role = String(pick(row, 'createdByUserType', 'CreatedByUserType') || '')
+  const name = String(pick(row, 'createdByName', 'CreatedByName') || '').trim()
+  return source === 'Crm' || role === 'Crm' || role === 'قسم التسويق' || name === 'قسم التسويق'
+}
+
+/** Product the customer wants (Excel «نوع المبيع», CRM / agents-app product line in notes). */
+function productOf(row) {
+  return requestProduct(pick(row, 'notes', 'Notes'))
 }
 
 function saleRequestTypeLabel(row) {
-  const t = pick(row, 'saleRequestType', 'SaleRequestType')
-  if (t === 'Old')
+  // Only new/old here. The Excel «نوع المبيع» column is the product — see productOf().
+  const raw = String(pick(row, 'saleRequestType', 'SaleRequestType') || '').trim()
+  const t = raw.toLowerCase()
+  if (t === 'old' || raw === 'مبيع قديم')
     return 'مبيع قديم'
-  if (t === 'New')
+  if (t === 'new' || raw === 'مبيع جديد')
     return 'مبيع جديد'
+  if (raw)
+    return raw
 
-  // Fallback for older rows: existing customer id ⇒ قديم
-  const existingId = pick(row, 'existingCustomerId', 'ExistingCustomerId')
-  return existingId ? 'مبيع قديم' : 'مبيع جديد'
+  const existingId = Number(pick(row, 'existingCustomerId', 'ExistingCustomerId') || 0)
+  return existingId > 0 ? 'مبيع قديم' : 'مبيع جديد'
 }
 
 function requestSourceLabel(row) {
   const who = (submittedBy(row) || '').trim()
+  if (pick(row, 'customerSourceType', 'CustomerSourceType') === 'CustomerApp')
+    return who && who !== 'المروج' && who !== 'تطبيق الزبون' ? `المروج: ${who}` : 'المروج'
   if (isCrmSubmitted(row))
     return 'قسم التسويق'
   if (isFollowerSubmitted(row))
@@ -488,7 +509,8 @@ function lastNote(row) {
   const ret = (row?.returnNote || row?.ReturnNote || '').trim()
   const pending = (row?.pendingNote || row?.PendingNote || '').trim()
   const rejected = (row?.rejectionReason || row?.RejectionReason || '').trim()
-  const notes = (row?.notes || row?.Notes || '').trim()
+  // The product line is shown in its own «المنتج» field.
+  const notes = notesWithoutProduct(row?.notes || row?.Notes)
   if (ret)
     return ret
   if (pending)
@@ -634,6 +656,238 @@ function unwrapPage(data) {
   }
 }
 
+const directorFrom = ref('')
+const directorTo = ref('')
+const directorSources = ref([])
+const directorSourcesLoading = ref(false)
+const directorSourceFailed = ref(false)
+const directorSourceMenu = ref(false)
+const directorPeople = ref({ delegate: [], follower: [], employee: [], promoter: [] })
+const directorPersonQuery = ref({ delegate: '', follower: '', employee: '', promoter: '' })
+const directorPromoterFailed = ref(false)
+const directorPersonRoles = ['delegate', 'follower', 'employee', 'promoter']
+
+const directorSourceMenuItems = [
+  { title: 'كل المندوبين', value: 'group:delegate', role: 'delegate' },
+  { title: 'كل المتابعين', value: 'group:follower', role: 'follower' },
+  { title: 'كل موظفي المبيعات', value: 'group:employee', role: 'employee' },
+  { title: 'مدير المبيعات', value: 'group:manager', role: 'manager' },
+  { title: 'قسم التسويق', value: 'group:crm', role: 'crm' },
+  { title: 'كل المروجين', value: 'group:promoter', role: 'promoter' },
+]
+
+function personFilterValue(role, city, id, name) {
+  const clean = String(name || '').replace(/[|~]/g, ' ').trim()
+  return `person:${role}|${city}|${id}|${clean}`
+}
+
+function asList(data) {
+  if (Array.isArray(data))
+    return data
+  if (Array.isArray(data?.items))
+    return data.items
+  if (Array.isArray(data?.Items))
+    return data.Items
+  return []
+}
+
+async function loadPromoters() {
+  const people = []
+  const pageSize = 100
+  for (let page = 1; page <= 30; page++) {
+    const res = caPaged(await caListAgents({ page, pageSize }))
+    for (const agent of res.items || [])
+      people.push(agent)
+    if (!res.items?.length || people.length >= res.total || res.items.length < pageSize)
+      break
+  }
+
+  return people
+}
+
+async function loadDirectorSourceOptions() {
+  if (!readOnly.value || directorSourcesLoading.value)
+    return
+  directorSourcesLoading.value = true
+  directorSourceFailed.value = false
+  directorPromoterFailed.value = false
+  const people = []
+  const seen = new Set()
+  const push = (role, city, id, name, cityName) => {
+    const who = String(name || '').trim()
+    const key = String(city || '').trim()
+    const num = Number(id || 0)
+    if (!who || !key || !Number.isFinite(num) || num <= 0)
+      return
+    const value = personFilterValue(role, key, num, who)
+    if (seen.has(value))
+      return
+    seen.add(value)
+    people.push({
+      role,
+      title: cityName ? `${who} — ${cityName}` : who,
+      value,
+    })
+  }
+  try {
+    const rows = asList(await smGet('source-directory', { timeoutMs: 20000 }))
+    for (const row of rows) {
+      const role = String(row.role || row.Role || '').trim().toLowerCase()
+      if (role !== 'delegate' && role !== 'follower' && role !== 'employee')
+        continue
+      push(
+        role,
+        row.cityValue || row.CityValue,
+        row.id || row.Id,
+        row.name || row.Name,
+        row.cityName || row.CityName,
+      )
+    }
+  }
+  catch {
+    directorSourceFailed.value = true
+  }
+  try {
+    for (const agent of await loadPromoters()) {
+      push(
+        'promoter',
+        'all',
+        agent.id || agent.Id || agent.userId || agent.UserId,
+        agent.fullName || agent.FullName || agent.name || agent.Name,
+        agent.cityName || agent.CityName,
+      )
+    }
+  }
+  catch {
+    directorPromoterFailed.value = true
+  }
+  const byTitle = list => list.sort((a, b) => String(a.title).localeCompare(String(b.title), 'ar'))
+  directorPeople.value = {
+    delegate: byTitle(people.filter(p => p.role === 'delegate')),
+    follower: byTitle(people.filter(p => p.role === 'follower')),
+    employee: byTitle(people.filter(p => p.role === 'employee')),
+    promoter: byTitle(people.filter(p => p.role === 'promoter')),
+  }
+  directorSourcesLoading.value = false
+}
+
+function ensureDirectorPeople() {
+  const loaded = directorPersonRoles.some(role => (directorPeople.value[role] || []).length)
+  if (!loaded)
+    void loadDirectorSourceOptions()
+}
+
+function directorPeopleFor(role) {
+  const q = String(directorPersonQuery.value[role] || '').trim()
+  const list = directorPeople.value[role] || []
+  if (!q)
+    return list
+
+  return list.filter(person => String(person.title || '').includes(q))
+}
+
+function isDirectorValueSelected(value) {
+  return (directorSources.value || []).includes(value)
+}
+
+function setDirectorSources(next) {
+  directorSources.value = [...next]
+}
+
+function toggleDirectorGroup(row) {
+  const current = new Set(directorSources.value || [])
+  if (current.has(row.value)) {
+    current.delete(row.value)
+  }
+  else {
+    current.add(row.value)
+    const prefix = `person:${row.role}|`
+    for (const item of [...current]) {
+      if (item.startsWith(prefix))
+        current.delete(item)
+    }
+  }
+  setDirectorSources(current)
+}
+
+function toggleDirectorPerson(person) {
+  const groupValue = `group:${person.role}`
+  const current = new Set(directorSources.value || [])
+  if (current.has(groupValue))
+    return
+  if (current.has(person.value))
+    current.delete(person.value)
+  else
+    current.add(person.value)
+  setDirectorSources(current)
+}
+
+function removeDirectorSource(value) {
+  directorSources.value = (directorSources.value || []).filter(item => item !== value)
+}
+
+const directorSourceChips = computed(() => {
+  const selected = new Set(directorSources.value || [])
+  const chips = []
+  for (const row of directorSourceMenuItems) {
+    if (selected.has(row.value))
+      chips.push({ value: row.value, title: row.title })
+  }
+  for (const role of directorPersonRoles) {
+    if (selected.has(`group:${role}`))
+      continue
+    for (const person of directorPeople.value[role] || []) {
+      if (selected.has(person.value))
+        chips.push({ value: person.value, title: person.title })
+    }
+  }
+
+  return chips
+})
+
+function directorDateValue(value) {
+  const text = String(value ?? '').trim()
+
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : ''
+}
+
+function directorFilterQuery() {
+  if (!readOnly.value)
+    return { from: '', to: '', sources: '', people: '', sourceFilter: '' }
+  let from = directorDateValue(directorFrom.value)
+  let to = directorDateValue(directorTo.value)
+  if (from && !to)
+    to = from
+  if (to && !from)
+    from = to
+  if (from && to && from > to) {
+    const swap = from
+    from = to
+    to = swap
+  }
+  const groups = new Set()
+  const people = []
+  for (const value of directorSources.value || []) {
+    const text = String(value || '')
+    if (text.startsWith('group:'))
+      groups.add(text.slice(6))
+    else if (text.startsWith('person:'))
+      people.push(text.slice('person:'.length))
+  }
+  const peopleOut = people.filter(token => {
+    const role = token.split('|')[0]
+    return role && !groups.has(role)
+  })
+  const active = groups.size > 0 || peopleOut.length > 0
+  return {
+    from,
+    to,
+    sources: [...groups].join(','),
+    people: peopleOut.join('~'),
+    sourceFilter: active ? '1' : '',
+  }
+}
+
 function buildRequestsQuery({ page, tabKey, q }) {
   const params = new URLSearchParams()
   params.set('page', String(page))
@@ -645,6 +899,17 @@ function buildRequestsQuery({ page, tabKey, q }) {
   const city = String(cityValue.value || '').trim()
   if (city)
     params.set('cityValue', city)
+  const extra = directorFilterQuery()
+  if (extra.from)
+    params.set('from', extra.from)
+  if (extra.to)
+    params.set('to', extra.to)
+  if (extra.sources)
+    params.set('sources', extra.sources)
+  if (extra.people)
+    params.set('people', extra.people)
+  if (extra.sourceFilter)
+    params.set('sourceFilter', extra.sourceFilter)
 
   return params.toString()
 }
@@ -721,7 +986,7 @@ async function load(options = {}) {
     void refreshSalesRequestUnread(city)
     // تقييم البرنامج والبحث قراءة فقط — المدير يرى التطابقات مثل مدير المبيعات
     if (!showingDeleted.value)
-      scheduleEvaluations()
+      scheduleEvaluations(append ? pageData.items : null)
     pruneBulkSelection()
   }
   catch (err) {
@@ -748,12 +1013,17 @@ async function loadMore() {
   await load({ append: true })
 }
 
-function scheduleEvaluations() {
+function scheduleEvaluations(appendedRows = null) {
   if (showingDeleted.value || showingExceptions.value)
     return
-  const list = visibleRows.value
-  // Only evaluate the currently loaded page window.
-  void loadEvaluations(capEvaluationRows(list, 24))
+  // «تحميل المزيد»: evaluate only the new page and keep earlier results.
+  if (Array.isArray(appendedRows)) {
+    void loadEvaluations(capEvaluationRows(appendedRows, listPageSize), { merge: true })
+
+    return
+  }
+  // Fresh load: evaluate the first page window only.
+  void loadEvaluations(capEvaluationRows(visibleRows.value, listPageSize))
 }
 
 function invalidateListCache(city = cityValue.value) {
@@ -1118,11 +1388,18 @@ function onEvalPopState(event) {
     closeEvalResults(row, { skipHistory: true })
 }
 
-async function loadEvaluations(list) {
-  const gen = ++evalGeneration
+/** Results added by «تحميل المزيد» since the last fresh evaluation (kept if the fresh one lands later). */
+let evalMergedSinceFresh = Object.create(null)
+
+async function loadEvaluations(list, { merge = false } = {}) {
+  // A merge rides on the current fresh generation; only fresh loads (or a city switch) bump it.
+  const gen = merge ? evalGeneration : ++evalGeneration
   const cityAtStart = String(cityValue.value || '').trim()
-  evaluationsBusy.value = true
-  evaluationsError.value = ''
+  if (!merge) {
+    evalMergedSinceFresh = Object.create(null)
+    evaluationsBusy.value = true
+    evaluationsError.value = ''
+  }
   try {
     const payloadItems = []
     for (const row of list || []) {
@@ -1138,26 +1415,33 @@ async function loadEvaluations(list) {
       })
     }
     if (!payloadItems.length) {
-      if (gen === evalGeneration)
-        evaluations.value = {}
+      if (gen === evalGeneration && !merge)
+        evaluations.value = { ...evalMergedSinceFresh }
 
       return
     }
     const res = await smPost('sales-requests/evaluate', { items: payloadItems }, { timeoutMs: 120000 })
     if (gen !== evalGeneration || String(cityValue.value || '').trim() !== cityAtStart)
       return
-    const evalItems = res?.items || res?.Items || []
-    // Replace for this province load — never merge leftovers from another city.
-    evaluations.value = indexEvaluationItems(evalItems, list)
+    const indexed = indexEvaluationItems(res?.items || res?.Items || [], list)
+    if (merge) {
+      // «تحميل المزيد»: add this page to what is already shown.
+      evalMergedSinceFresh = { ...evalMergedSinceFresh, ...indexed }
+      evaluations.value = { ...evaluations.value, ...indexed }
+    }
+    else {
+      // Fresh load replaces (never keep leftovers from another city), keeping pages added meanwhile.
+      evaluations.value = { ...evalMergedSinceFresh, ...indexed }
+    }
   }
   catch (err) {
-    if (gen !== evalGeneration)
+    if (gen !== evalGeneration || merge)
       return
-    evaluations.value = {}
+    evaluations.value = { ...evalMergedSinceFresh }
     evaluationsError.value = err?.response?.data?.message || 'تعذر تحميل تقييم البرنامج والبحث'
   }
   finally {
-    if (gen === evalGeneration)
+    if (gen === evalGeneration && !merge)
       evaluationsBusy.value = false
   }
 }
@@ -1271,6 +1555,40 @@ function paymentAmount(pay) {
   return Number.isFinite(n) ? n : 0
 }
 
+function closingLumpNotes(hit) {
+  return notesFromHit(hit)
+}
+
+function paymentRowIsLump(pay, profile, hit) {
+  const total = Number(hit?.amountTotalSales ?? hit?.AmountTotalSales ?? 0)
+  const remaining = Number(hit?.amountRemaining ?? hit?.AmountRemaining ?? NaN)
+  const rows = profilePayments(profile).map(row => ({
+    date: pick(row, 'paymentDate', 'PaymentDate'),
+    amount: paymentAmount(row),
+  }))
+
+  return isClosingLumpRow(
+    { date: pick(pay, 'paymentDate', 'PaymentDate'), amount: paymentAmount(pay) },
+    rows,
+    total,
+    isFinishedAccount(total, remaining),
+  )
+}
+
+function profileLumpNotes(profile, hit) {
+  const total = Number(hit?.amountTotalSales ?? hit?.AmountTotalSales ?? 0)
+  const remaining = Number(hit?.amountRemaining ?? hit?.AmountRemaining ?? NaN)
+
+  return findClosingLumpPayments(
+    profilePayments(profile).map(row => ({
+      date: pick(row, 'paymentDate', 'PaymentDate'),
+      amount: paymentAmount(row),
+    })),
+    total,
+    isFinishedAccount(total, remaining),
+  )
+}
+
 function isProvinceTransferBlocked(row) {
   const status = requestStatus(row)
   const converted = Number(pick(row, 'convertedToSaleId', 'ConvertedToSaleId') || 0)
@@ -1332,7 +1650,6 @@ async function saveEdit() {
     return
   editBusy.value = true
   try {
-    const city = requestCity(row)
     const id = requestId(row)
     const phone = editForm.value.phone ? normalizeIraqPhone(editForm.value.phone) : ''
     const newCity = String(editForm.value.cityValue || '')
@@ -1344,9 +1661,7 @@ async function saveEdit() {
 
         return
       }
-      const path = isDemo() || !city
-        ? `sales-requests/${id}/transfer-province`
-        : `sales-requests/${encodeURIComponent(city)}/${id}/transfer-province`
+      const path = salesRequestWritePath(row, 'transfer-province')
       const match = branches.value.find(b => String(b.value) === newCity)
       await smPost(path, {
         toCityValue: newCity,
@@ -1360,9 +1675,7 @@ async function saveEdit() {
       toast.success('تم نقل الطلب إلى المحافظة الجديدة')
     }
     else {
-      const path = isDemo() || !city
-        ? `sales-requests/${id}`
-        : `sales-requests/${encodeURIComponent(city)}/${id}`
+      const path = salesRequestWritePath(row)
       await smPut(path, {
         customerName: editForm.value.customerName,
         phone,
@@ -1672,6 +1985,20 @@ function gatewayCityKey(row = detail.value || selected.value) {
 
 function requestId(row = detail.value || selected.value) {
   return pick(row, 'id', 'Id')
+}
+
+function salesRequestWritePath(row, suffix = '') {
+  const id = requestId(row)
+  const tail = suffix ? `/${suffix}` : ''
+  // Branch APIs are sales-requests/{id}. The city segment exists only on the gateway.
+  // Using the raw Arabic cityValue here 404s; gatewayCityKey is the branch key.
+  if (isDemo() || !isCentralSalesManager())
+    return `sales-requests/${id}${tail}`
+  const city = gatewayCityKey(row)
+  if (!city)
+    return `sales-requests/${id}${tail}`
+
+  return `sales-requests/${encodeURIComponent(city)}/${id}${tail}`
 }
 
 function requestActionPath(row, suffix) {
@@ -2817,6 +3144,7 @@ onMounted(async () => {
     }
     catch { /* ignore */ }
     cityValue.value = ''
+    void loadDirectorSourceOptions()
   }
   const restored = await restoreBrowseReturnState()
   if (!restored)
@@ -2855,6 +3183,13 @@ watch(exceptionStatus, () => {
   if (showingExceptions.value)
     loadExceptions()
 })
+
+watch([directorFrom, directorTo, directorSources], () => {
+  if (!readOnly.value || suppressListReload.value)
+    return
+  listPage.value = 1
+  void load({ force: true })
+}, { deep: true })
 
 watch(cityValue, () => {
   if (suppressListReload.value)
@@ -3100,6 +3435,191 @@ async function assignBulk() {
           >
             اختر تبويب مرفوض أو المحذوفين ثم صدّر
           </div>
+        </VCol>
+      </VRow>
+      <VRow
+        v-if="readOnly"
+        class="mb-3 align-center"
+      >
+        <VCol
+          cols="12"
+          md="3"
+        >
+          <VTextField
+            v-model="directorFrom"
+            type="date"
+            label="من تاريخ"
+            placeholder="كل الطلبات"
+            clearable
+            hide-details
+            density="comfortable"
+          />
+        </VCol>
+        <VCol
+          cols="12"
+          md="3"
+        >
+          <VTextField
+            v-model="directorTo"
+            type="date"
+            label="إلى تاريخ"
+            placeholder="كل الطلبات"
+            clearable
+            hide-details
+            density="comfortable"
+          />
+          <div class="text-caption text-medium-emphasis mt-1">
+            بدون تاريخ تُعرض كل الطلبات
+          </div>
+        </VCol>
+        <VCol
+          cols="12"
+          md="6"
+        >
+          <VMenu
+            v-model="directorSourceMenu"
+            :close-on-content-click="false"
+            location="bottom end"
+          >
+            <template #activator="{ props: sourceMenuProps }">
+              <div
+                class="director-source-field"
+                v-bind="sourceMenuProps"
+              >
+                <div class="d-flex align-center justify-space-between ga-2">
+                  <span class="text-caption text-medium-emphasis">مصدر الطلب</span>
+                  <VBtn
+                    v-if="directorSourceChips.length"
+                    icon
+                    size="x-small"
+                    variant="text"
+                    @click.stop="directorSources = []"
+                  >
+                    <VIcon icon="tabler-x" size="16" />
+                  </VBtn>
+                </div>
+                <div class="d-flex flex-wrap ga-1 mt-1">
+                  <span
+                    v-if="!directorSourceChips.length"
+                    class="text-body-2 text-medium-emphasis"
+                  >
+                    كل المصادر
+                  </span>
+                  <VChip
+                    v-for="chip in directorSourceChips"
+                    :key="chip.value"
+                    size="small"
+                    closable
+                    @click:close.stop="removeDirectorSource(chip.value)"
+                  >
+                    {{ chip.title }}
+                  </VChip>
+                </div>
+              </div>
+            </template>
+            <VList
+              density="compact"
+              min-width="320"
+              class="py-1"
+            >
+              <VListItem
+                v-for="row in directorSourceMenuItems"
+                :key="row.value"
+                @click="toggleDirectorGroup(row)"
+              >
+                <template #prepend>
+                  <VCheckboxBtn
+                    :model-value="isDirectorValueSelected(row.value)"
+                    @click.stop
+                    @update:model-value="toggleDirectorGroup(row)"
+                  />
+                </template>
+                <VListItemTitle>{{ row.title }}</VListItemTitle>
+                <template
+                  v-if="directorPersonRoles.includes(row.role)"
+                  #append
+                >
+                  <VMenu
+                    :close-on-content-click="false"
+                    location="left"
+                    :open-on-hover="false"
+                  >
+                    <template #activator="{ props: peopleMenuProps }">
+                      <VBtn
+                        v-bind="peopleMenuProps"
+                        icon
+                        size="x-small"
+                        variant="text"
+                        :aria-label="`عرض ${row.title}`"
+                        @click.stop="ensureDirectorPeople()"
+                      >
+                        <VIcon icon="tabler-chevron-left" />
+                      </VBtn>
+                    </template>
+                    <VCard
+                      min-width="280"
+                      max-width="380"
+                    >
+                      <VCardText class="pb-1">
+                        <VTextField
+                          :model-value="directorPersonQuery[row.role]"
+                          density="compact"
+                          hide-details
+                          clearable
+                          placeholder="بحث عن مستخدم"
+                          @update:model-value="directorPersonQuery[row.role] = $event || ''"
+                          @click.stop
+                        />
+                        <div
+                          v-if="isDirectorValueSelected(row.value)"
+                          class="text-caption text-medium-emphasis mt-2"
+                        >
+                          المجموعة كلها محددة. ألغِ تحديدها لاختيار مستخدم واحد.
+                        </div>
+                      </VCardText>
+                      <VList
+                        density="compact"
+                        max-height="320"
+                        class="overflow-y-auto"
+                      >
+                        <VListItem
+                          v-if="directorSourcesLoading && !(directorPeople[row.role] || []).length"
+                          title="جاري تحميل الأسماء"
+                          disabled
+                        />
+                        <VListItem
+                          v-else-if="(row.role === 'promoter' ? directorPromoterFailed : directorSourceFailed) && !(directorPeople[row.role] || []).length"
+                          title="تعذر تحميل الأسماء — اضغط للمحاولة"
+                          @click.stop="loadDirectorSourceOptions()"
+                        />
+                        <VListItem
+                          v-else-if="!directorPeopleFor(row.role).length"
+                          title="لا يوجد مستخدمون"
+                          disabled
+                        />
+                        <VListItem
+                          v-for="person in directorPeopleFor(row.role)"
+                          :key="person.value"
+                          :disabled="isDirectorValueSelected(row.value)"
+                          @click="toggleDirectorPerson(person)"
+                        >
+                          <template #prepend>
+                            <VCheckboxBtn
+                              :model-value="isDirectorValueSelected(row.value) || isDirectorValueSelected(person.value)"
+                              :disabled="isDirectorValueSelected(row.value)"
+                              @click.stop
+                              @update:model-value="toggleDirectorPerson(person)"
+                            />
+                          </template>
+                          <VListItemTitle>{{ person.title }}</VListItemTitle>
+                        </VListItem>
+                      </VList>
+                    </VCard>
+                  </VMenu>
+                </template>
+              </VListItem>
+            </VList>
+          </VMenu>
         </VCol>
       </VRow>
       <VChipGroup
@@ -3519,6 +4039,7 @@ async function assignBulk() {
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">الهاتف</div>{{ row.customerPhone || row.CustomerPhone || '—' }}</VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">العنوان</div>{{ row.customerAddress || row.CustomerAddress || '—' }}</VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">المحافظة</div>{{ displayCityName(row, branches) || row.customerProvince || row.CustomerProvince || '—' }}</VCol>
+              <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">المنتج</div>{{ productOf(row) || '—' }}</VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">نوع المبيع</div>{{ saleRequestTypeLabel(row) }}</VCol>
               <VCol cols="12" sm="6"><div class="text-medium-emphasis text-caption">المصدر</div>{{ requestSourceLabel(row) }}</VCol>
               <VCol cols="12" sm="6">
@@ -3662,7 +4183,20 @@ async function assignBulk() {
                   :id="hitDomId(hit)"
                   :key="hitDomId(hit)"
                   class="eval-hit-card"
+                  :class="{ 'eval-hit-card--lump': closingLumpNotes(hit).length }"
                 >
+                  <div
+                    v-if="closingLumpNotes(hit).length"
+                    class="eval-lump-banner mb-2"
+                  >
+                    <div
+                      v-for="(note, noteIdx) in closingLumpNotes(hit)"
+                      :key="`${note.date || ''}-${note.amount}-${noteIdx}`"
+                      class="eval-lump-banner__line"
+                    >
+                      {{ note.text }}
+                    </div>
+                  </div>
                   <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-2">
                     <div class="font-weight-medium">{{ hit.fullName || hit.FullName }}</div>
                     <VChip
@@ -3753,6 +4287,18 @@ async function assignBulk() {
                         تفاصيل التسديدات
                       </div>
                       <div
+                        v-if="!closingLumpNotes(hit).length && profileLumpNotes(panelOf(row).profile, hit).length"
+                        class="eval-lump-banner my-2"
+                      >
+                        <div
+                          v-for="(note, noteIdx) in profileLumpNotes(panelOf(row).profile, hit)"
+                          :key="`profile-${note.date || ''}-${note.amount}-${noteIdx}`"
+                          class="eval-lump-banner__line"
+                        >
+                          {{ note.text }}
+                        </div>
+                      </div>
+                      <div
                         v-if="!profilePayments(panelOf(row).profile).length"
                         class="text-medium-emphasis"
                       >
@@ -3774,6 +4320,7 @@ async function assignBulk() {
                           <tr
                             v-for="(pay, idx) in profilePayments(panelOf(row).profile)"
                             :key="pick(pay, 'customerPaymentId', 'CustomerPaymentId') || idx"
+                            :class="{ 'eval-payment-row--lump': paymentRowIsLump(pay, panelOf(row).profile, hit) }"
                           >
                             <td>{{ formatSaleDate(pick(pay, 'paymentDate', 'PaymentDate')) }}</td>
                             <td>{{ moneyShort(paymentAmount(pay)) }}</td>
@@ -3874,6 +4421,7 @@ async function assignBulk() {
                     <div>الهاتف: {{ hit.customerPhone || hit.CustomerPhone || '—' }}</div>
                     <div>العنوان: {{ hit.customerAddress || hit.CustomerAddress || '—' }}</div>
                     <div>المصدر: {{ requestSourceLabel(hit) }}</div>
+                    <div v-if="productOf(hit)">المنتج: {{ productOf(hit) }}</div>
                     <div>نوع المبيع: {{ saleRequestTypeLabel(hit) }}</div>
                     <div>
                       تاريخ الطلب:
@@ -3954,6 +4502,7 @@ async function assignBulk() {
               {{ saleRequestTypeLabel(detail) }}
             </VChip>
           </div>
+          <div>المنتج: {{ productOf(detail) || '—' }}</div>
           <div v-if="pick(detail, 'existingCustomerId', 'ExistingCustomerId')">
             رقم الزبون: {{ pick(detail, 'existingCustomerId', 'ExistingCustomerId') }}
           </div>
@@ -4809,6 +5358,15 @@ async function assignBulk() {
           <div>الصحيح: {{ importPreview.valid.length }}</div>
           <div>الخطأ: {{ importPreview.errors.length }}</div>
           <div
+            v-if="importPreview.ignoredColumns?.length"
+            class="text-warning mt-2"
+          >
+            أعمدة لن تُحفظ: {{ importPreview.ignoredColumns.join('، ') }}
+            <span v-if="!importPreview.hasSaleTypeColumn">
+              — لم يُعثر على عمود المنتج («نوع المبيع» أو «المنتج»)، فلن يظهر المنتج في الطلبات.
+            </span>
+          </div>
+          <div
             v-if="importPreview.errors.length"
             class="mt-3"
           >
@@ -5163,6 +5721,25 @@ async function assignBulk() {
   padding: 0.75rem;
   overflow-wrap: anywhere;
 }
+.eval-hit-card--lump {
+  border-color: rgb(var(--v-theme-warning));
+  background: rgba(var(--v-theme-warning), 0.08);
+}
+.eval-lump-banner {
+  background: rgba(var(--v-theme-warning), 0.16);
+  border: 1px solid rgba(var(--v-theme-warning), 0.55);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+}
+.eval-lump-banner__line {
+  font-weight: 700;
+  color: rgb(var(--v-theme-warning));
+  line-height: 1.7;
+}
+.eval-payment-row--lump td {
+  background: rgba(var(--v-theme-warning), 0.18);
+  font-weight: 700;
+}
 .eval-mini-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -5203,5 +5780,16 @@ async function assignBulk() {
 }
 .cursor-pointer {
   cursor: pointer;
+}
+.director-source-field {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 6px;
+  min-height: 48px;
+  padding: 4px 12px 8px;
+  cursor: pointer;
+  background: rgb(var(--v-theme-surface));
+}
+.director-source-field:hover {
+  border-color: rgba(var(--v-theme-primary), 0.7);
 }
 </style>

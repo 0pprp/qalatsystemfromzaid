@@ -38,7 +38,7 @@ public sealed class MonitorAuthTests
         var jwt = tokens.CreateMonitorToken("المراقب", out _);
         var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
         var parsed = handler.ReadJwtToken(jwt);
-        Assert.Equal("المراقب", parsed.Claims.First(c => c.Type == "UserType").Value);
+        Assert.Equal("مسؤول المراقبين", parsed.Claims.First(c => c.Type == "UserType").Value);
         Assert.Equal("true", parsed.Claims.First(c => c.Type == TokenService.CentralClaim).Value);
     }
 
@@ -48,6 +48,15 @@ public sealed class MonitorAuthTests
         Assert.Equal(
             BE_SalesEmployee.Sales.Authorization.SalesRoles.Monitor,
             BE_SalesEmployee.Sales.Authorization.SalesRoles.ToModuleRole("المراقب"));
+        Assert.Equal(
+            BE_SalesEmployee.Sales.Authorization.SalesRoles.Monitor,
+            BE_SalesEmployee.Sales.Authorization.SalesRoles.ToModuleRole("مسؤول المراقبين"));
+        Assert.Equal(
+            BE_SalesEmployee.Sales.Authorization.SalesRoles.CommitteeHead,
+            BE_SalesEmployee.Sales.Authorization.SalesRoles.ToModuleRole("مسؤول لجنة المراقبة"));
+        Assert.Equal(
+            BE_SalesEmployee.Sales.Authorization.SalesRoles.CommitteeAssistant,
+            BE_SalesEmployee.Sales.Authorization.SalesRoles.ToModuleRole("مساعد مسؤول لجنة المراقبة"));
     }
 
     [Fact]

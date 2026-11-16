@@ -18,6 +18,7 @@ namespace BE_SalesEmployee.Controllers
         private readonly MainFollowerAccountService _mainFollowerAccount;
         private readonly DirectorAccountService _directorAccount;
         private readonly MonitorAccountService _monitorAccount;
+        private readonly OversightAccountService _oversightAccounts;
         private readonly SalesFilterLoginService _filterLogin;
         private readonly ISalesEmployeeAppBlockStore _appBlocks;
 
@@ -30,6 +31,7 @@ namespace BE_SalesEmployee.Controllers
             MainFollowerAccountService mainFollowerAccount,
             DirectorAccountService directorAccount,
             MonitorAccountService monitorAccount,
+            OversightAccountService oversightAccounts,
             SalesFilterLoginService filterLogin,
             ISalesEmployeeAppBlockStore appBlocks)
         {
@@ -41,6 +43,7 @@ namespace BE_SalesEmployee.Controllers
             _mainFollowerAccount = mainFollowerAccount;
             _directorAccount = directorAccount;
             _monitorAccount = monitorAccount;
+            _oversightAccounts = oversightAccounts;
             _filterLogin = filterLogin;
             _appBlocks = appBlocks;
         }
@@ -84,7 +87,7 @@ namespace BE_SalesEmployee.Controllers
         /// <summary>Central director login. No province — ratings across all branches.</summary>
         /// <remarks>Also accepts monitor credentials so older clients that only call LoginDirector still work.</remarks>
         [HttpPost("LoginDirector")]
-        public IActionResult LoginDirector([FromBody] LoginRequest request)
+        public async Task<IActionResult> LoginDirector([FromBody] LoginRequest request)
         {
             if (string.IsNullOrWhiteSpace(request.UserName) || string.IsNullOrWhiteSpace(request.Password))
             {
@@ -94,38 +97,20 @@ namespace BE_SalesEmployee.Controllers
             if (_directorAccount.TryAuthenticate(request.UserName, request.Password, out var directorIdentity) &&
                 directorIdentity != null)
             {
-                var directorToken = _tokens.CreateDirectorToken(directorIdentity.DisplayName, out var directorExp);
-                return Ok(new
-                {
-                    token = directorToken,
-                    expiration = directorExp,
-                    userId = 0,
-                    userName = directorIdentity.DisplayName,
-                    userType = "المدير",
-                    cityLink = "",
-                    cityName = "كل المحافظات",
-                    cityValue = "",
-                    central = true
-                });
+                return DirectorOk(directorIdentity.DisplayName);
             }
 
-            // Fallback: monitor accounts are also central / all-provinces.
+            var oversight = await _oversightAccounts.AuthenticateAsync(request.UserName, request.Password);
+            if (oversight != null)
+            {
+                return OversightOk(oversight);
+            }
+
+            // Config monitors are مسؤول المراقبين (legacy section name MonitorAccount).
             if (_monitorAccount.TryAuthenticate(request.UserName, request.Password, out var monitorIdentity) &&
                 monitorIdentity != null)
             {
-                var monitorToken = _tokens.CreateMonitorToken(monitorIdentity.DisplayName, out var monitorExp);
-                return Ok(new
-                {
-                    token = monitorToken,
-                    expiration = monitorExp,
-                    userId = 0,
-                    userName = monitorIdentity.DisplayName,
-                    userType = "المراقب",
-                    cityLink = "",
-                    cityName = "كل المحافظات",
-                    cityValue = "",
-                    central = true
-                });
+                return SupervisorOk(monitorIdentity.DisplayName);
             }
 
             return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
@@ -133,30 +118,85 @@ namespace BE_SalesEmployee.Controllers
 
         /// <summary>Central monitor login — «عمل المتابعين» only (all provinces).</summary>
         [HttpPost("LoginMonitor")]
-        public IActionResult LoginMonitor([FromBody] LoginRequest request)
+        public async Task<IActionResult> LoginMonitor([FromBody] LoginRequest request)
         {
             if (string.IsNullOrWhiteSpace(request.UserName) || string.IsNullOrWhiteSpace(request.Password))
             {
                 return BadRequest(new { message = "اسم المستخدم وكلمة المرور مطلوبان" });
             }
 
-            if (!_monitorAccount.TryAuthenticate(request.UserName, request.Password, out var identity) ||
-                identity == null)
+            if (_monitorAccount.TryAuthenticate(request.UserName, request.Password, out var identity) &&
+                identity != null)
             {
-                return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
+                return SupervisorOk(identity.DisplayName);
             }
 
-            var token = _tokens.CreateMonitorToken(identity.DisplayName, out var expiration);
+            var oversight = await _oversightAccounts.AuthenticateAsync(request.UserName, request.Password);
+            if (oversight != null &&
+                (oversight.Role == SalesRoles.UserTypeMonitorSupervisor || SalesRoles.IsCommittee(oversight.Role)))
+            {
+                return OversightOk(oversight);
+            }
+
+            return BadRequest(new { message = "اسم المستخدم أو كلمة المرور غير صحيحة" });
+        }
+
+        private IActionResult DirectorOk(string displayName)
+        {
+            var token = _tokens.CreateDirectorToken(displayName, out var expiration);
+            return Ok(new
+            {
+                token,
+                expiration,
+                userId = 0,
+                userName = displayName,
+                userType = SalesRoles.UserTypeDirector,
+                cityLink = "",
+                cityName = "كل المحافظات",
+                cityValue = "",
+                allowedCities = Array.Empty<string>(),
+                central = true
+            });
+        }
+
+        private IActionResult SupervisorOk(string displayName)
+        {
+            var token = _tokens.CreateMonitorToken(displayName, out var expiration);
+            return Ok(new
+            {
+                token,
+                expiration,
+                userId = 0,
+                userName = displayName,
+                userType = SalesRoles.UserTypeMonitorSupervisor,
+                cityLink = "",
+                cityName = "كل المحافظات",
+                cityValue = "",
+                allowedCities = Array.Empty<string>(),
+                central = true
+            });
+        }
+
+        private IActionResult OversightOk(OversightLoginIdentity identity)
+        {
+            if (identity.Role == SalesRoles.UserTypeDirector)
+                return DirectorOk(identity.DisplayName);
+            if (identity.Role == SalesRoles.UserTypeMonitorSupervisor)
+                return SupervisorOk(identity.DisplayName);
+
+            var cities = identity.CityValues ?? Array.Empty<string>();
+            var token = _tokens.CreateOversightToken(identity.DisplayName, identity.Role, cities, out var expiration);
             return Ok(new
             {
                 token,
                 expiration,
                 userId = 0,
                 userName = identity.DisplayName,
-                userType = "المراقب",
+                userType = identity.Role,
                 cityLink = "",
-                cityName = "كل المحافظات",
+                cityName = "فروع اللجنة",
                 cityValue = "",
+                allowedCities = cities,
                 central = true
             });
         }
