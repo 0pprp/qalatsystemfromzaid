@@ -192,9 +192,15 @@ namespace BE_DelegateWebApplication.Controllers
             {
                 province = await _followerActions.GetCityNameByIdAsync(auth.CityId.Value, ct);
             }
+            if (string.IsNullOrWhiteSpace(province) && auth.UserId is > 0)
+            {
+                // UsersSelectedCities is keyed by UserID (not DelegateID).
+                province = await _followerActions.GetFollowerCityNameAsync(auth.UserId.Value, ct);
+            }
             if (string.IsNullOrWhiteSpace(province))
             {
-                province = await _followerActions.GetFollowerCityNameAsync(auth.DelegateId, ct);
+                // Delegate row has no usable city (e.g. NULL CityID or no Cities row) — use the branch's own province.
+                province = await _followerActions.GetBranchProvinceNameAsync(ct);
             }
 
             string name;
