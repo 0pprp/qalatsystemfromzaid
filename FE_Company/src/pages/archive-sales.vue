@@ -54,6 +54,14 @@ function money(value) {
   return `${Number(value || 0).toLocaleString('en-US')} د.ع`
 }
 
+// Most recent period first; same period falls back to the higher bundle number.
+function newestFirst(list) {
+  return [...(list || [])].sort((a, b) =>
+    String(b.periodStart || '').localeCompare(String(a.periodStart || ''))
+    || String(b.periodEnd || '').localeCompare(String(a.periodEnd || ''))
+    || (Number(b.bundleNumber) || 0) - (Number(a.bundleNumber) || 0))
+}
+
 async function loadBoard() {
   if (!city.value)
     return
@@ -61,12 +69,12 @@ async function loadBoard() {
   try {
     const data = await archiveBoard(city.value)
     board.value = {
-      current: data?.current || [],
-      ready: data?.ready || [],
-      needsFix: data?.needsFix || [],
-      atCommittee: data?.atCommittee || [],
-      atArchive: data?.atArchive || [],
-      approved: data?.approved || [],
+      current: newestFirst(data?.current),
+      ready: newestFirst(data?.ready),
+      needsFix: newestFirst(data?.needsFix),
+      atCommittee: newestFirst(data?.atCommittee),
+      atArchive: newestFirst(data?.atArchive),
+      approved: newestFirst(data?.approved),
     }
   }
   catch (e) {

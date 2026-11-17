@@ -287,6 +287,7 @@ WHERE BundleId IN (SELECT BundleId FROM dbo.SalesArchiveItems WHERE ArchiveId IN
         var user = CleanActor(committeeUser);
         await using var connection = await OpenAsync(ct);
         await EnsureSchemaAsync(connection, ct);
+        await PurgeDeletedSalesAsync(connection, ct);
         var rows = await connection.QueryAsync<ItemRow>(new CommandDefinition($@"
 {ItemSelect}
 WHERE i.CommitteeUser = @User
@@ -463,9 +464,10 @@ INNER JOIN dbo.SalesArchiveBundles b ON b.BundleId = i.BundleId";
 
     private async Task BackfillAsync(SqlConnection connection, int? employeeId, CancellationToken ct)
     {
+        var branchSaleGone = await PurgeDeletedSalesAsync(connection, ct);
         for (var batch = 0; batch < 30; batch++)
         {
-            var inserted = await BackfillBatchAsync(connection, employeeId, ct);
+            var inserted = await BackfillBatchAsync(connection, employeeId, branchSaleGone, ct);
             if (inserted == 0)
             {
                 return;
@@ -473,9 +475,106 @@ INNER JOIN dbo.SalesArchiveBundles b ON b.BundleId = i.BundleId";
         }
     }
 
-    private async Task<int> BackfillBatchAsync(SqlConnection connection, int? employeeId, CancellationToken ct)
+    /// <summary>
+    /// Drops archive papers whose sale no longer exists: the sales-app draft is gone or no longer
+    /// Completed (voided), or its posted branch sale was deleted in the branch system.
+    /// Runs on every board/list load, so it also clears sales deleted before this rule existed.
+    /// Returns the "branch sale gone" predicate (over draft alias d) so the backfill skips the same
+    /// sales, or null when this branch database cannot be checked.
+    /// </summary>
+    private static async Task<string?> PurgeDeletedSalesAsync(SqlConnection connection, CancellationToken ct)
     {
-        var missing = (await connection.QueryAsync<MissingSaleRow>(new CommandDefinition(@"
+        var caps = await connection.QueryFirstAsync<BranchSaleCaps>(new CommandDefinition(BranchSaleCapsSql, cancellationToken: ct));
+        if (!caps.HasArchive)
+        {
+            return null;
+        }
+
+        var gone = BranchSaleGonePredicate(
+            caps.HasCustomersSales && caps.HasCustomerSaleId,
+            // On hold by request (2026-11-17): the CustomerId rule would drop 13 more papers on live.
+            ByCustomerIdRuleEnabled && caps.HasCustomersSales && caps.HasCustomerSaleId && caps.HasPostingStatus && caps.HasCustomerId,
+            caps.HasCustomersSales && caps.HasCustomerSaleId && caps.HasPostingStatus && caps.HasCustomerId && caps.HasCustomerMatchColumns);
+        var sql = @"
+DELETE i
+FROM dbo.SalesArchiveItems i
+LEFT JOIN dbo.SalesDrafts d ON d.SaleId = i.SaleId
+WHERE d.SaleId IS NULL OR d.Status <> N'Completed'" + (gone == null ? ";" : $@"
+   OR ({gone});");
+        await connection.ExecuteAsync(new CommandDefinition(sql, commandTimeout: 60, cancellationToken: ct));
+        return gone;
+    }
+
+    /// <summary>Rule 2 of <see cref="BranchSaleGonePredicate"/> (posted draft with only a CustomerId). Off until approved.</summary>
+    internal const bool ByCustomerIdRuleEnabled = false;
+
+    /// <summary>Seconds between the draft's completion and its branch customer row being created.</summary>
+    internal const int CustomerMatchWindowSeconds = 120;
+
+    /// <summary>
+    /// SQL condition (draft alias d) that is true when a completed draft's branch sale was deleted:
+    /// 1) linked CustomerSaleId no longer exists; 2) posted, no CustomerSaleId, linked CustomerId has
+    /// no sales left; 3) posted, unlinked: exactly one branch customer matches by phone, salesperson
+    /// and creation time (within <see cref="CustomerMatchWindowSeconds"/>) and that customer has no
+    /// sales left. No match or several matches → kept.
+    /// </summary>
+    internal static string? BranchSaleGonePredicate(bool bySaleId, bool byCustomerId, bool byMatch)
+    {
+        var parts = new List<string>();
+        if (bySaleId)
+        {
+            parts.Add(@"(d.CustomerSaleId IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM dbo.CustomersSales gs WHERE gs.CustomerSaleID = d.CustomerSaleId))");
+        }
+
+        if (byCustomerId)
+        {
+            parts.Add(@"(d.CustomerSaleId IS NULL AND ISNULL(d.PostingStatus, N'') = N'Posted' AND d.CustomerId IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM dbo.CustomersSales gs WHERE gs.CustomerID = d.CustomerId))");
+        }
+
+        if (byMatch)
+        {
+            const string match = @"gc.PhoneNumber = d.Phone AND gc.SaleName = LEFT(d.UserName, 100)
+            AND gc.CreatedDate BETWEEN DATEADD(SECOND, -{0}, d.CompletedAt) AND DATEADD(SECOND, {0}, d.CompletedAt)";
+            var on = string.Format(System.Globalization.CultureInfo.InvariantCulture, match, CustomerMatchWindowSeconds);
+            parts.Add($@"(d.CustomerSaleId IS NULL AND ISNULL(d.PostingStatus, N'') = N'Posted' AND d.CustomerId IS NULL
+        AND d.Phone IS NOT NULL AND LTRIM(RTRIM(d.Phone)) <> N''
+        AND (SELECT COUNT(1) FROM dbo.Customers gc WHERE {on}) = 1
+        AND NOT EXISTS (SELECT 1 FROM dbo.Customers gc INNER JOIN dbo.CustomersSales gs ON gs.CustomerID = gc.CustomerID WHERE {on}))");
+        }
+
+        return parts.Count == 0 ? null : string.Join("\n     OR ", parts);
+    }
+
+    private sealed class BranchSaleCaps
+    {
+        public bool HasArchive { get; set; }
+        public bool HasCustomersSales { get; set; }
+        public bool HasCustomerSaleId { get; set; }
+        public bool HasCustomerId { get; set; }
+        public bool HasPostingStatus { get; set; }
+        public bool HasCustomerMatchColumns { get; set; }
+    }
+
+    private const string BranchSaleCapsSql = @"
+IF OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.SalesDrafts', N'CustomerSaleId') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD CustomerSaleId INT NULL;
+SELECT
+    CAST(CASE WHEN OBJECT_ID(N'dbo.SalesArchiveItems', N'U') IS NOT NULL AND OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NOT NULL THEN 1 ELSE 0 END AS bit) AS HasArchive,
+    CAST(CASE WHEN OBJECT_ID(N'dbo.CustomersSales', N'U') IS NOT NULL THEN 1 ELSE 0 END AS bit) AS HasCustomersSales,
+    CAST(CASE WHEN COL_LENGTH(N'dbo.SalesDrafts', N'CustomerSaleId') IS NOT NULL THEN 1 ELSE 0 END AS bit) AS HasCustomerSaleId,
+    CAST(CASE WHEN COL_LENGTH(N'dbo.SalesDrafts', N'CustomerId') IS NOT NULL THEN 1 ELSE 0 END AS bit) AS HasCustomerId,
+    CAST(CASE WHEN COL_LENGTH(N'dbo.SalesDrafts', N'PostingStatus') IS NOT NULL THEN 1 ELSE 0 END AS bit) AS HasPostingStatus,
+    CAST(CASE WHEN COL_LENGTH(N'dbo.SalesDrafts', N'Phone') IS NOT NULL
+               AND COL_LENGTH(N'dbo.SalesDrafts', N'UserName') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Customers', N'PhoneNumber') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Customers', N'SaleName') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Customers', N'CreatedDate') IS NOT NULL THEN 1 ELSE 0 END AS bit) AS HasCustomerMatchColumns;";
+
+    private async Task<int> BackfillBatchAsync(SqlConnection connection, int? employeeId, string? branchSaleGone, CancellationToken ct)
+    {
+        var missing = (await connection.QueryAsync<MissingSaleRow>(new CommandDefinition($@"
 SELECT TOP (400)
        d.SaleId, d.EmployeeId, d.UserName AS EmployeeName, d.FullName,
        d.FinalSalePrice, d.CompletedAt, d.CustomerListId
@@ -483,7 +582,7 @@ FROM dbo.SalesDrafts d
 WHERE d.Status = N'Completed'
   AND d.CompletedAt IS NOT NULL
   AND (@EmployeeId IS NULL OR d.EmployeeId = @EmployeeId)
-  AND NOT EXISTS (SELECT 1 FROM dbo.SalesArchiveItems a WHERE a.SaleId = d.SaleId)
+  AND NOT EXISTS (SELECT 1 FROM dbo.SalesArchiveItems a WHERE a.SaleId = d.SaleId){(branchSaleGone == null ? string.Empty : $"\n  AND NOT ({branchSaleGone})")}
 ORDER BY d.CompletedAt, d.SaleId",
             new { EmployeeId = employeeId }, commandTimeout: 60, cancellationToken: ct))).ToList();
         if (missing.Count == 0)
