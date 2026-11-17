@@ -287,6 +287,7 @@ WHERE BundleId IN (SELECT BundleId FROM dbo.SalesArchiveItems WHERE ArchiveId IN
         var user = CleanActor(committeeUser);
         await using var connection = await OpenAsync(ct);
         await EnsureSchemaAsync(connection, ct);
+        await PurgeDeletedSalesAsync(connection, ct);
         var rows = await connection.QueryAsync<ItemRow>(new CommandDefinition($@"
 {ItemSelect}
 WHERE i.CommitteeUser = @User
@@ -463,9 +464,11 @@ INNER JOIN dbo.SalesArchiveBundles b ON b.BundleId = i.BundleId";
 
     private async Task BackfillAsync(SqlConnection connection, int? employeeId, CancellationToken ct)
     {
+        var checkBranchSales = await CanCheckBranchSalesAsync(connection, ct);
+        await PurgeDeletedSalesAsync(connection, ct);
         for (var batch = 0; batch < 30; batch++)
         {
-            var inserted = await BackfillBatchAsync(connection, employeeId, ct);
+            var inserted = await BackfillBatchAsync(connection, employeeId, checkBranchSales, ct);
             if (inserted == 0)
             {
                 return;
@@ -473,9 +476,59 @@ INNER JOIN dbo.SalesArchiveBundles b ON b.BundleId = i.BundleId";
         }
     }
 
-    private async Task<int> BackfillBatchAsync(SqlConnection connection, int? employeeId, CancellationToken ct)
+    /// <summary>
+    /// Drops archive papers whose sale no longer exists: the sales-app draft is gone or no longer
+    /// Completed (voided), or its posted branch sale (CustomersSales) was deleted in the branch system.
+    /// Runs on every board/list load, so it also clears sales deleted before this rule existed.
+    /// </summary>
+    private static async Task<int> PurgeDeletedSalesAsync(SqlConnection connection, CancellationToken ct)
     {
-        var missing = (await connection.QueryAsync<MissingSaleRow>(new CommandDefinition(@"
+        return await connection.ExecuteScalarAsync<int>(new CommandDefinition(PurgeDeletedSalesSql, commandTimeout: 60, cancellationToken: ct));
+    }
+
+    /// <summary>A completed draft whose posted branch sale was deleted must not be re-added by the backfill.</summary>
+    internal const string BranchSaleDeletedFilterSql = @"
+  AND (d.CustomerSaleId IS NULL
+       OR EXISTS (SELECT 1 FROM dbo.CustomersSales cs WHERE cs.CustomerSaleID = d.CustomerSaleId))";
+
+    private static async Task<bool> CanCheckBranchSalesAsync(SqlConnection connection, CancellationToken ct)
+    {
+        return await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
+IF OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.SalesDrafts', N'CustomerSaleId') IS NULL
+    ALTER TABLE dbo.SalesDrafts ADD CustomerSaleId INT NULL;
+SELECT CASE WHEN OBJECT_ID(N'dbo.CustomersSales', N'U') IS NOT NULL
+             AND COL_LENGTH(N'dbo.SalesDrafts', N'CustomerSaleId') IS NOT NULL THEN 1 ELSE 0 END;",
+            cancellationToken: ct)) == 1;
+    }
+
+    internal const string PurgeDeletedSalesSql = @"
+SET NOCOUNT ON;
+DECLARE @removed INT = 0;
+IF OBJECT_ID(N'dbo.SalesArchiveItems', N'U') IS NOT NULL AND OBJECT_ID(N'dbo.SalesDrafts', N'U') IS NOT NULL
+BEGIN
+    DELETE i
+    FROM dbo.SalesArchiveItems i
+    LEFT JOIN dbo.SalesDrafts d ON d.SaleId = i.SaleId
+    WHERE d.SaleId IS NULL OR d.Status <> N'Completed';
+    SET @removed = @@ROWCOUNT;
+
+    IF OBJECT_ID(N'dbo.CustomersSales', N'U') IS NOT NULL
+       AND COL_LENGTH(N'dbo.SalesDrafts', N'CustomerSaleId') IS NOT NULL
+    BEGIN
+        EXEC sp_executesql N'
+        DELETE i
+        FROM dbo.SalesArchiveItems i
+        INNER JOIN dbo.SalesDrafts d ON d.SaleId = i.SaleId
+        WHERE d.CustomerSaleId IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM dbo.CustomersSales cs WHERE cs.CustomerSaleID = d.CustomerSaleId);';
+        SET @removed = @removed + @@ROWCOUNT;
+    END
+END
+SELECT @removed;";
+
+    private async Task<int> BackfillBatchAsync(SqlConnection connection, int? employeeId, bool checkBranchSales, CancellationToken ct)
+    {
+        var missing = (await connection.QueryAsync<MissingSaleRow>(new CommandDefinition($@"
 SELECT TOP (400)
        d.SaleId, d.EmployeeId, d.UserName AS EmployeeName, d.FullName,
        d.FinalSalePrice, d.CompletedAt, d.CustomerListId
@@ -483,7 +536,7 @@ FROM dbo.SalesDrafts d
 WHERE d.Status = N'Completed'
   AND d.CompletedAt IS NOT NULL
   AND (@EmployeeId IS NULL OR d.EmployeeId = @EmployeeId)
-  AND NOT EXISTS (SELECT 1 FROM dbo.SalesArchiveItems a WHERE a.SaleId = d.SaleId)
+  AND NOT EXISTS (SELECT 1 FROM dbo.SalesArchiveItems a WHERE a.SaleId = d.SaleId){(checkBranchSales ? BranchSaleDeletedFilterSql : string.Empty)}
 ORDER BY d.CompletedAt, d.SaleId",
             new { EmployeeId = employeeId }, commandTimeout: 60, cancellationToken: ct))).ToList();
         if (missing.Count == 0)

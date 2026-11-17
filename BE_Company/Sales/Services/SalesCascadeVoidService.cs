@@ -443,6 +443,13 @@ namespace BE_Company.Sales.Services
                   WHERE SaleId = @SaleId",
                 new { SaleId = saleId, Voided = DraftVoidedStatus },
                 cancellationToken: ct));
+
+            // A voided sale no longer belongs in the paper archive, whatever stage its paper is at.
+            await connection.ExecuteAsync(new CommandDefinition(
+                @"IF OBJECT_ID(N'dbo.SalesArchiveItems', N'U') IS NOT NULL
+                      DELETE FROM dbo.SalesArchiveItems WHERE SaleId = @SaleId",
+                new { SaleId = saleId },
+                cancellationToken: ct));
         }
 
         private static async Task<bool> ProcedureExistsAsync(
