@@ -492,7 +492,8 @@ INNER JOIN dbo.SalesArchiveBundles b ON b.BundleId = i.BundleId";
 
         var gone = BranchSaleGonePredicate(
             caps.HasCustomersSales && caps.HasCustomerSaleId,
-            caps.HasCustomersSales && caps.HasCustomerSaleId && caps.HasPostingStatus && caps.HasCustomerId,
+            // On hold by request (2026-11-17): the CustomerId rule would drop 13 more papers on live.
+            ByCustomerIdRuleEnabled && caps.HasCustomersSales && caps.HasCustomerSaleId && caps.HasPostingStatus && caps.HasCustomerId,
             caps.HasCustomersSales && caps.HasCustomerSaleId && caps.HasPostingStatus && caps.HasCustomerId && caps.HasCustomerMatchColumns);
         var sql = @"
 DELETE i
@@ -503,6 +504,9 @@ WHERE d.SaleId IS NULL OR d.Status <> N'Completed'" + (gone == null ? ";" : $@"
         await connection.ExecuteAsync(new CommandDefinition(sql, commandTimeout: 60, cancellationToken: ct));
         return gone;
     }
+
+    /// <summary>Rule 2 of <see cref="BranchSaleGonePredicate"/> (posted draft with only a CustomerId). Off until approved.</summary>
+    internal const bool ByCustomerIdRuleEnabled = false;
 
     /// <summary>Seconds between the draft's completion and its branch customer row being created.</summary>
     internal const int CustomerMatchWindowSeconds = 120;

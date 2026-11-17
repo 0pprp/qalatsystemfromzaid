@@ -92,7 +92,7 @@ DELETE FROM dbo.SalesDrafts WHERE SaleId = 303;");
             var agent3 = Assert.Single(await archive.ListForEmployeeAsync(3, default));
             var kept = (await archive.GetForEmployeeAsync(3, agent3.BundleId, default))!.Items
                 .Select(i => i.SaleId).OrderBy(id => id).ToArray();
-            Assert.Equal(new[] { 402, 403, 405, 406 }, kept);
+            Assert.Equal(new[] { 402, 403, 404, 405, 406 }, kept); // 404: CustomerId rule is on hold
         }
 
         // A paper already in a bundle is removed once its matched branch sale is deleted.
@@ -102,7 +102,7 @@ DELETE FROM dbo.SalesDrafts WHERE SaleId = 303;");
         }
 
         var agent3After = Assert.Single(await archive.ListForEmployeeAsync(3, default));
-        Assert.Equal(3, agent3After.ItemCount);
+        Assert.Equal(4, agent3After.ItemCount);
     }
 
     private static async Task<string> ResetDatabaseAsync(string master)
