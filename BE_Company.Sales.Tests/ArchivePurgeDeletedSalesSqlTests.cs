@@ -84,6 +84,25 @@ DELETE FROM dbo.SalesDrafts WHERE SaleId = 303;");
 
         Assert.Empty(await archive.ListForEmployeeAsync(2, default));
         Assert.Empty((await archive.BoardAsync(default)).AtCommittee);
+
+        // Agent 3's unlinked sales: only confident "branch sale deleted" matches are dropped,
+        // and the backfill never adds them in the first place.
+        for (var load = 0; load < 2; load++)
+        {
+            var agent3 = Assert.Single(await archive.ListForEmployeeAsync(3, default));
+            var kept = (await archive.GetForEmployeeAsync(3, agent3.BundleId, default))!.Items
+                .Select(i => i.SaleId).OrderBy(id => id).ToArray();
+            Assert.Equal(new[] { 402, 403, 405, 406 }, kept);
+        }
+
+        // A paper already in a bundle is removed once its matched branch sale is deleted.
+        await using (var c = new SqlConnection(cs))
+        {
+            await c.ExecuteAsync("DELETE FROM dbo.CustomersSales WHERE CustomerSaleID = 9402;");
+        }
+
+        var agent3After = Assert.Single(await archive.ListForEmployeeAsync(3, default));
+        Assert.Equal(3, agent3After.ItemCount);
     }
 
     private static async Task<string> ResetDatabaseAsync(string master)
@@ -116,7 +135,29 @@ INSERT INTO dbo.SalesDrafts VALUES
     (301, 2, N'موظف 2', N'زبون أ', 100000, '2026-02-03T10:00:00', NULL, N'Completed', 9001),
     (302, 2, N'موظف 2', N'زبون ب', 200000, '2026-02-04T10:00:00', NULL, N'Completed', 9002),
     (303, 2, N'موظف 2', N'زبون ج', 300000, '2026-02-05T10:00:00', NULL, N'Completed', NULL),
-    (304, 2, N'موظف 2', N'زبون د', 400000, '2026-02-06T10:00:00', NULL, N'Completed', 9004);");
+    (304, 2, N'موظف 2', N'زبون د', 400000, '2026-02-06T10:00:00', NULL, N'Completed', 9004);
+ALTER TABLE dbo.SalesDrafts ADD Phone NVARCHAR(50) NULL, CustomerId INT NULL, PostingStatus NVARCHAR(30) NULL;
+CREATE TABLE dbo.Customers (
+    CustomerID INT PRIMARY KEY, CustomerName NVARCHAR(200), PhoneNumber NVARCHAR(100),
+    SaleName NVARCHAR(100), CreatedDate DATETIME NULL);");
+        await db.ExecuteAsync(@"
+UPDATE dbo.SalesDrafts SET PostingStatus = N'Posted';
+-- Agent 3: early sales posted before CustomerSaleId / CustomerId were linked on the draft.
+INSERT INTO dbo.SalesDrafts (SaleId, EmployeeId, UserName, FullName, FinalSalePrice, CompletedAt, Status, Phone, CustomerId, PostingStatus) VALUES
+    (401, 3, N'dhiaa', N'حذف في الفرع', 5450000, '2026-02-04T14:14:52.080', N'Completed', N'07700000401', NULL, N'Posted'),
+    (402, 3, N'dhiaa', N'ما زال موجود', 1000000, '2026-02-05T10:00:00', N'Completed', N'07700000402', NULL, N'Posted'),
+    (403, 3, N'dhiaa', N'تطابق مزدوج', 1000000, '2026-02-06T10:00:00', N'Completed', N'07700000403', NULL, N'Posted'),
+    (404, 3, N'dhiaa', N'رقم العميل فقط', 1000000, '2026-02-07T10:00:00', N'Completed', N'07700000404', 7404, N'Posted'),
+    (405, 3, N'dhiaa', N'لم يرحّل بعد', 1000000, '2026-02-08T10:00:00', N'Completed', N'07700000405', NULL, NULL),
+    (406, 3, N'dhiaa', N'عميل قديم بعيد', 1000000, '2026-02-09T10:00:00', N'Completed', N'07700000406', NULL, N'Posted');
+INSERT INTO dbo.Customers VALUES
+    (7401, N'حذف في الفرع', N'07700000401', N'dhiaa', '2026-02-04T14:14:51.967'),  -- sale deleted
+    (7402, N'ما زال موجود', N'07700000402', N'dhiaa', '2026-02-05T10:00:00'),       -- still sold
+    (7403, N'تطابق 1', N'07700000403', N'dhiaa', '2026-02-06T10:00:01'),             -- two matches, no sales
+    (7413, N'تطابق 2', N'07700000403', N'dhiaa', '2026-02-06T10:00:30'),
+    (7404, N'رقم العميل فقط', N'07700000404', N'dhiaa', '2026-02-07T10:00:00'),     -- sale deleted
+    (7406, N'عميل قديم بعيد', N'07700000406', N'dhiaa', '2026-01-01T10:00:00');     -- outside window
+INSERT INTO dbo.CustomersSales VALUES (9402, 7402);");
         return cs;
     }
 }
