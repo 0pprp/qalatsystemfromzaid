@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:follower_application/services/follower_tracking_api.dart';
 import 'package:follower_application/services/follower_tracking_repository.dart';
 import 'package:follower_application/services/follower_tracking_session.dart';
@@ -162,7 +163,18 @@ class ShiftTrackingController {
     if (_collecting) {
       FollowerShiftDebug.log('startForegroundService called');
       try {
-        nativeOk = await _startNative(shift);
+        try {
+          nativeOk = await _startNative(shift);
+        } on PlatformException catch (e) {
+          // Native refuses to start without location permission (it would
+          // otherwise crash the app). Ask once while we are in the foreground,
+          // then retry.
+          if (e.code != 'PERMISSION') rethrow;
+          FollowerShiftDebug.log('native start refused: no location permission');
+          final status = await Permission.locationWhenInUse.request();
+          if (!status.isGranted) rethrow;
+          nativeOk = await _startNative(shift);
+        }
         FollowerShiftDebug.log('native service ${nativeOk ? 'success' : 'failure'}');
         if (nativeOk) {
           FollowerShiftDebug.log('native tracking started');

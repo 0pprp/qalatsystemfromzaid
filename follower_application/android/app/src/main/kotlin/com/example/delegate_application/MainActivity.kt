@@ -73,6 +73,14 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "start" -> {
+                        // Starting a location foreground service without location
+                        // permission makes startForeground() throw on Android 14+,
+                        // and the system then kills the whole app. Refuse instead.
+                        if (!hasLocationPermission()) {
+                            LocationForegroundService.log("FOLLOWER_SERVICE_START_SKIPPED reason=no-location-permission")
+                            result.error("PERMISSION", "location permission denied", null)
+                            return@setMethodCallHandler
+                        }
                         val intent = Intent(this, LocationForegroundService::class.java)
                         intent.putExtra(LocationForegroundService.EXTRA_SHIFT_ID, call.argument<Int>("shiftId") ?: 0)
                         intent.putExtra(LocationForegroundService.EXTRA_CUTOFF, (call.argument<Number>("cutoffAtUtcMs") ?: 0).toLong())
@@ -197,10 +205,14 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun currentFix(result: MethodChannel.Result) {
+    private fun hasLocationPermission(): Boolean {
         val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) {
+        return fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun currentFix(result: MethodChannel.Result) {
+        if (!hasLocationPermission()) {
             result.error("PERMISSION", "location permission denied", null)
             return
         }
