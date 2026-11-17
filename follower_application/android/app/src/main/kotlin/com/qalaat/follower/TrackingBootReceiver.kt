@@ -1,10 +1,13 @@
 package com.qalaat.follower
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.os.Build
+import androidx.core.content.ContextCompat
 
 class TrackingBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -47,6 +50,19 @@ class TrackingBootReceiver : BroadcastReceiver() {
             LocationForegroundService.log(
                 "FOLLOWER_BOOT_SKIP reason=no-active-shift shiftId=$shiftId active=$active cutoff=$cutoff",
             )
+            return
+        }
+
+        // From a boot broadcast the app is in the background, so a location
+        // foreground service needs background location (Android 10+) or the
+        // service's startForeground() throws and the app crashes.
+        val needed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
+        }
+        if (ContextCompat.checkSelfPermission(context, needed) != PackageManager.PERMISSION_GRANTED) {
+            LocationForegroundService.log("FOLLOWER_BOOT_SKIP reason=no-location-permission shiftId=$shiftId")
             return
         }
 
