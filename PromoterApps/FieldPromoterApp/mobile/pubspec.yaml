@@ -1,7 +1,7 @@
 name: customer_app
 description: "قلعة الضمان — تطبيق المروج الميداني (field promoter app)."
 publish_to: 'none'
-version: 1.4.10+17
+version: 1.4.11+18
 
 environment:
   sdk: ^3.13.7

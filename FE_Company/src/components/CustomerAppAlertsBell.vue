@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   caAge,
+  caIsClosedEarly,
   caMinutes,
   caSeenAlert,
   caSeenAllAlerts,
@@ -13,7 +14,8 @@ import { formatIraqClock } from '@/composables/gpsTrack'
 import { useToast } from '@/composables/useToast'
 
 /**
- * Navbar bell for المدير / المراقب: «بقي في نفس المكان» alerts from تطبيق المسوّقين.
+ * Navbar bell for المدير / المراقب: alerts from تطبيق المسوّقين — «بقي في نفس المكان», and «أنهى الدوام قبل الهدف»
+ * (the agent ended the working day by hand before the daily work-time target).
  * Polls every minute; a new alert shows a toast, plays a short tone and (when allowed) a browser notification.
  */
 const router = useRouter()
@@ -32,6 +34,13 @@ const hasAlerts = computed(() => unseen.value > 0)
 
 function clock(value) {
   return value ? formatIraqClock(value) : '—'
+}
+
+/** One line for the toast and the browser notification. */
+function describe(alert) {
+  return caIsClosedEarly(alert)
+    ? `${alert.name} أنهى الدوام دون إكمال الهدف اليومي (عمل ${caMinutes(alert.workMinutes)} من ${caMinutes(alert.targetMinutes)})`
+    : `${alert.name} في نفس المكان منذ ${caMinutes(alert.minutes)}`
 }
 
 function beep() {
@@ -58,7 +67,7 @@ function notifyBrowser(alert) {
       return
 
     const n = new Notification('تنبيه دوام المسوّقين', {
-      body: `${alert.name} في نفس المكان منذ ${caMinutes(alert.minutes)}`,
+      body: describe(alert),
       tag: `ca-alert-${alert.id}`,
     })
 
@@ -87,7 +96,7 @@ async function load() {
     if (!first && fresh.length) {
       const a = fresh[0]
 
-      toast.warning(`تنبيه: ${a.name} بقي في نفس المكان منذ ${caMinutes(a.minutes)}`)
+      toast.warning(`تنبيه: ${describe(a)}`)
       beep()
       fresh.forEach(notifyBrowser)
     }
@@ -111,6 +120,12 @@ function askPermission() {
 function showOnMap(alert) {
   open.value = false
   router.push({ path: '/customer-app-attendance', query: { userId: alert.userId, date: caYmd(new Date(alert.createdAt)) } })
+}
+
+/** «المحلات المثبّتة» of that agent and day: the work periods against the target. */
+function showWorkDay(alert) {
+  open.value = false
+  router.push({ path: '/customer-app-prospects', query: { userId: alert.userId, date: caYmd(new Date(alert.createdAt)) } })
 }
 
 async function markSeen(alert) {
@@ -203,7 +218,7 @@ onUnmounted(() => clearInterval(timer))
         >
           لا توجد تنبيهات جديدة.
           <div class="text-caption mt-1">
-            يصل تنبيه عندما يبقى مسوّق في الدوام في نفس المكان لمدة ساعة.
+            يصل تنبيه عندما يبقى مسوّق في الدوام في نفس المكان لمدة ساعة، أو عندما ينهي الدوام قبل إكمال هدفه اليومي.
           </div>
         </div>
         <VList
@@ -217,23 +232,37 @@ onUnmounted(() => clearInterval(timer))
           >
             <template #prepend>
               <VAvatar
-                :color="a.isOpen ? 'error' : 'secondary'"
+                :color="caIsClosedEarly(a) ? 'warning' : a.isOpen ? 'error' : 'secondary'"
                 variant="tonal"
                 size="36"
               >
-                <VIcon icon="tabler-clock-pause" />
+                <VIcon :icon="caIsClosedEarly(a) ? 'tabler-target-off' : 'tabler-clock-pause'" />
               </VAvatar>
             </template>
             <VListItemTitle class="font-weight-medium">
               {{ a.name }}
             </VListItemTitle>
-            <VListItemSubtitle>
+            <VListItemSubtitle v-if="caIsClosedEarly(a)">
+              أنهى الدوام الساعة {{ clock(a.sinceAt) }} دون إكمال الهدف اليومي:
+              عمل {{ caMinutes(a.workMinutes) }} من {{ caMinutes(a.targetMinutes) }}
+            </VListItemSubtitle>
+            <VListItemSubtitle v-else>
               {{ a.isOpen ? 'ما زال' : 'كان' }} في نفس المكان {{ caMinutes(a.minutes) }}
               (منذ {{ clock(a.sinceAt) }})
               <span v-if="a.cityName"> · {{ a.cityName }}</span>
             </VListItemSubtitle>
             <div class="d-flex gap-2 mt-1">
               <VBtn
+                v-if="caIsClosedEarly(a)"
+                size="x-small"
+                variant="tonal"
+                prepend-icon="tabler-timeline"
+                @click="showWorkDay(a)"
+              >
+                فترات العمل
+              </VBtn>
+              <VBtn
+                v-else
                 size="x-small"
                 variant="tonal"
                 prepend-icon="tabler-map"

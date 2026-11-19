@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -5,7 +7,9 @@ import 'package:go_router/go_router.dart';
 import '../../app_config/data/app_config_repository.dart';
 import '../../../core/utils/launcher.dart';
 import '../../../core/config/app_config.dart';
+import '../../../core/push/push_service.dart';
 import '../../work/data/work_controller.dart';
+import '../../work/presentation/target_summary_dialog.dart';
 
 /// Bottom navigation: new sale order (opens first), my summary, orders, working day, account.
 class MainShell extends ConsumerStatefulWidget {
@@ -17,8 +21,37 @@ class MainShell extends ConsumerStatefulWidget {
   ConsumerState<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends ConsumerState<MainShell> {
+class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserver {
   bool _softUpdateShown = false;
+  StreamSubscription<Object?>? _pushSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // «حققت هدفك اليومي»: shown when the app opens, comes back to the front, or the notification arrives while open.
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkTargetSummary());
+    _pushSub = ref.read(pushServiceProvider).foregroundMessages.listen((m) {
+      if (m.data['kind'] == 'target_reached') _checkTargetSummary();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pushSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkTargetSummary();
+  }
+
+  void _checkTargetSummary() {
+    if (mounted) maybeShowTargetSummary(context, ref);
+  }
+
   void _maybeShowSoftUpdate() {
     if (_softUpdateShown || !ref.read(updateAvailableProvider)) return;
     _softUpdateShown = true;

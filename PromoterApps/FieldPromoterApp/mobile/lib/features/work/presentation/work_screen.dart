@@ -136,13 +136,29 @@ class _WorkScreenState extends ConsumerState<WorkScreen> {
   }
 
   Future<void> _end() async {
-    final ok = await confirmDialog(
-      context,
-      title: 'إنهاء الدوام',
-      message: 'سيتوقف تسجيل موقعك ويُحتسب وقت الدوام حتى الآن. هل تريد إنهاء الدوام؟',
-      confirm: 'إنهاء الدوام',
-      destructive: true,
-    );
+    // Ending before the daily target: warn with the time worked so far. Offline, the plain question is asked.
+    TargetStatus? target;
+    try {
+      target = await ref.read(workRepositoryProvider).targetStatus().timeout(const Duration(seconds: 8));
+    } catch (_) {}
+    if (!mounted) return;
+    final ok = target != null && target.endsEarly
+        ? await confirmDialog(
+            context,
+            title: 'لم تحقق هدفك اليومي',
+            message: 'عملت اليوم ${target.workedText} فقط ولم تصل إلى هدفك اليومي.\n'
+                'يمكنك متابعة العمل لتحقيق الهدف، أو إنهاء الدوام على أي حال.',
+            confirm: 'إنهاء الدوام على أي حال',
+            cancel: 'متابعة العمل',
+            destructive: true,
+          )
+        : await confirmDialog(
+            context,
+            title: 'إنهاء الدوام',
+            message: 'سيتوقف تسجيل موقعك ويُحتسب وقت الدوام حتى الآن. هل تريد إنهاء الدوام؟',
+            confirm: 'إنهاء الدوام',
+            destructive: true,
+          );
     if (!ok) return;
     final error = await ref.read(workControllerProvider.notifier).endDay();
     if (!mounted) return;

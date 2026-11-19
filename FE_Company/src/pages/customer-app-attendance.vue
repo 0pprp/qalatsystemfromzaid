@@ -8,6 +8,7 @@ import {
   caAgentHistory,
   caAttendance,
   caAttendanceAlerts,
+  caIsClosedEarly,
   caDate,
   caErrorMessage,
   caMinutes,
@@ -50,6 +51,20 @@ const alertByUser = computed(() => {
 })
 
 const openAlerts = computed(() => alerts.value.filter(a => a.isOpen).length)
+
+// «أنهى الدوام قبل الهدف» alerts of the selected date; userId → the latest one
+const earlyCloses = ref([])
+
+const earlyCloseByUser = computed(() => {
+  const out = {}
+  for (const a of earlyCloses.value) {
+    if (!out[a.userId] || a.id > out[a.userId].id)
+      out[a.userId] = a
+  }
+
+  return out
+})
+
 const selectedAlerts = computed(() => alerts.value.filter(a => a.userId === selectedId.value))
 
 async function acknowledge(alert) {
@@ -97,10 +112,14 @@ async function loadDay() {
   try {
     rows.value = await caAttendance({ date: date.value }) || []
     try {
-      alerts.value = await caAttendanceAlerts({ date: date.value }) || []
+      const all = await caAttendanceAlerts({ date: date.value }) || []
+
+      alerts.value = all.filter(a => !caIsClosedEarly(a))
+      earlyCloses.value = all.filter(caIsClosedEarly)
     }
     catch {
       alerts.value = []
+      earlyCloses.value = []
     }
     paint()
   }
@@ -364,6 +383,15 @@ onUnmounted(() => {
             </template>
           </VChip>
           <VChip
+            v-if="earlyCloses.length"
+            color="warning"
+            variant="tonal"
+            prepend-icon="tabler-target-off"
+            size="small"
+          >
+            {{ Object.keys(earlyCloseByUser).length }} أنهوا الدوام قبل الهدف
+          </VChip>
+          <VChip
             v-if="isToday"
             color="success"
             variant="tonal"
@@ -524,6 +552,19 @@ onUnmounted(() => {
               prepend-icon="tabler-clock-pause"
             >
               {{ alertByUser[r.userId].isOpen ? 'في نفس المكان منذ' : 'بقي في نفس المكان' }} {{ caMinutes(alertByUser[r.userId].minutes) }}
+            </VChip>
+          </div>
+          <div
+            v-if="earlyCloseByUser[r.userId]"
+            class="px-3 pb-2"
+          >
+            <VChip
+              size="x-small"
+              color="warning"
+              variant="tonal"
+              prepend-icon="tabler-target-off"
+            >
+              أنهى الدوام قبل الهدف: عمل {{ caMinutes(earlyCloseByUser[r.userId].workMinutes) }} من {{ caMinutes(earlyCloseByUser[r.userId].targetMinutes) }}
             </VChip>
           </div>
         </VCard>

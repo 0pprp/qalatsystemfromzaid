@@ -202,4 +202,26 @@ void main() {
     expect(ended.track, hasLength(3));
     expect(ended.lastEndedAt, isNotNull);
   });
+
+  test('daily target: status before ending the day and the summary that shows once', () async {
+    await login('agent2');
+    final work = WorkRepository(api);
+    final pins = ProspectsRepository(api);
+    for (var i = 0; i < 2; i++) {
+      await pins.create(ProspectInput(lat: 32.04 + i / 1000, lng: 44.34, shopName: 'محل الهدف $i', interest: 3));
+    }
+    final status = await work.targetStatus();
+    expect(status.hasTarget, isTrue);
+    expect(status.reached, isTrue);
+    expect(status.endsEarly, isFalse);
+    expect(status.workedText, isNotEmpty);
+
+    final summary = await work.targetSummary();
+    expect(summary, isNotNull);
+    expect(summary!.isToday, isTrue);
+    expect(summary.stores, greaterThanOrEqualTo(2));
+    expect(summary.day, isNotNull);
+    await work.markTargetSummarySeen(summary.id);
+    expect(await work.targetSummary(), isNull);
+  });
 }

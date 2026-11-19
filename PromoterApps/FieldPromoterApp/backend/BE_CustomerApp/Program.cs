@@ -64,6 +64,7 @@ builder.Services.AddScoped<AuditService>();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<OtpService>();
 builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<BE_CustomerApp.Domain.Work.DailyTargetService>();
 builder.Services.AddScoped<BE_CustomerApp.Domain.Work.WorkService>();
 builder.Services.AddScoped<BE_CustomerApp.Domain.Work.WorkAlertService>();
 builder.Services.AddScoped<BE_CustomerApp.Domain.Work.ProspectService>();
