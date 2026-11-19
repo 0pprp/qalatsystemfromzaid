@@ -785,4 +785,123 @@ public sealed class EndToEndTests : IClassFixture<ApiFixture>
         Assert.False(today["isOpen"]!.GetValue<bool>());
         Assert.Equal("مدير الاختبار", today["seenBy"]!.GetValue<string>());
     }
+
+    /// <summary>Sets pins' times to minutes from now (negative = in the past).</summary>
+    private async Task SetPinTimesFromNow(IReadOnlyList<long> ids, params int[] minutesFromNow)
+    {
+        await using var c = new SqlConnection(_fx.ConnectionString);
+        await c.OpenAsync();
+        for (var i = 0; i < ids.Count; i++)
+        {
+            await using var cmd = new SqlCommand("UPDATE agents.Prospects SET CreatedAt = @at WHERE Id = @id", c);
+            cmd.Parameters.AddWithValue("@at", DateTime.UtcNow.AddMinutes(minutesFromNow[i]));
+            cmd.Parameters.AddWithValue("@id", ids[i]);
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Agents_are_told_about_the_daily_target_and_the_dashboard_about_a_day_closed_early()
+    {
+        if (!_fx.Available) return;
+        // The pins below are moved up to 2 h 10 min back and must stay inside today (Iraq time).
+        if (DateTime.UtcNow.AddHours(3).TimeOfDay < TimeSpan.FromMinutes(140)) return;
+        var admin = ApiFixture.AdminToken();
+        var (aId, a) = await CreateAgentAndLogin("notice.reach", "07700000041", "مرتضى");
+        var (bId, b) = await CreateAgentAndLogin("notice.idle", "07700000043", "سجاد");
+        var (_, free) = await CreateAgentAndLogin("notice.none", "07700000045", "أمير");
+        await Send(HttpMethod.Put, $"/api/v1/admin/agents/{aId}/target", admin, new { dailyWorkMinutesTarget = 20 });
+        await Send(HttpMethod.Put, $"/api/v1/admin/agents/{bId}/target", admin, new { dailyWorkMinutesTarget = 120 });
+
+        async Task<long> Pin(string token, int n) => (await Send(HttpMethod.Post, "/api/v1/prospects", token,
+            new { latitude = 32.07m + n / 1000m, longitude = 44.39m, shopName = $"محل التنبيه {n}", interest = 3 }, appVersion: "1.4.11"))["id"]!.GetValue<long>();
+        async Task<int> Detect()
+        {
+            using var scope = _fx.Services.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<BE_CustomerApp.Domain.Work.DailyTargetService>().DetectAsync(CancellationToken.None);
+        }
+        async Task<List<JsonNode>> Inbox(string token, string title) =>
+            (await Send(HttpMethod.Get, "/api/v1/notifications", token))["items"]!.AsArray()
+                .Where(n => n!["title"]!.GetValue<string>() == title).Select(n => n!).ToList();
+
+        // No target: nothing to warn about.
+        var none = await Send(HttpMethod.Get, "/api/v1/work/target-status", free);
+        Assert.False(none["hasTarget"]!.GetValue<bool>());
+
+        // A worked 10 minutes of a 20-minute target.
+        var aPins = new List<long> { await Pin(a, 1), await Pin(a, 2) };
+        await SetPinTimesFromNow(aPins, -30, -20);
+        var status = await Send(HttpMethod.Get, "/api/v1/work/target-status", a);
+        Assert.True(status["hasTarget"]!.GetValue<bool>());
+        Assert.False(status["reached"]!.GetValue<bool>());
+        Assert.Equal(10, status["workMinutes"]!.GetValue<int>());
+        Assert.Equal("10 دقائق", status["workedText"]!.GetValue<string>());
+        Assert.Null(status["targetMinutes"]); // the target is never sent to the agent
+        Assert.Null((await Send(HttpMethod.Get, "/api/v1/work/target-summary", a))["summary"]);
+
+        // Ending the day now tells the dashboard.
+        await Send(HttpMethod.Post, "/api/v1/work/start", a, new { });
+        await Send(HttpMethod.Post, "/api/v1/work/end", a, new { });
+        var early = (await Send(HttpMethod.Get, "/api/v1/admin/attendance/alerts/unseen", admin))["latest"]!.AsArray()
+            .Single(x => x!["userId"]!.GetValue<long>() == aId)!;
+        Assert.Equal("ClosedEarly", early["type"]!.GetValue<string>());
+        Assert.Equal(10, early["workMinutes"]!.GetValue<int>());
+        Assert.Equal(20, early["targetMinutes"]!.GetValue<int>());
+        Assert.False(early["isOpen"]!.GetValue<bool>());
+        Assert.Null(early["latitude"]);
+
+        // B: 5 minutes of work, last pin 2 h 5 min ago: one «لم تحقق هدفك» notification with the time worked.
+        var bPins = new List<long> { await Pin(b, 3), await Pin(b, 4) };
+        await SetPinTimesFromNow(bPins, -130, -125);
+        // A pins again 8 minutes ago: 22 minutes, target reached (found by the worker pass, the pin was just moved).
+        aPins.Add(await Pin(a, 5));
+        await SetPinTimesFromNow(aPins, -30, -20, -8);
+        Assert.Equal(2, await Detect());
+        Assert.Equal(0, await Detect()); // each is told once
+
+        var idle = Assert.Single(await Inbox(b, "لم تحقق هدفك اليومي بعد"));
+        Assert.Contains("5 دقائق", idle["body"]!.GetValue<string>());
+        Assert.Empty(await Inbox(a, "لم تحقق هدفك اليومي بعد"));
+
+        var reached = Assert.Single(await Inbox(a, "أحسنت! حققت هدفك اليومي"));
+        Assert.DoesNotContain(reached["body"]!.GetValue<string>(), char.IsDigit); // no hours in the notification
+        Assert.Equal("target_reached", reached["data"]!["kind"]!.GetValue<string>());
+
+        // The summary waits until the agent closes it; it has the day's numbers and no hours.
+        var summary = (await Send(HttpMethod.Get, "/api/v1/work/target-summary", a))["summary"]!;
+        Assert.True(summary["isToday"]!.GetValue<bool>());
+        Assert.Equal(3, summary["stores"]!.GetValue<int>());
+        Assert.Equal(0, summary["orders"]!.GetValue<int>());
+        Assert.Equal(0, summary["sales"]!.GetValue<int>());
+        Assert.Null(summary["workMinutes"]);
+
+        // Not opened until the next day: the same summary, dated yesterday.
+        await using (var c = new SqlConnection(_fx.ConnectionString))
+        {
+            await c.OpenAsync();
+            await using var cmd = new SqlCommand(
+                "UPDATE agents.WorkTargetNotices SET [Day] = DATEADD(DAY, -1, [Day]) WHERE UserId = @u; " +
+                "UPDATE agents.Prospects SET CreatedAt = DATEADD(DAY, -1, CreatedAt) WHERE CreatedByUserId = @u;", c);
+            cmd.Parameters.AddWithValue("@u", aId);
+            await cmd.ExecuteNonQueryAsync();
+        }
+        var yesterday = (await Send(HttpMethod.Get, "/api/v1/work/target-summary", a))["summary"]!;
+        Assert.False(yesterday["isToday"]!.GetValue<bool>());
+        Assert.True(yesterday["isYesterday"]!.GetValue<bool>());
+        Assert.Equal(DateTime.UtcNow.AddHours(3).AddDays(-1).ToString("yyyy-MM-dd"), yesterday["date"]!.GetValue<string>());
+        Assert.Equal(3, yesterday["stores"]!.GetValue<int>());
+
+        await Send(HttpMethod.Post, $"/api/v1/work/target-summary/{yesterday["id"]!.GetValue<long>()}/seen", a, expect: HttpStatusCode.NoContent);
+        Assert.Null((await Send(HttpMethod.Get, "/api/v1/work/target-summary", a))["summary"]);
+
+        // A day ended after the target raises nothing.
+        var (cId, cTok) = await CreateAgentAndLogin("notice.done", "07700000047", "ياسر");
+        await Send(HttpMethod.Put, $"/api/v1/admin/agents/{cId}/target", admin, new { dailyWorkMinutesTarget = 5 });
+        await SetPinTimesFromNow(new List<long> { await Pin(cTok, 6), await Pin(cTok, 7) }, -12, -2);
+        Assert.True((await Send(HttpMethod.Get, "/api/v1/work/target-status", cTok))["reached"]!.GetValue<bool>());
+        await Send(HttpMethod.Post, "/api/v1/work/start", cTok, new { });
+        await Send(HttpMethod.Post, "/api/v1/work/end", cTok, new { });
+        Assert.DoesNotContain((await Send(HttpMethod.Get, "/api/v1/admin/attendance/alerts", admin)).AsArray(),
+            x => x!["userId"]!.GetValue<long>() == cId);
+    }
 }

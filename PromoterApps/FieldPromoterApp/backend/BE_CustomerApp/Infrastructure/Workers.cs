@@ -103,5 +103,8 @@ public sealed class WorkAlertWorker : PeriodicWorker
     {
         var raised = await services.GetRequiredService<Domain.Work.WorkAlertService>().DetectAsync(ct);
         if (raised > 0) Logger.LogInformation("Raised {Count} stationary alerts", raised);
+        // Daily target: «حققت هدفك» and «ساعتان بلا تثبيت» notifications to the agents.
+        var told = await services.GetRequiredService<Domain.Work.DailyTargetService>().DetectAsync(ct);
+        if (told > 0) Logger.LogInformation("Sent {Count} daily target notifications", told);
     }
 }

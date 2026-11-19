@@ -24,6 +24,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 String routeForPushData(Map<String, dynamic> data) {
   final orderId = data['orderId']?.toString();
   if (orderId != null && int.tryParse(orderId) != null) return '/orders/$orderId';
+  // Daily-target messages open the working-day tab (the «حققت هدفك» summary pops up by itself).
+  final kind = data['kind']?.toString();
+  if (kind == 'target_reached' || kind == 'target_idle') return '/work';
   return '/notifications';
 }
 

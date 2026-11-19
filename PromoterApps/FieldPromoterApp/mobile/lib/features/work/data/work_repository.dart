@@ -80,6 +80,65 @@ class WorkDay {
       );
 }
 
+/// Today's daily-target state, asked before «إنهاء الدوام». The target itself is never sent to the app.
+class TargetStatus {
+  const TargetStatus({required this.hasTarget, required this.reached, required this.workedText});
+
+  final bool hasTarget;
+  final bool reached;
+
+  /// Time worked so far, ready to show: «ساعتين و5 دقائق».
+  final String workedText;
+
+  /// The day would be closed before the target.
+  bool get endsEarly => hasTarget && !reached;
+
+  factory TargetStatus.fromJson(Json j) => TargetStatus(
+        hasTarget: asBool(j['hasTarget']),
+        reached: asBool(j['reached']),
+        workedText: asString(j['workedText']),
+      );
+}
+
+/// «حققت هدفك اليومي»: the numbers of the day the target was reached on.
+class TargetSummary {
+  const TargetSummary({
+    required this.id,
+    required this.date,
+    required this.isToday,
+    required this.isYesterday,
+    required this.stores,
+    required this.orders,
+    required this.sales,
+  });
+
+  final int id;
+
+  /// Iraq day, `yyyy-MM-dd`.
+  final String date;
+  final bool isToday;
+  final bool isYesterday;
+  final int stores;
+  final int orders;
+  final int sales;
+
+  /// Noon (Iraq) of [date], so date formatting lands on the right day.
+  DateTime? get day {
+    final d = DateTime.tryParse('${date}T09:00:00Z');
+    return d;
+  }
+
+  factory TargetSummary.fromJson(Json j) => TargetSummary(
+        id: asInt(j['id']),
+        date: asString(j['date']),
+        isToday: asBool(j['isToday']),
+        isYesterday: asBool(j['isYesterday']),
+        stores: asInt(j['stores']),
+        orders: asInt(j['orders']),
+        sales: asInt(j['sales']),
+      );
+}
+
 class WorkRepository {
   WorkRepository(this._api);
 
@@ -96,6 +155,16 @@ class WorkRepository {
 
   Future<WorkDay> end({double? lat, double? lng}) async =>
       WorkDay.fromJson(asJson(await _api.post('work/end', body: {'latitude': lat, 'longitude': lng})));
+
+  Future<TargetStatus> targetStatus() async => TargetStatus.fromJson(asJson(await _api.get('work/target-status')));
+
+  /// The «حققت هدفك اليومي» summary not closed yet, or null.
+  Future<TargetSummary?> targetSummary() async {
+    final s = asJson(await _api.get('work/target-summary'))['summary'];
+    return s is Map ? TargetSummary.fromJson(asJson(s)) : null;
+  }
+
+  Future<void> markTargetSummarySeen(int id) => _api.post('work/target-summary/$id/seen');
 
   /// Key for the background tracking service of the open working day.
   Future<String> trackingKey() async => asString(asJson(await _api.post('work/tracking-key'))['key']);

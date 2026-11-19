@@ -181,6 +181,10 @@ export const caAttendance = (params = {}) => caGet('admin/attendance', params)
  */
 export const caAttendanceAlerts = (params = {}) => caGet('admin/attendance/alerts', params)
 
+/** Alert type: the agent ended the working day by hand before the daily work-time target (workMinutes / targetMinutes). */
+export const CA_ALERT_CLOSED_EARLY = 'ClosedEarly'
+export const caIsClosedEarly = alert => alert?.type === CA_ALERT_CLOSED_EARLY
+
 /** { unseen, latest: [...] } — unacknowledged alerts of the last 24 h (for the navbar bell). */
 export const caUnseenAlerts = () => caGet('admin/attendance/alerts/unseen', undefined, { timeoutMs: 15000 })
 export const caSeenAlert = id => caPost(`admin/attendance/alerts/${id}/seen`)

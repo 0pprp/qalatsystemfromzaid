@@ -156,11 +156,35 @@ public sealed class WorkController : ControllerBase
 {
     private readonly WorkService _work;
     private readonly UserService _users;
+    private readonly DailyTargetService _dailyTarget;
 
-    public WorkController(WorkService work, UserService users)
+    public WorkController(WorkService work, UserService users, DailyTargetService dailyTarget)
     {
         _work = work;
         _users = users;
+        _dailyTarget = dailyTarget;
+    }
+
+    /// <summary>
+    /// Before «إنهاء الدوام»: { hasTarget, reached, workMinutes, workedText }. When there is a target and it is not
+    /// reached the app warns the agent with the time worked so far. The target itself is not sent.
+    /// </summary>
+    [HttpGet("target-status")]
+    public async Task<IActionResult> TargetStatus(CancellationToken ct) => Ok(await _dailyTarget.StatusAsync(User.CustomerId(), ct));
+
+    /// <summary>
+    /// { summary }: the «حققت هدفك اليومي» day summary the agent has not closed yet (shops, orders, sales of that day),
+    /// or null. Shown once, when the app is next opened, also on a later day (with that day's date).
+    /// </summary>
+    [HttpGet("target-summary")]
+    public async Task<IActionResult> TargetSummary(CancellationToken ct) =>
+        Ok(new { summary = await _dailyTarget.PendingSummaryAsync(User.CustomerId(), ct) });
+
+    [HttpPost("target-summary/{id:long}/seen")]
+    public async Task<IActionResult> TargetSummarySeen(long id, CancellationToken ct)
+    {
+        await _dailyTarget.MarkSummarySeenAsync(User.CustomerId(), id, ct);
+        return NoContent();
     }
 
     /// <summary>Today's sessions, totals and trail (or another day with ?date=yyyy-MM-dd).</summary>
@@ -208,11 +232,13 @@ public sealed class ProspectsController : ControllerBase
 {
     private readonly ProspectService _prospects;
     private readonly UserService _users;
+    private readonly DailyTargetService _dailyTarget;
 
-    public ProspectsController(ProspectService prospects, UserService users)
+    public ProspectsController(ProspectService prospects, UserService users, DailyTargetService dailyTarget)
     {
         _prospects = prospects;
         _users = users;
+        _dailyTarget = dailyTarget;
     }
 
     /// <summary>Every agent's pins inside the visible map area.</summary>
@@ -234,7 +260,10 @@ public sealed class ProspectsController : ControllerBase
     public async Task<IActionResult> Create(ProspectInput body, CancellationToken ct)
     {
         var user = await _users.GetActiveAsync(User.CustomerId(), ct);
-        return Ok(await _prospects.CreateAsync(user, body, ct));
+        var pin = await _prospects.CreateAsync(user, body, ct);
+        // Work time only grows with a pin: this one may have completed the daily target.
+        await _dailyTarget.CheckAfterPinAsync(user.Id, CancellationToken.None);
+        return Ok(pin);
     }
 
     [HttpPut("{id:long}")]

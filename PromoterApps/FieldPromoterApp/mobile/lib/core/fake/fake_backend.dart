@@ -199,6 +199,31 @@ class FakeBackend extends Interceptor {
       }
       return (200, _workDay(user));
     }
+    // Daily target (demo: 2 pinned shops today reach it; the summary shows once).
+    if (path == 'work/target-status') {
+      final pins = _pinsToday(user);
+      return (200, {'hasTarget': true, 'reached': pins >= 2, 'workMinutes': pins * 25, 'workedText': '${pins * 25} دقيقة'});
+    }
+    if (path == 'work/target-summary' && method == 'GET') {
+      final pins = _pinsToday(user);
+      if (pins < 2 || _targetSummarySeen.contains(user.id)) return (200, {'summary': null});
+      final local = DateTime.now();
+      return (200, {
+        'summary': {
+          'id': 1,
+          'date': '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}',
+          'isToday': true,
+          'isYesterday': false,
+          'stores': pins,
+          'orders': 0,
+          'sales': 0,
+        },
+      });
+    }
+    if (seg.length == 4 && seg[0] == 'work' && seg[1] == 'target-summary' && seg[3] == 'seen') {
+      _targetSummarySeen.add(user.id);
+      return (204, null);
+    }
     if (path == 'work/locations' && method == 'POST') {
       if (!_isWorking(user)) return (200, {'accepted': 0, 'isWorking': false});
       var accepted = 0;
@@ -759,6 +784,16 @@ class FakeBackend extends Interceptor {
         'accuracy': 6 + _rnd.nextInt(10),
       });
     }
+  }
+
+  final Set<Object> _targetSummarySeen = {};
+
+  int _pinsToday(_FakeAgent u) {
+    final now = DateTime.now();
+    return _prospects.where((p) {
+      final at = DateTime.tryParse('${p['createdAt']}')?.toLocal();
+      return p['createdByUserId'] == u.id && at != null && at.year == now.year && at.month == now.month && at.day == now.day;
+    }).length;
   }
 
   Map<String, dynamic> _workDay(_FakeAgent u) {

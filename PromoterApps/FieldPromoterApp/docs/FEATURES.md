@@ -264,3 +264,25 @@ Backups of the earlier versions:
 - **Fix:** `AppConfig.prodDefaultBaseUrl` is now `http://agents.alsaaeidy.com/api/v1/`, so a release build without the define still reaches the live API. 1.4.10 was built with the define as well; its `libapp.so` was checked to contain only `http://agents.alsaaeidy.com/api/v1/`. Same signing key. APK `demo/apk/qalaa-agents-live-v4.10.apk`.
 - **Phones already on 1.4.9 cannot learn about 1.4.10** (they cannot reach `app/config`). They must install it by hand from `http://admincompany.alsaaeidy.com/mobile-updates/agents/qalaa-agents-latest.apk` once it is published. It installs over 1.4.9 and keeps the sign-in. Phones still on 1.4.8 get it through the normal forced-update screen.
 - **Before publishing any agents APK:** check the server address inside it, e.g. `unzip -p <apk> lib/arm64-v8a/libapp.so | grep -aoE "https?://[^\"]*alsaaeidy[^\"]*" | sort -u`.
+
+## v4.11 (2026-11-19, app 1.4.11+18): the agent is told about the daily target
+
+The daily target is still work time inside pin periods (`PinPeriods`), and the agent still never sees the target itself. Agents without a target (0) get none of the following. Server: `Domain/Work/DailyTargetService.cs`, migration `0012_DailyTargetNotices.sql`.
+
+**Target reached**
+- The pin that completes the target sends a notification «أحسنت! حققت هدفك اليومي» (no hours in it). Checked right after each pin and by the 2-minute worker.
+- The next time the app is opened (or brought back to the front, or straight away if it is open when the notification arrives) a popup shows «حققت هدفك اليومي» with that day's numbers: shops pinned, sale orders sent, sales made. No work hours. It is shown once; closing it marks it seen.
+- First opened on a later day, the same popup carries the date of the day it belongs to («أمس · 18 تشرين الثاني 2026»). A summary nobody opened is dropped after 7 days.
+- API: `GET work/target-summary` → `{ summary: { id, date, isToday, isYesterday, stores, orders, sales } | null }`, `POST work/target-summary/{id}/seen`.
+
+**Two hours without a pin**
+- Target not reached and the last pin was 2 hours ago: one notification «لم تحقق هدفك اليومي بعد» with the time worked so far. One per last pin (a new pin and another 2 idle hours send it again). Not sent after the agent ended the day by hand, nor more than 30 minutes late (server restart).
+
+**Ending the day before the target**
+- «إنهاء الدوام» first asks `GET work/target-status` → `{ hasTarget, reached, workMinutes, workedText }`. Not reached: the warning «لم تحقق هدفك اليومي — عملت اليوم … فقط» with «متابعة العمل» / «إنهاء الدوام على أي حال». Offline, the plain question is asked.
+- The time shown is the target's work time (pin periods), not the length of the «الدوام» session shown on the tab.
+- Ending anyway raises a dashboard alert (`agents.WorkAlerts`, type `ClosedEarly`, with `workMinutes` / `targetMinutes`). The server does this on `work/end`, so it also works for older apps. The midnight auto-close raises nothing («الأهداف اليومية» already lists missed days).
+
+**Dashboard**
+- The bell (المدير / المراقب) also shows «أنهى الدوام دون إكمال الهدف اليومي: عمل … من …» with toast, sound and browser notification; «فترات العمل» opens that agent's day in «المحلات المثبّتة».
+- «دوام المسوّقين»: a chip on the agent's row and a count in the header.

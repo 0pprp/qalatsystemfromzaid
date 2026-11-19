@@ -52,12 +52,14 @@ public sealed class WorkService
     private readonly Db _db;
     private readonly IClock _clock;
     private readonly BranchCatalog _branches;
+    private readonly DailyTargetService _dailyTarget;
 
-    public WorkService(Db db, IClock clock, BranchCatalog branches)
+    public WorkService(Db db, IClock clock, BranchCatalog branches, DailyTargetService dailyTarget)
     {
         _db = db;
         _clock = clock;
         _branches = branches;
+        _dailyTarget = dailyTarget;
     }
 
     // ---------------- Agent ----------------
@@ -96,10 +98,13 @@ public sealed class WorkService
         if (lat is not null && lng is not null)
             await AddPointsAsync(userId, [new LocationInput(lat.Value, lng.Value, null, null, null, now)], ct);
         await using var c = await _db.OpenAsync(ct);
-        await c.ExecuteAsync("""
+        var closed = (await c.QueryAsync<long>("""
             UPDATE agents.WorkSessions SET EndedAt = @now, EndLat = @lat, EndLng = @lng, EndedBy = 'user'
+            OUTPUT inserted.Id
             WHERE UserId = @userId AND EndedAt IS NULL
-            """, new { userId, now, lat, lng });
+            """, new { userId, now, lat, lng })).ToList();
+        // Ended before the daily target: the dashboard is told.
+        if (closed.Count > 0) await _dailyTarget.OnDayEndedByAgentAsync(userId, closed[0], lat, lng, now, ct);
         return await LoadDayAsync(userId, IraqTime.DateOf(now), c);
     }
 

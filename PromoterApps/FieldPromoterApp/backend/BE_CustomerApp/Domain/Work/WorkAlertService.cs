@@ -6,8 +6,9 @@ using BE_CustomerApp.Integrations.Gateway;
 namespace BE_CustomerApp.Domain.Work;
 
 public sealed record WorkAlertDto(
-    long Id, long UserId, string Name, string Phone, string? CityName, string Type, decimal Latitude, decimal Longitude,
-    DateTime SinceAt, DateTime LastSeenAt, int Minutes, DateTime CreatedAt, DateTime? ResolvedAt, bool IsOpen, string? SeenBy, DateTime? SeenAt);
+    long Id, long UserId, string Name, string Phone, string? CityName, string Type, decimal? Latitude, decimal? Longitude,
+    DateTime SinceAt, DateTime LastSeenAt, int Minutes, DateTime CreatedAt, DateTime? ResolvedAt, bool IsOpen, string? SeenBy, DateTime? SeenAt,
+    int? WorkMinutes = null, int? TargetMinutes = null);
 
 public sealed record WorkAlertsSummary(int Unseen, IReadOnlyList<WorkAlertDto> Latest);
 
@@ -15,10 +16,14 @@ public sealed record WorkAlertsSummary(int Unseen, IReadOnlyList<WorkAlertDto> L
 /// Raises a dashboard alert when a working agent stays within <see cref="RadiusMeters"/> of one place for
 /// <see cref="StationaryMinutes"/> (based on the points the phone sent, so a phone that stopped sending raises nothing).
 /// The alert stays open while the agent is still there and resolves when they move on or finish the day.
+/// <para><see cref="ClosedEarly"/> alerts (the agent ended the day by hand before the daily work-time target) are written
+/// by <see cref="DailyTargetService"/>; they are never open, have a position only when the phone sent one, and carry
+/// WorkMinutes / TargetMinutes.</para>
 /// </summary>
 public sealed class WorkAlertService
 {
     public const string Stationary = "Stationary";
+    public const string ClosedEarly = "ClosedEarly";
 
     private readonly Db _db;
     private readonly IClock _clock;
@@ -64,7 +69,8 @@ public sealed class WorkAlertService
                 WHERE SessionId = @Id AND RecordedAt >= @lookBack ORDER BY RecordedAt DESC
                 """, new { s.Id, lookBack })).ToList();
             var open = await c.QuerySingleOrDefaultAsync<(long Id, decimal Latitude, decimal Longitude)>(
-                "SELECT TOP 1 Id, Latitude, Longitude FROM agents.WorkAlerts WHERE SessionId = @Id AND ResolvedAt IS NULL ORDER BY Id DESC", new { s.Id });
+                "SELECT TOP 1 Id, Latitude, Longitude FROM agents.WorkAlerts WHERE SessionId = @Id AND ResolvedAt IS NULL AND Type = @type ORDER BY Id DESC",
+                new { s.Id, type = Stationary });
             if (points.Count == 0) continue;
 
             var latest = points[0];
@@ -124,12 +130,13 @@ public sealed class WorkAlertService
 
     private const string Select = """
         SELECT a.Id, a.UserId, CONCAT(u.FirstName, ' ', u.FatherName, ' ', u.GrandfatherName) AS Name, u.Phone, u.CityValue, a.Type,
-               a.Latitude, a.Longitude, a.SinceAt, a.LastSeenAt, a.CreatedAt, a.ResolvedAt, a.SeenBy, a.SeenAt
+               a.Latitude, a.Longitude, a.SinceAt, a.LastSeenAt, a.CreatedAt, a.ResolvedAt, a.SeenBy, a.SeenAt, a.WorkMinutes, a.TargetMinutes
         FROM agents.WorkAlerts a JOIN agents.Users u ON u.Id = a.UserId
         """;
 
-    private sealed record Row(long Id, long UserId, string Name, string Phone, int? CityValue, string Type, decimal Latitude, decimal Longitude,
-        DateTime SinceAt, DateTime LastSeenAt, DateTime CreatedAt, DateTime? ResolvedAt, string? SeenBy, DateTime? SeenAt);
+    private sealed record Row(long Id, long UserId, string Name, string Phone, int? CityValue, string Type, decimal? Latitude, decimal? Longitude,
+        DateTime SinceAt, DateTime LastSeenAt, DateTime CreatedAt, DateTime? ResolvedAt, string? SeenBy, DateTime? SeenAt,
+        int? WorkMinutes, int? TargetMinutes);
 
     /// <summary>Alerts raised on an Iraq date (default today), newest first; openOnly = agent still there.</summary>
     public async Task<IReadOnlyList<WorkAlertDto>> ListAsync(DateOnly? date, bool openOnly, int? cityValue, CancellationToken ct)
@@ -171,7 +178,7 @@ public sealed class WorkAlertService
         {
             list.Add(new WorkAlertDto(r.Id, r.UserId, r.Name, r.Phone, r.CityValue is { } cv ? await _branches.NameAsync(cv, ct) : null, r.Type,
                 r.Latitude, r.Longitude, r.SinceAt, r.LastSeenAt, (int)Math.Max(0, (r.LastSeenAt - r.SinceAt).TotalMinutes), r.CreatedAt,
-                r.ResolvedAt, r.ResolvedAt is null, r.SeenBy, r.SeenAt));
+                r.ResolvedAt, r.ResolvedAt is null, r.SeenBy, r.SeenAt, r.WorkMinutes, r.TargetMinutes));
         }
         return list;
     }
