@@ -316,6 +316,13 @@ public sealed class EndToEndTests : IClassFixture<ApiFixture>
         Assert.True(report["sold"]!.GetValue<int>() >= 1);
         var row = report["byAgent"]!.AsArray().Single(a => a!["username"]!.GetValue<string>() == "sajjad")!;
         Assert.Equal(1, row["sold"]!.GetValue<int>());
+        // Every number of the row opens the list of names counted in it.
+        foreach (var bucket in new[] { "orders", "waiting", "withAgent", "sold", "finished", "denied", "notSold", "pins" })
+        {
+            var names = (await Send(HttpMethod.Get, $"/api/v1/admin/reports/agent-details?userId={row["userId"]}&bucket={bucket}", admin)).AsArray();
+            Assert.Equal(row[bucket]!.GetValue<int>(), names.Count);
+        }
+        await Send(HttpMethod.Get, $"/api/v1/admin/reports/agent-details?userId={row["userId"]}&bucket=nope", admin, expect: HttpStatusCode.BadRequest);
         Assert.Contains(report["topItems"]!.AsArray(), i => i!["name"]!.GetValue<string>() == "ثلاجة سامسونج 18 قدم" && i["quantity"]!.GetValue<int>() == 2);
 
         var adminOrder = await Send(HttpMethod.Get, $"/api/v1/admin/orders/{orderId}", admin);

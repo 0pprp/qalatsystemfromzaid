@@ -274,6 +274,11 @@ public sealed class AdminSystemController : AdminControllerBase
     [HttpGet("reports/overview")]
     public async Task<IActionResult> Overview([FromQuery] DateOnly? from, [FromQuery] DateOnly? to, CancellationToken ct) => Ok(await _reports.OverviewAsync(from, to, ct));
 
+    /// <summary>The customers (or pinned shops) counted in one number of an agent's row in «أداء المسوّقين».</summary>
+    [HttpGet("reports/agent-details")]
+    public async Task<IActionResult> AgentDetails([FromQuery] long userId, [FromQuery] string? bucket, [FromQuery] DateOnly? from, [FromQuery] DateOnly? to,
+        CancellationToken ct) => Ok(await _reports.AgentDetailsAsync(userId, bucket, from, to, ct));
+
     [HttpGet("reports/export")]
     public async Task<IActionResult> Export([FromQuery] string type, [FromQuery] DateOnly? from, [FromQuery] DateOnly? to, CancellationToken ct)
     {

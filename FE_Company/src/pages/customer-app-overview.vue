@@ -9,6 +9,7 @@ import {
   caMinutes,
   caOrderStatusMeta,
   caPaged,
+  caReportsAgentDetails,
   caReportsOverview,
   caYmd,
 } from '@/composables/customerAppApi'
@@ -113,13 +114,56 @@ const topItemMax = computed(() => Math.max(1, ...(o.value.topItems || []).map(i 
 const agentHeaders = [
   { title: 'المسوّق', key: 'fullName', sortable: true },
   { title: 'الطلبات', key: 'orders', sortable: true, align: 'center' },
+  { title: 'بانتظار الإسناد', key: 'waiting', sortable: true, align: 'center' },
+  { title: 'عند مندوب المبيعات', key: 'withAgent', sortable: true, align: 'center' },
+  { title: 'رفضتها لوحة التحكم', key: 'denied', sortable: true, align: 'center' },
+  { title: 'رفضها مندوب المبيعات', key: 'notSold', sortable: true, align: 'center' },
   { title: 'المبيعات', key: 'sold', sortable: true, align: 'center' },
   { title: 'مكتملة التسديد', key: 'finished', sortable: true, align: 'center' },
-  { title: 'لم تُبع', key: 'notSold', sortable: true, align: 'center' },
   { title: 'محلات مثبّتة', key: 'pins', sortable: true, align: 'center' },
   { title: 'أيام الدوام', key: 'workedDays', sortable: true, align: 'center' },
   { title: 'ساعات الدوام', key: 'workedMinutes', sortable: true, align: 'center' },
 ]
+
+// Every count in the table opens the names counted in it.
+const BUCKETS = [
+  { key: 'orders', title: 'كل الطلبات', color: 'primary' },
+  { key: 'waiting', title: 'بانتظار الإسناد لمندوب المبيعات', color: 'warning' },
+  { key: 'withAgent', title: 'موافق عليها ومسندة لمندوب المبيعات', color: 'info' },
+  { key: 'denied', title: 'مرفوضة من مستخدم لوحة التحكم', color: 'error' },
+  { key: 'notSold', title: 'مرفوضة من مندوب المبيعات', color: 'error' },
+  { key: 'sold', title: 'المبيعات', color: 'success' },
+  { key: 'finished', title: 'مكتملة التسديد', color: 'success' },
+  { key: 'pins', title: 'المحلات المثبّتة', color: 'secondary' },
+]
+
+const names = ref(null) // { agent, bucket, from, to }
+const nameRows = ref([])
+const namesLoading = ref(false)
+const namesError = ref('')
+let namesSeq = 0
+
+async function openNames(agent, bucket) {
+  const seq = ++namesSeq
+
+  names.value = { agent, bucket, from: from.value, to: to.value }
+  nameRows.value = []
+  namesError.value = ''
+  namesLoading.value = true
+  try {
+    const rows = await caReportsAgentDetails({ userId: agent.userId, bucket: bucket.key, from: from.value, to: to.value })
+    if (seq === namesSeq)
+      nameRows.value = Array.isArray(rows) ? rows : []
+  }
+  catch (err) {
+    if (seq === namesSeq)
+      namesError.value = caErrorMessage(err, 'تعذر تحميل الأسماء')
+  }
+  finally {
+    if (seq === namesSeq)
+      namesLoading.value = false
+  }
+}
 
 const EXPORTS = [
   { type: 'orders', title: 'الطلبات', icon: 'tabler-receipt' },
@@ -484,14 +528,20 @@ onMounted(load)
                 {{ item.username }}
               </div>
             </template>
-            <template #item.sold="{ item }">
+            <template
+              v-for="b in BUCKETS"
+              #[`item.${b.key}`]="{ item }"
+            >
               <VChip
-                v-if="item.sold"
-                color="success"
+                v-if="item[b.key]"
+                :color="b.color"
                 size="small"
                 variant="tonal"
+                class="ca-count"
+                :title="`عرض الأسماء: ${b.title}`"
+                @click="openNames(item, b)"
               >
-                {{ item.sold }}
+                {{ item[b.key] }}
               </VChip>
               <span
                 v-else
@@ -595,6 +645,114 @@ onMounted(load)
     </VWindow>
 
     <VDialog
+      :model-value="!!names"
+      max-width="760"
+      scrollable
+      @update:model-value="v => { if (!v) names = null }"
+    >
+      <VCard v-if="names">
+        <VCardTitle class="pa-4 d-flex align-center gap-2">
+          <VIcon
+            :icon="names.bucket.key === 'pins' ? 'tabler-map-pin' : 'tabler-list-details'"
+            :color="names.bucket.color"
+          />
+          <span class="text-wrap">{{ names.bucket.title }}</span>
+          <VChip
+            v-if="!namesLoading && !namesError"
+            size="small"
+            :color="names.bucket.color"
+            variant="tonal"
+          >
+            {{ nameRows.length }}
+          </VChip>
+          <VSpacer />
+          <IconBtn @click="names = null">
+            <VIcon icon="tabler-x" />
+          </IconBtn>
+        </VCardTitle>
+        <VCardSubtitle class="px-4 pb-2">
+          {{ names.agent.fullName }} · من {{ names.from }} إلى {{ names.to }}
+        </VCardSubtitle>
+        <VDivider />
+        <VCardText class="pa-0">
+          <VProgressLinear
+            v-if="namesLoading"
+            indeterminate
+          />
+          <VAlert
+            v-if="namesError"
+            type="error"
+            variant="tonal"
+            class="ma-4"
+          >
+            {{ namesError }}
+          </VAlert>
+          <div
+            v-else-if="!namesLoading && !nameRows.length"
+            class="text-medium-emphasis text-center py-8"
+          >
+            لا توجد أسماء
+          </div>
+          <VList
+            v-else
+            lines="two"
+            density="compact"
+          >
+            <template
+              v-for="(r, idx) in nameRows"
+              :key="r.id"
+            >
+              <VDivider v-if="idx" />
+              <VListItem>
+                <template #prepend>
+                  <span class="text-caption text-medium-emphasis me-3">{{ idx + 1 }}</span>
+                </template>
+                <VListItemTitle class="font-weight-medium text-wrap">
+                  {{ r.name }}
+                </VListItemTitle>
+                <VListItemSubtitle class="text-wrap">
+                  <span
+                    v-if="r.phone"
+                    dir="ltr"
+                  >{{ r.phone }}</span>
+                  <span v-if="r.orderNumber"> · طلب {{ r.orderNumber }}</span>
+                  <span v-if="r.cityName"> · {{ r.cityName }}</span>
+                  <span> · {{ caDateTime(r.createdAt) }}</span>
+                </VListItemSubtitle>
+                <div
+                  v-if="r.reason"
+                  class="text-caption text-error text-wrap mt-1"
+                >
+                  سبب الرفض: {{ r.reason }}
+                </div>
+                <template #append>
+                  <div class="d-flex flex-column align-end gap-1">
+                    <VChip
+                      v-if="r.status"
+                      size="small"
+                      variant="tonal"
+                      :color="caOrderStatusMeta(r.status).color"
+                    >
+                      {{ caOrderStatusMeta(r.status).long }}
+                    </VChip>
+                    <span
+                      v-else-if="r.statusLabel"
+                      class="text-caption text-medium-emphasis"
+                    >{{ r.statusLabel }}</span>
+                    <span
+                      v-if="r.branchStatusLabel"
+                      class="text-caption text-medium-emphasis"
+                    >{{ r.branchStatusLabel }}</span>
+                  </div>
+                </template>
+              </VListItem>
+            </template>
+          </VList>
+        </VCardText>
+      </VCard>
+    </VDialog>
+
+    <VDialog
       :model-value="!!auditDetail"
       max-width="900"
       scrollable
@@ -646,6 +804,11 @@ onMounted(load)
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+}
+.ca-count {
+  cursor: pointer;
+  min-inline-size: 34px;
+  justify-content: center;
 }
 .min-w-0 {
   min-inline-size: 0;

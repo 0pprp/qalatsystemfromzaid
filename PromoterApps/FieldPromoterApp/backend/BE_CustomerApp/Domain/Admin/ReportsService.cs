@@ -11,7 +11,13 @@ public sealed record TopItemDto(string Name, int Quantity);
 
 /// <summary>One agent's numbers in the selected range.</summary>
 public sealed record AgentPerformanceDto(
-    long UserId, string FullName, string? Username, int Orders, int Sold, int Finished, int NotSold, int Pins, int WorkedDays, int WorkedMinutes);
+    long UserId, string FullName, string? Username, int Orders, int Waiting, int WithAgent, int Sold, int Finished, int Denied, int NotSold, int Pins,
+    int WorkedDays, int WorkedMinutes);
+
+/// <summary>One name behind a number of the «أداء المسوّقين» table: an order's customer or a pinned shop.</summary>
+public sealed record AgentDetailRowDto(
+    long Id, string? OrderNumber, string Name, string? Phone, string? Status, string? StatusLabel, string? BranchStatusLabel,
+    string? CityName, string? Reason, DateTime CreatedAt);
 
 /// <summary>Dashboard → «نظرة عامة». Range is by Iraq calendar day, both ends included.</summary>
 public sealed record OverviewDto(
@@ -24,21 +30,102 @@ public sealed class ReportsService
 
     public ReportsService(Db db) => _db = db;
 
+    // Company-system statuses that mean a sales employee already holds the request (anything but unassigned «New»).
+    private const string InRange = "o.CreatedAt >= @fromUtc AND o.CreatedAt < @toUtc";
+    private const string Unassigned = "(o.BranchStatus IS NULL OR o.BranchStatus = 'New')";
+
+    /// <summary>
+    /// The order filters behind each per-agent number (alias o). The table counts and the names popup share them,
+    /// so a number always equals the length of its list.
+    /// </summary>
+    private static readonly Dictionary<string, string> OrderBuckets = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["orders"] = InRange,
+        // Not with a sales employee yet: waiting for the dashboard review, or sent to the branch and still unassigned.
+        ["waiting"] = $"{InRange} AND (o.Status IN ('New','UnderReview') OR (o.Status = 'Transferred' AND {Unassigned}))",
+        // Approved and assigned: a sales employee is working on it.
+        ["withAgent"] = $"{InRange} AND (o.Status = 'FieldInspection' OR (o.Status = 'Transferred' AND NOT {Unassigned}))",
+        ["sold"] = "o.Status IN ('Sold','Finished') AND o.SoldAt >= @fromUtc AND o.SoldAt < @toUtc",
+        ["finished"] = $"{InRange} AND o.Status = 'Finished'",
+        // Refused by the dashboard user before it reached the branch.
+        ["denied"] = $"{InRange} AND o.Status = 'Denied'",
+        // Refused (or cancelled) in the company system by the sales side.
+        ["notSold"] = $"{InRange} AND o.Status = 'NotSold'",
+    };
+
+    private static string CountOf(string bucket) =>
+        $"(SELECT COUNT(*) FROM agents.Orders o WHERE o.SubmittedByUserId = u.Id AND {OrderBuckets[bucket]})";
+
+    private static string? BranchStatusLabel(string? s) => s switch
+    {
+        null or "" => null,
+        "New" => "غير مسند لمندوب",
+        "Assigned" => "مسند لمندوب المبيعات",
+        "Viewed" => "شاهده مندوب المبيعات",
+        "Returned" => "معاد لمندوب المبيعات",
+        "Pending" => "معلّق عند المندوب",
+        "PreparedForSale" => "جاهز للبيع",
+        "InProgress" => "قيد التنفيذ",
+        "Inspected" => "تم الكشف",
+        "ConvertedToSale" => "قيد التحويل إلى مبيعة",
+        "LegalFollowup" => "متابعة قانونية",
+        "Completed" => "تم البيع",
+        "Rejected" => "مرفوض من المبيعات",
+        _ => s,
+    };
+
+    /// <summary>The names counted in one number of an agent's row. Buckets: the order ones above, or «pins».</summary>
+    public async Task<IReadOnlyList<AgentDetailRowDto>> AgentDetailsAsync(long userId, string? bucket, DateOnly? from, DateOnly? to, CancellationToken ct)
+    {
+        var (fromUtc, toUtc) = Range(from, to);
+        await using var c = await _db.OpenAsync(ct);
+        if (string.Equals(bucket, "pins", StringComparison.OrdinalIgnoreCase))
+        {
+            var pins = await c.QueryAsync<(long Id, string? ShopName, string? Phone, string? Description, DateTime CreatedAt)>("""
+                SELECT p.Id, p.ShopName, p.Phone, p.Description, p.CreatedAt FROM agents.Prospects p
+                WHERE p.CreatedByUserId = @userId AND p.IsDeleted = 0 AND p.CreatedAt >= @fromUtc AND p.CreatedAt < @toUtc
+                ORDER BY p.CreatedAt DESC
+                """, new { userId, fromUtc, toUtc });
+            return pins.Select(p => new AgentDetailRowDto(p.Id, null, string.IsNullOrWhiteSpace(p.ShopName) ? "—" : p.ShopName!, p.Phone, null,
+                string.IsNullOrWhiteSpace(p.Description) ? null : p.Description, null, null, null, p.CreatedAt)).ToList();
+        }
+
+        if (bucket is null || !OrderBuckets.TryGetValue(bucket, out var filter))
+            throw ApiException.BadRequest("validation", "نوع القائمة غير معروف");
+        var rows = await c.QueryAsync<(long Id, string? OrderNumber, string Name, string? Phone, string Status, string? BranchStatus, string? CityName,
+            string? PublicReason, string? BranchRejectReason, DateTime CreatedAt)>($"""
+            SELECT o.Id, o.OrderNumber, CONCAT(o.FirstName,' ',o.FatherName,' ',o.GrandfatherName,' ',o.Surname) AS Name, o.CustomerPhone AS Phone,
+                   o.Status, o.BranchStatus, o.CityName, o.PublicReason, o.BranchRejectReason, o.CreatedAt
+            FROM agents.Orders o WHERE o.SubmittedByUserId = @userId AND {filter}
+            ORDER BY o.CreatedAt DESC
+            """, new { userId, fromUtc, toUtc });
+        return rows.Select(r =>
+        {
+            var refused = r.Status is OrderStatus.NotSold or OrderStatus.Denied;
+            return new AgentDetailRowDto(r.Id, r.OrderNumber, r.Name.Trim(), r.Phone, r.Status, OrderStatus.Label(r.Status),
+                r.Status is OrderStatus.Transferred or OrderStatus.FieldInspection ? BranchStatusLabel(r.BranchStatus) : null,
+                r.CityName, refused ? (string.IsNullOrWhiteSpace(r.BranchRejectReason) ? r.PublicReason : r.BranchRejectReason) : null, r.CreatedAt);
+        }).ToList();
+    }
+
     public async Task<OverviewDto> OverviewAsync(DateOnly? from, DateOnly? to, CancellationToken ct)
     {
         var (fromUtc, toUtc) = Range(from, to);
         await using var c = await _db.OpenAsync(ct);
-        using var multi = await c.QueryMultipleAsync("""
+        using var multi = await c.QueryMultipleAsync($"""
             SELECT COUNT(*) FROM agents.Users WHERE IsDeleted = 0 AND Username IS NOT NULL AND IsSuspended = 0;
             SELECT COUNT(DISTINCT UserId) FROM agents.WorkSessions WHERE EndedAt IS NULL;
             SELECT Status, COUNT(*) FROM agents.Orders WHERE CreatedAt >= @fromUtc AND CreatedAt < @toUtc GROUP BY Status;
             SELECT COUNT(*) FROM agents.Orders WHERE Status IN ('Sold','Finished') AND SoldAt >= @fromUtc AND SoldAt < @toUtc;
             SELECT COUNT(*) FROM agents.Prospects WHERE IsDeleted = 0 AND CreatedAt >= @fromUtc AND CreatedAt < @toUtc;
             SELECT u.Id AS UserId, CONCAT(u.FirstName, ' ', u.FatherName, ' ', u.GrandfatherName) AS FullName, u.Username,
-                   (SELECT COUNT(*) FROM agents.Orders o WHERE o.SubmittedByUserId = u.Id AND o.CreatedAt >= @fromUtc AND o.CreatedAt < @toUtc) AS Orders,
-                   (SELECT COUNT(*) FROM agents.Orders o WHERE o.SubmittedByUserId = u.Id AND o.Status IN ('Sold','Finished') AND o.SoldAt >= @fromUtc AND o.SoldAt < @toUtc) AS Sold,
-                   (SELECT COUNT(*) FROM agents.Orders o WHERE o.SubmittedByUserId = u.Id AND o.Status = 'Finished' AND o.CreatedAt >= @fromUtc AND o.CreatedAt < @toUtc) AS Finished,
-                   (SELECT COUNT(*) FROM agents.Orders o WHERE o.SubmittedByUserId = u.Id AND o.Status IN ('NotSold','Denied') AND o.CreatedAt >= @fromUtc AND o.CreatedAt < @toUtc) AS NotSold,
+                   {CountOf("orders")} AS Orders,
+                   {CountOf("waiting")} AS Waiting,
+                   {CountOf("withAgent")} AS WithAgent,
+                   {CountOf("sold")} AS Sold,
+                   {CountOf("finished")} AS Finished,
+                   {CountOf("denied")} AS Denied,
+                   {CountOf("notSold")} AS NotSold,
                    (SELECT COUNT(*) FROM agents.Prospects p WHERE p.CreatedByUserId = u.Id AND p.IsDeleted = 0 AND p.CreatedAt >= @fromUtc AND p.CreatedAt < @toUtc) AS Pins,
                    (SELECT COUNT(DISTINCT w.WorkDate) FROM agents.WorkSessions w WHERE w.UserId = u.Id AND w.StartedAt >= @fromUtc AND w.StartedAt < @toUtc) AS WorkedDays,
                    (SELECT ISNULL(SUM(DATEDIFF(MINUTE, w.StartedAt, ISNULL(w.EndedAt, SYSUTCDATETIME()))), 0) FROM agents.WorkSessions w
@@ -83,10 +170,14 @@ public sealed class ReportsService
                 FROM agents.Orders o JOIN agents.Users u ON u.Id = o.SubmittedByUserId
                 WHERE o.CreatedAt >= @fromUtc AND o.CreatedAt < @toUtc ORDER BY o.Id
                 """,
-            "agents" => """
+            "agents" => $"""
                 SELECT CONCAT(u.FirstName,' ',u.FatherName,' ',u.GrandfatherName,' ',u.Surname) AS [المسوّق], u.Username AS [اسم المستخدم], u.Phone AS [الهاتف],
-                       (SELECT COUNT(*) FROM agents.Orders o WHERE o.SubmittedByUserId = u.Id AND o.CreatedAt >= @fromUtc AND o.CreatedAt < @toUtc) AS [الطلبات],
-                       (SELECT COUNT(*) FROM agents.Orders o WHERE o.SubmittedByUserId = u.Id AND o.Status IN ('Sold','Finished') AND o.SoldAt >= @fromUtc AND o.SoldAt < @toUtc) AS [المبيعات],
+                       {CountOf("orders")} AS [الطلبات],
+                       {CountOf("waiting")} AS [بانتظار الإسناد],
+                       {CountOf("withAgent")} AS [عند مندوب المبيعات],
+                       {CountOf("denied")} AS [مرفوضة من لوحة التحكم],
+                       {CountOf("notSold")} AS [مرفوضة من المبيعات],
+                       {CountOf("sold")} AS [المبيعات],
                        (SELECT COUNT(*) FROM agents.Prospects p WHERE p.CreatedByUserId = u.Id AND p.IsDeleted = 0 AND p.CreatedAt >= @fromUtc AND p.CreatedAt < @toUtc) AS [المحلات المثبتة],
                        (SELECT COUNT(DISTINCT w.WorkDate) FROM agents.WorkSessions w WHERE w.UserId = u.Id AND w.StartedAt >= @fromUtc AND w.StartedAt < @toUtc) AS [أيام الدوام],
                        (SELECT ISNULL(SUM(DATEDIFF(MINUTE, w.StartedAt, ISNULL(w.EndedAt, SYSUTCDATETIME()))), 0) / 60 FROM agents.WorkSessions w

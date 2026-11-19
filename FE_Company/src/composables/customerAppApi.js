@@ -292,7 +292,9 @@ export const caListBroadcasts = (params = {}) => caGet('admin/notifications/broa
 // ---------------------------------------------------------------------------
 
 export const caReportsOverview = (params = {}) => caGet('admin/reports/overview', params)
-export const caListAudit = (params = {}) => caGet('admin/audit', params)
+/** Names behind one number of the «أداء المسوّقين» table. params: { userId, bucket, from, to } */
+export const caReportsAgentDetails = (params = {}) => caGet('admin/reports/agent-details', params)
+export const caListAudit =(params = {}) => caGet('admin/audit', params)
 
 /** Downloads `admin/reports/export` CSV (UTF-8 BOM) and saves it in the browser. */
 export async function caExportReport(type, { from, to } = {}) {
