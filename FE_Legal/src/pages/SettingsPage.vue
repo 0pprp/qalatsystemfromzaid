@@ -72,6 +72,23 @@ function rename(type) {
     save(type, { name: name.trim() })
 }
 
+async function remove(type) {
+  const used = type.usedCount
+    ? `\nسُجّلت على المدينين ${type.usedCount} مرة؛ تبقى في ملفاتهم كما هي.`
+    : ''
+  const mandatory = type.isMandatory ? '\nهي خطوة إلزامية: بعد الحذف لن تُشترط على أحد.' : ''
+  if (!window.confirm(`حذف الخطوة «${type.name}» من القائمة؟${used}${mandatory}`))
+    return
+  try {
+    await api.deleteStepType(type.id)
+    toast.ok(`حُذفت «${type.name}»`)
+    await load()
+  }
+  catch (e) {
+    toast.error(errorMessage(e, 'تعذر الحذف'))
+  }
+}
+
 /** Swaps the order with the neighbour above/below. */
 async function shift(type, direction) {
   const list = typesOf(type.flow)
@@ -190,6 +207,14 @@ onMounted(load)
                   variant="text"
                   title="تغيير الاسم"
                   @click="rename(type)"
+                />
+                <VBtn
+                  icon="trash"
+                  size="x-small"
+                  variant="text"
+                  color="error"
+                  title="حذف الخطوة"
+                  @click="remove(type)"
                 />
                 <VSwitch
                   :model-value="type.isMandatory"

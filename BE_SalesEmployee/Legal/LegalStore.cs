@@ -821,6 +821,21 @@ VALUES (@Flow, @Name, CASE WHEN @SortOrder > 0 THEN @SortOrder ELSE ISNULL((SELE
 """, new { Flow = flow, Name = name.Trim(), SortOrder = sortOrder, IsActive = isActive, IsMandatory = isMandatory }, cancellationToken: ct));
     }
 
+    /// <summary>
+    /// Removes a step from the list. Steps already logged on debtors stay on their files under the
+    /// same name; they just no longer point at a list entry.
+    /// </summary>
+    public async Task DeleteStepTypeAsync(int id, CancellationToken ct)
+    {
+        await using var c = await _db.OpenAsync(ct);
+        await using var tx = (SqlTransaction)await c.BeginTransactionAsync(ct);
+        await c.ExecuteAsync("UPDATE dbo.LegalCaseSteps SET StepTypeId = NULL WHERE StepTypeId = @Id", new { Id = id }, tx);
+        var n = await c.ExecuteAsync("DELETE FROM dbo.LegalStepTypes WHERE Id = @Id", new { Id = id }, tx);
+        if (n == 0)
+            throw new LegalRuleException("الخطوة غير موجودة", 404);
+        await tx.CommitAsync(ct);
+    }
+
     /// <summary>A step is logged against the flow the debtor is currently in; the same step may repeat.</summary>
     /// <param name="lawyerId">
     /// Another lawyer for this step only. The debtor stays assigned to his own lawyer, so the next
