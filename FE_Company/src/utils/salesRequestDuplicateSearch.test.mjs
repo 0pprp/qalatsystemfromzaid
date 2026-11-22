@@ -19,6 +19,23 @@ test('matches triple name ignoring trailing numeric tokens', () => {
   assert.equal(isTripleNameMatch('علي حسن محمد', 'علي حسن كريم'), false)
 })
 
+test('matches names wherever the sale number sits', () => {
+  const query = 'كرم رضوان غازي'
+  for (const candidate of [
+    'كرم رضوان غازي1',
+    'كرم رضوان غازي١',
+    'كرم رضوان غازي-1',
+    'كرم رضوان غازي (2)',
+    'كرم1 رضوان غازي',
+    'كرم رضوان 1 غازي',
+    '1 كرم رضوان غازي',
+  ]) {
+    assert.equal(isTripleNameMatch(query, candidate), true, candidate)
+    assert.equal(isTripleNameMatch(candidate, query), true, candidate)
+    assert.equal(isFatherGrandfatherMatch(query, candidate), true, candidate)
+  }
+})
+
 test('matches father+grandfather without first name', () => {
   assert.equal(isFatherGrandfatherMatch('سارة حسن محمد', 'أحمد حسن محمد'), true)
   assert.equal(isFatherGrandfatherMatch('سارة حسن محمد', 'أحمد حسن علي'), false)

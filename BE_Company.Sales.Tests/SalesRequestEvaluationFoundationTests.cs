@@ -51,6 +51,24 @@ public class SalesRequestNameSimilarityTests
             "أحمد منتظر سرحان", "احمد منتظر سرحان"));
     }
 
+    [Theory]
+    [InlineData("كرم رضوان غازي1")] // glued to the last name
+    [InlineData("كرم رضوان غازي١")] // Arabic-Indic digit
+    [InlineData("كرم رضوان غازي-1")]
+    [InlineData("كرم رضوان غازي (2)")]
+    [InlineData("كرم1 رضوان غازي")]
+    [InlineData("كرم رضوان 1 غازي")]
+    [InlineData("1 كرم رضوان غازي")]
+    [InlineData("كرم رضوان غازي1 الجبوري")]
+    public void Names_Match_Wherever_The_Sale_Number_Sits(string candidate)
+    {
+        const string query = "كرم رضوان غازي";
+        Assert.True(SalesRequestNameSimilarity.IsTripleNameMatch(query, candidate));
+        Assert.True(SalesRequestNameSimilarity.IsTripleNameMatch(candidate, query));
+        Assert.True(SalesRequestNameSimilarity.IsFatherOrGrandfatherMatch(query, candidate));
+        Assert.True(SalesRequestNameSimilarity.IsFatherOrGrandfatherMatch(candidate, query));
+    }
+
     [Fact]
     public void TripleName_Rejects_Clearly_Different()
     {
