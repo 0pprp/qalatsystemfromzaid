@@ -83,6 +83,7 @@ export const api = {
 
   stepTypes: () => get('step-types'),
   saveStepType: body => post('step-types', body),
+  deleteStepType: id => http.delete(`step-types/${id}`).then(r => r.data),
 
   lawyers: () => get('lawyers'),
   lawyer: id => get(`lawyers/${id}`),

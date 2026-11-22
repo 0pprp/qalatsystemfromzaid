@@ -210,11 +210,15 @@ public sealed class CentralComplaintsServiceTests
 
         var dm = await service.CreateAsync(
             Sender(userName: "dm", userType: SalesRoles.UserTypeDelegatedManager), Input("من المفوض"));
+        // A user type the gateway has no module role for is stored as it came.
+        var unmapped = await service.CreateAsync(
+            Sender(userName: "other", userType: "نوع غير معروف"), Input("من نوع غير معروف"));
         var branchManager = await service.CreateAsync(
-            Sender(userName: "bm", userType: "مدير فرع"), Input("من مدير الفرع"));
+            Sender(userName: "bm", userType: SalesRoles.UserTypeBranchManager), Input("من مدير الفرع"));
 
         Assert.Equal(SalesRoles.DelegatedManager, dm.Complaint!.SenderRole);
-        Assert.Equal("مدير فرع", branchManager.Complaint!.SenderRole);
+        Assert.Equal("نوع غير معروف", unmapped.Complaint!.SenderRole);
+        Assert.Equal(SalesRoles.BranchManager, branchManager.Complaint!.SenderRole);
     }
 
     [Fact]

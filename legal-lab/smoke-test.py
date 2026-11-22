@@ -308,6 +308,15 @@ check("the dashboard القاصة adds up: ابطال + direct = total = debt + 
       and box["funds"]["total"] == sum(f["amount"] for f in box["funds"]["records"]) and box["funds"]["count"] == len(box["funds"]["records"])
       and box["companyDebt"] == box["funds"]["total"] - box["paidBack"]["total"], box_c)
 check("the legal team cannot open the dashboard القاصة", call("GET", GW + "/legal-desk/cashbox", team)[0] == 403)
+status, temp_type = call("POST", GW + "/legal-app/step-types", team, {"flow": "Judicial", "name": "خطوة مؤقتة للفحص", "isMandatory": True})
+status_logged, _ = call("POST", GW + "/legal-app/cases/%d/steps" % case, team, {"stepTypeId": temp_type["id"]})
+status_del, _ = call("DELETE", GW + "/legal-app/step-types/%d" % temp_type["id"], team)
+steps_now = call("GET", GW + "/legal-app/cases/%d" % case, team)[1]["extras"]["steps"]
+check("a step can be removed from the list; the one already logged stays on the file",
+      status == 200 and status_logged == 200 and status_del == 200
+      and not any(t["id"] == temp_type["id"] for t in call("GET", GW + "/legal-app/step-types", team)[1])
+      and any(s["stepName"] == "خطوة مؤقتة للفحص" for s in steps_now), (status, status_logged, status_del))
+check("removing a missing step answers 404", call("DELETE", GW + "/legal-app/step-types/%d" % temp_type["id"], team)[0] == 404)
 
 print("7) decisions and execution")
 must = {"id": new_type["id"], "flow": "Judicial", "name": "خطوة إلزامية %d" % int(time.time()), "sortOrder": 99, "isActive": True, "isMandatory": True}

@@ -219,6 +219,13 @@ public sealed class LegalAppController : ControllerBase
     public async Task<IActionResult> SaveStepType([FromBody] StepTypeBody body, CancellationToken ct) =>
         Ok(new { id = await _store.SaveStepTypeAsync(body.Id, body.Flow ?? "", body.Name ?? "", body.SortOrder, body.IsActive, body.IsMandatory, ct) });
 
+    [HttpDelete("step-types/{id:int}")]
+    public async Task<IActionResult> DeleteStepType(int id, CancellationToken ct)
+    {
+        await _store.DeleteStepTypeAsync(id, ct);
+        return Ok(new { id });
+    }
+
     // —— المحامون ——
 
     [HttpGet("lawyers")]

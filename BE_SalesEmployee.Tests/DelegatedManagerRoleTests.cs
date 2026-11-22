@@ -34,7 +34,7 @@ public sealed class DelegatedManagerRoleTests
     [Fact]
     public void UnknownUserType_MapsToNull()
     {
-        Assert.Null(SalesRoles.ToModuleRole("مدير فرع"));
+        Assert.Null(SalesRoles.ToModuleRole("نوع غير معروف"));
         Assert.Null(SalesRoles.ToModuleRole(null));
         Assert.Null(SalesRoles.ToModuleRole(""));
     }
