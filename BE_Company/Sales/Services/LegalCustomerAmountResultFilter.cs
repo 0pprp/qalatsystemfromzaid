@@ -12,7 +12,9 @@ public sealed class LegalCustomerAmountResultFilter : IAsyncResultFilter
     {
         var userType = context.HttpContext.Items["UserType"] as string
             ?? context.HttpContext.User.FindFirst("UserType")?.Value;
+        // Legal viewers (المدير / محاسب القانونية / مدير القانونية) work with these balances.
         if (!LegalCustomerAmountRedactor.IsMainAccountant(userType)
+            && !BE_Company.Legal.LegalVisibility.IsLegalViewer(context.HttpContext)
             && context.Result is ObjectResult result
             && result.StatusCode is null or >= 200 and < 300)
         {

@@ -12,7 +12,7 @@ import {
 } from '@/composables/directorApi'
 import { useToast } from '@/composables/useToast'
 import { useUserRole } from '@/composables/useUserRole'
-import { ROLE_ARCHIVE_MANAGER, ROLE_COMMITTEE_ASSISTANT, ROLE_COMMITTEE_HEAD, ROLE_DIRECTOR, ROLE_SUPERVISOR } from '@/utils/oversightRoles'
+import { ROLE_ARCHIVE_MANAGER, ROLE_COMMITTEE_ASSISTANT, ROLE_COMMITTEE_HEAD, ROLE_DIRECTOR, ROLE_LEGAL_ACCOUNTANT, ROLE_LEGAL_TEAM, ROLE_SUPERVISOR } from '@/utils/oversightRoles'
 
 definePage({
   meta: { layout: 'default' },
@@ -33,7 +33,7 @@ const SLOTS = [
   { role: ROLE_COMMITTEE_HEAD, label: 'مسؤول اللجنة', add: 'إضافة مسؤول', icon: 'tabler-user-star' },
   { role: ROLE_COMMITTEE_ASSISTANT, label: 'المساعد', add: 'إضافة مساعد', icon: 'tabler-user' },
 ]
-const MANAGEMENT_ROLES = [ROLE_DIRECTOR, ROLE_SUPERVISOR, ROLE_ARCHIVE_MANAGER]
+const MANAGEMENT_ROLES = [ROLE_DIRECTOR, ROLE_SUPERVISOR, ROLE_ARCHIVE_MANAGER, ROLE_LEGAL_ACCOUNTANT, ROLE_LEGAL_TEAM]
 const BRANCH_PREVIEW = 6
 
 const errorMessage = e => e?.response?.data?.message || e?.message || ''
@@ -697,6 +697,20 @@ onMounted(() => {
                 class="flex-grow-1"
               >
                 {{ ROLE_ARCHIVE_MANAGER }}
+              </VBtn>
+              <VBtn
+                v-if="isDirector"
+                :value="ROLE_LEGAL_ACCOUNTANT"
+                class="flex-grow-1"
+              >
+                {{ ROLE_LEGAL_ACCOUNTANT }}
+              </VBtn>
+              <VBtn
+                v-if="isDirector"
+                :value="ROLE_LEGAL_TEAM"
+                class="flex-grow-1"
+              >
+                {{ ROLE_LEGAL_TEAM }}
               </VBtn>
             </VBtnToggle>
 

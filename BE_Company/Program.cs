@@ -18,6 +18,8 @@ builder.Services.AddSingleton<IPortalTokenRevocationStore, MemoryPortalTokenRevo
 builder.Services.AddSingleton<PortalAccessService>();
 builder.Services.AddControllers(o =>
     {
+        // القانونية customers/lists are visible to legal viewers only (runs before the amount redactor).
+        o.Filters.Add(new BE_Company.Legal.LegalCustomerVisibilityFilter());
         o.Filters.Add(new BE_Company.Sales.Services.LegalCustomerAmountResultFilter());
     })
     .AddJsonOptions(o =>
