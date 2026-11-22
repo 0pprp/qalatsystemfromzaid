@@ -82,24 +82,7 @@ class PaymentSyncService with WidgetsBindingObserver {
     _started = false;
   }
 
-  /// Test hooks: replace the connectivity check and count how often the sync body is entered.
-  /// Unused in the app itself.
-  @visibleForTesting
-  Future<bool> Function()? isOnlineOverride;
-  int _syncBodyEnterCount = 0;
-
-  @visibleForTesting
-  int get syncBodyEnterCount => _syncBodyEnterCount;
-
-  @visibleForTesting
-  void resetSyncTestHooks() {
-    isOnlineOverride = null;
-    _syncBodyEnterCount = 0;
-  }
-
   Future<bool> get isOnline async {
-    final override = isOnlineOverride;
-    if (override != null) return override();
     final results = await _connectivity.checkConnectivity();
     return results.any((r) => r != ConnectivityResult.none);
   }
@@ -348,7 +331,6 @@ WHERE PermanentFailure = 1
     }
     final lock = Completer<void>();
     _syncLock = lock;
-    _syncBodyEnterCount++;
     _uploadedAnyThisRun = false;
     _uploadedCountThisRun = 0;
     lastSkippedDueToGate = false;
