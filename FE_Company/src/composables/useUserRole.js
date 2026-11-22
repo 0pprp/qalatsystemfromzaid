@@ -2,6 +2,7 @@ import { computed } from 'vue'
 import {
   canManageOversightAccounts,
   isArchiveManagerRole,
+  isLegalAccountantRole,
   isCommitteeAssistantRole,
   isCommitteeHeadRole,
   isCommitteeRole,
@@ -24,6 +25,7 @@ export function useUserRole() {
   const isCommitteeAssistant = computed(() => isCommitteeAssistantRole(userType.value))
   const isCommittee = computed(() => isCommitteeRole(userType.value))
   const isArchiveManager = computed(() => isArchiveManagerRole(userType.value))
+  const isLegalAccountant = computed(() => isLegalAccountantRole(userType.value))
   const isDirectorOrMonitor = computed(() => isDirector.value || isMonitor.value)
   const canOpenOversightBoards = computed(() => isOversightBoardRole(userType.value))
   const canManageOversight = computed(() => canManageOversightAccounts(userType.value))
@@ -55,6 +57,7 @@ export function useUserRole() {
     isCommitteeAssistant,
     isCommittee,
     isArchiveManager,
+    isLegalAccountant,
     isDirectorOrMonitor,
     canOpenOversightBoards,
     canManageOversight,

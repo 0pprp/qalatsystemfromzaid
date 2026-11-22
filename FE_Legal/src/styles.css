@@ -1,0 +1,139 @@
+@font-face {
+  font-display: swap;
+  font-family: Cairo;
+  font-weight: 400;
+  src: url("/fonts/Cairo-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-display: swap;
+  font-family: Cairo;
+  font-weight: 500;
+  src: url("/fonts/Cairo-Medium.ttf") format("truetype");
+}
+
+@font-face {
+  font-display: swap;
+  font-family: Cairo;
+  font-weight: 700;
+  src: url("/fonts/Cairo-Bold.ttf") format("truetype");
+}
+
+html,
+body,
+.v-application {
+  font-family: Cairo, "Segoe UI", Tahoma, sans-serif !important;
+}
+
+.v-application [class*="text-"] {
+  font-family: inherit !important;
+}
+
+.tb-icon {
+  display: inline-flex;
+}
+
+/* Cards float on a soft shadow, as on the company dashboard. */
+.v-card {
+  box-shadow: 0 3px 12px rgba(47, 43, 61, 14%) !important;
+}
+
+.v-dialog > .v-overlay__content > .v-card {
+  box-shadow: 0 6px 30px rgba(47, 43, 61, 30%) !important;
+}
+
+.v-main a {
+  color: rgb(var(--v-theme-primary));
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.v-main a:hover {
+  text-decoration: underline;
+}
+
+/* Money and dates read left-to-right even inside Arabic text. */
+.num {
+  direction: ltr;
+  font-variant-numeric: tabular-nums;
+  unicode-bidi: isolate;
+}
+
+/* direction: ltr flips logical alignment, so pin it back to the page's (RTL) sides. */
+span.num,
+strong.num {
+  display: inline-block;
+}
+
+div.num,
+td.num {
+  text-align: right;
+}
+
+div.num.text-end,
+td.num.text-end {
+  text-align: left !important;
+}
+
+/* كود ارشيف القانونية: always left-to-right, easy to read aloud and copy. */
+.code {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(var(--v-theme-primary), 0.1);
+  color: rgb(var(--v-theme-primary));
+  direction: ltr;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+  unicode-bidi: isolate;
+  white-space: nowrap;
+}
+
+.page {
+  padding: 16px 24px 48px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.muted {
+  color: rgba(var(--v-theme-on-surface), 0.62);
+}
+
+.section-title {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.v-table th {
+  color: rgba(var(--v-theme-on-surface), 0.62) !important;
+  font-weight: 500 !important;
+  white-space: nowrap;
+}
+
+.row-link {
+  cursor: pointer;
+}
+
+.row-link:hover td {
+  background: rgba(var(--v-theme-primary), 0.04);
+}
+
+.stat {
+  padding: 14px 16px;
+}
+
+.stat__label {
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  font-size: 0.85rem;
+}
+
+.stat__value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.5;
+}

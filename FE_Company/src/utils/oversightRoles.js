@@ -5,6 +5,15 @@ export const ROLE_COMMITTEE_HEAD = 'مسؤول لجنة المراقبة'
 export const ROLE_COMMITTEE_ASSISTANT = 'مساعد مسؤول لجنة المراقبة'
 export const ROLE_ARCHIVE_MANAGER = 'مسؤول الارشيف'
 
+/** محاسب القانونية — legal desk on this dashboard (all branches). */
+export const ROLE_LEGAL_ACCOUNTANT = 'محاسب القانونية'
+/** مدير القانونية — users of the separate legal app; they do not use this dashboard. */
+export const ROLE_LEGAL_TEAM = 'مدير القانونية'
+
+export function isLegalAccountantRole(userType) {
+  return String(userType || '') === ROLE_LEGAL_ACCOUNTANT
+}
+
 export function isArchiveManagerRole(userType) {
   return String(userType || '') === ROLE_ARCHIVE_MANAGER
 }

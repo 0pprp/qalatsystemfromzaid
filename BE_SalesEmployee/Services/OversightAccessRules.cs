@@ -11,9 +11,12 @@ public static class OversightAccessRules
     public const string RoleCommitteeHead = "مسؤول لجنة المراقبة";
     public const string RoleCommitteeAssistant = "مساعد مسؤول لجنة المراقبة";
     public const string RoleArchiveManager = "مسؤول الارشيف";
+    public const string RoleLegalAccountant = "محاسب القانونية";
+    public const string RoleLegalTeam = "مدير القانونية";
 
     public static bool IsKnownRole(string? role) =>
-        role is RoleDirector or RoleSupervisor or RoleCommitteeHead or RoleCommitteeAssistant or RoleArchiveManager;
+        role is RoleDirector or RoleSupervisor or RoleCommitteeHead or RoleCommitteeAssistant or RoleArchiveManager
+            or RoleLegalAccountant or RoleLegalTeam;
 
     public static bool IsCommitteeRole(string? role) =>
         role is RoleCommitteeHead or RoleCommitteeAssistant;

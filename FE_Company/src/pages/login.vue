@@ -9,6 +9,7 @@ import { salesGatewayBase } from '@/composables/useSalesBranches'
 import {
   isArchiveManagerRole,
   isCommitteeRole,
+  isLegalAccountantRole,
   isSupervisorRole,
   ROLE_DIRECTOR,
   storeAllowedCities,
@@ -48,7 +49,7 @@ const validateForm = async () => {
 
 function acceptCentralRole(res) {
   const userType = String(res?.userType || res?.UserType || '')
-  const known = userType === ROLE_DIRECTOR || isSupervisorRole(userType) || isCommitteeRole(userType) || isArchiveManagerRole(userType)
+  const known = userType === ROLE_DIRECTOR || isSupervisorRole(userType) || isCommitteeRole(userType) || isArchiveManagerRole(userType) || isLegalAccountantRole(userType)
   if (!res?.token || !known)
     return false
   localStorage.setItem('Token', res.token)
@@ -70,9 +71,11 @@ function acceptCentralRole(res) {
     localStorage.removeItem('DirectorScope')
   }
   loginLoadingBtn.value = false
-  if (!isArchiveManagerRole(userType))
+  if (!isArchiveManagerRole(userType) && !isLegalAccountantRole(userType))
     import('@/composables/warmDirectorCache').then(m => m.warmDirectorCacheInBackground()).catch(() => {})
-  if (isArchiveManagerRole(userType))
+  if (isLegalAccountantRole(userType))
+    router.push('/legal-desk-overview')
+  else if (isArchiveManagerRole(userType))
     router.push('/archive-overview')
   else if (isCommitteeRole(userType))
     router.push('/director-delegate-followup')
@@ -380,6 +383,7 @@ const isPasswordVisible = ref(false)
                 density="comfortable"
                 color="primary"
                 cache-items
+                clearable
                 prepend-inner-icon="tabler-map-pin"
               />
             </VCol>

@@ -194,7 +194,7 @@ namespace BE_SalesEmployee.Controllers
                 userName = identity.DisplayName,
                 userType = identity.Role,
                 cityLink = "",
-                cityName = "فروع اللجنة",
+                cityName = cities.Count > 0 ? "فروع اللجنة" : "كل المحافظات",
                 cityValue = "",
                 allowedCities = cities,
                 central = true
