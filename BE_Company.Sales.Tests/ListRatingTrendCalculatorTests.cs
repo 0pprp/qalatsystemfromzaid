@@ -79,7 +79,7 @@ public class ListRatingTrendCalculatorTests
         for (var i = 1; i <= 5; i++)
             facts.Add(Settled(i, sale, 100)); // Excellent
         for (var i = 6; i <= 8; i++)
-            facts.Add(Settled(i, sale, 150)); // Good
+            facts.Add(Settled(i, sale, 155)); // Good (151–160)
         facts.Add(Settled(9, sale, 170)); // Weak
         facts.Add(Settled(10, sale, 190)); // متلكئ (180–199)
         // Sale before period must not affect score

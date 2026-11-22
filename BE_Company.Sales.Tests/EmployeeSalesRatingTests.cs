@@ -39,7 +39,7 @@ public class EmployeeSalesRatingTests
         {
             Settled(1, new DateTime(2026, 8, 31), 100), // excluded
             Settled(2, new DateTime(2026, 9, 1), 100),  // excellent
-            Settled(3, new DateTime(2026, 9, 10), 150), // good
+            Settled(3, new DateTime(2026, 9, 10), 155), // good (151–160 days)
             Settled(4, new DateTime(2026, 9, 30), 100), // after to — excluded
         };
 
