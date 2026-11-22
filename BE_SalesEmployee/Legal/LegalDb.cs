@@ -238,64 +238,6 @@ BEGIN
         (N'Execution', N'حجز', 3), (N'Execution', N'منع سفر', 4);
 END;
 
--- كود ارشيف القانونية: one per sale (branch account), issued when the debtor enters the legal archive.
-IF COL_LENGTH(N'dbo.LegalPersonAccounts', N'ArchiveCode') IS NULL
-BEGIN
-    ALTER TABLE dbo.LegalPersonAccounts ADD ArchiveCode NVARCHAR(40) NULL;
-    EXEC(N'CREATE UNIQUE INDEX UX_LegalPersonAccounts_ArchiveCode ON dbo.LegalPersonAccounts (ArchiveCode) WHERE ArchiveCode IS NOT NULL');
-END;
-
--- Highest box/sequence issued per branch + sale year + million slice.
-IF OBJECT_ID(N'dbo.LegalArchiveSeries', N'U') IS NULL
-CREATE TABLE dbo.LegalArchiveSeries (
-    BranchCode NVARCHAR(4) NOT NULL,
-    Year2 INT NOT NULL,
-    Slice INT NOT NULL,
-    MaxBox INT NOT NULL,
-    MaxSeq INT NOT NULL,
-    CONSTRAINT PK_LegalArchiveSeries PRIMARY KEY (BranchCode, Year2, Slice)
-);
-
--- Every code ever used (old system + this one). A code in here is never issued again.
-IF OBJECT_ID(N'dbo.LegalArchiveTaken', N'U') IS NULL
-CREATE TABLE dbo.LegalArchiveTaken (
-    Code NVARCHAR(40) NOT NULL PRIMARY KEY,
-    Source NVARCHAR(20) NOT NULL,
-    AtUtc DATETIME2 NOT NULL CONSTRAINT DF_LegalArchiveTaken_At DEFAULT (SYSUTCDATETIME())
-);
-
--- The lawyer who handled one step. Usually the debtor's assigned lawyer; IsSubstitute marks a step
--- handed to another lawyer for that step only (the assignment itself does not change).
-IF COL_LENGTH(N'dbo.LegalCaseSteps', N'LawyerId') IS NULL
-    ALTER TABLE dbo.LegalCaseSteps ADD LawyerId INT NULL, IsSubstitute BIT NOT NULL CONSTRAINT DF_LegalCaseSteps_Substitute DEFAULT (0);
-
--- A step dated in the future is scheduled, not done yet. It shows under «الخطوات القادمة» until it is
--- marked done; once its date passes without that it is overdue. Steps logged before this column are done.
-IF COL_LENGTH(N'dbo.LegalCaseSteps', N'IsDone') IS NULL
-    ALTER TABLE dbo.LegalCaseSteps ADD IsDone BIT NOT NULL CONSTRAINT DF_LegalCaseSteps_Done DEFAULT (1), DoneAtUtc DATETIME2 NULL;
-
--- ابطال is asked for by the legal app together with مبلغ الابطال; محاسب القانونية accepts it on the
--- company dashboard, and on acceptance the amount is recorded as a تسديد.
-IF OBJECT_ID(N'dbo.LegalAnnulRequests', N'U') IS NULL
-CREATE TABLE dbo.LegalAnnulRequests (
-    Id INT IDENTITY(1,1) PRIMARY KEY,
-    PersonId INT NOT NULL REFERENCES dbo.LegalPersons(Id),
-    CaseId INT NOT NULL REFERENCES dbo.LegalCases(Id),
-    Amount BIGINT NOT NULL,
-    Note NVARCHAR(MAX) NULL,
-    RequestedBy NVARCHAR(200) NULL,
-    RequestedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_LegalAnnulRequests_At DEFAULT (SYSUTCDATETIME()),
-    Status NVARCHAR(20) NOT NULL CONSTRAINT DF_LegalAnnulRequests_Status DEFAULT (N'Pending'),
-    PaymentId INT NULL,
-    DecidedBy NVARCHAR(200) NULL,
-    DecidedAtUtc DATETIME2 NULL,
-    DecisionNote NVARCHAR(MAX) NULL
-);
-
--- A mandatory step must be logged on a debtor before he can leave that flow.
-IF COL_LENGTH(N'dbo.LegalStepTypes', N'IsMandatory') IS NULL
-    ALTER TABLE dbo.LegalStepTypes ADD IsMandatory BIT NOT NULL CONSTRAINT DF_LegalStepTypes_Mandatory DEFAULT (0);
-
 IF OBJECT_ID(N'dbo.LegalCaseSteps', N'U') IS NULL
 CREATE TABLE dbo.LegalCaseSteps (
     Id INT IDENTITY(1,1) PRIMARY KEY,
@@ -410,6 +352,67 @@ BEGIN
     INSERT INTO dbo.LegalSettings ([Key], [Value]) VALUES
         (N'JudicialFee', 200000), (N'ExecutionFee', 150000), (N'EarlySettlementPenalty', 35000);
 END;
+
+-- ───── Added after the first version. Kept below every CREATE TABLE so a new database gets its
+-- tables first: a column can only be added to a table that already exists. ─────
+
+-- كود ارشيف القانونية: one per sale (branch account), issued when the debtor enters the legal archive.
+IF COL_LENGTH(N'dbo.LegalPersonAccounts', N'ArchiveCode') IS NULL
+BEGIN
+    ALTER TABLE dbo.LegalPersonAccounts ADD ArchiveCode NVARCHAR(40) NULL;
+    EXEC(N'CREATE UNIQUE INDEX UX_LegalPersonAccounts_ArchiveCode ON dbo.LegalPersonAccounts (ArchiveCode) WHERE ArchiveCode IS NOT NULL');
+END;
+
+-- Highest box/sequence issued per branch + sale year + million slice.
+IF OBJECT_ID(N'dbo.LegalArchiveSeries', N'U') IS NULL
+CREATE TABLE dbo.LegalArchiveSeries (
+    BranchCode NVARCHAR(4) NOT NULL,
+    Year2 INT NOT NULL,
+    Slice INT NOT NULL,
+    MaxBox INT NOT NULL,
+    MaxSeq INT NOT NULL,
+    CONSTRAINT PK_LegalArchiveSeries PRIMARY KEY (BranchCode, Year2, Slice)
+);
+
+-- Every code ever used (old system + this one). A code in here is never issued again.
+IF OBJECT_ID(N'dbo.LegalArchiveTaken', N'U') IS NULL
+CREATE TABLE dbo.LegalArchiveTaken (
+    Code NVARCHAR(40) NOT NULL PRIMARY KEY,
+    Source NVARCHAR(20) NOT NULL,
+    AtUtc DATETIME2 NOT NULL CONSTRAINT DF_LegalArchiveTaken_At DEFAULT (SYSUTCDATETIME())
+);
+
+-- The lawyer who handled one step. Usually the debtor's assigned lawyer; IsSubstitute marks a step
+-- handed to another lawyer for that step only (the assignment itself does not change).
+IF COL_LENGTH(N'dbo.LegalCaseSteps', N'LawyerId') IS NULL
+    ALTER TABLE dbo.LegalCaseSteps ADD LawyerId INT NULL, IsSubstitute BIT NOT NULL CONSTRAINT DF_LegalCaseSteps_Substitute DEFAULT (0);
+
+-- A step dated in the future is scheduled, not done yet. It shows under «الخطوات القادمة» until it is
+-- marked done; once its date passes without that it is overdue. Steps logged before this column are done.
+IF COL_LENGTH(N'dbo.LegalCaseSteps', N'IsDone') IS NULL
+    ALTER TABLE dbo.LegalCaseSteps ADD IsDone BIT NOT NULL CONSTRAINT DF_LegalCaseSteps_Done DEFAULT (1), DoneAtUtc DATETIME2 NULL;
+
+-- ابطال is asked for by the legal app together with مبلغ الابطال; محاسب القانونية accepts it on the
+-- company dashboard, and on acceptance the amount is recorded as a تسديد.
+IF OBJECT_ID(N'dbo.LegalAnnulRequests', N'U') IS NULL
+CREATE TABLE dbo.LegalAnnulRequests (
+    Id INT IDENTITY(1,1) PRIMARY KEY,
+    PersonId INT NOT NULL REFERENCES dbo.LegalPersons(Id),
+    CaseId INT NOT NULL REFERENCES dbo.LegalCases(Id),
+    Amount BIGINT NOT NULL,
+    Note NVARCHAR(MAX) NULL,
+    RequestedBy NVARCHAR(200) NULL,
+    RequestedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_LegalAnnulRequests_At DEFAULT (SYSUTCDATETIME()),
+    Status NVARCHAR(20) NOT NULL CONSTRAINT DF_LegalAnnulRequests_Status DEFAULT (N'Pending'),
+    PaymentId INT NULL,
+    DecidedBy NVARCHAR(200) NULL,
+    DecidedAtUtc DATETIME2 NULL,
+    DecisionNote NVARCHAR(MAX) NULL
+);
+
+-- A mandatory step must be logged on a debtor before he can leave that flow.
+IF COL_LENGTH(N'dbo.LegalStepTypes', N'IsMandatory') IS NULL
+    ALTER TABLE dbo.LegalStepTypes ADD IsMandatory BIT NOT NULL CONSTRAINT DF_LegalStepTypes_Mandatory DEFAULT (0);
 """;
 }
 
