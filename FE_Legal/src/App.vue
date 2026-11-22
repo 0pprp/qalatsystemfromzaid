@@ -1,4 +1,5 @@
 <script setup>
+const baseUrl = import.meta.env.BASE_URL
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
@@ -42,7 +43,7 @@ function logout() {
       >
         <div class="side__brand">
           <img
-            src="/logo.png"
+            :src="`${baseUrl}logo.png`"
             alt=""
             width="40"
             height="40"

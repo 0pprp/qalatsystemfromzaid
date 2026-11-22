@@ -1,4 +1,5 @@
 <script setup>
+const baseUrl = import.meta.env.BASE_URL
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { errorMessage, signIn } from '../api'
@@ -39,7 +40,7 @@ async function submit() {
       <VCardText class="pa-8">
         <div class="text-center mb-6">
           <img
-            src="/logo.png"
+            :src="`${baseUrl}logo.png`"
             alt=""
             width="84"
             height="84"
