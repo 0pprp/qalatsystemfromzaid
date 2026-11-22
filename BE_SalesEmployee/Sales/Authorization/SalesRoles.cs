@@ -27,6 +27,12 @@ namespace BE_SalesEmployee.Sales.Authorization
         /// <summary>مسؤول الارشيف — receives paper archives from the committees, all branches.</summary>
         public const string UserTypeArchiveManager = "مسؤول الارشيف";
         public const string ArchiveManager = "ArchiveManager";
+        /// <summary>محاسب القانونية — company-side legal desk (legal lists, grouping, تسديدات), all branches.</summary>
+        public const string UserTypeLegalAccountant = "محاسب القانونية";
+        public const string LegalAccountant = "LegalAccountant";
+        /// <summary>مدير القانونية — users of the legal app (cases, lawyers, registers).</summary>
+        public const string UserTypeLegalTeam = "مدير القانونية";
+        public const string LegalTeam = "LegalTeam";
         public const string UserTypeBranchManager = "مدير فرع";
         public const string CommitteeHead = "CommitteeHead";
         public const string CommitteeAssistant = "CommitteeAssistant";
@@ -64,6 +70,16 @@ namespace BE_SalesEmployee.Sales.Authorization
 
         public static bool IsArchiveManager(string? userType) =>
             string.Equals(userType, UserTypeArchiveManager, StringComparison.Ordinal);
+
+        public static bool IsLegalAccountant(string? userType) =>
+            string.Equals(userType, UserTypeLegalAccountant, StringComparison.Ordinal);
+
+        public static bool IsLegalTeam(string? userType) =>
+            string.Equals(userType, UserTypeLegalTeam, StringComparison.Ordinal);
+
+        /// <summary>Who may see القانونية customers and legal lists on the branches.</summary>
+        public static bool IsLegalViewer(string? userType) =>
+            IsDirector(userType) || IsLegalAccountant(userType) || IsLegalTeam(userType);
 
         public static bool IsBranchManager(string? userType) =>
             string.Equals(userType, UserTypeBranchManager, StringComparison.Ordinal);
@@ -120,6 +136,14 @@ namespace BE_SalesEmployee.Sales.Authorization
             {
                 return ArchiveManager;
             }
+            if (IsLegalAccountant(userType))
+            {
+                return LegalAccountant;
+            }
+            if (IsLegalTeam(userType))
+            {
+                return LegalTeam;
+            }
             return null;
         }
     }
@@ -150,6 +174,12 @@ namespace BE_SalesEmployee.Sales.Authorization
         public const string SalesManagerOrDirector = "Sales.ManagerOrDirector";
         /// <summary>Paper archive chain: لجنة المراقبة (head/assistant) and مسؤول الارشيف.</summary>
         public const string ArchiveFlow = "Sales.ArchiveFlow";
+        /// <summary>Company-side legal desk: محاسب القانونية + المدير.</summary>
+        public const string LegalDesk = "Legal.Desk";
+        /// <summary>Legal app: مدير القانونية + المدير.</summary>
+        public const string LegalApp = "Legal.App";
+        /// <summary>Read-only views shared by both sides (overview, registers).</summary>
+        public const string LegalAny = "Legal.Any";
     }
 
     public sealed class SalesRoleRequirement : IAuthorizationRequirement

@@ -22,10 +22,16 @@ builder.Services.AddHttpClient<AdminCitiesService>();
 // Must exceed SalesManagerBranchAggregator excel/evaluate CancelAfter (90s).
 // A 20s client timeout made multi-province evaluate return 502
 // ("تعذر تقييم الطلبات في محافظة المصدر") under real catalog load.
+builder.Services.AddTransient<BE_SalesEmployee.Legal.LegalViewerStampHandler>();
 builder.Services.AddHttpClient<BranchProxyService>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(BranchProxyTimeouts.HttpClientSeconds);
-});
+}).AddHttpMessageHandler<BE_SalesEmployee.Legal.LegalViewerStampHandler>();
+// القانونية: legal desk (company side) + legal app. Own tables, created on first use.
+builder.Services.AddSingleton<BE_SalesEmployee.Legal.LegalDb>();
+builder.Services.AddScoped<BE_SalesEmployee.Legal.LegalStore>();
+builder.Services.AddScoped<BE_SalesEmployee.Legal.LegalBranchClient>();
+builder.Services.AddScoped<BE_SalesEmployee.Legal.LegalService>();
 builder.Services.AddHttpClient("crm-bridge", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);
@@ -180,6 +186,13 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy(SalesPolicies.ArchiveFlow, p =>
         p.Requirements.Add(new SalesRoleRequirement(
             SalesRoles.ArchiveManager, SalesRoles.CommitteeHead, SalesRoles.CommitteeAssistant)));
+    options.AddPolicy(SalesPolicies.LegalDesk, p =>
+        p.Requirements.Add(new SalesRoleRequirement(SalesRoles.LegalAccountant, SalesRoles.Director)));
+    options.AddPolicy(SalesPolicies.LegalApp, p =>
+        p.Requirements.Add(new SalesRoleRequirement(SalesRoles.LegalTeam, SalesRoles.Director)));
+    options.AddPolicy(SalesPolicies.LegalAny, p =>
+        p.Requirements.Add(new SalesRoleRequirement(
+            SalesRoles.LegalAccountant, SalesRoles.LegalTeam, SalesRoles.Director)));
     options.AddPolicy(SalesPolicies.ReadGps, p =>
         p.Requirements.Add(new SalesRoleRequirement(SalesRoles.SalesManager)));
     options.AddPolicy(SalesPolicies.ReadOtherSalesEmployees, p =>
@@ -266,6 +279,8 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 var app = builder.Build();
+
+await BE_SalesEmployee.Services.OversightAccountSeeder.RunAsync(app.Services, app.Configuration, app.Logger);
 if (app.Environment.IsDevelopment())
 {
     app.Logger.LogInformation("Sales DB: {Catalog}", SalesDevelopmentGuard.AllowedDemoDatabase);

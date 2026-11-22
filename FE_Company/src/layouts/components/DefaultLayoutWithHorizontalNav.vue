@@ -4,6 +4,7 @@ import { themeConfig } from '@themeConfig'
 import { useUserRole } from '@/composables/useUserRole'
 import { useSalesRequestUnread, withRequestsUnreadBadge } from '@/composables/useSalesRequestUnread'
 import { ARCHIVE_MANAGER_NAV, COMMITTEE_ARCHIVE_NAV } from '@/composables/archiveFlowApi'
+import { LEGAL_DESK_DIRECTOR_NAV, LEGAL_DESK_NAV, LEGAL_DESK_NAV_GROUP } from '@/composables/legalDeskApi'
 
 // Components
 import AppLoadingIndicator from "@/components/AppLoadingIndicator.vue"
@@ -32,7 +33,7 @@ watch([
 // !SECTION
 
 const cityName = ref(localStorage.getItem('CityName'))
-const { canManageUsers, canBackup, canViewDecisions, isSalesManager, isDirector, isMonitor, isCommittee, isArchiveManager, canManageOversight, canViewFollowerGps, isAdmin } = useUserRole()
+const { canManageUsers, canBackup, canViewDecisions, isSalesManager, isDirector, isMonitor, isCommittee, isArchiveManager, isLegalAccountant, canManageOversight, canViewFollowerGps, isAdmin } = useUserRole()
 
 useSalesRequestUnread()
 
@@ -52,6 +53,8 @@ const tutorialVideoNavItem = {
 const navItems = computed(() => {
   if (isArchiveManager.value)
     return ARCHIVE_MANAGER_NAV.map(i => ({ ...i }))
+  if (isLegalAccountant.value)
+    return LEGAL_DESK_NAV.map(i => ({ ...i }))
 
   const items = allNavItems.filter(item => {
     if (isCommittee.value)
@@ -206,6 +209,9 @@ const navItems = computed(() => {
 
   if (isCommittee.value)
     items.push({ ...COMMITTEE_ARCHIVE_NAV })
+
+  if (isDirector.value)
+    items.push({ ...LEGAL_DESK_NAV_GROUP, children: [...LEGAL_DESK_NAV, ...LEGAL_DESK_DIRECTOR_NAV].map(i => ({ ...i })) })
 
   if (canManageOversight.value && !items.some(i => i?.to?.name === 'oversight-accounts')) {
     items.push({

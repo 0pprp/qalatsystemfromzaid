@@ -1,5 +1,5 @@
 import { isAuthenticated, removeLocalStorage, removeToken } from "@/services/tokenService"
-import { isArchiveManagerRole, isCommitteeRole, isOversightBoardRole, isSupervisorRole } from "@/utils/oversightRoles"
+import { isArchiveManagerRole, isCommitteeRole, isLegalAccountantRole, isOversightBoardRole, isSupervisorRole } from "@/utils/oversightRoles"
 import { setupLayouts } from 'virtual:generated-layouts'
 import { createRouter, createWebHashHistory } from 'vue-router/auto'
 
@@ -91,6 +91,8 @@ function homePath() {
     return '/director-delegate-followup'
   if (isArchiveManagerRole(t))
     return '/archive-overview'
+  if (isLegalAccountantRole(t))
+    return '/legal-desk-overview'
   if (t === 'مدير مبيعات')
     return '/sales-manager-employees'
 
@@ -142,6 +144,21 @@ router.beforeEach((to, from, next) => {
     return next({ path: '/director-ratings', query: {} })
   if (isCommitteeRole(userType) && to.path === '/')
     return next('/director-delegate-followup')
+
+  // القانونية (لوحة الشركة): محاسب القانونية + المدير فقط.
+  const legalDeskPaths = ['/legal-desk-overview', '/legal-desk-lists', '/legal-desk-debtors', '/legal-desk-debtor', '/legal-desk-payments', '/legal-desk-cashbox']
+  if (isLegalAccountantRole(userType)) {
+    if (!legalDeskPaths.includes(to.path) && to.path !== '/logout')
+      return next('/legal-desk-overview')
+
+    return next()
+  }
+  if (legalDeskPaths.includes(to.path) && userType !== 'المدير')
+    return next(homePath())
+
+  // مدينون بلا تقدم: المدير فقط (محاسب القانونية is already kept to legalDeskPaths above).
+  if (to.path === '/legal-desk-stalled' && userType !== 'المدير')
+    return next(homePath())
 
   // مسؤول الارشيف: the three archive pages only.
   const archiveManagerPaths = ['/archive-overview', '/archive-sales', '/archive-requests', '/archive-finished-customers']
@@ -304,6 +321,13 @@ router.beforeEach((to, from, next) => {
     '/sales-manager-followers-map',
     '/sales-manager-followers-routes',
     '/oversight-accounts',
+    '/legal-desk-overview',
+    '/legal-desk-lists',
+    '/legal-desk-debtors',
+    '/legal-desk-debtor',
+    '/legal-desk-payments',
+    '/legal-desk-cashbox',
+    '/legal-desk-stalled',
 
     // تطبيق المسوّقين (BE_CustomerApp) — كامل الصلاحيات للمدير
     ...customerAppPaths,
