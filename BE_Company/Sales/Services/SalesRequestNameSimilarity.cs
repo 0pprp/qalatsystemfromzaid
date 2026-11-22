@@ -46,7 +46,11 @@ namespace BE_Company.Sales.Services
             return string.Join(" ", parts);
         }
 
-        /// <summary>Name tokens with trailing pure-numeric tokens removed (e.g. "… سرحان 2").</summary>
+        /// <summary>
+        /// Name tokens with every digit removed, wherever it sits: a separate token ("… سرحان 2"),
+        /// glued to a name ("… سرحان2"), or in the middle. Staff add these numbers to tell a
+        /// customer's repeat sales apart; they are never part of the name.
+        /// </summary>
         public static IReadOnlyList<string> MatchingTokens(string? value)
         {
             var normalized = Normalize(value);
@@ -55,13 +59,11 @@ namespace BE_Company.Sales.Services
                 return [];
             }
 
-            var parts = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
-            while (parts.Count > 0 && parts[^1].All(char.IsDigit))
-            {
-                parts.RemoveAt(parts.Count - 1);
-            }
-
-            return parts;
+            return normalized
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => new string(part.Where(ch => !char.IsDigit(ch)).ToArray()))
+                .Where(part => part.Length > 0)
+                .ToList();
         }
 
         public static (string First, string Father, string Grandfather) TripleParts(string? value)

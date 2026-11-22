@@ -56,10 +56,11 @@ export function matchingTokens(value) {
   const normalized = normalizeName(value)
   if (!normalized)
     return []
-  const parts = normalized.split(' ').filter(Boolean)
-  while (parts.length > 0 && /^\d+$/.test(parts[parts.length - 1]))
-    parts.pop()
-  return parts
+  // Drop every digit (Latin or Arabic-Indic) wherever it sits: "… محمد 2", "… محمد2", "علي 1 حسن …".
+  return normalized
+    .split(' ')
+    .map(part => part.replace(/\p{Nd}+/gu, ''))
+    .filter(Boolean)
 }
 
 export function tripleParts(value) {
