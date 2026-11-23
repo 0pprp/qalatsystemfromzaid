@@ -17,10 +17,12 @@ public interface IFollowerDeclineService
 public sealed class FollowerDeclineService : IFollowerDeclineService
 {
     private readonly string _cs;
+    private readonly IFollowerBranchFactsCache _facts;
     private static int _schemaReady;
 
-    public FollowerDeclineService(IConfiguration configuration)
+    public FollowerDeclineService(IConfiguration configuration, IFollowerBranchFactsCache facts)
     {
+        _facts = facts;
         _cs = configuration.GetConnectionString("DataBaseConnection")
               ?? throw new InvalidOperationException("DataBaseConnection missing.");
     }
@@ -82,13 +84,17 @@ IF NOT EXISTS (
 SELECT ListId FROM dbo.FollowerUserLists WHERE UserId = @UserId;",
             new { UserId = followerUserId }, cancellationToken: ct))).ToList();
 
+        // Shared whole-branch snapshot (same figures as the per-list query below, which stays as
+        // the fallback for branch DBs where the snapshot cannot be loaded).
+        var branchFacts = await _facts.GetAsync(ct);
+
         foreach (var listId in listIds)
         {
             ct.ThrowIfCancellationRequested();
             List<FollowerCustomerRatingFacts> facts;
             try
             {
-                facts = await LoadRatingFactsAsync(c, listId, ct);
+                facts = branchFacts?[listId].ToList() ?? await LoadRatingFactsAsync(c, listId, ct);
             }
             catch
             {
