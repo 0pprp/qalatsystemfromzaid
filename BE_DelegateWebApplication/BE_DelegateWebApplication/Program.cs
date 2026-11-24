@@ -51,6 +51,7 @@ builder.Services.AddScoped<BE_DelegateWebApplication.Services.ILegalFollowupFoll
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerFieldFollowupService, BE_DelegateWebApplication.Services.FollowerFieldFollowupService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerSaleAuthService, BE_DelegateWebApplication.Services.FollowerSaleAuthService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IDelegateFirstCollectionEvalService, BE_DelegateWebApplication.Services.DelegateFirstCollectionEvalService>();
+builder.Services.AddSingleton<BE_DelegateWebApplication.Services.IFollowerBranchFactsCache, BE_DelegateWebApplication.Services.FollowerBranchFactsCache>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerListStatsService, BE_DelegateWebApplication.Services.FollowerListStatsService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerListCardsService, BE_DelegateWebApplication.Services.FollowerListCardsService>();
 builder.Services.AddScoped<BE_DelegateWebApplication.Services.IFollowerShopCaptureService, BE_DelegateWebApplication.Services.FollowerShopCaptureService>();

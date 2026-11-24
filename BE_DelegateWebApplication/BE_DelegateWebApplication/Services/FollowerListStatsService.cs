@@ -7,10 +7,12 @@ namespace BE_DelegateWebApplication.Services;
 public sealed class FollowerListStatsService : IFollowerListStatsService
 {
     private readonly string _cs;
+    private readonly IFollowerBranchFactsCache _facts;
     private static int _schemaReady;
 
-    public FollowerListStatsService(IConfiguration configuration)
+    public FollowerListStatsService(IConfiguration configuration, IFollowerBranchFactsCache facts)
     {
+        _facts = facts;
         _cs = configuration.GetConnectionString("DataBaseConnection")
               ?? throw new InvalidOperationException("DataBaseConnection missing.");
     }
@@ -125,8 +127,27 @@ WHERE d.DelegateID = @ListId;",
         var weekAgoDate = FollowerListTrendRules.WeekAgoDate(asOf);
         var monthAgoDate = FollowerListTrendRules.MonthAgoDate(asOf);
 
+        // Shared whole-branch snapshot: every figure below that needs View_Customers is computed
+        // from it in memory instead of running the view once per figure. Null on branch DBs where
+        // the view shape is not usable; then the original per-list queries run.
+        var listFacts = (await _facts.GetAsync(ct))?[listId].ToList();
+        HashSet<int>? newIds = null;
+
         // One connection: keep queries sequential (SqlClient is not concurrent-safe).
-        var live = await LoadLiveAggregatesAsync(c, listId, yearMonth, ct);
+        (decimal TotalSalesSum, decimal DaySalesSum, int NewCustomersCount) live;
+        if (listFacts is null)
+        {
+            live = await LoadLiveAggregatesAsync(c, listId, yearMonth, ct);
+        }
+        else
+        {
+            newIds = await LoadNewCustomerIdsAsync(c, listId, monthStart, monthEnd, ct);
+            live = (
+                (decimal)listFacts.Sum(f => f.AmountTotalSales),
+                (decimal)listFacts.Sum(f => f.AmountDaySales),
+                newIds.Count);
+        }
+
         await UpsertSnapshotAsync(c, listId, yearMonth, live, ct);
 
         var prev = await c.QueryFirstOrDefaultAsync<(decimal TotalSalesSum, decimal DaySalesSum)?>(
@@ -138,7 +159,7 @@ WHERE ListId = @ListId AND YearMonth = @YearMonth;",
                 cancellationToken: ct));
 
         var ratingCutoff = asOf.AddDays(-30);
-        var rated = (await LoadRatingFactsAsync(c, listId, ct))
+        var rated = (listFacts ?? await LoadRatingFactsAsync(c, listId, ct))
             .Where(f => f.AmountRemaining > 0
                         && !f.IsLegal
                         && f.LastPaymentDate is DateTime lp
@@ -154,8 +175,32 @@ WHERE ListId = @ListId AND YearMonth = @YearMonth;",
         var scoreMonthAgo = await FollowerListCardsService.LoadSnapshotScoreAsync(
             c, listId, monthAgoDate, ct);
 
-        var zeroed = await LoadZeroedMonthAsync(c, listId, monthStart, monthEnd, ct);
-        var neu = await LoadNewMonthMoneyAsync(c, listId, monthStart, monthEnd, ct);
+        (int Count, decimal SaleSum, decimal DaySum) zeroed;
+        (decimal SaleSum, decimal DaySum) neu;
+        if (listFacts is null || newIds is null)
+        {
+            zeroed = await LoadZeroedMonthAsync(c, listId, monthStart, monthEnd, ct);
+            neu = await LoadNewMonthMoneyAsync(c, listId, monthStart, monthEnd, ct);
+        }
+        else
+        {
+            // Same rules as LoadZeroedMonthAsync / LoadNewMonthMoneyAsync.
+            var zeroedFacts = listFacts
+                .Where(f => f.AmountRemaining == 0
+                            && f.LastPaymentDate is DateTime lp
+                            && lp.Date >= monthStart.Date
+                            && lp.Date < monthEnd.Date)
+                .ToList();
+            zeroed = (
+                zeroedFacts.Count,
+                (decimal)zeroedFacts.Sum(f => f.AmountTotalSales),
+                (decimal)zeroedFacts.Sum(f => f.AmountDaySales));
+            var newFacts = listFacts.Where(f => newIds.Contains(f.CustomerId)).ToList();
+            neu = (
+                (decimal)newFacts.Sum(f => f.AmountTotalSales),
+                (decimal)newFacts.Sum(f => f.AmountDaySales));
+        }
+
         var prevTotal = prev?.TotalSalesSum ?? 0m;
         var prevDay = prev?.DaySalesSum ?? 0m;
 
@@ -252,7 +297,8 @@ VALUES
         await using var c = new SqlConnection(_cs);
         // Match ExcellentCount/… on list cards: open balance + payment within last 30 days.
         var ratingCutoff = nowLocal.Date.AddDays(-30);
-        var rated = (await LoadRatingFactsAsync(c, listId, ct))
+        var branchFacts = await _facts.GetAsync(ct);
+        var rated = (branchFacts?[listId].ToList() ?? await LoadRatingFactsAsync(c, listId, ct))
             .Where(f => f.AmountRemaining > 0
                         && !f.IsLegal
                         && f.LastPaymentDate is DateTime lp
@@ -324,8 +370,31 @@ ORDER BY ISNULL(vc.CustomerName, c.CustomerName);",
         if (minRemainingInclusive < 0 || minRemainingInclusive >= maxRemainingExclusive)
             throw new ArgumentException("نطاق الباقي غير صالح");
 
-        await using var c = new SqlConnection(_cs);
         // Band: minInclusive <= remaining < maxExclusive (no overlap between 0–100k and 100–200k).
+        var branchFacts = await _facts.GetAsync(ct);
+        if (branchFacts is not null)
+        {
+            // Same filter, columns and order as the query below, from the shared snapshot.
+            return branchFacts[listId]
+                .Where(f => f.AmountRemaining > 0
+                            && f.AmountRemaining >= (double)minRemainingInclusive
+                            && f.AmountRemaining < (double)maxRemainingExclusive)
+                .OrderBy(f => f.AmountRemaining)
+                .ThenBy(f => f.CustomerName)
+                .Select(f => new FollowerListStatsCustomerRow
+                {
+                    CustomerId = f.CustomerId,
+                    CustomerName = f.CustomerName,
+                    PhoneNumber = f.PhoneNumber,
+                    AmountTotalSales = f.AmountTotalSales,
+                    AmountDaySales = f.AmountDaySales,
+                    AmountRemaining = f.AmountRemaining,
+                    IsLegal = f.IsLegal
+                })
+                .ToList();
+        }
+
+        await using var c = new SqlConnection(_cs);
         try
         {
             var rows = await c.QueryAsync<FollowerListStatsCustomerRow>(new CommandDefinition(@"
@@ -465,6 +534,25 @@ WHERE c.DelegateID = @ListId
             cancellationToken: ct));
 
         return (totals.TotalSalesSum, totals.DaySalesSum, newCount);
+    }
+
+    /// <summary>Customers of the list whose first sale ever falls inside the month.</summary>
+    private static async Task<HashSet<int>> LoadNewCustomerIdsAsync(
+        SqlConnection c, int listId, DateTime monthStart, DateTime monthEnd, CancellationToken ct)
+    {
+        var ids = await c.QueryAsync<int>(new CommandDefinition(@"
+SELECT DISTINCT c.CustomerID
+FROM dbo.Customers c
+INNER JOIN dbo.CustomersSales s ON s.CustomerID = c.CustomerID
+WHERE c.DelegateID = @ListId
+  AND s.DateCreate >= @MonthStart AND s.DateCreate < @MonthEnd
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.CustomersSales s2
+      WHERE s2.CustomerID = c.CustomerID AND s2.DateCreate < @MonthStart
+  );",
+            new { ListId = listId, MonthStart = monthStart, MonthEnd = monthEnd },
+            cancellationToken: ct));
+        return ids.ToHashSet();
     }
 
     private static async Task<(decimal SaleSum, decimal DaySum)> LoadNewMonthMoneyAsync(

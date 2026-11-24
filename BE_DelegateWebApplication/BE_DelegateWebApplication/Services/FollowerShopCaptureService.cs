@@ -149,6 +149,45 @@ ORDER BY C.CustomerName;",
     public async Task<IReadOnlyList<ShopCaptureListDto>> GetListsAsync(int followerUserId, CancellationToken ct)
     {
         await using var c = await OpenAsync(ct);
+        try
+        {
+            // One pass for all of the follower's lists. View_Customers recomputes every customer's
+            // balance on each use, so asking per list cost a full pass per list and timed out for
+            // followers with several large lists.
+            var rows = await c.QueryAsync<(int ListId, string? ListName, int CustomerCount, int WithLocation, int WithPhoto)>(
+                new CommandDefinition(@"
+SELECT ful.ListId, d.DelegateName,
+       COUNT(cur.CustomerID),
+       COUNT(CASE WHEN cap.Latitude IS NOT NULL THEN 1 END),
+       COUNT(CASE WHEN cap.PhotoAtUtc IS NOT NULL THEN 1 END)
+FROM dbo.FollowerUserLists ful
+INNER JOIN dbo.Delegates d ON d.DelegateID = ful.ListId
+LEFT JOIN (
+    SELECT C.CustomerID, C.DelegateID
+    FROM dbo.Customers C
+    INNER JOIN dbo.View_Customers VC ON VC.CustomerID = C.CustomerID
+    WHERE ISNULL(VC.AmountRemaining, 0) > 0
+      AND ISNULL(C.IsLegal, 0) = 0
+) cur ON cur.DelegateID = ful.ListId
+LEFT JOIN dbo.CustomerShopFollowerCapture cap ON cap.CustomerID = cur.CustomerID
+WHERE ful.UserId = @UserId
+GROUP BY ful.ListId, d.DelegateName
+ORDER BY d.DelegateName;",
+                    new { UserId = followerUserId }, commandTimeout: 90, cancellationToken: ct));
+            return rows.Select(r => new ShopCaptureListDto
+            {
+                ListId = r.ListId,
+                ListName = string.IsNullOrWhiteSpace(r.ListName) ? $"قائمة {r.ListId}" : r.ListName.Trim(),
+                CustomerCount = r.CustomerCount,
+                WithLocation = r.WithLocation,
+                WithPhoto = r.WithPhoto,
+            }).ToList();
+        }
+        catch (SqlException)
+        {
+            // Older branch DBs (View_Customers / IsLegal missing): per-list path below.
+        }
+
         var lists = (await c.QueryAsync<(int ListId, string? ListName)>(new CommandDefinition(@"
 SELECT ful.ListId, d.DelegateName
 FROM dbo.FollowerUserLists ful

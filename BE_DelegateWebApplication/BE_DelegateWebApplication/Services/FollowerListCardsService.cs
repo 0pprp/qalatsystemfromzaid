@@ -22,11 +22,13 @@ public interface IFollowerListCardsService
 public sealed class FollowerListCardsService : IFollowerListCardsService
 {
     private readonly string _cs;
+    private readonly IFollowerBranchFactsCache _facts;
     private static int _schemaReady;
     private const int MaxParallelLists = 4;
 
-    public FollowerListCardsService(IConfiguration configuration)
+    public FollowerListCardsService(IConfiguration configuration, IFollowerBranchFactsCache facts)
     {
+        _facts = facts;
         _cs = configuration.GetConnectionString("DataBaseConnection")
               ?? throw new InvalidOperationException("DataBaseConnection missing.");
     }
@@ -95,6 +97,9 @@ ORDER BY d.DelegateName;",
         if (lists.Count == 0)
             return Array.Empty<FollowerListCardDto>();
 
+        // Shared whole-branch snapshot instead of one View_Customers pass per list.
+        var factsByList = await _facts.GetAsync(ct);
+
         var bag = new ConcurrentBag<(int Order, FollowerListCardDto Card)>();
         await Parallel.ForEachAsync(
             lists.Select((list, index) => (list, index)),
@@ -109,7 +114,9 @@ ORDER BY d.DelegateName;",
                 await using var conn = new SqlConnection(_cs);
                 await conn.OpenAsync(token);
 
-                var facts = await LoadRatingFactsFastAsync(conn, list.ListId, token);
+                var facts = factsByList is null
+                    ? await LoadRatingFactsFastAsync(conn, list.ListId, token)
+                    : factsByList[list.ListId].ToList();
                 var rated = facts
                     .Where(f => f.AmountRemaining > 0
                                 && f.LastPaymentDate is DateTime lp
