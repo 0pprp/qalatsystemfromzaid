@@ -251,6 +251,14 @@ onMounted(async () => {
                   <RouterLink :to="{ path: '/legal-desk-debtor', query: { id: d.id } }">
                     {{ d.fullName }}
                   </RouterLink>
+                  <VIcon
+                    v-if="d.isPaying"
+                    icon="tabler-star-filled"
+                    color="warning"
+                    size="16"
+                    class="ms-1"
+                    title="مؤشَّر «تسديد» في تطبيق القانونية"
+                  />
                   <div
                     class="text-caption text-medium-emphasis"
                     dir="ltr"

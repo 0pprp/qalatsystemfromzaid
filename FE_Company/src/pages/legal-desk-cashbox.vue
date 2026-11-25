@@ -19,6 +19,9 @@ const payments = computed(() => data.value?.payments || [])
 const d = computed(() => data.value?.discounted || {})
 const discounts = computed(() => data.value?.discounts || [])
 
+/** Discounts count into the register's total together with the money received. */
+const grandTotal = computed(() => Number(c.value.total || 0) + Number(d.value.total || 0))
+
 async function load() {
   loading.value = true
   try {
@@ -60,22 +63,48 @@ onMounted(load)
         <VCard class="h-100">
           <VCardText>
             <div class="text-body-2 text-medium-emphasis">
-              المقبوض من التسديدات
+              مجموع التسديدات والخصومات
             </div>
             <div class="text-h4 font-weight-bold text-success my-1">
-              {{ legalMoney(c.total) }}
+              {{ legalMoney(grandTotal) }}
             </div>
             <div class="text-body-2 mb-3">
-              من <strong>{{ c.customers || 0 }}</strong> مدين · <strong>{{ c.payments || 0 }}</strong> تسديد
+              <strong>{{ c.payments || 0 }}</strong> تسديد · <strong>{{ d.count || 0 }}</strong> خصم
             </div>
             <VTable density="compact">
               <tbody>
+                <tr>
+                  <td>تسديدات</td>
+                  <td class="text-medium-emphasis">
+                    {{ c.customers || 0 }} مدين
+                  </td>
+                  <td class="text-end font-weight-medium">
+                    {{ legalMoney(c.total) }}
+                  </td>
+                </tr>
+                <tr>
+                  <td>خصومات</td>
+                  <td class="text-medium-emphasis">
+                    {{ d.customers || 0 }} مدين
+                  </td>
+                  <td class="text-end font-weight-medium">
+                    {{ legalMoney(d.total) }}
+                  </td>
+                </tr>
+                <tr>
+                  <td
+                    colspan="3"
+                    class="text-caption text-medium-emphasis pt-3"
+                  >
+                    ومن المجموع
+                  </td>
+                </tr>
                 <tr>
                   <td colspan="2">
                     من أصل الدين
                   </td>
                   <td class="text-end">
-                    {{ legalMoney(c.debt) }}
+                    {{ legalMoney(Number(c.debt || 0) + Number(d.debt || 0)) }}
                   </td>
                 </tr>
                 <tr>
@@ -83,7 +112,7 @@ onMounted(load)
                     من غرامات القانونية
                   </td>
                   <td class="text-end">
-                    {{ legalMoney(c.penalties) }}
+                    {{ legalMoney(Number(c.penalties || 0) + Number(d.penalties || 0)) }}
                   </td>
                 </tr>
               </tbody>
@@ -196,7 +225,7 @@ onMounted(load)
                     colspan="2"
                     class="text-caption text-medium-emphasis pt-3"
                   >
-                    الخصم يُنقص المطلوب من المدين وليس مبلغاً مقبوضاً، فلا يدخل في مجموع التسديدات.
+                    الخصومات محسوبة ضمن مجموع القاصة مع التسديدات.
                   </td>
                 </tr>
               </tbody>

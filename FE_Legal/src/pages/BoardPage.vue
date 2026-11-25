@@ -277,6 +277,13 @@ onMounted(async () => {
             <td>
               <div class="font-weight-medium">
                 {{ row.fullName }}
+                <VIcon
+                  v-if="row.isPaying"
+                  icon="star-filled"
+                  color="warning"
+                  size="16"
+                  title="تسديد"
+                />
               </div>
               <div class="text-caption muted">
                 <span class="num">{{ row.phone || '' }}</span>

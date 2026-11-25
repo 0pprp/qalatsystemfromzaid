@@ -139,6 +139,26 @@ function askClose() {
   })
 }
 
+// The «تسديد» star: put on and taken off by hand.
+const starring = ref(false)
+
+async function togglePaying() {
+  starring.value = true
+  try {
+    const paying = !c.value.isPaying
+
+    await api.paying(c.value.id, paying)
+    toast.ok(paying ? 'أُشّر المدين «تسديد»' : 'أُزيل تأشير التسديد')
+    await load()
+  }
+  catch (e) {
+    toast.error(errorMessage(e, 'تعذر تغيير التأشير'))
+  }
+  finally {
+    starring.value = false
+  }
+}
+
 function editNote() {
   openText({
     title: 'ملاحظات الملف',
@@ -233,6 +253,23 @@ onMounted(async () => {
         <div>
           <h1 class="page-title">
             {{ c.fullName }}
+            <VBtn
+              :icon="c.isPaying ? 'star-filled' : 'star'"
+              :color="c.isPaying ? 'warning' : undefined"
+              variant="text"
+              size="small"
+              :loading="starring"
+              :title="c.isPaying ? 'إزالة تأشير التسديد' : 'تأشير تسديد'"
+              @click="togglePaying"
+            />
+            <VChip
+              v-if="c.isPaying"
+              size="small"
+              color="warning"
+              variant="tonal"
+            >
+              تسديد
+            </VChip>
           </h1>
           <div class="text-body-2 muted">
             <span class="num">{{ c.phone || 'بلا هاتف' }}</span>

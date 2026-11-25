@@ -114,7 +114,7 @@ async function save() {
           hide-details
         />
         <div class="text-caption text-medium-emphasis mt-3">
-          الخصم يُنقص المطلوب من المدين ولا يدخل قاصة ولا يصدر له وصل.
+          الخصم يُنقص المطلوب من المدين ويُحسب ضمن مجموع القاصة، ولا يصدر له وصل.
         </div>
       </VCardText>
       <VCardActions>

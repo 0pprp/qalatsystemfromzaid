@@ -77,6 +77,7 @@ export const api = {
   assignLawyer: (id, lawyerId) => post(`cases/${id}/lawyer`, { lawyerId: lawyerId || null }),
   decision: (id, text, date) => post(`cases/${id}/decision`, { text: text || null, date: date || null }),
   note: (id, note) => post(`cases/${id}/note`, { note: note || null }),
+  paying: (id, paying) => post(`cases/${id}/paying`, { paying }),
   close: (id, note) => post(`cases/${id}/close`, { note: note || null }),
 
   stepTypes: () => get('step-types'),

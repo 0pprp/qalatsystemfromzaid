@@ -489,6 +489,10 @@ IF COL_LENGTH(N'dbo.LegalPayments', N'Kind') IS NULL
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UX_LegalPayments_Receipt' AND object_id = OBJECT_ID(N'dbo.LegalPayments'))
     EXEC(N'CREATE UNIQUE INDEX UX_LegalPayments_Receipt ON dbo.LegalPayments (ReceiptNumber) WHERE ReceiptNumber IS NOT NULL');
 
+-- The «تسديد» star: put on a debtor by hand in the legal app, and taken off by hand.
+IF COL_LENGTH(N'dbo.LegalCases', N'IsPaying') IS NULL
+    ALTER TABLE dbo.LegalCases ADD IsPaying BIT NOT NULL CONSTRAINT DF_LegalCases_IsPaying DEFAULT (0);
+
 -- Receipts issued by the old legal system: searchable, and a new receipt never takes one of their numbers.
 IF OBJECT_ID(N'dbo.LegalOldReceipts', N'U') IS NULL
 CREATE TABLE dbo.LegalOldReceipts (
