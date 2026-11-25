@@ -201,6 +201,23 @@ public sealed class LegalDeskController : ControllerBase
 
     // —— نظرة عامة (قراءة فقط) ——
 
+    /// <summary>ذمة القانونية for a month given as yyyy-MM (Iraq time); the current month when omitted.</summary>
+    [HttpGet("liability")]
+    public async Task<IActionResult> Liability([FromQuery] string? month, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow.AddHours(3);
+        int year = now.Year, monthNumber = now.Month;
+        if (!string.IsNullOrWhiteSpace(month))
+        {
+            var parts = month.Trim().Split('-');
+            if (parts.Length != 2 || !int.TryParse(parts[0], out year) || !int.TryParse(parts[1], out monthNumber)
+                || year is < 2000 or > 2200 || monthNumber is < 1 or > 12)
+                return BadRequest(new { message = "الشهر غير صحيح" });
+        }
+
+        return Ok(await _store.LiabilityAsync(year, monthNumber, ct));
+    }
+
     /// <summary>القاصة: collected تسديدات and the money put into the legal app's قاصة.</summary>
     [HttpGet("cashbox")]
     public async Task<IActionResult> Cashbox(CancellationToken ct) => Ok(await _store.DeskCashboxAsync(ct));

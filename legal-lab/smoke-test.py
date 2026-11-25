@@ -126,10 +126,29 @@ check("a debtor who was not sent cannot pay or get a discount",
       call("POST", GW + "/legal-desk/persons/%d/payments" % person, accountant, {"lines": [], "penaltyAmount": 0})[0] == 400
       and call("POST", GW + "/legal-desk/persons/%d/discounts" % person, accountant, {"amount": 1000})[0] == 409)
 reg_before_send = call("GET", GW + "/legal-desk/registers", accountant)[1]
+
+
+def liab():
+    """(ذمة القانونية, تسديدات الشهر, قرارات الشهر) for the current month."""
+    body = call("GET", GW + "/legal-desk/liability", accountant)[1]
+    return body["liability"]["total"], body["monthPayments"]["total"], body["monthDecisions"]["total"], body
+
+
+liab_before_send = liab()
 status, sent = call("POST", GW + "/legal-desk/persons/%d/send" % person, accountant, {"note": "smoke"})
 check("sent to the legal app", status == 200 and sent["caseId"] > 0, sent)
 case = sent["caseId"]
 reg_after_send = call("GET", GW + "/legal-desk/registers", accountant)[1]
+liab_sent = liab()
+owed_on_send = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]["totalDue"]
+check("ذمة القانونية grows by everything the debtor owes when he is sent",
+      liab_sent[0] == liab_before_send[0] + owed_on_send and liab_sent[1:3] == liab_before_send[1:3]
+      and any(d["personId"] == person and d["due"] == owed_on_send for d in liab_sent[3]["liability"]["debtors"]),
+      (liab_before_send[:3], liab_sent[:3], owed_on_send))
+check("the legal team cannot open ذمة القانونية, and a bad month is refused",
+      call("GET", GW + "/legal-desk/liability", team)[0] == 403
+      and call("GET", GW + "/legal-desk/liability?month=2026-13", accountant)[0] == 400
+      and call("GET", GW + "/legal-desk/liability?month=2020-01", accountant)[1]["monthPayments"]["total"] == 0)
 check("sending charges 200,000: a penalty on the debtor, and paid back to قلعة الضمان",
       call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]["penaltiesDue"] == 200000
       and reg_after_send["companyDebt"] == reg_before_send["companyDebt"] - 200000
@@ -256,6 +275,7 @@ check("company dashboard reads registers", call("GET", GW + "/legal-desk/registe
 check("company dashboard cannot change registers", call("POST", GW + "/legal-app/registers/expenses", accountant, {"amount": 1, "note": "x"})[0] == 403)
 
 print("6) payments, receipts and discounts")
+liab_before_pay = liab()
 check("ابطال and the full-settlement request are gone",
       call("POST", GW + "/legal-app/cases/%d/annul" % case, team, {"annulled": True, "amount": 1000})[0] in (404, 405)
       and call("POST", GW + "/legal-app/cases/%d/settlement-request" % case, team, {})[0] in (404, 405)
@@ -337,6 +357,14 @@ check("the dashboard القاصة: discounts are counted apart from the money co
       and box["funds"]["total"] == sum(f["amount"] for f in box["funds"]["records"]) and box["funds"]["count"] == len(box["funds"]["records"])
       and box["companyDebt"] == box["funds"]["total"] - box["paidBack"]["total"], (box_c, box.get("discounted")))
 check("the legal team cannot open the dashboard القاصة", call("GET", GW + "/legal-desk/cashbox", team)[0] == 403)
+liab_after_pay = liab()
+month = liab_after_pay[3]["monthPayments"]
+check("payments and discounts lower ذمة القانونية and add to تسديدات الشهر (126,000 paid + 50,000 discounted)",
+      liab_after_pay[0] == liab_before_pay[0] - 176000 and liab_after_pay[1] == liab_before_pay[1] + 176000
+      and liab_after_pay[2] == liab_before_pay[2]
+      and month["total"] == month["fromPayments"] + month["fromDiscounts"]
+      and month["fromDiscounts"] == liab_before_pay[3]["monthPayments"]["fromDiscounts"] + 50000,
+      (liab_before_pay[:3], liab_after_pay[:3]))
 status, temp_type = call("POST", GW + "/legal-app/step-types", team, {"flow": "Judicial", "name": "خطوة مؤقتة للفحص", "isMandatory": True})
 status_logged, _ = call("POST", GW + "/legal-app/cases/%d/steps" % case, team, {"stepTypeId": temp_type["id"]})
 status_del, _ = call("DELETE", GW + "/legal-app/step-types/%d" % temp_type["id"], team)
@@ -377,7 +405,26 @@ def log_mandatory_judicial():
 
 
 log_mandatory_judicial()
+liab_before_decisions = liab()
+owed_at_decisions = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]["totalDue"]
 check("judicial -> decisions", call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"to": "Decisions"})[0] == 200)
+liab_at_decisions = liab()
+check("reaching القرارات moves what he still owes from ذمة القانونية into قرارات الشهر",
+      liab_at_decisions[0] == liab_before_decisions[0] - owed_at_decisions
+      and liab_at_decisions[2] == liab_before_decisions[2] + owed_at_decisions
+      and liab_at_decisions[1] == liab_before_decisions[1]
+      and any(d["caseId"] == case and d["amount"] == owed_at_decisions for d in liab_at_decisions[3]["monthDecisions"]["rows"])
+      and not any(d["personId"] == person for d in liab_at_decisions[3]["liability"]["debtors"]),
+      (liab_before_decisions[:3], liab_at_decisions[:3], owed_at_decisions))
+late_account = next(a for a in call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["accounts"] if a["remaining"] > 3000)
+check("a تسديد and a discount after القرارات are recorded",
+      call("POST", GW + "/legal-desk/persons/%d/payments" % person, accountant, {"lines": [{"accountId": late_account["id"], "amount": 2000}], "penaltyAmount": 0})[0] == 200
+      and call("POST", GW + "/legal-desk/persons/%d/discounts" % person, accountant, {"amount": 1000})[0] == 200)
+liab_after_late = liab()
+check("but they change none of the three figures (his earlier payments still count)",
+      liab_after_late[:3] == liab_at_decisions[:3]
+      and any(p["personId"] == person for p in liab_after_late[3]["monthPayments"]["rows"]),
+      (liab_at_decisions[:3], liab_after_late[:3]))
 check("make the step optional again", call("POST", GW + "/legal-app/step-types", team, dict(must, isMandatory=False, isActive=False))[0] == 200)
 check("court decision saved", call("POST", GW + "/legal-app/cases/%d/decision" % case, team, {"text": "قرار تجريبي", "date": "2026-11-18"})[0] == 200)
 status, moved = call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"to": "Execution"})
@@ -387,11 +434,13 @@ detail3 = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]
 check("penalties due = 100,000 + 150,000", detail3["totals"]["penaltiesDue"] == 250000, detail3["totals"])
 status, back = call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"to": "Archive", "note": "رجوع"})
 check("a debtor can be returned from التنفيذ straight to an earlier station", status == 200 and back["to"] == "Archive" and back["charged"] == 0, back)
+liab_before_again = liab()
 check("still cannot skip stations going forward", call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"to": "Decisions"})[0] == 409)
 forward = [call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"to": "Judicial"})]
 log_mandatory_judicial()
 forward += [call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"to": to}) for to in ("Decisions", "Execution")]
 check("moving forward again charges no fee twice", all(s == 200 and m["charged"] == 0 for s, m in forward), forward)
+check("going back and reaching القرارات again counts nothing twice", liab()[:3] == liab_before_again[:3], (liab_before_again[:3], liab()[:3]))
 check("penalties unchanged after going back and forward",
       call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]["penaltiesDue"] == 250000)
 print("8) paying everything at any time, with no request")

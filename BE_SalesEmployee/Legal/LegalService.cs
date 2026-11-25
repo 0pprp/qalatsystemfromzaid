@@ -529,6 +529,20 @@ public sealed class LegalService
             requests = built;
         }
 
+        // Reaching القرارات fixes what the debtor owes at that moment (ذمة القانونية), so read his
+        // balances from the branches first. Best effort: a branch that is down leaves the last figures.
+        if (to == LegalStages.Decisions)
+        {
+            try
+            {
+                await LiveAccountsAsync(await _store.AccountsAsync((int)legalCase.personId, ct), actor, ct);
+            }
+            catch (Exception)
+            {
+                // The move itself must not depend on the branches.
+            }
+        }
+
         return await _store.MoveAsync(caseId, to, note, actor, ct, lawyerId, requests);
     }
 
