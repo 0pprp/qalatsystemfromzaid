@@ -11,7 +11,7 @@ const NAMES = [
   'history', 'phone', 'briefcase', 'coin', 'list-check', 'calendar', 'route', 'square', 'square-check',
   'square-minus', 'circle', 'circle-dot', 'caret-down', 'menu-2', 'selector', 'paperclip', 'chevrons-left',
   'chevrons-right', 'arrow-back-up', 'player-play', 'file-text', 'transfer', 'cash-banknote', 'report-money',
-  'user-check', 'eye',
+  'user-check', 'eye', 'star', 'star-filled',
 ]
 
 const require = createRequire(import.meta.url)

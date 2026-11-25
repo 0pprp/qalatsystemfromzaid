@@ -400,6 +400,13 @@ onMounted(load)
             >
               <td>
                 <span class="font-weight-medium">{{ row.fullName }}</span>
+                <VIcon
+                  v-if="row.isPaying"
+                  icon="star-filled"
+                  color="warning"
+                  size="16"
+                  title="تسديد"
+                />
                 <div v-if="row.archiveCodes">
                   <span
                     v-for="code in row.archiveCodes.split(' · ')"

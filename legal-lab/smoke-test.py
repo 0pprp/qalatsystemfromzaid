@@ -347,6 +347,16 @@ check("a step can be removed from the list; the one already logged stays on the 
       and any(s["stepName"] == "خطوة مؤقتة للفحص" for s in steps_now), (status, status_logged, status_del))
 check("removing a missing step answers 404", call("DELETE", GW + "/legal-app/step-types/%d" % temp_type["id"], team)[0] == 404)
 
+star_on = call("POST", GW + "/legal-app/cases/%d/paying" % case, team, {"paying": True})[0]
+starred = call("GET", GW + "/legal-app/cases/%d" % case, team)[1]["legalCase"]
+star_off = call("POST", GW + "/legal-app/cases/%d/paying" % case, team, {"paying": False})[0]
+unstarred = call("GET", GW + "/legal-app/cases/%d" % case, team)[1]["legalCase"]
+check("the «تسديد» star is put on and taken off by hand, and changes nothing else",
+      star_on == 200 and starred["isPaying"] is True and star_off == 200 and unstarred["isPaying"] is False
+      and starred["stage"] == unstarred["stage"], (star_on, star_off))
+check("the dashboard accountant cannot set the star (it belongs to the legal app)",
+      call("POST", GW + "/legal-app/cases/%d/paying" % case, accountant, {"paying": True})[0] == 403)
+
 print("7) decisions and execution")
 must = {"id": new_type["id"], "flow": "Judicial", "name": "خطوة إلزامية %d" % int(time.time()), "sortOrder": 99, "isActive": True, "isMandatory": True}
 check("a step can be made mandatory", call("POST", GW + "/legal-app/step-types", team, must)[0] == 200

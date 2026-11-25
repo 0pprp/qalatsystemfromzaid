@@ -91,7 +91,7 @@ SELECT p.Id AS id, p.FullName AS fullName, p.Phone AS phone, p.Address AS addres
        ISNULL((SELECT SUM(py.PenaltyAmount) FROM dbo.LegalPayments py WHERE py.PersonId = p.Id), 0) AS penaltiesPaid,
        ISNULL((SELECT SUM(py.DebtAmount) FROM dbo.LegalPayments py WHERE py.PersonId = p.Id), 0) AS debtPaid,
        ISNULL((SELECT SUM(py.DebtAmount + py.PenaltyAmount) FROM dbo.LegalPayments py WHERE py.PersonId = p.Id AND py.Kind = N'Discount'), 0) AS discounts,
-       cs.Id AS caseId, cs.Stage AS stage, cs.IsAnnulled AS isAnnulled, cs.SentAtUtc AS sentAtUtc,
+       cs.Id AS caseId, cs.Stage AS stage, cs.IsAnnulled AS isAnnulled, cs.IsPaying AS isPaying, cs.SentAtUtc AS sentAtUtc,
        cs.StageEnteredAtUtc AS stageEnteredAtUtc, cs.LawyerId AS lawyerId, l.Name AS lawyerName,
        cs.CloseReason AS closeReason
 FROM dbo.LegalPersons p
@@ -304,7 +304,7 @@ INSERT INTO dbo.LegalRegisterTx (Register, Kind, Amount, CaseId, Note, Actor) VA
 
     private const string CaseListSql = """
 SELECT k.Id AS id, k.PersonId AS personId, p.FullName AS fullName, p.Phone AS phone,
-       k.Stage AS stage, k.IsAnnulled AS isAnnulled, k.LawyerId AS lawyerId, l.Name AS lawyerName,
+       k.Stage AS stage, k.IsAnnulled AS isAnnulled, k.IsPaying AS isPaying, k.LawyerId AS lawyerId, l.Name AS lawyerName,
        k.SentAtUtc AS sentAtUtc, k.StageEnteredAtUtc AS stageEnteredAtUtc,
        k.JudicialStartedAtUtc AS judicialStartedAtUtc, k.ExecutionStartedAtUtc AS executionStartedAtUtc,
        k.DecisionText AS decisionText, k.DecisionDate AS decisionDate, k.Note AS note,
@@ -636,6 +636,20 @@ WHERE Id = @Id;
         await c.ExecuteAsync("UPDATE dbo.LegalCases SET DecisionText = @Text, DecisionDate = @Date WHERE Id = @Id",
             new { Id = caseId, Text = Blank(text), Date = date?.Date }, tx);
         await EventAsync(c, tx, caseId, "Decision", row.Stage, row.Stage, text, actor);
+        await tx.CommitAsync(ct);
+    }
+
+    /// <summary>
+    /// The «تسديد» star: a manual mark any legal-app user puts on a debtor who is paying, and takes
+    /// off again. It changes nothing else about the file.
+    /// </summary>
+    public async Task SetPayingMarkAsync(int caseId, bool paying, string actor, CancellationToken ct)
+    {
+        await using var c = await _db.OpenAsync(ct);
+        await using var tx = (SqlTransaction)await c.BeginTransactionAsync(ct);
+        var row = await LockCaseAsync(c, tx, caseId);
+        await c.ExecuteAsync("UPDATE dbo.LegalCases SET IsPaying = @Paying WHERE Id = @Id", new { Id = caseId, Paying = paying }, tx);
+        await EventAsync(c, tx, caseId, paying ? "PayingMark" : "PayingUnmark", row.Stage, row.Stage, null, actor);
         await tx.CommitAsync(ct);
     }
 
@@ -1230,7 +1244,7 @@ INSERT INTO dbo.LegalRegisterTx (Register, Kind, Amount, Note, Actor) VALUES
         await using var c = await _db.OpenAsync(ct);
         return await c.QueryAsync(new CommandDefinition("""
 SELECT k.Id AS caseId, p.Id AS personId, p.FullName AS fullName, p.Phone AS phone,
-       k.Stage AS stage, k.IsAnnulled AS isAnnulled, l.Name AS lawyerName, k.SentAtUtc AS sentAtUtc,
+       k.Stage AS stage, k.IsAnnulled AS isAnnulled, k.IsPaying AS isPaying, l.Name AS lawyerName, k.SentAtUtc AS sentAtUtc,
        lp.LastProgressUtc AS lastProgressUtc,
        DATEDIFF(DAY, lp.LastProgressUtc, SYSUTCDATETIME()) AS idleDays,
        st.LastStepName AS lastStepName,

@@ -53,6 +53,8 @@ export const EVENT_KIND = {
   Move: 'نقل',
   Close: 'إغلاق',
   Discount: 'خصم',
+  PayingMark: 'تأشير تسديد',
+  PayingUnmark: 'إزالة تأشير التسديد',
   Annul: 'ابطال',
   AnnulRequest: 'طلب ابطال',
   AnnulRejected: 'رفض الابطال',

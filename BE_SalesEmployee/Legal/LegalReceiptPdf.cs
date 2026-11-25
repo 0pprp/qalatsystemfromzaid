@@ -6,7 +6,7 @@ using QuestPDF.Infrastructure;
 namespace BE_SalesEmployee.Legal;
 
 /// <summary>
-/// The receipt of one تسديد as an A5 PDF: who paid, when, the receipt number and the amount.
+/// The receipt of one تسديد as an A5 PDF: who paid, the date, the receipt number and the amount.
 /// It deliberately says nothing about what the debtor still owes.
 /// </summary>
 public static class LegalReceiptPdf
@@ -30,7 +30,8 @@ public static class LegalReceiptPdf
         {
             document.Page(page =>
             {
-                page.Size(PageSizes.A5);
+                // As wide as A5, as tall as its content.
+                page.ContinuousSize(PageSizes.A5.Width);
                 page.Margin(28);
                 page.ContentFromRightToLeft();
                 page.DefaultTextStyle(t => t.FontFamily(Regular).FontSize(11).FontColor(Ink));
@@ -67,10 +68,7 @@ public static class LegalReceiptPdf
                     col.Item().Border(1).BorderColor(Line).Column(box =>
                     {
                         Field(box, "اسم المسدِّد", receipt.FullName, strong: true);
-                        if (!string.IsNullOrWhiteSpace(receipt.ArchiveCodes))
-                            Field(box, "كود الارشيف", receipt.ArchiveCodes!);
-                        Field(box, "التاريخ", at.ToString("yyyy/MM/dd"));
-                        Field(box, "الوقت", at.ToString("HH:mm"), last: string.IsNullOrWhiteSpace(receipt.Note));
+                        Field(box, "التاريخ", at.ToString("yyyy/MM/dd"), last: string.IsNullOrWhiteSpace(receipt.Note));
                         if (!string.IsNullOrWhiteSpace(receipt.Note))
                             Field(box, "ملاحظة", receipt.Note!, last: true);
                     });
@@ -84,18 +82,11 @@ public static class LegalReceiptPdf
                             text.Span("  دينار عراقي").FontSize(11).FontColor(Colors.White);
                         });
                     });
-
-                    col.Item().PaddingTop(26).Row(row =>
-                    {
-                        Signature(row.RelativeItem(), "توقيع المستلم", receipt.Actor);
-                        row.ConstantItem(30);
-                        Signature(row.RelativeItem(), "توقيع المسدِّد", null);
-                    });
                 });
 
                 page.Footer().Column(footer =>
                 {
-                    footer.Item().LineHorizontal(0.75f).LineColor(Line);
+                    footer.Item().PaddingTop(14).LineHorizontal(0.75f).LineColor(Line);
                     footer.Item().PaddingTop(6).AlignCenter()
                         .Text("وصل صادر إلكترونياً من نظام القانونية — يُعتمد برقمه.").FontSize(8.5f).FontColor(Muted);
                 });
@@ -116,16 +107,6 @@ public static class LegalReceiptPdf
                 text.FontFamily(Bold).FontSize(13);
         });
     }
-
-    private static void Signature(IContainer container, string label, string? name) =>
-        container.Column(c =>
-        {
-            c.Item().Height(30);
-            c.Item().LineHorizontal(0.75f).LineColor(Muted);
-            c.Item().PaddingTop(4).AlignCenter().Text(label).FontSize(9.5f).FontColor(Muted);
-            if (!string.IsNullOrWhiteSpace(name))
-                c.Item().AlignCenter().Text(name!).FontSize(9.5f);
-        });
 
     private static void EnsureReady()
     {

@@ -159,6 +159,19 @@ public sealed class LegalAppController : ControllerBase
         public string? Note { get; set; }
     }
 
+    public sealed class PayingBody
+    {
+        public bool Paying { get; set; }
+    }
+
+    /// <summary>Puts the manual «تسديد» star on a debtor, or takes it off.</summary>
+    [HttpPost("cases/{id:int}/paying")]
+    public async Task<IActionResult> Paying(int id, [FromBody] PayingBody body, CancellationToken ct)
+    {
+        await _store.SetPayingMarkAsync(id, body.Paying, Actor, ct);
+        return Ok(new { id, paying = body.Paying });
+    }
+
     [HttpPost("cases/{id:int}/note")]
     public async Task<IActionResult> Note(int id, [FromBody] NoteBody body, CancellationToken ct)
     {
