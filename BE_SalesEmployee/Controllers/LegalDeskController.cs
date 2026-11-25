@@ -173,56 +173,31 @@ public sealed class LegalDeskController : ControllerBase
         return Ok(await _service.PayAsync(id, lines, body.PenaltyAmount, body.Note, Actor, ct));
     }
 
-    // —— طلبات التسديد الكامل ——
-
-    [HttpGet("settlement-requests")]
-    public async Task<IActionResult> SettlementRequests([FromQuery] string? status, CancellationToken ct) =>
-        Ok(await _store.SettlementRequestsAsync(status, ct));
-
-    public sealed class DecideBody
+    public sealed class DiscountBody
     {
-        public bool Approve { get; set; }
-        public long Penalty { get; set; }
+        public long Amount { get; set; }
         public string? Note { get; set; }
     }
 
-    [HttpPost("settlement-requests/{id:int}/decide")]
-    public async Task<IActionResult> Decide(int id, [FromBody] DecideBody body, CancellationToken ct) =>
-        Ok(new { personId = await _store.DecideSettlementAsync(id, body.Approve, body.Penalty, body.Note, Actor, ct) });
+    /// <summary>خصم: taken off what the debtor owes, never more than all of it. No receipt.</summary>
+    [HttpPost("persons/{id:int}/discounts")]
+    public async Task<IActionResult> Discount(int id, [FromBody] DiscountBody body, CancellationToken ct) =>
+        Ok(await _service.DiscountAsync(id, body.Amount, body.Note, Actor, ct));
 
-    // —— طلبات الابطال ——
-
-    [HttpGet("annul-requests")]
-    public async Task<IActionResult> AnnulRequests([FromQuery] string? status, CancellationToken ct) =>
-        Ok(await _store.AnnulRequestsAsync(status, ct));
-
-    public sealed class AnnulDecideBody
+    /// <summary>The receipt of one تسديد as a PDF.</summary>
+    [HttpGet("payments/{id:int}/receipt")]
+    public async Task<IActionResult> Receipt(int id, CancellationToken ct)
     {
-        public bool Approve { get; set; }
-        public string? Note { get; set; }
+        var receipt = await _store.ReceiptAsync(id, ct);
+        if (receipt is null)
+            return NotFound(new { message = "لا يوجد وصل لهذه الحركة" });
+        return File(LegalReceiptPdf.Render(receipt), "application/pdf", $"receipt-{receipt.ReceiptNumber}.pdf");
     }
 
-    /// <summary>Accepting records مبلغ الابطال as a تسديد and marks the debtor ابطال.</summary>
-    [HttpPost("annul-requests/{id:int}/decide")]
-    public async Task<IActionResult> DecideAnnul(int id, [FromBody] AnnulDecideBody body, CancellationToken ct) =>
-        Ok(await _service.DecideAnnulAsync(id, body.Approve, body.Note, Actor, ct));
-
-    public sealed class ReturnAnnulBody
-    {
-        public string? Note { get; set; }
-    }
-
-    /// <summary>
-    /// The debtor stopped paying: ابطال is lifted and he goes back to the legal app as an ordinary
-    /// file. His station, steps and what he already paid are untouched.
-    /// </summary>
-    [HttpPost("cases/{caseId:int}/return-from-annul")]
-    public async Task<IActionResult> ReturnFromAnnul(int caseId, [FromBody] ReturnAnnulBody? body, CancellationToken ct)
-    {
-        var note = string.IsNullOrWhiteSpace(body?.Note) ? "أُعيد من التسديد: المدين لا يسدد حالياً" : $"أُعيد من التسديد: {body!.Note!.Trim()}";
-        await _store.ReturnFromAnnulAsync(caseId, note, Actor, ct);
-        return Ok(new { caseId });
-    }
+    /// <summary>Receipts of the old legal system (search only).</summary>
+    [HttpGet("old-receipts")]
+    public async Task<IActionResult> OldReceipts([FromQuery] string? q, [FromQuery] int take = 500, CancellationToken ct = default) =>
+        Ok(await _store.OldReceiptsAsync(q, take, ct));
 
     // —— نظرة عامة (قراءة فقط) ——
 
@@ -235,8 +210,10 @@ public sealed class LegalDeskController : ControllerBase
 
     /// <summary>What القانونية collected from debtors (debt + penalties), newest first.</summary>
     [HttpGet("payments")]
-    public async Task<IActionResult> Payments([FromQuery] int take = 300, [FromQuery] string? q = null, CancellationToken ct = default) =>
-        Ok(await _store.RecentPaymentsAsync(take, ct, q));
+    public async Task<IActionResult> Payments([FromQuery] int take = 300, [FromQuery] string? q = null,
+        [FromQuery] string? kind = null, CancellationToken ct = default) =>
+        Ok(await _store.RecentPaymentsAsync(take, ct, q,
+            kind == LegalStore.PaymentKinds.Discount ? LegalStore.PaymentKinds.Discount : LegalStore.PaymentKinds.Payment));
 
     [HttpGet("registers")]
     public async Task<IActionResult> Registers([FromQuery] int take = 300, CancellationToken ct = default) =>

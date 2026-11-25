@@ -4,8 +4,8 @@ import { useToast } from '@/composables/useToast'
 import { formatUtc, legalCashbox, legalError, legalMoney } from '@/composables/legalDeskApi'
 
 /**
- * القاصة (read-only): what was collected from debtors through التسديدات, and what the company
- * put into the legal app's قاصة (دين قلعة الضمان).
+ * القاصة (read-only): what was collected from debtors through التسديدات, the discounts given,
+ * and what the company put into the legal app's قاصة (دين قلعة الضمان).
  */
 const toast = useToast()
 const loading = ref(false)
@@ -16,6 +16,8 @@ const c = computed(() => data.value?.collected || {})
 const funds = computed(() => data.value?.funds || { total: 0, count: 0, records: [] })
 const back = computed(() => data.value?.paidBack || {})
 const payments = computed(() => data.value?.payments || [])
+const d = computed(() => data.value?.discounted || {})
+const discounts = computed(() => data.value?.discounts || [])
 
 async function load() {
   loading.value = true
@@ -53,7 +55,7 @@ onMounted(load)
       <!-- 1) المقبوض من التسديدات -->
       <VCol
         cols="12"
-        md="6"
+        md="4"
       >
         <VCard class="h-100">
           <VCardText>
@@ -68,32 +70,6 @@ onMounted(load)
             </div>
             <VTable density="compact">
               <tbody>
-                <tr>
-                  <td>مبالغ الابطال</td>
-                  <td class="text-medium-emphasis">
-                    {{ c.annulCustomers || 0 }} مدين · {{ c.annulPayments || 0 }} تسديد
-                  </td>
-                  <td class="text-end font-weight-medium">
-                    {{ legalMoney(c.annulTotal) }}
-                  </td>
-                </tr>
-                <tr>
-                  <td>تسديدات مباشرة</td>
-                  <td class="text-medium-emphasis">
-                    {{ c.directCustomers || 0 }} مدين · {{ c.directPayments || 0 }} تسديد
-                  </td>
-                  <td class="text-end font-weight-medium">
-                    {{ legalMoney(c.directTotal) }}
-                  </td>
-                </tr>
-                <tr>
-                  <td
-                    colspan="3"
-                    class="text-caption text-medium-emphasis pt-3"
-                  >
-                    ومن المجموع
-                  </td>
-                </tr>
                 <tr>
                   <td colspan="2">
                     من أصل الدين
@@ -119,7 +95,7 @@ onMounted(load)
       <!-- 2) المضاف إلى قاصة تطبيق القانونية -->
       <VCol
         cols="12"
-        md="6"
+        md="4"
       >
         <VCard class="h-100">
           <VCardText>
@@ -135,7 +111,7 @@ onMounted(load)
             <VTable density="compact">
               <tbody>
                 <tr>
-                  <td>أجور الدعوى القضائية</td>
+                  <td>أجور القانونية</td>
                   <td class="text-medium-emphasis">
                     {{ back.judicialCount || 0 }} مدين
                   </td>
@@ -152,7 +128,7 @@ onMounted(load)
                     {{ legalMoney(back.executionFees) }}
                   </td>
                 </tr>
-                <tr>
+                <tr v-if="back.earlyCount">
                   <td>غرامة التسديد الكامل</td>
                   <td class="text-medium-emphasis">
                     {{ back.earlyCount || 0 }} مدين
@@ -185,12 +161,58 @@ onMounted(load)
           </VCardText>
         </VCard>
       </VCol>
+      <!-- 3) الخصومات -->
+      <VCol
+        cols="12"
+        md="4"
+      >
+        <VCard class="h-100">
+          <VCardText>
+            <div class="text-body-2 text-medium-emphasis">
+              الخصومات
+            </div>
+            <div class="text-h4 font-weight-bold text-warning my-1">
+              {{ legalMoney(d.total) }}
+            </div>
+            <div class="text-body-2 mb-3">
+              لـ <strong>{{ d.customers || 0 }}</strong> مدين · <strong>{{ d.count || 0 }}</strong> خصم
+            </div>
+            <VTable density="compact">
+              <tbody>
+                <tr>
+                  <td>من أصل الدين</td>
+                  <td class="text-end">
+                    {{ legalMoney(d.debt) }}
+                  </td>
+                </tr>
+                <tr>
+                  <td>من غرامات القانونية</td>
+                  <td class="text-end">
+                    {{ legalMoney(d.penalties) }}
+                  </td>
+                </tr>
+                <tr>
+                  <td
+                    colspan="2"
+                    class="text-caption text-medium-emphasis pt-3"
+                  >
+                    الخصم يُنقص المطلوب من المدين وليس مبلغاً مقبوضاً، فلا يدخل في مجموع التسديدات.
+                  </td>
+                </tr>
+              </tbody>
+            </VTable>
+          </VCardText>
+        </VCard>
+      </VCol>
     </VRow>
 
     <VCard class="mt-6">
       <VTabs v-model="tab">
         <VTab value="payments">
           سجل التسديدات ({{ payments.length }})
+        </VTab>
+        <VTab value="discounts">
+          سجل الخصومات ({{ discounts.length }})
         </VTab>
         <VTab value="funds">
           سجل دين قلعة الضمان ({{ funds.count }})
@@ -208,7 +230,7 @@ onMounted(load)
               <tr>
                 <th>التاريخ</th>
                 <th>المدين</th>
-                <th>النوع</th>
+                <th>رقم الوصل</th>
                 <th class="text-end">
                   من الدين
                 </th>
@@ -240,14 +262,8 @@ onMounted(load)
                     {{ p.note }}
                   </div>
                 </td>
-                <td>
-                  <VChip
-                    size="small"
-                    variant="tonal"
-                    :color="p.isAnnul ? 'info' : 'success'"
-                  >
-                    {{ p.isAnnul ? 'مبلغ ابطال' : 'تسديد' }}
-                  </VChip>
+                <td dir="ltr">
+                  {{ p.receiptNumber }}
                 </td>
                 <td class="text-end">
                   {{ legalMoney(p.debtAmount) }}
@@ -266,6 +282,62 @@ onMounted(load)
                   class="text-center text-medium-emphasis py-8"
                 >
                   لا توجد تسديدات بعد
+                </td>
+              </tr>
+            </tbody>
+          </VTable>
+        </VWindowItem>
+
+        <VWindowItem value="discounts">
+          <VTable>
+            <thead>
+              <tr>
+                <th>التاريخ</th>
+                <th>المدين</th>
+                <th class="text-end">
+                  من الدين
+                </th>
+                <th class="text-end">
+                  من الغرامات
+                </th>
+                <th class="text-end">
+                  مبلغ الخصم
+                </th>
+                <th>السبب</th>
+                <th>بواسطة</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="p in discounts"
+                :key="p.id"
+              >
+                <td class="text-no-wrap">
+                  {{ formatUtc(p.atUtc) }}
+                </td>
+                <td>
+                  <RouterLink :to="{ path: '/legal-desk-debtor', query: { id: p.personId } }">
+                    {{ p.fullName }}
+                  </RouterLink>
+                </td>
+                <td class="text-end">
+                  {{ legalMoney(p.debtAmount) }}
+                </td>
+                <td class="text-end">
+                  {{ legalMoney(p.penaltyAmount) }}
+                </td>
+                <td class="text-end font-weight-bold">
+                  {{ legalMoney(Number(p.debtAmount) + Number(p.penaltyAmount)) }}
+                </td>
+                <td>{{ p.note || '—' }}</td>
+                <td>{{ p.actor }}</td>
+              </tr>
+              <tr v-if="!loading && !discounts.length">
+                <td
+                  colspan="7"
+                  class="text-center text-medium-emphasis py-8"
+                >
+                  لا توجد خصومات بعد
                 </td>
               </tr>
             </tbody>

@@ -9,9 +9,8 @@ const FLOWS = [
 ]
 
 const AMOUNTS = [
-  { key: 'JudicialFee', label: 'أجور اقامة الدعوى', hint: 'تُسجَّل عند نقل المدين إلى الدعوى القضائية' },
+  { key: 'JudicialFee', label: 'أجور القانونية', hint: 'تُسجَّل عند إحالة المدين إلى القانونية' },
   { key: 'ExecutionFee', label: 'أجور التنفيذ', hint: 'تُسجَّل عند نقل المدين إلى التنفيذ' },
-  { key: 'EarlySettlementPenalty', label: 'غرامة التسديد الكامل قبل الدعوى', hint: 'المبلغ المقترح في طلب التسديد الكامل' },
 ]
 
 const stepTypes = ref([])
@@ -280,7 +279,7 @@ onMounted(load)
           v-for="item in AMOUNTS"
           :key="item.key"
           cols="12"
-          md="4"
+          md="6"
         >
           <VTextField
             v-model.number="amountDraft[item.key]"

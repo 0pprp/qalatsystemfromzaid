@@ -90,6 +90,7 @@ SELECT p.Id AS id, p.FullName AS fullName, p.Phone AS phone, p.Address AS addres
        ISNULL((SELECT SUM(ch.Amount) FROM dbo.LegalCharges ch WHERE ch.PersonId = p.Id), 0) AS penaltiesCharged,
        ISNULL((SELECT SUM(py.PenaltyAmount) FROM dbo.LegalPayments py WHERE py.PersonId = p.Id), 0) AS penaltiesPaid,
        ISNULL((SELECT SUM(py.DebtAmount) FROM dbo.LegalPayments py WHERE py.PersonId = p.Id), 0) AS debtPaid,
+       ISNULL((SELECT SUM(py.DebtAmount + py.PenaltyAmount) FROM dbo.LegalPayments py WHERE py.PersonId = p.Id AND py.Kind = N'Discount'), 0) AS discounts,
        cs.Id AS caseId, cs.Stage AS stage, cs.IsAnnulled AS isAnnulled, cs.SentAtUtc AS sentAtUtc,
        cs.StageEnteredAtUtc AS stageEnteredAtUtc, cs.LawyerId AS lawyerId, l.Name AS lawyerName,
        cs.CloseReason AS closeReason
@@ -284,9 +285,22 @@ INSERT INTO dbo.LegalCases (PersonId, Stage, Note, SentBy) OUTPUT INSERTED.Id
 VALUES (@PersonId, N'Recent', @Note, @Actor);
 """, new { PersonId = personId, Note = Blank(note), Actor = actor }, tx);
         await EventAsync(c, tx, caseId, "Sent", null, LegalStages.Recent, note, actor);
+
+        // The legal fee is due from the moment the debtor is handed to the legal app: a penalty on
+        // him, and the same amount counted as paid back to قلعة الضمان.
+        var fee = await SettingAsync(c, tx, LegalSettingKeys.JudicialFee, 200_000);
+        if (fee > 0)
+            await ChargeSendFeeAsync(c, tx, personId, caseId, fee, actor);
+
         await tx.CommitAsync(ct);
         return caseId;
     }
+
+    internal static Task ChargeSendFeeAsync(SqlConnection c, SqlTransaction tx, int personId, int caseId, long amount, string actor) =>
+        c.ExecuteAsync("""
+INSERT INTO dbo.LegalCharges (PersonId, CaseId, Kind, Amount, Note, Actor) VALUES (@PersonId, @CaseId, N'Judicial', @Amount, @Note, @Actor);
+INSERT INTO dbo.LegalRegisterTx (Register, Kind, Amount, CaseId, Note, Actor) VALUES (N'CompanyDebt', N'JudicialFee', -@Amount, @CaseId, @Note, @Actor);
+""", new { PersonId = personId, CaseId = caseId, Amount = amount, Note = "أجور الإحالة إلى القانونية", Actor = actor }, tx);
 
     private const string CaseListSql = """
 SELECT k.Id AS id, k.PersonId AS personId, p.FullName AS fullName, p.Phone AS phone,
@@ -305,9 +319,7 @@ SELECT k.Id AS id, k.PersonId AS personId, p.FullName AS fullName, p.Phone AS ph
           AND t.Flow = CASE k.Stage WHEN N'Judicial' THEN N'Judicial' WHEN N'Execution' THEN N'Execution' END
           AND NOT EXISTS (SELECT 1 FROM dbo.LegalCaseSteps s WHERE s.CaseId = k.Id AND s.StepTypeId = t.Id AND s.IsDone = 1)) AS missingMandatory,
        ls.StepTypeId AS lastStepTypeId, ls.StepName AS lastStepName, ls.StepDate AS lastStepDate,
-       (SELECT COUNT(*) FROM dbo.LegalCaseSteps s WHERE s.CaseId = k.Id) AS stepCount,
-       (SELECT COUNT(*) FROM dbo.LegalSettlementRequests r WHERE r.CaseId = k.Id AND r.Status = N'Pending') AS pendingSettlement,
-       (SELECT TOP (1) r.Amount FROM dbo.LegalAnnulRequests r WHERE r.CaseId = k.Id AND r.Status = N'Pending' ORDER BY r.Id DESC) AS pendingAnnulAmount
+       (SELECT COUNT(*) FROM dbo.LegalCaseSteps s WHERE s.CaseId = k.Id) AS stepCount
 FROM dbo.LegalCases k
 JOIN dbo.LegalPersons p ON p.Id = k.PersonId
 LEFT JOIN dbo.LegalLawyers l ON l.Id = k.LawyerId
@@ -342,7 +354,6 @@ ORDER BY k.StageEnteredAtUtc DESC, k.Id DESC;
         await using var c = await _db.OpenAsync(ct);
         return await c.QueryAsync(new CommandDefinition("""
 SELECT k.Stage AS stage, COUNT(*) AS [count],
-       SUM(CASE WHEN k.IsAnnulled = 1 THEN 1 ELSE 0 END) AS annulled,
        ISNULL(SUM(r.Remaining), 0) AS remainingSnapshot
 FROM dbo.LegalCases k
 OUTER APPLY (SELECT SUM(a.LastRemaining) AS Remaining FROM dbo.LegalPersonAccounts a WHERE a.PersonId = k.PersonId) r
@@ -392,7 +403,8 @@ SELECT Id AS id, CaseId AS caseId, Kind AS kind, Amount AS amount, Note AS note,
 FROM dbo.LegalCharges WHERE PersonId = @Id ORDER BY Id;
 """, new { Id = personId }, cancellationToken: ct));
         var payments = (await c.QueryAsync(new CommandDefinition("""
-SELECT Id AS id, DebtAmount AS debtAmount, PenaltyAmount AS penaltyAmount, Note AS note, Actor AS actor, AtUtc AS atUtc
+SELECT Id AS id, Kind AS kind, ReceiptNumber AS receiptNumber, DebtAmount AS debtAmount, PenaltyAmount AS penaltyAmount,
+       Note AS note, Actor AS actor, AtUtc AS atUtc
 FROM dbo.LegalPayments WHERE PersonId = @Id ORDER BY Id DESC;
 """, new { Id = personId }, cancellationToken: ct))).ToList();
         var lines = (await c.QueryAsync(new CommandDefinition("""
@@ -407,12 +419,8 @@ WHERE p.PersonId = @Id ORDER BY l.Id;
             ((IDictionary<string, object>)payment)["lines"] = lines.Where(l => (int)l.paymentId == id).ToList();
         }
 
-        var requests = await c.QueryAsync(new CommandDefinition("""
-SELECT Id AS id, CaseId AS caseId, SuggestedPenalty AS suggestedPenalty, Note AS note, RequestedBy AS requestedBy,
-       RequestedAtUtc AS requestedAtUtc, Status AS status, ApprovedPenalty AS approvedPenalty,
-       DecidedBy AS decidedBy, DecidedAtUtc AS decidedAtUtc, DecisionNote AS decisionNote
-FROM dbo.LegalSettlementRequests WHERE PersonId = @Id ORDER BY Id DESC;
-""", new { Id = personId }, cancellationToken: ct));
+        // Full-settlement requests are gone; old ones are no longer shown.
+        var requests = Enumerable.Empty<dynamic>();
         return (charges, payments, requests);
     }
 
@@ -490,12 +498,8 @@ ORDER BY t.SortOrder, t.Id;
 
         long charged = 0;
         string? chargeKind = null;
-        if (to == LegalStages.Judicial && row.JudicialStartedAtUtc is null)
-        {
-            charged = await SettingAsync(c, tx, LegalSettingKeys.JudicialFee, 200_000);
-            chargeKind = "Judicial";
-        }
-        else if (to == LegalStages.Execution && row.ExecutionStartedAtUtc is null)
+        // The first fee is charged when the debtor is sent (see SendPersonAsync); only التنفيذ charges here.
+        if (to == LegalStages.Execution && row.ExecutionStartedAtUtc is null)
         {
             charged = await SettingAsync(c, tx, LegalSettingKeys.ExecutionFee, 150_000);
             chargeKind = "Execution";
@@ -512,7 +516,7 @@ WHERE Id = @Id;
 
         if (chargeKind != null && charged > 0)
         {
-            var label = chargeKind == "Judicial" ? "اقامة دعوى قضائية" : "الدخول في التنفيذ";
+            const string label = "الدخول في التنفيذ";
             await c.ExecuteAsync("""
 INSERT INTO dbo.LegalCharges (PersonId, CaseId, Kind, Amount, Note, Actor) VALUES (@PersonId, @CaseId, @Kind, @Amount, @Note, @Actor);
 INSERT INTO dbo.LegalRegisterTx (Register, Kind, Amount, CaseId, Note, Actor) VALUES (N'CompanyDebt', @RegisterKind, -@Amount, @CaseId, @Note, @Actor);
@@ -602,149 +606,6 @@ UPDATE dbo.LegalCases SET Stage = N'Closed', StageEnteredAtUtc = SYSUTCDATETIME(
 WHERE Id = @Id;
 """, new { Id = caseId, Reason = Blank(reason) ?? "أُغلق يدوياً" }, tx);
         await EventAsync(c, tx, caseId, "Close", row.Stage, LegalStages.Closed, reason, actor);
-        await tx.CommitAsync(ct);
-    }
-
-    /// <summary>ابطال: an agreement to pay without further action. Pointless once the debtor is in التنفيذ.</summary>
-    public async Task SetAnnulledAsync(int caseId, bool annulled, string? note, string actor, CancellationToken ct)
-    {
-        await using var c = await _db.OpenAsync(ct);
-        await using var tx = (SqlTransaction)await c.BeginTransactionAsync(ct);
-        var row = await LockCaseAsync(c, tx, caseId);
-        if (row.Stage == LegalStages.Closed)
-            throw new LegalRuleException("الملف مغلق");
-        if (annulled && row.Stage == LegalStages.Execution)
-            throw new LegalRuleException("لا يمكن الابطال بعد وصول المدين إلى التنفيذ");
-        await c.ExecuteAsync("""
-UPDATE dbo.LegalCases
-SET IsAnnulled = @Annulled, AnnulledAtUtc = CASE WHEN @Annulled = 1 THEN SYSUTCDATETIME() ELSE NULL END,
-    AnnulNote = CASE WHEN @Annulled = 1 THEN @Note ELSE NULL END
-WHERE Id = @Id;
-""", new { Id = caseId, Annulled = annulled, Note = Blank(note) }, tx);
-        if (!annulled)
-        {
-            await c.ExecuteAsync("""
-UPDATE dbo.LegalAnnulRequests SET Status = N'Withdrawn', DecidedBy = @Actor, DecidedAtUtc = SYSUTCDATETIME()
-WHERE CaseId = @Id AND Status = N'Pending';
-""", new { Id = caseId, Actor = actor }, tx);
-        }
-
-        await EventAsync(c, tx, caseId, annulled ? "Annul" : "Unannul", row.Stage, row.Stage, note, actor);
-        await tx.CommitAsync(ct);
-    }
-
-    /// <summary>The dashboard returns an ابطال debtor who stopped paying. Only the ابطال mark is lifted.</summary>
-    public async Task ReturnFromAnnulAsync(int caseId, string note, string actor, CancellationToken ct)
-    {
-        await using var c = await _db.OpenAsync(ct);
-        await using var tx = (SqlTransaction)await c.BeginTransactionAsync(ct);
-        var row = await LockCaseAsync(c, tx, caseId);
-        if (row.Stage == LegalStages.Closed)
-            throw new LegalRuleException("الملف مغلق");
-        if (!row.IsAnnulled)
-            throw new LegalRuleException("المدين ليس في الابطال");
-        await c.ExecuteAsync(
-            "UPDATE dbo.LegalCases SET IsAnnulled = 0, AnnulledAtUtc = NULL, AnnulNote = NULL WHERE Id = @Id;",
-            new { Id = caseId }, tx);
-        await EventAsync(c, tx, caseId, "Unannul", row.Stage, row.Stage, note, actor);
-        await tx.CommitAsync(ct);
-    }
-
-    // ───────────────────────── طلبات الابطال ─────────────────────────
-
-    /// <summary>
-    /// The legal app asks for ابطال and states مبلغ الابطال. Nothing changes on the debtor until
-    /// محاسب القانونية accepts it on the company dashboard.
-    /// </summary>
-    public async Task<int> RequestAnnulAsync(int caseId, long amount, string? note, string actor, CancellationToken ct)
-    {
-        if (amount <= 0)
-            throw new LegalRuleException("أدخل مبلغ الابطال", 400);
-        await using var c = await _db.OpenAsync(ct);
-        await using var tx = (SqlTransaction)await c.BeginTransactionAsync(ct);
-        var row = await LockCaseAsync(c, tx, caseId);
-        if (row.Stage == LegalStages.Closed)
-            throw new LegalRuleException("الملف مغلق");
-        if (row.Stage == LegalStages.Execution)
-            throw new LegalRuleException("لا يمكن الابطال بعد وصول المدين إلى التنفيذ");
-        if (row.IsAnnulled)
-            throw new LegalRuleException("المدين مؤشَّر ابطال مسبقاً");
-        var pending = await c.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM dbo.LegalAnnulRequests WHERE CaseId = @Id AND Status = N'Pending'", new { Id = caseId }, tx);
-        if (pending > 0)
-            throw new LegalRuleException("يوجد طلب ابطال بانتظار محاسب القانونية");
-        var id = await c.ExecuteScalarAsync<int>("""
-INSERT INTO dbo.LegalAnnulRequests (PersonId, CaseId, Amount, Note, RequestedBy) OUTPUT INSERTED.Id
-VALUES (@PersonId, @CaseId, @Amount, @Note, @Actor);
-""", new { row.PersonId, CaseId = caseId, Amount = amount, Note = Blank(note), Actor = actor }, tx);
-        await EventAsync(c, tx, caseId, "AnnulRequest", row.Stage, row.Stage,
-            $"مبلغ الابطال {amount:N0}" + (string.IsNullOrWhiteSpace(note) ? "" : $" — {note!.Trim()}"), actor);
-        await tx.CommitAsync(ct);
-        return id;
-    }
-
-    public async Task<IEnumerable<dynamic>> AnnulRequestsAsync(string? status, CancellationToken ct)
-    {
-        await using var c = await _db.OpenAsync(ct);
-        return await c.QueryAsync(new CommandDefinition("""
-SELECT r.Id AS id, r.PersonId AS personId, p.FullName AS fullName, p.Phone AS phone, r.CaseId AS caseId, k.Stage AS stage,
-       r.Amount AS amount, r.Note AS note, r.RequestedBy AS requestedBy, r.RequestedAtUtc AS requestedAtUtc,
-       r.Status AS status, r.DecidedBy AS decidedBy, r.DecidedAtUtc AS decidedAtUtc, r.DecisionNote AS decisionNote,
-       ISNULL((SELECT SUM(a.LastRemaining) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = p.Id), 0) AS remainingSnapshot,
-       ISNULL((SELECT SUM(Amount) FROM dbo.LegalCharges WHERE PersonId = p.Id), 0)
-         - ISNULL((SELECT SUM(PenaltyAmount) FROM dbo.LegalPayments WHERE PersonId = p.Id), 0) AS penaltiesDue,
-       (SELECT STRING_AGG(a.ArchiveCode, N' · ') WITHIN GROUP (ORDER BY a.Id) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = p.Id AND a.ArchiveCode IS NOT NULL) AS archiveCodes
-FROM dbo.LegalAnnulRequests r
-JOIN dbo.LegalPersons p ON p.Id = r.PersonId
-JOIN dbo.LegalCases k ON k.Id = r.CaseId
-WHERE (@Status IS NULL OR r.Status = @Status)
-ORDER BY CASE WHEN r.Status = N'Pending' THEN 0 ELSE 1 END, r.Id DESC;
-""", new { Status = Blank(status) }, cancellationToken: ct));
-    }
-
-    public sealed class AnnulRequestRow
-    {
-        public int Id { get; set; }
-        public int PersonId { get; set; }
-        public int CaseId { get; set; }
-        public long Amount { get; set; }
-        public string? Note { get; set; }
-        public string Status { get; set; } = "";
-    }
-
-    public async Task<AnnulRequestRow?> AnnulRequestAsync(int requestId, CancellationToken ct)
-    {
-        await using var c = await _db.OpenAsync(ct);
-        return await c.QueryFirstOrDefaultAsync<AnnulRequestRow>(new CommandDefinition(
-            "SELECT Id, PersonId, CaseId, Amount, Note, Status FROM dbo.LegalAnnulRequests WHERE Id = @Id",
-            new { Id = requestId }, cancellationToken: ct));
-    }
-
-    /// <summary>Closes a request. On acceptance the debtor becomes ابطال; the تسديد was recorded just before by the caller.</summary>
-    public async Task FinishAnnulRequestAsync(int requestId, bool approve, int? paymentId, string? note, string actor, CancellationToken ct)
-    {
-        await using var c = await _db.OpenAsync(ct);
-        await using var tx = (SqlTransaction)await c.BeginTransactionAsync(ct);
-        var request = await c.QueryFirstOrDefaultAsync<AnnulRequestRow>(
-            "SELECT Id, PersonId, CaseId, Amount, Note, Status FROM dbo.LegalAnnulRequests WITH (UPDLOCK, ROWLOCK) WHERE Id = @Id", new { Id = requestId }, tx)
-            ?? throw new LegalRuleException("الطلب غير موجود", 404);
-        if (request.Status != "Pending")
-            throw new LegalRuleException("تم البت في هذا الطلب مسبقاً");
-        var row = await LockCaseAsync(c, tx, request.CaseId);
-        await c.ExecuteAsync("""
-UPDATE dbo.LegalAnnulRequests
-SET Status = @Status, PaymentId = @PaymentId, DecidedBy = @Actor, DecidedAtUtc = SYSUTCDATETIME(), DecisionNote = @Note
-WHERE Id = @Id;
-""", new { Id = requestId, Status = approve ? "Approved" : "Rejected", PaymentId = paymentId, Actor = actor, Note = Blank(note) }, tx);
-        if (approve && row.Stage != LegalStages.Closed)
-        {
-            await c.ExecuteAsync("""
-UPDATE dbo.LegalCases SET IsAnnulled = 1, AnnulledAtUtc = SYSUTCDATETIME(), AnnulNote = @Note WHERE Id = @Id;
-""", new { Id = request.CaseId, Note = Blank(request.Note) ?? $"مبلغ الابطال {request.Amount:N0}" }, tx);
-        }
-
-        await EventAsync(c, tx, request.CaseId, approve ? "Annul" : "AnnulRejected", row.Stage, row.Stage,
-            approve ? $"قُبل الابطال — مبلغ {request.Amount:N0} سُجّل تسديداً" : note, actor);
         await tx.CommitAsync(ct);
     }
 
@@ -934,96 +795,6 @@ ORDER BY s.StepDate, s.Id;
             throw new LegalRuleException("الخطوة غير موجودة", 404);
     }
 
-    // ───────────────────────── settlement requests ─────────────────────────
-
-    /// <summary>
-    /// The debtor wants to pay everything. Before a judicial case exists the request suggests the
-    /// early-settlement penalty; afterwards the existing penalties already apply, so it suggests none.
-    /// </summary>
-    public async Task<int> RequestSettlementAsync(int caseId, string? note, string actor, CancellationToken ct)
-    {
-        await using var c = await _db.OpenAsync(ct);
-        await using var tx = (SqlTransaction)await c.BeginTransactionAsync(ct);
-        var row = await LockCaseAsync(c, tx, caseId);
-        if (row.Stage == LegalStages.Closed)
-            throw new LegalRuleException("الملف مغلق");
-        var pending = await c.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM dbo.LegalSettlementRequests WHERE CaseId = @Id AND Status = N'Pending'", new { Id = caseId }, tx);
-        if (pending > 0)
-            throw new LegalRuleException("يوجد طلب تسديد كامل بانتظار محاسب القانونية");
-        var suggested = row.JudicialStartedAtUtc is null
-            ? await SettingAsync(c, tx, LegalSettingKeys.EarlySettlementPenalty, 35_000)
-            : 0;
-        var id = await c.ExecuteScalarAsync<int>("""
-INSERT INTO dbo.LegalSettlementRequests (PersonId, CaseId, SuggestedPenalty, Note, RequestedBy) OUTPUT INSERTED.Id
-VALUES (@PersonId, @CaseId, @Suggested, @Note, @Actor);
-""", new { row.PersonId, CaseId = caseId, Suggested = suggested, Note = Blank(note), Actor = actor }, tx);
-        await EventAsync(c, tx, caseId, "SettlementRequest", row.Stage, row.Stage, note, actor);
-        await tx.CommitAsync(ct);
-        return id;
-    }
-
-    public async Task<IEnumerable<dynamic>> SettlementRequestsAsync(string? status, CancellationToken ct)
-    {
-        await using var c = await _db.OpenAsync(ct);
-        return await c.QueryAsync(new CommandDefinition("""
-SELECT r.Id AS id, r.PersonId AS personId, p.FullName AS fullName, p.Phone AS phone, r.CaseId AS caseId, k.Stage AS stage,
-       r.SuggestedPenalty AS suggestedPenalty, r.Note AS note, r.RequestedBy AS requestedBy, r.RequestedAtUtc AS requestedAtUtc,
-       r.Status AS status, r.ApprovedPenalty AS approvedPenalty, r.DecidedBy AS decidedBy, r.DecidedAtUtc AS decidedAtUtc,
-       r.DecisionNote AS decisionNote,
-       CAST(CASE WHEN k.JudicialStartedAtUtc IS NULL THEN 0 ELSE 1 END AS bit) AS judicialStarted,
-       ISNULL((SELECT SUM(a.LastRemaining) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = p.Id), 0) AS remainingSnapshot
-FROM dbo.LegalSettlementRequests r
-JOIN dbo.LegalPersons p ON p.Id = r.PersonId
-JOIN dbo.LegalCases k ON k.Id = r.CaseId
-WHERE (@Status IS NULL OR r.Status = @Status)
-ORDER BY CASE WHEN r.Status = N'Pending' THEN 0 ELSE 1 END, r.Id DESC;
-""", new { Status = Blank(status) }, cancellationToken: ct));
-    }
-
-    /// <summary>
-    /// Approval adds the (possibly edited) early-settlement penalty, but only for a debtor with no
-    /// judicial case: once a case exists its own penalty already stands and nothing is added here.
-    /// The تسديد itself is a normal payment afterwards.
-    /// </summary>
-    public async Task<int> DecideSettlementAsync(int requestId, bool approve, long penalty, string? note, string actor, CancellationToken ct)
-    {
-        if (penalty < 0)
-            throw new LegalRuleException("مبلغ الغرامة غير صحيح", 400);
-        await using var c = await _db.OpenAsync(ct);
-        await using var tx = (SqlTransaction)await c.BeginTransactionAsync(ct);
-        var request = await c.QueryFirstOrDefaultAsync<RequestRow>(
-            "SELECT PersonId, CaseId, Status FROM dbo.LegalSettlementRequests WITH (UPDLOCK, ROWLOCK) WHERE Id = @Id", new { Id = requestId }, tx);
-        if (request is null)
-            throw new LegalRuleException("الطلب غير موجود", 404);
-        if (request.Status != "Pending")
-            throw new LegalRuleException("تم البت في هذا الطلب مسبقاً");
-        var judicialStarted = await c.ExecuteScalarAsync<DateTime?>(
-            "SELECT JudicialStartedAtUtc FROM dbo.LegalCases WHERE Id = @Id", new { Id = request.CaseId }, tx);
-        if (judicialStarted != null)
-            penalty = 0;
-        await c.ExecuteAsync("""
-UPDATE dbo.LegalSettlementRequests
-SET Status = @Status, ApprovedPenalty = @Penalty, DecidedBy = @Actor, DecidedAtUtc = SYSUTCDATETIME(), DecisionNote = @Note
-WHERE Id = @Id;
-""", new { Id = requestId, Status = approve ? "Approved" : "Rejected", Penalty = approve ? penalty : (long?)null, Actor = actor, Note = Blank(note) }, tx);
-        if (approve && penalty > 0)
-        {
-            await c.ExecuteAsync("""
-INSERT INTO dbo.LegalCharges (PersonId, CaseId, Kind, Amount, Note, Actor)
-VALUES (@PersonId, @CaseId, N'EarlySettlement', @Amount, N'غرامة تسديد كامل قبل الدعوى', @Actor);
-INSERT INTO dbo.LegalRegisterTx (Register, Kind, Amount, CaseId, Note, Actor)
-VALUES (N'CompanyDebt', N'EarlySettlementFee', -@Amount, @CaseId, N'أجور تسديد كامل قبل الدعوى', @Actor);
-""", new { request.PersonId, request.CaseId, Amount = penalty, Actor = actor }, tx);
-        }
-
-        var stage = await c.ExecuteScalarAsync<string>("SELECT Stage FROM dbo.LegalCases WHERE Id = @Id", new { Id = request.CaseId }, tx);
-        await EventAsync(c, tx, request.CaseId, approve ? "SettlementApproved" : "SettlementRejected", stage, stage,
-            approve ? $"غرامة {penalty:N0}" + (string.IsNullOrWhiteSpace(note) ? "" : $" — {note}") : note, actor);
-        await tx.CommitAsync(ct);
-        return request.PersonId;
-    }
-
     // ───────────────────────── payments ─────────────────────────
 
     public async Task<long> PenaltiesDueAsync(int personId, CancellationToken ct)
@@ -1053,8 +824,10 @@ FROM dbo.LegalPaymentLines WHERE Status = N'Posted' GROUP BY CityValue, Customer
     /// recorded here in القانونية only: nothing is posted to the branch or its boxes.
     /// Each line is checked against the account balance (refreshed by the caller just before).
     /// </summary>
-    public async Task<int> RecordPaymentAsync(int personId, IReadOnlyList<PayLine> lines, long penaltyAmount, string? note, string actor, CancellationToken ct)
+    public async Task<PaymentRecord> RecordPaymentAsync(int personId, IReadOnlyList<PayLine> lines, long penaltyAmount, string? note,
+        string actor, CancellationToken ct, string kind = PaymentKinds.Payment)
     {
+        var discount = kind == PaymentKinds.Discount;
         await using var c = await _db.OpenAsync(ct);
         await using var tx = (SqlTransaction)await c.BeginTransactionAsync(ct);
         var accounts = (await c.QueryAsync<LegalAccountRow>(
@@ -1076,14 +849,19 @@ SELECT ISNULL((SELECT SUM(Amount) FROM dbo.LegalCharges WHERE PersonId = @Id), 0
         if (penaltyAmount > penaltiesDue)
             throw new LegalRuleException($"مبلغ الغرامات أكبر من المستحق ({penaltiesDue:N0})");
 
+        // Only a debtor who was sent to the legal app, and whose file is still open, takes money.
         var caseId = await c.ExecuteScalarAsync<int?>(
-            "SELECT TOP (1) Id FROM dbo.LegalCases WHERE PersonId = @Id ORDER BY CASE WHEN Stage = N'Closed' THEN 1 ELSE 0 END, Id DESC",
-            new { Id = personId }, tx);
+            "SELECT TOP (1) Id FROM dbo.LegalCases WHERE PersonId = @Id AND Stage <> N'Closed' ORDER BY Id DESC",
+            new { Id = personId }, tx)
+            ?? throw new LegalRuleException("لا يوجد للمدين ملف مفتوح في القانونية");
+
+        // A تسديد gets a receipt number; a خصم does not.
+        long? receipt = discount ? null : await NewReceiptNumberAsync(c, tx);
         var debt = lines.Sum(l => l.Amount);
         var id = await c.ExecuteScalarAsync<int>("""
-INSERT INTO dbo.LegalPayments (PersonId, CaseId, DebtAmount, PenaltyAmount, Note, Actor) OUTPUT INSERTED.Id
-VALUES (@PersonId, @CaseId, @Debt, @Penalty, @Note, @Actor);
-""", new { PersonId = personId, CaseId = caseId, Debt = debt, Penalty = penaltyAmount, Note = Blank(note), Actor = actor }, tx);
+INSERT INTO dbo.LegalPayments (PersonId, CaseId, Kind, ReceiptNumber, DebtAmount, PenaltyAmount, Note, Actor) OUTPUT INSERTED.Id
+VALUES (@PersonId, @CaseId, @Kind, @Receipt, @Debt, @Penalty, @Note, @Actor);
+""", new { PersonId = personId, CaseId = caseId, Kind = kind, Receipt = receipt, Debt = debt, Penalty = penaltyAmount, Note = Blank(note), Actor = actor }, tx);
         foreach (var line in lines)
         {
             var account = accounts.First(a => a.Id == line.AccountId);
@@ -1094,30 +872,99 @@ UPDATE dbo.LegalPersonAccounts SET LastPaid = LastPaid + @Amount, LastRemaining 
 """, new { PaymentId = id, account.CityValue, account.CustomerId, account.CustomerName, line.Amount, AccountId = account.Id }, tx);
         }
 
-        if (caseId is int openCase)
-        {
-            await EventAsync(c, tx, openCase, "Payment", null, null,
-                $"تسديد {debt + penaltyAmount:N0} (دين {debt:N0} + غرامات {penaltyAmount:N0})", actor);
-        }
+        await EventAsync(c, tx, caseId, discount ? "Discount" : "Payment", null, null,
+            discount
+                ? $"خصم {debt + penaltyAmount:N0} (من الدين {debt:N0} + من الغرامات {penaltyAmount:N0})"
+                : $"تسديد {debt + penaltyAmount:N0} (دين {debt:N0} + غرامات {penaltyAmount:N0}) — وصل {receipt}", actor);
 
         await tx.CommitAsync(ct);
-        return id;
+        return new PaymentRecord(id, receipt);
     }
 
-    /// <summary>Everything القانونية collected, newest first: the "branch" legal customers now pay into.</summary>
-    public async Task<IEnumerable<dynamic>> RecentPaymentsAsync(int take, CancellationToken ct, string? q = null)
+    public static class PaymentKinds
+    {
+        public const string Payment = "Payment";
+        public const string Discount = "Discount";
+    }
+
+    public sealed record PaymentRecord(int Id, long? ReceiptNumber);
+
+    /// <summary>
+    /// A random 10-digit receipt number that no تسديد here and no receipt of the old system has.
+    /// </summary>
+    internal static async Task<long> NewReceiptNumberAsync(SqlConnection c, SqlTransaction tx)
+    {
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            var number = System.Security.Cryptography.RandomNumberGenerator.GetInt32(100_000_000, 1_000_000_000) * 10L
+                + System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 10);
+            var taken = await c.ExecuteScalarAsync<int>("""
+SELECT (SELECT COUNT(1) FROM dbo.LegalPayments WHERE ReceiptNumber = @N)
+     + (SELECT COUNT(1) FROM dbo.LegalOldReceipts WHERE ReceiptNumber = @N);
+""", new { N = number }, tx);
+            if (taken == 0)
+                return number;
+        }
+
+        throw new LegalRuleException("تعذر توليد رقم وصل", 500);
+    }
+
+    /// <summary>One تسديد with what a receipt needs. Null for a خصم or an unknown id.</summary>
+    public async Task<ReceiptData?> ReceiptAsync(int paymentId, CancellationToken ct)
+    {
+        await using var c = await _db.OpenAsync(ct);
+        var receipt = await c.QueryFirstOrDefaultAsync<ReceiptData>(new CommandDefinition("""
+SELECT y.Id, y.ReceiptNumber, y.DebtAmount, y.PenaltyAmount, y.Note, y.Actor, y.AtUtc,
+       p.FullName, p.Phone,
+       (SELECT STRING_AGG(a.ArchiveCode, N' · ') WITHIN GROUP (ORDER BY a.Id) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = p.Id AND a.ArchiveCode IS NOT NULL) AS ArchiveCodes
+FROM dbo.LegalPayments y JOIN dbo.LegalPersons p ON p.Id = y.PersonId
+WHERE y.Id = @Id AND y.Kind = N'Payment' AND y.ReceiptNumber IS NOT NULL;
+""", new { Id = paymentId }, cancellationToken: ct));
+        return receipt;
+    }
+
+    public sealed class ReceiptData
+    {
+        public int Id { get; set; }
+        public long ReceiptNumber { get; set; }
+        public long DebtAmount { get; set; }
+        public long PenaltyAmount { get; set; }
+        public string? Note { get; set; }
+        public string? Actor { get; set; }
+        public DateTime AtUtc { get; set; }
+        public string FullName { get; set; } = "";
+        public string? Phone { get; set; }
+        public string? ArchiveCodes { get; set; }
+        public long Total => DebtAmount + PenaltyAmount;
+    }
+
+    /// <summary>Receipts issued by the old legal system: searchable, and their numbers are never reused.</summary>
+    public async Task<IEnumerable<dynamic>> OldReceiptsAsync(string? q, int take, CancellationToken ct)
     {
         await using var c = await _db.OpenAsync(ct);
         return await c.QueryAsync(new CommandDefinition("""
-SELECT TOP (@Take) y.Id AS id, y.PersonId AS personId, p.FullName AS fullName, y.DebtAmount AS debtAmount,
-       y.PenaltyAmount AS penaltyAmount, y.Note AS note, y.Actor AS actor, y.AtUtc AS atUtc,
-       CAST(CASE WHEN EXISTS (SELECT 1 FROM dbo.LegalAnnulRequests r WHERE r.PaymentId = y.Id) THEN 1 ELSE 0 END AS bit) AS isAnnul,
+SELECT TOP (@Take) ReceiptNumber AS receiptNumber, Customer AS customer, Amount AS amount, PaymentDate AS paymentDate, Branch AS branch
+FROM dbo.LegalOldReceipts
+WHERE @Q IS NULL OR CAST(ReceiptNumber AS NVARCHAR(20)) LIKE N'%' + @Q + N'%' OR Customer LIKE N'%' + @Q + N'%' OR Branch LIKE N'%' + @Q + N'%'
+ORDER BY PaymentDate DESC, ReceiptNumber;
+""", new { Take = Math.Clamp(take, 1, 5000), Q = Blank(q) }, cancellationToken: ct));
+    }
+
+    /// <summary>Everything القانونية collected, newest first: the "branch" legal customers now pay into.</summary>
+    public async Task<IEnumerable<dynamic>> RecentPaymentsAsync(int take, CancellationToken ct, string? q = null, string kind = PaymentKinds.Payment)
+    {
+        await using var c = await _db.OpenAsync(ct);
+        return await c.QueryAsync(new CommandDefinition("""
+SELECT TOP (@Take) y.Id AS id, y.PersonId AS personId, p.FullName AS fullName, y.Kind AS kind, y.ReceiptNumber AS receiptNumber,
+       y.DebtAmount AS debtAmount, y.PenaltyAmount AS penaltyAmount, y.Note AS note, y.Actor AS actor, y.AtUtc AS atUtc,
        (SELECT STRING_AGG(a.ArchiveCode, N' · ') WITHIN GROUP (ORDER BY a.Id) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = p.Id AND a.ArchiveCode IS NOT NULL) AS archiveCodes
 FROM dbo.LegalPayments y JOIN dbo.LegalPersons p ON p.Id = y.PersonId
-WHERE (@Q IS NULL OR p.FullName LIKE N'%' + @Q + N'%' OR p.Phone LIKE N'%' + @Q + N'%'
+WHERE y.Kind = @Kind
+  AND (@Q IS NULL OR p.FullName LIKE N'%' + @Q + N'%' OR p.Phone LIKE N'%' + @Q + N'%'
+       OR CAST(y.ReceiptNumber AS NVARCHAR(20)) LIKE N'%' + @Q + N'%'
        OR EXISTS (SELECT 1 FROM dbo.LegalPersonAccounts a WHERE a.PersonId = p.Id AND a.ArchiveCode LIKE N'%' + @Q + N'%'))
 ORDER BY y.Id DESC;
-""", new { Take = Math.Clamp(take, 1, 2000), Q = Blank(q) }, cancellationToken: ct));
+""", new { Take = Math.Clamp(take, 1, 2000), Q = Blank(q), Kind = kind }, cancellationToken: ct));
     }
 
     public async Task<int?> OpenCaseIdAsync(int personId, CancellationToken ct)
@@ -1411,19 +1258,14 @@ ORDER BY lp.LastProgressUtc, k.Id;
     {
         await using var c = await _db.OpenAsync(ct);
         var collected = await c.QueryFirstAsync(new CommandDefinition("""
-WITH y AS (
-    SELECT p.Id, p.PersonId, p.DebtAmount, p.PenaltyAmount, p.DebtAmount + p.PenaltyAmount AS Total,
-           CASE WHEN EXISTS (SELECT 1 FROM dbo.LegalAnnulRequests r WHERE r.PaymentId = p.Id) THEN 1 ELSE 0 END AS IsAnnul
-    FROM dbo.LegalPayments p)
-SELECT ISNULL(SUM(Total), 0) AS total, COUNT(*) AS payments, COUNT(DISTINCT PersonId) AS customers,
-       ISNULL(SUM(DebtAmount), 0) AS debt, ISNULL(SUM(PenaltyAmount), 0) AS penalties,
-       ISNULL(SUM(CASE WHEN IsAnnul = 1 THEN Total END), 0) AS annulTotal,
-       ISNULL(SUM(IsAnnul), 0) AS annulPayments,
-       COUNT(DISTINCT CASE WHEN IsAnnul = 1 THEN PersonId END) AS annulCustomers,
-       ISNULL(SUM(CASE WHEN IsAnnul = 0 THEN Total END), 0) AS directTotal,
-       ISNULL(SUM(1 - IsAnnul), 0) AS directPayments,
-       COUNT(DISTINCT CASE WHEN IsAnnul = 0 THEN PersonId END) AS directCustomers
-FROM y;
+SELECT ISNULL(SUM(DebtAmount + PenaltyAmount), 0) AS total, COUNT(*) AS payments, COUNT(DISTINCT PersonId) AS customers,
+       ISNULL(SUM(DebtAmount), 0) AS debt, ISNULL(SUM(PenaltyAmount), 0) AS penalties
+FROM dbo.LegalPayments WHERE Kind = N'Payment';
+""", cancellationToken: ct));
+        var discounted = await c.QueryFirstAsync(new CommandDefinition("""
+SELECT ISNULL(SUM(DebtAmount + PenaltyAmount), 0) AS total, COUNT(*) AS [count], COUNT(DISTINCT PersonId) AS customers,
+       ISNULL(SUM(DebtAmount), 0) AS debt, ISNULL(SUM(PenaltyAmount), 0) AS penalties
+FROM dbo.LegalPayments WHERE Kind = N'Discount';
 """, cancellationToken: ct));
         var funds = (await c.QueryAsync(new CommandDefinition("""
 SELECT Id AS id, Amount AS amount, Note AS note, Actor AS actor, AtUtc AS atUtc
@@ -1439,12 +1281,15 @@ SELECT ISNULL(-SUM(CASE WHEN Kind = N'JudicialFee' THEN Amount END), 0) AS judic
 FROM dbo.LegalRegisterTx WHERE Register = N'CompanyDebt';
 """, cancellationToken: ct));
         var payments = await RecentPaymentsAsync(2000, ct);
+        var discounts = await RecentPaymentsAsync(2000, ct, null, PaymentKinds.Discount);
         long fundsTotal = funds.Sum(f => (long)f.amount);
         long back = (long)paidBack.judicialFees + (long)paidBack.executionFees + (long)paidBack.earlyFees;
         return new
         {
             collected,
             payments,
+            discounted,
+            discounts,
             funds = new { total = fundsTotal, count = funds.Count, records = funds },
             paidBack = new
             {
@@ -1468,13 +1313,12 @@ SELECT (SELECT COUNT(*) FROM dbo.LegalPersons) AS persons,
        (SELECT COUNT(*) FROM dbo.LegalPersonAccounts) AS accounts,
        ISNULL((SELECT SUM(LastRemaining) FROM dbo.LegalPersonAccounts), 0) AS remainingSnapshot,
        ISNULL((SELECT SUM(Amount) FROM dbo.LegalCharges), 0) AS penaltiesCharged,
-       ISNULL((SELECT SUM(PenaltyAmount) FROM dbo.LegalPayments), 0) AS penaltiesPaid,
-       ISNULL((SELECT SUM(DebtAmount) FROM dbo.LegalPayments), 0) AS debtCollected,
+       ISNULL((SELECT SUM(PenaltyAmount) FROM dbo.LegalPayments WHERE Kind = N'Payment'), 0) AS penaltiesPaid,
+       ISNULL((SELECT SUM(DebtAmount) FROM dbo.LegalPayments WHERE Kind = N'Payment'), 0) AS debtCollected,
+       ISNULL((SELECT SUM(DebtAmount + PenaltyAmount) FROM dbo.LegalPayments WHERE Kind = N'Discount'), 0) AS discounts,
+       ISNULL((SELECT SUM(Amount) FROM dbo.LegalCharges), 0) - ISNULL((SELECT SUM(PenaltyAmount) FROM dbo.LegalPayments), 0) AS penaltiesDue,
        (SELECT COUNT(*) FROM dbo.LegalCases WHERE JudicialStartedAtUtc IS NOT NULL) AS judicialStarted,
        (SELECT COUNT(*) FROM dbo.LegalCases WHERE ExecutionStartedAtUtc IS NOT NULL) AS executionStarted,
-       (SELECT COUNT(*) FROM dbo.LegalCases WHERE IsAnnulled = 1 AND Stage <> N'Closed') AS annulled,
-       (SELECT COUNT(*) FROM dbo.LegalSettlementRequests WHERE Status = N'Pending') AS pendingSettlements,
-       (SELECT COUNT(*) FROM dbo.LegalAnnulRequests WHERE Status = N'Pending') AS pendingAnnuls,
        ISNULL((SELECT SUM(Amount) FROM dbo.LegalLawyerTx WHERE Kind = N'Fee'), 0) AS lawyerFees;
 """, cancellationToken: ct));
         var payments = await RecentPaymentsAsync(15, ct);

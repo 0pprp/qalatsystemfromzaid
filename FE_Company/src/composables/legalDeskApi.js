@@ -41,18 +41,31 @@ export const legalSend = (id, note) => call('post', `persons/${id}/send`, { data
 export const legalPay = (id, lines, penaltyAmount, note) =>
   call('post', `persons/${id}/payments`, { data: { lines, penaltyAmount, note: note || null } })
 
-export const legalRequests = status => call('get', 'settlement-requests', { params: { status: status || undefined } })
-export const legalDecide = (id, approve, penalty, note) =>
-  call('post', `settlement-requests/${id}/decide`, { data: { approve, penalty: Number(penalty) || 0, note: note || null } })
+/** خصم: one amount taken off what the debtor owes. No receipt. */
+export const legalDiscount = (id, amount, note) =>
+  call('post', `persons/${id}/discounts`, { data: { amount, note: note || null } })
 
 export const legalOverview = () => call('get', 'overview')
 /** المدير only. */
 export const legalStalled = days => call('get', 'stalled', { params: { days } })
 export const legalRegisters = () => call('get', 'registers')
-export const legalPayments = q => call('get', 'payments', { params: { q: q || undefined, take: 1000 } })
-export const legalAnnulRequests = status => call('get', 'annul-requests', { params: { status: status || undefined } })
-export const legalDecideAnnul = (id, approve, note) => call('post', `annul-requests/${id}/decide`, { data: { approve, note: note || null } })
-export const legalReturnFromAnnul = (caseId, note) => call('post', `cases/${caseId}/return-from-annul`, { data: { note: note || null } })
+/** kind: 'Payment' (default) or 'Discount'. */
+export const legalPayments = (q, kind) => call('get', 'payments', { params: { q: q || undefined, kind: kind || undefined, take: 1000 } })
+export const legalOldReceipts = q => call('get', 'old-receipts', { params: { q: q || undefined, take: 2000 } })
+
+/** The receipt of one تسديد as a PDF blob. */
+export async function legalReceiptPdf(paymentId) {
+  const { data } = await axios({
+    method: 'get',
+    url: `${salesGatewayBase()}legal-desk/payments/${paymentId}/receipt`,
+    headers: getAuthHeaders(),
+    responseType: 'blob',
+    timeout: 120000,
+  })
+
+  return data
+}
+
 export const legalCashbox = () => call('get', 'cashbox')
 export const legalRefreshBalances = () => call('post', 'refresh-balances')
 
@@ -95,15 +108,11 @@ export const LEGAL_STATUS = {
   Waiting: { label: 'قيد الانتظار', color: 'secondary' },
   Judicial: { label: 'دعوى قضائية', color: 'warning' },
   Execution: { label: 'التنفيذ', color: 'error' },
-  Paying: { label: 'التسديد', color: 'info' },
   Closed: { label: 'مغلق', color: 'success' },
 }
 
-/**
- * stage = the debtor's station in the legal app (empty when not sent yet).
- * «التسديد» = an agreement to pay was reached (ابطال) and he has not reached التنفيذ.
- */
-export function legalStatus(stage, isAnnulled) {
+/** stage = the debtor's station in the legal app (empty when not sent yet). */
+export function legalStatus(stage) {
   let key = 'Waiting'
   if (!stage)
     key = 'NotSent'
@@ -111,8 +120,6 @@ export function legalStatus(stage, isAnnulled) {
     key = 'Closed'
   else if (stage === 'Execution')
     key = 'Execution'
-  else if (isAnnulled)
-    key = 'Paying'
   else if (stage === 'Judicial' || stage === 'Decisions')
     key = 'Judicial'
 
@@ -120,7 +127,7 @@ export function legalStatus(stage, isAnnulled) {
 }
 
 export const CHARGE_KIND = {
-  Judicial: 'أجور اقامة دعوى',
+  Judicial: 'أجور القانونية',
   Execution: 'أجور التنفيذ',
   EarlySettlement: 'غرامة تسديد كامل',
 }

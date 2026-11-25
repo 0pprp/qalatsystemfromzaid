@@ -19,24 +19,21 @@ const data = ref(null)
 
 const m = computed(() => data.value?.money || {})
 const r = computed(() => data.value?.registers || {})
-const penaltiesDue = computed(() => Number(m.value.penaltiesCharged || 0) - Number(m.value.penaltiesPaid || 0))
+const penaltiesDue = computed(() => Number(m.value.penaltiesDue || 0))
 
 /** Debtors per status, from the per-stage counts the server returns. */
 const counts = computed(() => {
-  const stage = key => data.value?.stages?.find(s => s.stage === key) || { count: 0, annulled: 0 }
-  const open = ['Recent', 'Archive', 'Judicial', 'Decisions'].map(stage)
-  const plain = s => Number(s.count || 0) - Number(s.annulled || 0)
+  const count = key => Number(data.value?.stages?.find(s => s.stage === key)?.count || 0)
 
   return {
-    Waiting: plain(open[0]) + plain(open[1]),
-    Judicial: plain(open[2]) + plain(open[3]),
-    Execution: Number(stage('Execution').count || 0),
-    Paying: open.reduce((sum, s) => sum + Number(s.annulled || 0), 0),
-    Closed: Number(stage('Closed').count || 0),
+    Waiting: count('Recent') + count('Archive'),
+    Judicial: count('Judicial') + count('Decisions'),
+    Execution: count('Execution'),
+    Closed: count('Closed'),
   }
 })
 
-const TILES = ['Waiting', 'Judicial', 'Execution', 'Paying', 'Closed']
+const TILES = ['Waiting', 'Judicial', 'Execution', 'Closed']
 
 async function load() {
   loading.value = true
@@ -93,39 +90,6 @@ onMounted(load)
       indeterminate
       class="mb-4"
     />
-
-    <VAlert
-      v-if="m.pendingSettlements > 0"
-      type="warning"
-      variant="tonal"
-      density="compact"
-      class="mb-4"
-    >
-      {{ m.pendingSettlements }} طلب تسديد كامل بانتظارك.
-      <VBtn
-        size="small"
-        variant="text"
-        :to="{ path: '/legal-desk-payments', query: { tab: 'settlement' } }"
-      >
-        فتح الطلبات
-      </VBtn>
-    </VAlert>
-    <VAlert
-      v-if="m.pendingAnnuls > 0"
-      type="warning"
-      variant="tonal"
-      density="compact"
-      class="mb-4"
-    >
-      {{ m.pendingAnnuls }} طلب ابطال بانتظار قبولك.
-      <VBtn
-        size="small"
-        variant="text"
-        :to="{ path: '/legal-desk-payments', query: { tab: 'annul' } }"
-      >
-        فتح الطلبات
-      </VBtn>
-    </VAlert>
 
     <!-- المدينون حسب الحالة -->
     <VRow class="mb-1">

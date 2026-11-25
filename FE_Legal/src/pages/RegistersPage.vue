@@ -20,9 +20,10 @@ const rows = computed(() => (r.value.transactions || []).filter(t =>
 
 /** How the team paid قلعة الضمان back, line by line. */
 const paidBackLines = computed(() => [
-  { label: 'دعاوى قضائية', count: r.value.judicialCount, amount: r.value.judicialFees },
+  { label: 'أجور القانونية (عند الإحالة)', count: r.value.judicialCount, amount: r.value.judicialFees },
   { label: 'تنفيذ', count: r.value.executionCount, amount: r.value.executionFees },
-  { label: 'تسديد قبل الدعوى', count: r.value.earlyCount, amount: r.value.earlyFees },
+  // Kept only while old movements of this kind exist.
+  ...(r.value.earlyCount ? [{ label: 'تسديد قبل الدعوى (سابقاً)', count: r.value.earlyCount, amount: r.value.earlyFees }] : []),
 ])
 
 async function load() {
@@ -255,7 +256,7 @@ onMounted(load)
         </tbody>
       </VTable>
       <div class="text-caption muted pa-4 pt-2">
-        عمود «حساب قلعة الضمان»: الموجب مبلغ استلمته القاصة منها، والسالب تسديد لها (200,000 عن كل دعوى، 150,000 عن كل تنفيذ، ومبلغ التسديد قبل الدعوى).
+        عمود «حساب قلعة الضمان»: الموجب مبلغ استلمته القاصة منها، والسالب تسديد لها (200,000 عن كل مدين يُحال إلى القانونية، و150,000 عن كل تنفيذ).
       </div>
     </VCard>
 

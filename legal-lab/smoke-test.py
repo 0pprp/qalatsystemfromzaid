@@ -122,9 +122,19 @@ check("same account cannot join a second debtor",
 status, detail = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)
 check("debtor detail has live balances", status == 200 and len(detail["accounts"]) == len(accounts)
       and all(a["isLive"] for a in detail["accounts"]), detail)
+check("a debtor who was not sent cannot pay or get a discount",
+      call("POST", GW + "/legal-desk/persons/%d/payments" % person, accountant, {"lines": [], "penaltyAmount": 0})[0] == 400
+      and call("POST", GW + "/legal-desk/persons/%d/discounts" % person, accountant, {"amount": 1000})[0] == 409)
+reg_before_send = call("GET", GW + "/legal-desk/registers", accountant)[1]
 status, sent = call("POST", GW + "/legal-desk/persons/%d/send" % person, accountant, {"note": "smoke"})
 check("sent to the legal app", status == 200 and sent["caseId"] > 0, sent)
 case = sent["caseId"]
+reg_after_send = call("GET", GW + "/legal-desk/registers", accountant)[1]
+check("sending charges 200,000: a penalty on the debtor, and paid back to قلعة الضمان",
+      call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]["penaltiesDue"] == 200000
+      and reg_after_send["companyDebt"] == reg_before_send["companyDebt"] - 200000
+      and reg_after_send["judicialCount"] == reg_before_send["judicialCount"] + 1
+      and reg_after_send["cash"] == reg_before_send["cash"], (reg_before_send["companyDebt"], reg_after_send["companyDebt"]))
 check("cannot send twice", call("POST", GW + "/legal-desk/persons/%d/send" % person, accountant, {})[0] == 409)
 
 print("4) flow in the legal app")
@@ -168,13 +178,13 @@ status, refused = call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"t
 check("a judicial case cannot start without a lawyer", status == 409 and refused.get("code") == "LawyerRequired", refused)
 first_lawyer = call("POST", GW + "/legal-app/lawyers", team, {"name": "محامي الدعوى %d" % int(time.time())})[1]["id"]
 status, moved = call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"to": "Judicial", "lawyerId": first_lawyer})
-check("archive -> judicial with a lawyer charges 200,000", status == 200 and moved["charged"] == 200000, moved)
+check("archive -> judicial with a lawyer charges nothing (the fee was taken on sending)", status == 200 and moved["charged"] == 0, moved)
 check("the lawyer chosen in the move is assigned",
       call("GET", GW + "/legal-app/cases/%d" % case, team)[1]["legalCase"]["lawyerId"] == first_lawyer)
 check("the lawyer cannot be removed once the case started",
       call("POST", GW + "/legal-app/cases/%d/lawyer" % case, team, {"lawyerId": None})[0] == 409)
 after = call("GET", GW + "/legal-app/registers", team)[1]
-check("دين قلعة الضمان went down by 200,000", after["companyDebt"] == before["companyDebt"] - 200000, (before["companyDebt"], after["companyDebt"]))
+check("دين قلعة الضمان is unchanged by starting the judicial case", after["companyDebt"] == before["companyDebt"], (before["companyDebt"], after["companyDebt"]))
 step_types = call("GET", GW + "/legal-app/step-types", team)[1]
 judicial_step = next(s for s in step_types if s["flow"] == "Judicial")
 for _ in range(2):
@@ -245,27 +255,18 @@ check("debtor profile lists both fees (60,000)", sum(f["amount"] for f in case_d
 check("company dashboard reads registers", call("GET", GW + "/legal-desk/registers", accountant)[0] == 200)
 check("company dashboard cannot change registers", call("POST", GW + "/legal-app/registers/expenses", accountant, {"amount": 1, "note": "x"})[0] == 403)
 
-print("6) ابطال and payments")
-check("ابطال needs مبلغ الابطال", call("POST", GW + "/legal-app/cases/%d/annul" % case, team, {"annulled": True, "note": "اتفاق"})[0] == 400)
-before_annul = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]
-status, asked = call("POST", GW + "/legal-app/cases/%d/annul" % case, team, {"annulled": True, "note": "اتفاق", "amount": 40000})
-waiting = call("GET", GW + "/legal-app/cases/%d" % case, team)[1]["legalCase"]
-check("the legal app sends an ابطال request with its amount; the debtor is not ابطال yet",
-      status == 200 and waiting["pendingAnnulAmount"] == 40000 and not waiting["isAnnulled"], waiting)
-check("a second request while one is waiting is refused",
-      call("POST", GW + "/legal-app/cases/%d/annul" % case, team, {"annulled": True, "amount": 1000})[0] == 409)
-annul_row = next(r for r in call("GET", GW + "/legal-desk/annul-requests?status=Pending", accountant)[1] if r["id"] == asked["requestId"])
-check("the accountant sees it under طلبات الابطال", annul_row["amount"] == 40000 and annul_row["personId"] == person, annul_row)
-check("the legal team cannot accept its own request",
-      call("POST", GW + "/legal-desk/annul-requests/%d/decide" % asked["requestId"], team, {"approve": True})[0] == 403)
-status, accepted = call("POST", GW + "/legal-desk/annul-requests/%d/decide" % asked["requestId"], accountant, {"approve": True})
-after_annul = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]
-check("accepting marks him ابطال and counts the amount as a تسديد",
-      status == 200 and after_annul["person"]["isAnnulled"] is True
-      and after_annul["totals"]["remaining"] == before_annul["totals"]["remaining"] - 40000
-      and after_annul["payments"][0]["debtAmount"] == 40000, (status, accepted))
-check("it shows in التسديدات marked as ابطال",
-      any(p["personId"] == person and p["isAnnul"] and p["debtAmount"] == 40000 for p in call("GET", GW + "/legal-desk/payments", accountant)[1]))
+print("6) payments, receipts and discounts")
+check("ابطال and the full-settlement request are gone",
+      call("POST", GW + "/legal-app/cases/%d/annul" % case, team, {"annulled": True, "amount": 1000})[0] in (404, 405)
+      and call("POST", GW + "/legal-app/cases/%d/settlement-request" % case, team, {})[0] in (404, 405)
+      and call("GET", GW + "/legal-desk/annul-requests", accountant)[0] in (404, 405)
+      and call("GET", GW + "/legal-desk/settlement-requests", accountant)[0] in (404, 405))
+status, old_receipts = call("GET", GW + "/legal-desk/old-receipts", accountant)
+old_numbers = {r["receiptNumber"] for r in old_receipts} if status == 200 else set()
+check("the old system's receipts are loaded and searchable",
+      status == 200 and len(old_receipts) == 36
+      and [r["receiptNumber"] for r in call("GET", GW + "/legal-desk/old-receipts?q=1025185214", accountant)[1]] == [1025185214]
+      and call("GET", GW + "/legal-desk/old-receipts", team)[0] == 403, (status, len(old_receipts or [])))
 detail = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]
 najaf_account = next(a for a in detail["accounts"] if a["customerId"] == first["customerId"])
 check("penalty of 200,000 shows on the debtor", detail["totals"]["penaltiesDue"] == 200000, detail["totals"])
@@ -274,6 +275,14 @@ branch_before = call("GET", NAJAF + "/legal-branch/customers/%d/detail" % first[
 status, paid = call("POST", GW + "/legal-desk/persons/%d/payments" % person, accountant,
                     {"lines": [{"accountId": najaf_account["id"], "amount": 25000}], "penaltyAmount": 100000, "note": "smoke"})
 check("payment recorded with its penalty part", status == 200 and paid["ok"] and paid["debtPaid"] == 25000 and paid["penaltyTaken"] == 100000, paid)
+receipt_no = paid.get("receiptNumber") or 0
+check("the تسديد got a random 10-digit receipt number that the old system never used",
+      1000000000 <= receipt_no <= 9999999999 and receipt_no not in old_numbers, receipt_no)
+status, pdf = call("GET", GW + "/legal-desk/payments/%d/receipt" % paid["paymentId"], accountant)
+check("its receipt downloads as a PDF", status == 200 and isinstance(pdf, bytes) and pdf[:4] == b"%PDF", (status, str(pdf)[:60]))
+if isinstance(pdf, bytes):
+    open(os.path.join(HERE, "data", "last-receipt.pdf"), "wb").write(pdf)
+check("the legal team cannot download a receipt", call("GET", GW + "/legal-desk/payments/%d/receipt" % paid["paymentId"], team)[0] == 403)
 detail2 = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]
 najaf_after = next(a for a in detail2["accounts"] if a["customerId"] == first["customerId"])
 check("the debtor's remaining dropped by the payment", najaf_after["remaining"] == najaf_account["remaining"] - 25000, (najaf_account["remaining"], najaf_after["remaining"]))
@@ -287,26 +296,46 @@ check("overpaying an account is refused",
       call("POST", GW + "/legal-desk/persons/%d/payments" % person, accountant, {"lines": [{"accountId": najaf_account["id"], "amount": 10 ** 10}], "penaltyAmount": 0})[0] == 409)
 check("overpaying penalties is refused", call("POST", GW + "/legal-desk/persons/%d/payments" % person, accountant, {"lines": [], "penaltyAmount": 10 ** 9})[0] == 409)
 status, collected = call("GET", GW + "/legal-desk/payments", accountant)
-check("the payment shows in القانونية's collections", status == 200 and collected[0]["personId"] == person and collected[0]["debtAmount"] == 25000 and not collected[0]["isAnnul"], collected)
-check("the legal team cannot return an ابطال debtor from the dashboard",
-      call("POST", GW + "/legal-desk/cases/%d/return-from-annul" % case, team, {})[0] == 403)
-before_back = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]
-status, _ = call("POST", GW + "/legal-desk/cases/%d/return-from-annul" % case, accountant, {"note": "توقف عن الدفع"})
-after_back = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]
-check("the accountant returns an ابطال debtor: ابطال lifted, station and money untouched",
-      status == 200 and after_back["person"]["isAnnulled"] is False
-      and after_back["person"]["stage"] == before_back["person"]["stage"]
-      and after_back["totals"] == before_back["totals"], (status, after_back["person"]))
-check("returning a debtor who is not ابطال is refused",
-      call("POST", GW + "/legal-desk/cases/%d/return-from-annul" % case, accountant, {})[0] == 409)
+check("the payment shows in سجل التسديدات with its receipt number",
+      status == 200 and collected[0]["personId"] == person and collected[0]["debtAmount"] == 25000
+      and collected[0]["receiptNumber"] == receipt_no and collected[0]["kind"] == "Payment", collected[:1])
+check("it can be found by receipt number",
+      [p["id"] for p in call("GET", GW + "/legal-desk/payments?q=%d" % receipt_no, accountant)[1]] == [paid["paymentId"]])
+second_pay = call("POST", GW + "/legal-desk/persons/%d/payments" % person, accountant,
+                  {"lines": [{"accountId": najaf_account["id"], "amount": 1000}], "penaltyAmount": 0})[1]
+check("every تسديد gets its own receipt number", second_pay["receiptNumber"] not in (receipt_no, None), second_pay)
+
+box_before = call("GET", GW + "/legal-desk/cashbox", accountant)[1]
+due_before = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]
+check("a discount larger than everything owed is refused",
+      call("POST", GW + "/legal-desk/persons/%d/discounts" % person, accountant, {"amount": due_before["totalDue"] + 1})[0] == 409)
+status, disc = call("POST", GW + "/legal-desk/persons/%d/discounts" % person, accountant, {"amount": 30000, "note": "خصم تجريبي"})
+due_after = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]
+check("a discount lowers what is owed (debt first) and has no receipt",
+      status == 200 and disc["kind"] == "Discount" and disc["receiptNumber"] is None
+      and due_after["remaining"] == due_before["remaining"] - 30000
+      and due_after["totalDue"] == due_before["totalDue"] - 30000, (status, disc))
+check("there is no receipt PDF for a discount",
+      call("GET", GW + "/legal-desk/payments/%d/receipt" % disc["paymentId"], accountant)[0] == 404)
+status, disc2 = call("POST", GW + "/legal-desk/persons/%d/discounts" % person, accountant, {"amount": 20000})
+check("a second discount is accepted", status == 200 and
+      call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]["totalDue"] == due_before["totalDue"] - 50000, disc2)
+check("the legal team cannot give a discount",
+      call("POST", GW + "/legal-desk/persons/%d/discounts" % person, team, {"amount": 1000})[0] == 403)
+disc_list = call("GET", GW + "/legal-desk/payments?kind=Discount", accountant)[1]
+check("discounts have their own record and stay out of سجل التسديدات",
+      [d["id"] for d in disc_list[:2]] == [disc2["paymentId"], disc["paymentId"]]
+      and not any(p["kind"] != "Payment" for p in call("GET", GW + "/legal-desk/payments", accountant)[1]), disc_list[:2])
 status, box = call("GET", GW + "/legal-desk/cashbox", accountant)
 box_c = box["collected"] if status == 200 else {}
-check("the dashboard القاصة adds up: ابطال + direct = total = debt + penalties = the record",
-      status == 200 and box_c["total"] == box_c["annulTotal"] + box_c["directTotal"] == box_c["debt"] + box_c["penalties"]
-      == sum(p["debtAmount"] + p["penaltyAmount"] for p in box["payments"])
-      and box_c["annulTotal"] >= 40000 and box_c["customers"] >= 1
+check("the dashboard القاصة: discounts are counted apart from the money collected",
+      status == 200 and box_c["total"] == box_before["collected"]["total"]
+      and box_c["total"] == box_c["debt"] + box_c["penalties"] == sum(p["debtAmount"] + p["penaltyAmount"] for p in box["payments"])
+      and box["discounted"]["total"] == box_before["discounted"]["total"] + 50000
+      and box["discounted"]["count"] == box_before["discounted"]["count"] + 2
+      and box["discounted"]["total"] == sum(p["debtAmount"] + p["penaltyAmount"] for p in box["discounts"])
       and box["funds"]["total"] == sum(f["amount"] for f in box["funds"]["records"]) and box["funds"]["count"] == len(box["funds"]["records"])
-      and box["companyDebt"] == box["funds"]["total"] - box["paidBack"]["total"], box_c)
+      and box["companyDebt"] == box["funds"]["total"] - box["paidBack"]["total"], (box_c, box.get("discounted")))
 check("the legal team cannot open the dashboard القاصة", call("GET", GW + "/legal-desk/cashbox", team)[0] == 403)
 status, temp_type = call("POST", GW + "/legal-app/step-types", team, {"flow": "Judicial", "name": "خطوة مؤقتة للفحص", "isMandatory": True})
 status_logged, _ = call("POST", GW + "/legal-app/cases/%d/steps" % case, team, {"stepTypeId": temp_type["id"]})
@@ -343,8 +372,6 @@ check("make the step optional again", call("POST", GW + "/legal-app/step-types",
 check("court decision saved", call("POST", GW + "/legal-app/cases/%d/decision" % case, team, {"text": "قرار تجريبي", "date": "2026-11-18"})[0] == 200)
 status, moved = call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"to": "Execution"})
 check("decisions -> execution charges 150,000", status == 200 and moved["charged"] == 150000, moved)
-check("ابطال refused in التنفيذ", call("POST", GW + "/legal-app/cases/%d/annul" % case, team, {"annulled": False})[0] == 200
-      and call("POST", GW + "/legal-app/cases/%d/annul" % case, team, {"annulled": True, "amount": 1000})[0] == 409)
 check("execution step accepted now", call("POST", GW + "/legal-app/cases/%d/steps" % case, team, {"stepTypeId": execution_step["id"]})[0] == 200)
 detail3 = call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]
 check("penalties due = 100,000 + 150,000", detail3["totals"]["penaltiesDue"] == 250000, detail3["totals"])
@@ -357,36 +384,23 @@ forward += [call("POST", GW + "/legal-app/cases/%d/move" % case, team, {"to": to
 check("moving forward again charges no fee twice", all(s == 200 and m["charged"] == 0 for s, m in forward), forward)
 check("penalties unchanged after going back and forward",
       call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]["penaltiesDue"] == 250000)
-status, late = call("POST", GW + "/legal-app/cases/%d/settlement-request" % case, team, {})
-late_row = next(r for r in call("GET", GW + "/legal-desk/settlement-requests?status=Pending", accountant)[1] if r["id"] == late["id"])
-check("after a judicial case the request carries no penalty", late_row["suggestedPenalty"] == 0 and late_row["judicialStarted"] is True, late_row)
-check("approving it adds nothing even if a penalty is sent",
-      call("POST", GW + "/legal-desk/settlement-requests/%d/decide" % late["id"], accountant, {"approve": True, "penalty": 35000})[0] == 200
-      and call("GET", GW + "/legal-desk/persons/%d" % person, accountant)[1]["totals"]["penaltiesDue"] == 250000)
-
-print("8) full settlement before a judicial case (35,000)")
+print("8) paying everything at any time, with no request")
 status, created = call("POST", GW + "/legal-desk/persons", accountant,
                        {"fullName": second["customerName"], "accounts": [{"cityValue": "lab-najaf", "customerId": second["customerId"]}]})
 person2 = created["id"]
+before_second = call("GET", GW + "/legal-app/registers", team)[1]
 case2 = call("POST", GW + "/legal-desk/persons/%d/send" % person2, accountant, {})[1]["caseId"]
-status, request = call("POST", GW + "/legal-app/cases/%d/settlement-request" % case2, team, {"note": "يريد التسديد"})
-check("settlement request sent", status == 200, request)
-pending = call("GET", GW + "/legal-desk/settlement-requests?status=Pending", accountant)[1]
-mine = next(r for r in pending if r["id"] == request["id"])
-check("before a judicial case the request suggests 35,000", mine["suggestedPenalty"] == 35000 and mine["judicialStarted"] is False, mine)
-paid_back_before = call("GET", GW + "/legal-app/registers", team)[1]
-check("accountant approves with an edited penalty",
-      call("POST", GW + "/legal-desk/settlement-requests/%d/decide" % request["id"], accountant, {"approve": True, "penalty": 30000})[0] == 200)
-paid_back_after = call("GET", GW + "/legal-app/registers", team)[1]
-check("the early-settlement amount counts as paid back to قلعة الضمان",
-      paid_back_after["earlyFees"] == paid_back_before["earlyFees"] + 30000
-      and paid_back_after["companyDebt"] == paid_back_before["companyDebt"] - 30000
-      and paid_back_after["cash"] == paid_back_before["cash"], (paid_back_before["earlyFees"], paid_back_after["earlyFees"]))
+after_second = call("GET", GW + "/legal-app/registers", team)[1]
 d = call("GET", GW + "/legal-desk/persons/%d" % person2, accountant)[1]
-check("penalty 30,000 added", d["totals"]["penaltiesDue"] == 30000, d["totals"])
+check("no 35,000: a debtor still in «الاسماء المضافة مؤخرا» owes his debt + 200,000 only",
+      d["totals"]["penaltiesDue"] == 200000 and after_second["earlyFees"] == before_second["earlyFees"]
+      and after_second["companyDebt"] == before_second["companyDebt"] - 200000, d["totals"])
 lines = [{"accountId": a["id"], "amount": a["remaining"]} for a in d["accounts"] if a["remaining"] > 0]
-status, paid = call("POST", GW + "/legal-desk/persons/%d/payments" % person2, accountant, {"lines": lines, "penaltyAmount": 30000})
-check("paying everything closes the file", status == 200 and paid["ok"] and paid["closed"] and paid["remaining"] == 0, paid)
+status, paid = call("POST", GW + "/legal-desk/persons/%d/payments" % person2, accountant, {"lines": lines, "penaltyAmount": 200000})
+check("he pays everything straight away and the file closes",
+      status == 200 and paid["ok"] and paid["closed"] and paid["remaining"] == 0 and paid["receiptNumber"], paid)
+check("a closed file takes no more money",
+      call("POST", GW + "/legal-desk/persons/%d/discounts" % person2, accountant, {"amount": 1})[0] == 409)
 
 print("9) who can see legal customers on a branch")
 list_id = big["delegateId"]
