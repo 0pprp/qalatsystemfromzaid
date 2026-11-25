@@ -67,6 +67,8 @@ export async function legalReceiptPdf(paymentId) {
 }
 
 export const legalCashbox = () => call('get', 'cashbox')
+/** month: 'yyyy-MM' (Iraq time). */
+export const legalLiability = month => call('get', 'liability', { params: { month: month || undefined } })
 export const legalRefreshBalances = () => call('post', 'refresh-balances')
 
 export function legalError(e, fallback) {
@@ -138,6 +140,7 @@ export const LEGAL_DESK_NAV = [
   { title: 'المدينون', to: { name: 'legal-desk-debtors' }, icon: { icon: 'tabler-users', size: '22' } },
   { title: 'التسديدات', to: { name: 'legal-desk-payments' }, icon: { icon: 'tabler-cash', size: '22' } },
   { title: 'القاصة', to: { name: 'legal-desk-cashbox' }, icon: { icon: 'tabler-wallet', size: '22' } },
+  { title: 'ذمة القانونية', to: { name: 'legal-desk-liability' }, icon: { icon: 'tabler-scale', size: '22' } },
 ]
 
 /** Extra tab for المدير only. */

@@ -176,6 +176,30 @@ IF NOT EXISTS (SELECT 1 FROM dbo.LegalOldReceipts WHERE ReceiptNumber = @Number)
             await connection.ExecuteAsync("UPDATE dbo.LegalPayments SET ReceiptNumber = @N WHERE Id = @Id", new { N = number, Id = id }, tx);
         }
 
+        if (await FirstTimeAsync(connection, tx, "Upgrade.DecisionsReached"))
+        {
+            // Files that reached القرارات before this was recorded: the moment comes from the file's
+            // history, and what was owed then is worked back from today (payments since are added
+            // back, charges since are left out).
+            await connection.ExecuteAsync("""
+UPDATE k SET DecisionsReachedAtUtc = COALESCE(ev.AtUtc, k.ExecutionStartedAtUtc, k.StageEnteredAtUtc)
+FROM dbo.LegalCases k
+OUTER APPLY (SELECT MIN(e.AtUtc) AS AtUtc FROM dbo.LegalCaseEvents e
+             WHERE e.CaseId = k.Id AND e.Kind = N'Move' AND e.ToStage = N'Decisions') ev
+WHERE k.DecisionsReachedAtUtc IS NULL AND (ev.AtUtc IS NOT NULL OR k.Stage IN (N'Decisions', N'Execution'));
+
+UPDATE k SET DecisionsAmount =
+      ISNULL((SELECT SUM(a.LastRemaining) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = k.PersonId), 0)
+    + ISNULL((SELECT SUM(py.DebtAmount) FROM dbo.LegalPayments py WHERE py.PersonId = k.PersonId AND py.AtUtc >= k.DecisionsReachedAtUtc), 0)
+    + ISNULL((SELECT SUM(ch.Amount) FROM dbo.LegalCharges ch WHERE ch.PersonId = k.PersonId AND ch.AtUtc < k.DecisionsReachedAtUtc), 0)
+    - ISNULL((SELECT SUM(py.PenaltyAmount) FROM dbo.LegalPayments py WHERE py.PersonId = k.PersonId AND py.AtUtc < k.DecisionsReachedAtUtc), 0)
+FROM dbo.LegalCases k
+WHERE k.DecisionsReachedAtUtc IS NOT NULL AND k.DecisionsAmount IS NULL;
+
+UPDATE dbo.LegalCases SET DecisionsAmount = 0 WHERE DecisionsAmount < 0;
+""", transaction: tx);
+        }
+
         if (await FirstTimeAsync(connection, tx, "Upgrade.FeeOnSend"))
         {
             var fee = await connection.ExecuteScalarAsync<long?>(
@@ -488,6 +512,11 @@ IF COL_LENGTH(N'dbo.LegalPayments', N'Kind') IS NULL
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UX_LegalPayments_Receipt' AND object_id = OBJECT_ID(N'dbo.LegalPayments'))
     EXEC(N'CREATE UNIQUE INDEX UX_LegalPayments_Receipt ON dbo.LegalPayments (ReceiptNumber) WHERE ReceiptNumber IS NOT NULL');
+
+-- ذمة القانونية: the first time a debtor reaches القرارات, and what he owed at that moment.
+-- From then on he is outside the ذمة and his payments no longer count into a month's تسديدات.
+IF COL_LENGTH(N'dbo.LegalCases', N'DecisionsReachedAtUtc') IS NULL
+    ALTER TABLE dbo.LegalCases ADD DecisionsReachedAtUtc DATETIME2 NULL, DecisionsAmount BIGINT NULL;
 
 -- The «تسديد» star: put on a debtor by hand in the legal app, and taken off by hand.
 IF COL_LENGTH(N'dbo.LegalCases', N'IsPaying') IS NULL

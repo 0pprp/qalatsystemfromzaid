@@ -511,6 +511,14 @@ SET Stage = @To, StageEnteredAtUtc = SYSUTCDATETIME(),
     JudicialStartedAtUtc = CASE WHEN @To = N'Judicial' AND JudicialStartedAtUtc IS NULL THEN SYSUTCDATETIME() ELSE JudicialStartedAtUtc END,
     ExecutionStartedAtUtc = CASE WHEN @To = N'Execution' AND ExecutionStartedAtUtc IS NULL THEN SYSUTCDATETIME() ELSE ExecutionStartedAtUtc END
 WHERE Id = @Id;
+
+-- First arrival at القرارات: fix the moment and what he owes right now (ذمة القانونية).
+UPDATE k SET DecisionsReachedAtUtc = SYSUTCDATETIME(),
+    DecisionsAmount = ISNULL((SELECT SUM(a.LastRemaining) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = k.PersonId), 0)
+        + ISNULL((SELECT SUM(ch.Amount) FROM dbo.LegalCharges ch WHERE ch.PersonId = k.PersonId), 0)
+        - ISNULL((SELECT SUM(py.PenaltyAmount) FROM dbo.LegalPayments py WHERE py.PersonId = k.PersonId), 0)
+FROM dbo.LegalCases k
+WHERE k.Id = @Id AND @To = N'Decisions' AND k.DecisionsReachedAtUtc IS NULL;
 """, new { Id = caseId, To = to }, tx);
         await EventAsync(c, tx, caseId, "Move", row.Stage, to, note, actor);
 
@@ -1262,6 +1270,74 @@ WHERE k.Stage NOT IN (N'Closed', N'Execution')
   AND DATEDIFF(DAY, lp.LastProgressUtc, SYSUTCDATETIME()) >= @Days
 ORDER BY lp.LastProgressUtc, k.Id;
 """, new { Days = Math.Max(0, days) }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// ذمة القانونية for one month (Iraq time).
+    /// <list type="bullet">
+    /// <item>ذمة: what the debtors with an open file who have not reached القرارات owe now. Not tied to the month.</item>
+    /// <item>تسديدات الشهر: payments and discounts of the month, leaving out those a debtor made after he reached القرارات.</item>
+    /// <item>قرارات الشهر: what each debtor owed at the moment he first reached القرارات, for those who reached it this month.</item>
+    /// </list>
+    /// </summary>
+    public async Task<object> LiabilityAsync(int year, int month, CancellationToken ct)
+    {
+        // The month in Iraq (UTC+3), as UTC bounds.
+        var fromUtc = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc).AddHours(-3);
+        var toUtc = fromUtc.AddHours(3).AddMonths(1).AddHours(-3);
+        await using var c = await _db.OpenAsync(ct);
+        var debtors = (await c.QueryAsync(new CommandDefinition("""
+SELECT p.Id AS personId, p.FullName AS fullName, k.Id AS caseId, k.Stage AS stage, k.SentAtUtc AS sentAtUtc,
+       (SELECT STRING_AGG(a.ArchiveCode, N' · ') WITHIN GROUP (ORDER BY a.Id) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = p.Id AND a.ArchiveCode IS NOT NULL) AS archiveCodes,
+       d.Remaining AS remaining, d.Penalties AS penaltiesDue, d.Remaining + d.Penalties AS due
+FROM dbo.LegalCases k
+JOIN dbo.LegalPersons p ON p.Id = k.PersonId
+CROSS APPLY (SELECT ISNULL((SELECT SUM(a.LastRemaining) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = p.Id), 0) AS Remaining,
+                    ISNULL((SELECT SUM(ch.Amount) FROM dbo.LegalCharges ch WHERE ch.PersonId = p.Id), 0)
+                  - ISNULL((SELECT SUM(py.PenaltyAmount) FROM dbo.LegalPayments py WHERE py.PersonId = p.Id), 0) AS Penalties) d
+WHERE k.Stage <> N'Closed' AND k.DecisionsReachedAtUtc IS NULL
+ORDER BY d.Remaining + d.Penalties DESC, p.FullName;
+""", cancellationToken: ct))).ToList();
+        var payments = (await c.QueryAsync(new CommandDefinition("""
+SELECT y.Id AS id, y.PersonId AS personId, p.FullName AS fullName, y.Kind AS kind, y.ReceiptNumber AS receiptNumber,
+       y.DebtAmount AS debtAmount, y.PenaltyAmount AS penaltyAmount, y.DebtAmount + y.PenaltyAmount AS amount,
+       y.Note AS note, y.Actor AS actor, y.AtUtc AS atUtc
+FROM dbo.LegalPayments y
+JOIN dbo.LegalPersons p ON p.Id = y.PersonId
+LEFT JOIN dbo.LegalCases k ON k.Id = y.CaseId
+WHERE y.AtUtc >= @From AND y.AtUtc < @To
+  AND (k.DecisionsReachedAtUtc IS NULL OR y.AtUtc < k.DecisionsReachedAtUtc)
+ORDER BY y.Id DESC;
+""", new { From = fromUtc, To = toUtc }, cancellationToken: ct))).ToList();
+        var decisions = (await c.QueryAsync(new CommandDefinition("""
+SELECT p.Id AS personId, p.FullName AS fullName, k.Id AS caseId, k.Stage AS stage,
+       k.DecisionsReachedAtUtc AS reachedAtUtc, ISNULL(k.DecisionsAmount, 0) AS amount,
+       (SELECT STRING_AGG(a.ArchiveCode, N' · ') WITHIN GROUP (ORDER BY a.Id) FROM dbo.LegalPersonAccounts a WHERE a.PersonId = p.Id AND a.ArchiveCode IS NOT NULL) AS archiveCodes
+FROM dbo.LegalCases k
+JOIN dbo.LegalPersons p ON p.Id = k.PersonId
+WHERE k.DecisionsReachedAtUtc >= @From AND k.DecisionsReachedAtUtc < @To
+ORDER BY k.DecisionsReachedAtUtc DESC;
+""", new { From = fromUtc, To = toUtc }, cancellationToken: ct))).ToList();
+
+        long Sum(IEnumerable<dynamic> rows, Func<dynamic, long> pick) => rows.Sum(pick);
+        var paid = payments.Where(p => (string)p.kind == PaymentKinds.Payment).ToList();
+        var discounted = payments.Where(p => (string)p.kind == PaymentKinds.Discount).ToList();
+        return new
+        {
+            year,
+            month,
+            liability = new { total = Sum(debtors, d => (long)d.due), count = debtors.Count, debtors },
+            monthPayments = new
+            {
+                total = Sum(payments, p => (long)p.amount),
+                fromPayments = Sum(paid, p => (long)p.amount),
+                paymentsCount = paid.Count,
+                fromDiscounts = Sum(discounted, p => (long)p.amount),
+                discountsCount = discounted.Count,
+                rows = payments,
+            },
+            monthDecisions = new { total = Sum(decisions, d => (long)d.amount), count = decisions.Count, rows = decisions },
+        };
     }
 
     /// <summary>

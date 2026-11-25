@@ -146,7 +146,7 @@ router.beforeEach((to, from, next) => {
     return next('/director-delegate-followup')
 
   // القانونية (لوحة الشركة): محاسب القانونية + المدير فقط.
-  const legalDeskPaths = ['/legal-desk-overview', '/legal-desk-lists', '/legal-desk-debtors', '/legal-desk-debtor', '/legal-desk-payments', '/legal-desk-cashbox']
+  const legalDeskPaths = ['/legal-desk-overview', '/legal-desk-lists', '/legal-desk-debtors', '/legal-desk-debtor', '/legal-desk-payments', '/legal-desk-cashbox', '/legal-desk-liability']
   if (isLegalAccountantRole(userType)) {
     if (!legalDeskPaths.includes(to.path) && to.path !== '/logout')
       return next('/legal-desk-overview')
@@ -327,6 +327,7 @@ router.beforeEach((to, from, next) => {
     '/legal-desk-debtor',
     '/legal-desk-payments',
     '/legal-desk-cashbox',
+    '/legal-desk-liability',
     '/legal-desk-stalled',
 
     // تطبيق المسوّقين (BE_CustomerApp) — كامل الصلاحيات للمدير
