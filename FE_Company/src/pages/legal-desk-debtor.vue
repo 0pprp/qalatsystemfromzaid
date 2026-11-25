@@ -31,8 +31,7 @@ const person = computed(() => data.value?.person || {})
 const accounts = computed(() => data.value?.accounts || [])
 const totals = computed(() => data.value?.totals || { remaining: 0, penaltiesDue: 0, totalDue: 0 })
 const stage = computed(() => person.value.stage || '')
-const status = computed(() => legalStatus(person.value.stage, person.value.isAnnulled))
-const pendingRequest = computed(() => (data.value?.requests || []).find(r => r.status === 'Pending'))
+const status = computed(() => legalStatus(person.value.stage))
 
 async function load() {
   if (!id.value)
@@ -228,23 +227,6 @@ onMounted(load)
       >
         تعذر الاتصال بـ {{ data.staleCities.join('، ') }} — أرصدة حساباتها من آخر تحديث وقد تكون قديمة.
       </VAlert>
-      <VAlert
-        v-if="pendingRequest"
-        type="info"
-        variant="tonal"
-        density="compact"
-        class="mb-3"
-      >
-        يوجد طلب تسديد كامل من فريق القانونية بانتظار قرارك.
-        <VBtn
-          size="small"
-          variant="text"
-          :to="{ path: '/legal-desk-payments', query: { tab: 'settlement' } }"
-        >
-          فتح الطلبات
-        </VBtn>
-      </VAlert>
-
       <VRow class="mb-1">
         <VCol
           cols="12"
@@ -439,6 +421,7 @@ onMounted(load)
               <thead>
                 <tr>
                   <th>التاريخ</th>
+                  <th>النوع</th>
                   <th class="text-end">
                     دين
                   </th>
@@ -455,6 +438,20 @@ onMounted(load)
                   :key="p.id"
                 >
                   <td>{{ formatUtc(p.atUtc, true) }}</td>
+                  <td>
+                    <VChip
+                      size="x-small"
+                      variant="tonal"
+                      :color="p.kind === 'Discount' ? 'warning' : 'success'"
+                    >
+                      {{ p.kind === 'Discount' ? 'خصم' : 'تسديد' }}
+                    </VChip>
+                    <span
+                      v-if="p.receiptNumber"
+                      class="text-caption ms-1"
+                      dir="ltr"
+                    >{{ p.receiptNumber }}</span>
+                  </td>
                   <td class="text-end">
                     {{ legalMoney(p.debtAmount) }}
                   </td>
@@ -468,7 +465,7 @@ onMounted(load)
                 </tr>
                 <tr v-if="!data.payments.length">
                   <td
-                    colspan="5"
+                    colspan="6"
                     class="text-medium-emphasis py-3"
                   >
                     لا توجد تسديدات من القانونية بعد

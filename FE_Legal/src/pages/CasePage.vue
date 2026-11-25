@@ -1,7 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api, errorMessage } from '../api'
-import AmountDialog from '../components/AmountDialog.vue'
 import FlowBar from '../components/FlowBar.vue'
 import MoveDialog from '../components/MoveDialog.vue'
 import StepDialog from '../components/StepDialog.vue'
@@ -26,7 +25,6 @@ const feesTotal = computed(() => extras.value.fees.reduce((sum, f) => sum + Numb
 const judicialSteps = computed(() => extras.value.steps.filter(s => s.flow === 'Judicial'))
 const executionSteps = computed(() => extras.value.steps.filter(s => s.flow === 'Execution'))
 const payments = computed(() => extras.value.payments.filter(p => Number(p.debtAmount) + Number(p.penaltyAmount) > 0))
-const pendingRequest = computed(() => extras.value.requests.find(r => r.status === 'Pending'))
 /** Mandatory steps of the flow he is in, each marked done when logged at least once. */
 const mandatory = computed(() => {
   const flow = flowOf(stage.value)
@@ -38,7 +36,6 @@ const mandatory = computed(() => {
 
 const missingMandatory = computed(() => mandatory.value.filter(m => !m.done))
 const blocked = computed(() => stage.value === 'Judicial' && missingMandatory.value.length > 0)
-const canAnnul = computed(() => !closed.value && stage.value !== 'Execution')
 /** Every station before the current one: the debtor can be returned to any of them. */
 const backTargets = computed(() => closed.value ? [] : STAGES.slice(0, Math.max(0, stageIndex(stage.value))).reverse())
 
@@ -124,39 +121,6 @@ async function submitText() {
   finally {
     textSaving.value = false
   }
-}
-
-// ابطال is a request: the team states مبلغ الابطال and محاسب القانونية accepts it on the company dashboard.
-const annulDialog = ref(false)
-
-async function cancelAnnul() {
-  if (!window.confirm(c.value.isAnnulled ? 'إلغاء تأشير الابطال عن هذا المدين؟' : 'سحب طلب الابطال قبل أن يبتّ فيه المحاسب؟'))
-    return
-  try {
-    await api.annul(c.value.id, false)
-    toast.ok(c.value.isAnnulled ? 'أُلغي الابطال' : 'سُحب طلب الابطال')
-    await load()
-  }
-  catch (e) {
-    toast.error(errorMessage(e, 'تعذر الإلغاء'))
-  }
-}
-
-function askSettlement() {
-  const early = !c.value.judicialStartedAtUtc
-
-  openText({
-    title: 'طلب تسديد كامل',
-    description: early
-      ? `المدين يريد تسديد كل ما عليه قبل اقامة الدعوى. يُرسل الطلب إلى محاسب القانونية في لوحة الشركة مع غرامة مقترحة ${money(settings.value.EarlySettlementPenalty ?? 35000)} د.ع يوافق عليها أو يعدّلها، ثم يسجّل التسديد.`
-      : 'المدين يريد تسديد كل ما عليه (باقي الدين + غرامات الدعوى/التنفيذ). يُرسل الطلب إلى محاسب القانونية في لوحة الشركة ليسجّل التسديد.',
-    label: 'ملاحظة للمحاسب (اختياري)',
-    confirm: 'إرسال الطلب',
-    run: async note => {
-      await api.settlementRequest(c.value.id, note)
-      toast.ok('أُرسل الطلب إلى محاسب القانونية')
-    },
-  })
 }
 
 function askClose() {
@@ -269,15 +233,6 @@ onMounted(async () => {
         <div>
           <h1 class="page-title">
             {{ c.fullName }}
-            <VChip
-              v-if="c.isAnnulled"
-              size="small"
-              color="accent"
-              variant="flat"
-              class="ms-2"
-            >
-              ابطال
-            </VChip>
           </h1>
           <div class="text-body-2 muted">
             <span class="num">{{ c.phone || 'بلا هاتف' }}</span>
@@ -364,54 +319,6 @@ onMounted(async () => {
       >
         تعذر الاتصال بـ {{ data.staleCities.join('، ') }} — أرصدة حساباتها من آخر تحديث.
       </VAlert>
-      <VAlert
-        v-if="c.pendingAnnulAmount"
-        color="accent"
-        variant="tonal"
-        density="compact"
-        class="mb-4"
-      >
-        طلب ابطال بمبلغ <strong class="num">{{ money(c.pendingAnnulAmount) }}</strong> بانتظار قبول محاسب القانونية في لوحة الشركة.
-        <template #append>
-          <VBtn
-            size="small"
-            variant="text"
-            @click="cancelAnnul"
-          >
-            سحب الطلب
-          </VBtn>
-        </template>
-      </VAlert>
-      <VAlert
-        v-if="pendingRequest"
-        type="info"
-        variant="tonal"
-        density="compact"
-        class="mb-4"
-      >
-        طلب تسديد كامل بانتظار محاسب القانونية منذ <span class="num">{{ fromUtc(pendingRequest.requestedAtUtc) }}</span>.
-      </VAlert>
-      <VAlert
-        v-if="c.isAnnulled"
-        color="accent"
-        variant="tonal"
-        density="compact"
-        class="mb-4"
-      >
-        <strong>ابطال</strong> منذ <span class="num">{{ fromUtc(c.annulledAtUtc) }}</span>
-        <span v-if="c.annulNote"> — {{ c.annulNote }}</span>
-        <template #append>
-          <VBtn
-            v-if="!closed"
-            size="small"
-            variant="text"
-            @click="cancelAnnul"
-          >
-            إلغاء الابطال
-          </VBtn>
-        </template>
-      </VAlert>
-
       <VRow>
         <!-- العمود الرئيسي -->
         <VCol
@@ -740,6 +647,7 @@ onMounted(async () => {
               <thead>
                 <tr>
                   <th>التاريخ</th>
+                  <th>النوع</th>
                   <th class="text-end">
                     من الدين
                   </th>
@@ -756,6 +664,13 @@ onMounted(async () => {
                 >
                   <td class="num">
                     {{ fromUtc(p.atUtc, true) }}
+                  </td>
+                  <td>
+                    {{ p.kind === 'Discount' ? 'خصم' : 'تسديد' }}
+                    <span
+                      v-if="p.receiptNumber"
+                      class="text-caption muted num"
+                    >{{ p.receiptNumber }}</span>
                   </td>
                   <td class="text-end num">
                     {{ money(p.debtAmount) }}
@@ -848,33 +763,9 @@ onMounted(async () => {
               إجراءات على الملف
             </div>
             <div class="d-flex flex-column ga-2">
-              <VBtn
-                v-if="!c.isAnnulled"
-                variant="tonal"
-                color="accent"
-                prepend-icon="user-check"
-                :disabled="!canAnnul || Boolean(c.pendingAnnulAmount)"
-                block
-                @click="annulDialog = true"
-              >
-                {{ c.pendingAnnulAmount ? 'طلب الابطال بانتظار المحاسب' : 'طلب ابطال (اتفاق على التسديد)' }}
-              </VBtn>
-              <div
-                v-if="!c.isAnnulled && stage === 'Execution'"
-                class="text-caption muted"
-              >
-                لا يُؤشَّر الابطال بعد الوصول إلى التنفيذ.
+              <div class="text-caption muted">
+                التسديد والخصم يسجّلهما محاسب القانونية من لوحة الشركة (تبويب التسديدات) لأي مدين وفي أي وقت.
               </div>
-              <VBtn
-                variant="tonal"
-                color="info"
-                prepend-icon="cash-banknote"
-                :disabled="closed || Boolean(pendingRequest)"
-                block
-                @click="askSettlement"
-              >
-                المدين يريد التسديد الكامل
-              </VBtn>
               <VBtn
                 variant="text"
                 prepend-icon="notes"
@@ -936,18 +827,6 @@ onMounted(async () => {
       </VRow>
     </template>
 
-    <AmountDialog
-      v-model="annulDialog"
-      title="طلب ابطال — اتفاق مع المدين"
-      description="أدخل مبلغ الابطال الذي دفعه المدين. يُرسل الطلب إلى محاسب القانونية في لوحة الشركة، وعند قبوله يُسجَّل المبلغ تسديداً ويُؤشَّر المدين ابطال. الدعوى تستمر بشكل طبيعي تحسباً لتوقفه عن التسديد."
-      confirm-label="إرسال الطلب"
-      note-label="تفاصيل الاتفاق (المبالغ والمواعيد)"
-      :max="totals.totalDue"
-      max-label="المطلوب من المدين"
-      :action="(amount, note) => api.annul(c.id, true, note, amount)"
-      success-text="أُرسل طلب الابطال إلى محاسب القانونية"
-      @done="load"
-    />
     <MoveDialog
       v-model="moveDialog"
       :legal-case="c"

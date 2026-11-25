@@ -32,7 +32,7 @@ export const MOVE_LABEL = {
 export const flowOf = stage => stage === 'Judicial' ? 'Judicial' : stage === 'Execution' ? 'Execution' : null
 
 export const CHARGE_KIND = {
-  Judicial: 'أجور اقامة دعوى',
+  Judicial: 'أجور القانونية',
   Execution: 'أجور التنفيذ',
   EarlySettlement: 'غرامة تسديد كامل',
 }
@@ -40,7 +40,7 @@ export const CHARGE_KIND = {
 /** Movements of القاصة. The three "fee" kinds move no cash: they pay قلعة الضمان back. */
 export const REGISTER_KIND = {
   CompanyFunds: 'استلام من قلعة الضمان',
-  JudicialFee: 'تسديد لقلعة الضمان — دعوى قضائية',
+  JudicialFee: 'تسديد لقلعة الضمان — أجور القانونية',
   ExecutionFee: 'تسديد لقلعة الضمان — تنفيذ',
   EarlySettlementFee: 'تسديد لقلعة الضمان — تسديد قبل الدعوى',
   LawyerTransfer: 'تحويل لمحامٍ',
@@ -52,6 +52,7 @@ export const EVENT_KIND = {
   Sent: 'استُلم من الشركة',
   Move: 'نقل',
   Close: 'إغلاق',
+  Discount: 'خصم',
   Annul: 'ابطال',
   AnnulRequest: 'طلب ابطال',
   AnnulRejected: 'رفض الابطال',

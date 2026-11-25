@@ -400,15 +400,6 @@ onMounted(load)
             >
               <td>
                 <span class="font-weight-medium">{{ row.fullName }}</span>
-                <VChip
-                  v-if="row.isAnnulled"
-                  size="x-small"
-                  color="accent"
-                  variant="flat"
-                  class="ms-1"
-                >
-                  ابطال
-                </VChip>
                 <div v-if="row.archiveCodes">
                   <span
                     v-for="code in row.archiveCodes.split(' · ')"

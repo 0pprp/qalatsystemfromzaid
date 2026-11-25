@@ -21,7 +21,7 @@ const q = ref('')
 const loading = ref(false)
 const all = ref([])
 
-const rows = computed(() => all.value.filter(r => !status.value || legalStatus(r.stage, r.isAnnulled).key === status.value))
+const rows = computed(() => all.value.filter(r => !status.value || legalStatus(r.stage).key === status.value))
 
 async function load() {
   loading.value = true
@@ -133,10 +133,10 @@ onMounted(load)
             <td>
               <VChip
                 size="small"
-                :color="legalStatus(row.stage, row.isAnnulled).color"
+                :color="legalStatus(row.stage).color"
                 variant="tonal"
               >
-                {{ legalStatus(row.stage, row.isAnnulled).label }}
+                {{ legalStatus(row.stage).label }}
               </VChip>
             </td>
           </tr>

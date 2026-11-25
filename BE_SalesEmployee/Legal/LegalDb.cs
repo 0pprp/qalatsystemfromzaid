@@ -80,8 +80,13 @@ public sealed class LegalDb
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _ready;
 
-    public LegalDb(IConfiguration configuration)
+    private readonly string _oldReceiptsFile;
+
+    public LegalDb(IConfiguration configuration, IHostEnvironment environment)
     {
+        // Receipts of the old legal system. The file holds customer names, so it lives on the server
+        // (App_Data is never deployed over), not in the repository.
+        _oldReceiptsFile = Path.Combine(environment.ContentRootPath, "App_Data", "legal", "old-receipts.csv");
         _connectionString = configuration.GetConnectionString("Legal")
             ?? configuration.GetConnectionString("SalesGateway")
             ?? "";
@@ -103,6 +108,7 @@ public sealed class LegalDb
                 {
                     await connection.ExecuteAsync(new CommandDefinition(Schema, cancellationToken: ct));
                     await SeedAsync(connection, ct);
+                    await UpgradeMoneyAsync(connection, ct);
                     _ready = true;
                 }
             }
@@ -143,6 +149,67 @@ IF NOT EXISTS (SELECT 1 FROM dbo.LegalLawyers WHERE Name = @Name)
         }
 
         await tx.CommitAsync(ct);
+    }
+
+    /// <summary>
+    /// Brings existing data in line with the payment rules: every تسديد has a receipt number, every
+    /// open file carries the legal fee (it is charged on sending now, no longer on starting the
+    /// judicial case), and the old system's receipts are loaded so their numbers are never reused.
+    /// </summary>
+    private async Task UpgradeMoneyAsync(SqlConnection connection, CancellationToken ct)
+    {
+        await using var tx = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+
+        foreach (var row in ReadOldReceipts())
+        {
+            await connection.ExecuteAsync("""
+IF NOT EXISTS (SELECT 1 FROM dbo.LegalOldReceipts WHERE ReceiptNumber = @Number)
+    INSERT INTO dbo.LegalOldReceipts (ReceiptNumber, Customer, Amount, PaymentDate, Branch) VALUES (@Number, @Customer, @Amount, @Date, @Branch);
+""", row, tx);
+        }
+
+        var missing = (await connection.QueryAsync<int>(
+            "SELECT Id FROM dbo.LegalPayments WHERE Kind = N'Payment' AND ReceiptNumber IS NULL ORDER BY Id", transaction: tx)).ToList();
+        foreach (var id in missing)
+        {
+            var number = await LegalStore.NewReceiptNumberAsync(connection, tx);
+            await connection.ExecuteAsync("UPDATE dbo.LegalPayments SET ReceiptNumber = @N WHERE Id = @Id", new { N = number, Id = id }, tx);
+        }
+
+        if (await FirstTimeAsync(connection, tx, "Upgrade.FeeOnSend"))
+        {
+            var fee = await connection.ExecuteScalarAsync<long?>(
+                "SELECT [Value] FROM dbo.LegalSettings WHERE [Key] = N'JudicialFee'", transaction: tx) ?? 200_000;
+            var open = (await connection.QueryAsync<(int Id, int PersonId)>("""
+SELECT k.Id, k.PersonId FROM dbo.LegalCases k
+WHERE k.Stage <> N'Closed'
+  AND NOT EXISTS (SELECT 1 FROM dbo.LegalCharges ch WHERE ch.CaseId = k.Id AND ch.Kind = N'Judicial');
+""", transaction: tx)).ToList();
+            if (fee > 0)
+            {
+                foreach (var legalCase in open)
+                    await LegalStore.ChargeSendFeeAsync(connection, tx, legalCase.PersonId, legalCase.Id, fee, "النظام");
+            }
+        }
+
+        await tx.CommitAsync(ct);
+    }
+
+    /// <summary>receipt_number,customer,amount,payment_date,branch — bad lines are skipped.</summary>
+    private IEnumerable<object> ReadOldReceipts()
+    {
+        if (!File.Exists(_oldReceiptsFile))
+            yield break;
+        foreach (var line in File.ReadLines(_oldReceiptsFile, System.Text.Encoding.UTF8).Skip(1))
+        {
+            var parts = line.Split(',');
+            if (parts.Length < 5 || !long.TryParse(parts[0].Trim(), out var number))
+                continue;
+            decimal.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var amount);
+            DateTime? date = DateTime.TryParse(parts[3].Trim(), System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed) ? parsed : null;
+            yield return new { Number = number, Customer = parts[1].Trim(), Amount = (long)amount, Date = date, Branch = parts[4].Trim() };
+        }
     }
 
     /// <summary>True once per database for a seed marker (kept in its own table, away from the app's settings).</summary>
@@ -413,6 +480,24 @@ CREATE TABLE dbo.LegalAnnulRequests (
 -- A mandatory step must be logged on a debtor before he can leave that flow.
 IF COL_LENGTH(N'dbo.LegalStepTypes', N'IsMandatory') IS NULL
     ALTER TABLE dbo.LegalStepTypes ADD IsMandatory BIT NOT NULL CONSTRAINT DF_LegalStepTypes_Mandatory DEFAULT (0);
+
+-- A row of LegalPayments is a تسديد (money received, with a receipt number) or a خصم (an amount
+-- taken off what the debtor owes: no money, no receipt). Both reduce what he owes the same way.
+IF COL_LENGTH(N'dbo.LegalPayments', N'Kind') IS NULL
+    ALTER TABLE dbo.LegalPayments ADD Kind NVARCHAR(20) NOT NULL CONSTRAINT DF_LegalPayments_Kind DEFAULT (N'Payment'), ReceiptNumber BIGINT NULL;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UX_LegalPayments_Receipt' AND object_id = OBJECT_ID(N'dbo.LegalPayments'))
+    EXEC(N'CREATE UNIQUE INDEX UX_LegalPayments_Receipt ON dbo.LegalPayments (ReceiptNumber) WHERE ReceiptNumber IS NOT NULL');
+
+-- Receipts issued by the old legal system: searchable, and a new receipt never takes one of their numbers.
+IF OBJECT_ID(N'dbo.LegalOldReceipts', N'U') IS NULL
+CREATE TABLE dbo.LegalOldReceipts (
+    ReceiptNumber BIGINT NOT NULL PRIMARY KEY,
+    Customer NVARCHAR(255) NULL,
+    Amount BIGINT NOT NULL CONSTRAINT DF_LegalOldReceipts_Amount DEFAULT (0),
+    PaymentDate DATE NULL,
+    Branch NVARCHAR(200) NULL
+);
 """;
 }
 

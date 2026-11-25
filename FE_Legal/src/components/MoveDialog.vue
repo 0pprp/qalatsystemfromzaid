@@ -60,8 +60,6 @@ watch(() => props.modelValue, async open => {
 const target = computed(() => stageMeta(props.to))
 
 const fee = computed(() => {
-  if (props.to === 'Judicial' && !props.legalCase?.judicialStartedAtUtc)
-    return { amount: props.settings.JudicialFee ?? 200000, what: 'اقامة الدعوى' }
   if (props.to === 'Execution' && !props.legalCase?.executionStartedAtUtc)
     return { amount: props.settings.ExecutionFee ?? 150000, what: 'التنفيذ' }
 

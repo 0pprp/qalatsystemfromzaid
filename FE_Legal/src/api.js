@@ -75,10 +75,8 @@ export const api = {
   upcomingSteps: ({ lawyerId, caseId } = {}) => get('upcoming-steps', { lawyerId: lawyerId || undefined, caseId: caseId || undefined }),
   deleteStep: (id, stepId) => http.delete(`cases/${id}/steps/${stepId}`).then(r => r.data),
   assignLawyer: (id, lawyerId) => post(`cases/${id}/lawyer`, { lawyerId: lawyerId || null }),
-  annul: (id, annulled, note, amount) => post(`cases/${id}/annul`, { annulled, note: note || null, amount: amount || 0 }),
   decision: (id, text, date) => post(`cases/${id}/decision`, { text: text || null, date: date || null }),
   note: (id, note) => post(`cases/${id}/note`, { note: note || null }),
-  settlementRequest: (id, note) => post(`cases/${id}/settlement-request`, { note: note || null }),
   close: (id, note) => post(`cases/${id}/close`, { note: note || null }),
 
   stepTypes: () => get('step-types'),

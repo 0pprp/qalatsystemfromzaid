@@ -2,69 +2,59 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
+import LegalDiscountDialog from '@/components/LegalDiscountDialog.vue'
 import LegalPayDialog from '@/components/LegalPayDialog.vue'
-import LegalSettlementRequests from '@/components/LegalSettlementRequests.vue'
+import LegalReceiptDialog from '@/components/LegalReceiptDialog.vue'
 import {
+  LEGAL_STATUS,
   formatUtc,
-  legalAnnulRequests,
-  legalDecideAnnul,
+  legalDay,
   legalError,
   legalMoney,
-  legalOverview,
+  legalOldReceipts,
   legalPayments,
   legalPersons,
-  legalReturnFromAnnul,
   legalStatus,
 } from '@/composables/legalDeskApi'
 
 /**
- * التسديدات: everything محاسب القانونية does with debtors' money in one place —
- * the payments taken, ابطال requests from the legal app, and full-settlement requests.
+ * التسديدات: everything محاسب القانونية does with debtors' money —
+ * taking a تسديد or giving a خصم to any debtor in the legal app, the records of both,
+ * and the receipts of the old legal system.
  */
+const TABS = ['pay', 'payments', 'discounts', 'old']
+
 const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 
-const tab = ref(['pay', 'payments', 'annul', 'settlement'].includes(route.query.tab) ? route.query.tab : 'pay')
-const pending = ref({ annul: 0, settlement: 0 })
-
-async function loadPending() {
-  try {
-    const { money } = await legalOverview()
-
-    pending.value = { annul: Number(money.pendingAnnuls || 0), settlement: Number(money.pendingSettlements || 0) }
-  }
-  catch { /* the badges are a convenience only */ }
-}
+const tab = ref(TABS.includes(route.query.tab) ? route.query.tab : 'pay')
 
 watch(tab, value => router.replace({ query: value === 'pay' ? {} : { tab: value } }))
 
-// —— تسديد: who is paying ——
-const WHO = [
-  { key: 'Paying', label: 'ابطال (التسديد)' },
-  { key: 'Execution', label: 'التنفيذ' },
-  { key: 'All', label: 'كل المدينين' },
-]
+// —— تسديد: every debtor with an open file in the legal app ——
+const FILTERS = ['All', 'Waiting', 'Judicial', 'Execution']
 
-const who = ref('Paying')
+const filter = ref('All')
 const debtorQ = ref('')
 const debtors = ref([])
 const debtorsLoading = ref(false)
 
 const due = d => Number(d.remainingSnapshot || 0) + Number(d.penaltiesCharged || 0) - Number(d.penaltiesPaid || 0)
+const paid = d => Number(d.debtPaid || 0) + Number(d.penaltiesPaid || 0) - Number(d.discounts || 0)
 
 const shownDebtors = computed(() => debtors.value.filter(d => {
-  const status = legalStatus(d.stage, d.isAnnulled).key
-  if (status === 'Closed')
+  const status = legalStatus(d.stage).key
+  if (status === 'NotSent' || status === 'Closed')
     return false
 
-  return who.value === 'All' || status === who.value
+  return filter.value === 'All' || status === filter.value
 }))
 
 async function loadDebtors() {
   debtorsLoading.value = true
   try {
-    debtors.value = await legalPersons({ q: debtorQ.value.trim() })
+    debtors.value = await legalPersons({ q: (debtorQ.value || '').trim() })
   }
   catch (e) {
     toast.error(legalError(e, 'تعذر تحميل المدينين'))
@@ -74,61 +64,47 @@ async function loadDebtors() {
   }
 }
 
-// The one تسديد dialog of the dashboard.
+// —— حوار التسديد والخصم والوصل ——
 const payDialog = ref(false)
-const payPerson = ref(0)
-const payFull = ref(false)
+const discountDialog = ref(false)
+const current = ref(0)
 
-function openPay(personId, full = false) {
-  payPerson.value = Number(personId)
-  payFull.value = full
+function openPay(personId) {
+  current.value = Number(personId)
   payDialog.value = true
 }
 
-const afterPaid = () => Promise.all([loadDebtors(), loadPayments(), loadPending()])
-
-// —— إرجاع: an ابطال debtor who stopped paying goes back to the legal app ——
-const backDialog = ref(false)
-const backDebtor = ref(null)
-const backNote = ref('')
-const backSaving = ref(false)
-
-function openBack(debtor) {
-  backDebtor.value = debtor
-  backNote.value = ''
-  backDialog.value = true
+function openDiscount(personId) {
+  current.value = Number(personId)
+  discountDialog.value = true
 }
 
-async function confirmBack() {
-  backSaving.value = true
-  try {
-    await legalReturnFromAnnul(backDebtor.value.caseId, backNote.value)
-    backDialog.value = false
-    toast.success('أُعيد المدين إلى القانونية')
-    await Promise.all([loadDebtors(), loadPending()])
-  }
-  catch (e) {
-    toast.error(legalError(e, 'تعذر إرجاع المدين'))
-  }
-  finally {
-    backSaving.value = false
-  }
+const receiptDialog = ref(false)
+const receipt = ref({ id: 0, number: '' })
+
+function openReceipt(paymentId, number) {
+  receipt.value = { id: Number(paymentId), number }
+  receiptDialog.value = true
 }
 
-// —— كل التسديدات ——
-const q = ref('')
+async function afterPaid(res) {
+  await Promise.all([loadDebtors(), loadPayments()])
+  if (res?.paymentId && res.receiptNumber)
+    openReceipt(res.paymentId, res.receiptNumber)
+}
+
+const afterDiscount = () => Promise.all([loadDebtors(), loadDiscounts()])
+
+// —— سجل التسديدات ——
 const payments = ref([])
 const paymentsLoading = ref(false)
-
-const totals = computed(() => ({
-  debt: payments.value.reduce((sum, p) => sum + Number(p.debtAmount || 0), 0),
-  penalty: payments.value.reduce((sum, p) => sum + Number(p.penaltyAmount || 0), 0),
-}))
+const paymentsQ = ref('')
+const paymentsTotal = computed(() => payments.value.reduce((sum, p) => sum + Number(p.debtAmount) + Number(p.penaltyAmount), 0))
 
 async function loadPayments() {
   paymentsLoading.value = true
   try {
-    payments.value = await legalPayments(q.value.trim())
+    payments.value = await legalPayments((paymentsQ.value || '').trim())
   }
   catch (e) {
     toast.error(legalError(e, 'تعذر تحميل التسديدات'))
@@ -138,76 +114,50 @@ async function loadPayments() {
   }
 }
 
-// —— طلبات الابطال ——
-const ANNUL_STATUS = {
-  Pending: { label: 'بانتظار القبول', color: 'warning' },
-  Approved: { label: 'مقبول', color: 'success' },
-  Rejected: { label: 'مرفوض', color: 'error' },
-  Withdrawn: { label: 'سحبه الفريق', color: 'default' },
-}
+// —— الخصومات ——
+const discounts = ref([])
+const discountsLoading = ref(false)
+const discountsQ = ref('')
+const discountsTotal = computed(() => discounts.value.reduce((sum, p) => sum + Number(p.debtAmount) + Number(p.penaltyAmount), 0))
 
-const annulStatus = ref('Pending')
-const annulRows = ref([])
-const annulLoading = ref(false)
-const annulDialog = ref(false)
-const annulCurrent = ref(null)
-const annulNote = ref('')
-const annulSaving = ref(false)
-
-/** How مبلغ الابطال will be recorded: the debt first, anything left against the legal penalties. */
-const annulSplit = computed(() => {
-  const r = annulCurrent.value
-  if (!r)
-    return { debt: 0, penalty: 0, tooMuch: false }
-  const debt = Math.min(Number(r.amount), Number(r.remainingSnapshot))
-  const penalty = Number(r.amount) - debt
-
-  return { debt, penalty, tooMuch: penalty > Number(r.penaltiesDue) }
-})
-
-async function loadAnnul() {
-  annulLoading.value = true
+async function loadDiscounts() {
+  discountsLoading.value = true
   try {
-    annulRows.value = await legalAnnulRequests(annulStatus.value)
+    discounts.value = await legalPayments((discountsQ.value || '').trim(), 'Discount')
   }
   catch (e) {
-    toast.error(legalError(e, 'تعذر تحميل طلبات الابطال'))
+    toast.error(legalError(e, 'تعذر تحميل الخصومات'))
   }
   finally {
-    annulLoading.value = false
+    discountsLoading.value = false
   }
 }
 
-function openAnnul(row) {
-  annulCurrent.value = row
-  annulNote.value = ''
-  annulDialog.value = true
-}
+// —— وصولات النظام القديم ——
+const old = ref([])
+const oldLoading = ref(false)
+const oldQ = ref('')
+const oldTotal = computed(() => old.value.reduce((sum, r) => sum + Number(r.amount || 0), 0))
 
-async function decideAnnul(approve) {
-  annulSaving.value = true
+async function loadOld() {
+  oldLoading.value = true
   try {
-    await legalDecideAnnul(annulCurrent.value.id, approve, annulNote.value)
-    annulDialog.value = false
-    toast.success(approve ? 'قُبل الابطال وسُجّل المبلغ تسديداً' : 'رُفض طلب الابطال')
-    await Promise.all([loadAnnul(), loadPayments(), loadPending(), loadDebtors()])
+    old.value = await legalOldReceipts((oldQ.value || '').trim())
   }
   catch (e) {
-    toast.error(legalError(e, 'تعذر حفظ القرار'))
+    toast.error(legalError(e, 'تعذر تحميل الوصولات القديمة'))
   }
   finally {
-    annulSaving.value = false
+    oldLoading.value = false
   }
 }
-
-watch(annulStatus, loadAnnul)
 
 onMounted(async () => {
-  await Promise.all([loadDebtors(), loadPayments(), loadAnnul(), loadPending()])
+  await Promise.all([loadDebtors(), loadPayments(), loadDiscounts(), loadOld()])
 
   // Arriving from a debtor's profile: open his تسديد straight away.
   if (route.query.pay)
-    openPay(route.query.pay, route.query.full === '1')
+    openPay(route.query.pay)
 })
 </script>
 
@@ -225,27 +175,11 @@ onMounted(async () => {
         <VTab value="payments">
           سجل التسديدات
         </VTab>
-        <VTab value="annul">
-          طلبات الابطال
-          <VChip
-            v-if="pending.annul"
-            size="x-small"
-            color="warning"
-            class="ms-2"
-          >
-            {{ pending.annul }}
-          </VChip>
+        <VTab value="discounts">
+          الخصومات
         </VTab>
-        <VTab value="settlement">
-          طلبات التسديد الكامل
-          <VChip
-            v-if="pending.settlement"
-            size="x-small"
-            color="warning"
-            class="ms-2"
-          >
-            {{ pending.settlement }}
-          </VChip>
+        <VTab value="old">
+          وصولات النظام القديم
         </VTab>
       </VTabs>
       <VDivider />
@@ -255,18 +189,18 @@ onMounted(async () => {
         <VWindowItem value="pay">
           <VCardText class="d-flex flex-wrap align-center justify-space-between gap-3">
             <VChipGroup
-              v-model="who"
+              v-model="filter"
               mandatory
               selected-class="text-primary"
             >
               <VChip
-                v-for="w in WHO"
-                :key="w.key"
-                :value="w.key"
+                v-for="f in FILTERS"
+                :key="f"
+                :value="f"
                 filter
                 variant="outlined"
               >
-                {{ w.label }}
+                {{ f === 'All' ? 'كل المدينين' : LEGAL_STATUS[f].label }}
               </VChip>
             </VChipGroup>
             <VTextField
@@ -302,6 +236,9 @@ onMounted(async () => {
                 <th class="text-end">
                   سدّد حتى الآن
                 </th>
+                <th class="text-end">
+                  خصومات
+                </th>
                 <th />
               </tr>
             </thead>
@@ -324,10 +261,10 @@ onMounted(async () => {
                 <td>
                   <VChip
                     size="small"
-                    :color="legalStatus(d.stage, d.isAnnulled).color"
+                    :color="legalStatus(d.stage).color"
                     variant="tonal"
                   >
-                    {{ legalStatus(d.stage, d.isAnnulled).label }}
+                    {{ legalStatus(d.stage).label }}
                   </VChip>
                 </td>
                 <td class="text-end">
@@ -340,19 +277,22 @@ onMounted(async () => {
                   {{ legalMoney(due(d)) }}
                 </td>
                 <td class="text-end">
-                  {{ legalMoney(Number(d.debtPaid) + Number(d.penaltiesPaid)) }}
+                  {{ legalMoney(paid(d)) }}
+                </td>
+                <td class="text-end">
+                  {{ legalMoney(d.discounts) }}
                 </td>
                 <td class="text-end text-no-wrap">
                   <VBtn
-                    v-if="d.isAnnulled"
                     size="small"
                     variant="text"
-                    color="secondary"
-                    prepend-icon="tabler-arrow-back-up"
+                    color="warning"
+                    prepend-icon="tabler-discount"
                     class="me-2"
-                    @click="openBack(d)"
+                    :disabled="due(d) <= 0"
+                    @click="openDiscount(d.id)"
                   >
-                    إرجاع
+                    خصم
                   </VBtn>
                   <VBtn
                     size="small"
@@ -367,10 +307,10 @@ onMounted(async () => {
               </tr>
               <tr v-if="!debtorsLoading && !shownDebtors.length">
                 <td
-                  colspan="7"
+                  colspan="8"
                   class="text-center text-medium-emphasis py-8"
                 >
-                  {{ who === 'Paying' ? 'لا يوجد مدينون ابطال حالياً' : 'لا يوجد مدينون هنا' }}
+                  لا يوجد مدينون هنا
                 </td>
               </tr>
             </tbody>
@@ -380,23 +320,20 @@ onMounted(async () => {
         <!-- سجل التسديدات -->
         <VWindowItem value="payments">
           <VCardText class="d-flex flex-wrap align-center justify-space-between gap-3">
+            <div class="text-body-2">
+              <strong>{{ payments.length }}</strong> تسديد · المجموع <strong>{{ legalMoney(paymentsTotal) }}</strong>
+            </div>
             <VTextField
-              v-model="q"
-              placeholder="بحث بالاسم أو الهاتف أو كود الارشيف"
+              v-model="paymentsQ"
+              placeholder="بحث بالاسم أو رقم الوصل أو كود الارشيف"
               prepend-inner-icon="tabler-search"
               density="compact"
               hide-details
               clearable
               style="max-inline-size: 320px;"
               @keyup.enter="loadPayments"
-              @click:clear="q = ''; loadPayments()"
+              @click:clear="paymentsQ = ''; loadPayments()"
             />
-            <div class="d-flex align-center gap-4">
-              <div class="text-body-2">
-                المجموع <strong>{{ legalMoney(totals.debt + totals.penalty) }}</strong>
-                <span class="text-medium-emphasis"> (دين {{ legalMoney(totals.debt) }} · غرامات {{ legalMoney(totals.penalty) }})</span>
-              </div>
-            </div>
           </VCardText>
           <VProgressLinear
             v-if="paymentsLoading"
@@ -405,19 +342,20 @@ onMounted(async () => {
           <VTable>
             <thead>
               <tr>
+                <th>رقم الوصل</th>
                 <th>التاريخ</th>
                 <th>المدين</th>
                 <th class="text-end">
-                  دين
+                  من الدين
                 </th>
                 <th class="text-end">
-                  غرامات
+                  من الغرامات
                 </th>
                 <th class="text-end">
                   المجموع
                 </th>
                 <th>بواسطة</th>
-                <th>ملاحظة</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -425,17 +363,24 @@ onMounted(async () => {
                 v-for="p in payments"
                 :key="p.id"
               >
-                <td>{{ formatUtc(p.atUtc, true) }}</td>
+                <td
+                  class="font-weight-medium"
+                  dir="ltr"
+                >
+                  {{ p.receiptNumber }}
+                </td>
+                <td class="text-no-wrap">
+                  {{ formatUtc(p.atUtc, true) }}
+                </td>
                 <td>
                   <RouterLink :to="{ path: '/legal-desk-debtor', query: { id: p.personId } }">
                     {{ p.fullName }}
                   </RouterLink>
                   <div
-                    v-if="p.archiveCodes"
+                    v-if="p.note"
                     class="text-caption text-medium-emphasis"
-                    dir="ltr"
                   >
-                    {{ p.archiveCodes }}
+                    {{ p.note }}
                   </div>
                 </td>
                 <td class="text-end">
@@ -444,26 +389,24 @@ onMounted(async () => {
                 <td class="text-end">
                   {{ legalMoney(p.penaltyAmount) }}
                 </td>
-                <td class="text-end font-weight-medium">
+                <td class="text-end font-weight-bold">
                   {{ legalMoney(Number(p.debtAmount) + Number(p.penaltyAmount)) }}
                 </td>
                 <td>{{ p.actor }}</td>
-                <td>
-                  <VChip
-                    v-if="p.isAnnul"
-                    size="x-small"
-                    color="info"
+                <td class="text-end">
+                  <VBtn
+                    size="small"
                     variant="tonal"
-                    class="me-1"
+                    prepend-icon="tabler-receipt"
+                    @click="openReceipt(p.id, p.receiptNumber)"
                   >
-                    ابطال
-                  </VChip>
-                  {{ p.note || '' }}
+                    الوصل
+                  </VBtn>
                 </td>
               </tr>
               <tr v-if="!paymentsLoading && !payments.length">
                 <td
-                  colspan="7"
+                  colspan="8"
                   class="text-center text-medium-emphasis py-8"
                 >
                   لا توجد تسديدات
@@ -473,268 +416,164 @@ onMounted(async () => {
           </VTable>
         </VWindowItem>
 
-        <!-- طلبات الابطال -->
-        <VWindowItem value="annul">
+        <!-- الخصومات -->
+        <VWindowItem value="discounts">
           <VCardText class="d-flex flex-wrap align-center justify-space-between gap-3">
-            <div class="text-body-2 text-medium-emphasis">
-              فريق القانونية اتفق مع المدين وأرسل مبلغ الابطال. عند القبول يُسجَّل المبلغ تسديداً ويصبح المدين «التسديد».
+            <div class="text-body-2">
+              <strong>{{ discounts.length }}</strong> خصم · المجموع <strong>{{ legalMoney(discountsTotal) }}</strong>
             </div>
-            <VChipGroup
-              v-model="annulStatus"
-              mandatory
-              selected-class="text-primary"
-            >
-              <VChip
-                v-for="(s, key) in { Pending: 'بانتظار القبول', Approved: 'المقبولة', Rejected: 'المرفوضة' }"
-                :key="key"
-                :value="key"
-                filter
-                variant="outlined"
-              >
-                {{ s }}
-              </VChip>
-            </VChipGroup>
+            <VTextField
+              v-model="discountsQ"
+              placeholder="بحث بالاسم أو كود الارشيف"
+              prepend-inner-icon="tabler-search"
+              density="compact"
+              hide-details
+              clearable
+              style="max-inline-size: 320px;"
+              @keyup.enter="loadDiscounts"
+              @click:clear="discountsQ = ''; loadDiscounts()"
+            />
           </VCardText>
           <VProgressLinear
-            v-if="annulLoading"
+            v-if="discountsLoading"
             indeterminate
           />
           <VTable>
             <thead>
               <tr>
+                <th>التاريخ</th>
                 <th>المدين</th>
-                <th>الحالة</th>
                 <th class="text-end">
-                  مبلغ الابطال
+                  من الدين
                 </th>
                 <th class="text-end">
-                  المطلوب منه
+                  من الغرامات
                 </th>
-                <th>أرسله</th>
-                <th>تفاصيل الاتفاق</th>
-                <th />
+                <th class="text-end">
+                  مبلغ الخصم
+                </th>
+                <th>السبب</th>
+                <th>بواسطة</th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="row in annulRows"
-                :key="row.id"
+                v-for="p in discounts"
+                :key="p.id"
               >
-                <td>
-                  <RouterLink :to="{ path: '/legal-desk-debtor', query: { id: row.personId } }">
-                    {{ row.fullName }}
-                  </RouterLink>
-                  <div
-                    class="text-caption text-medium-emphasis"
-                    dir="ltr"
-                  >
-                    {{ row.archiveCodes || row.phone || '' }}
-                  </div>
+                <td class="text-no-wrap">
+                  {{ formatUtc(p.atUtc, true) }}
                 </td>
                 <td>
-                  <VChip
-                    size="small"
-                    :color="legalStatus(row.stage).color"
-                    variant="tonal"
-                  >
-                    {{ legalStatus(row.stage).label }}
-                  </VChip>
+                  <RouterLink :to="{ path: '/legal-desk-debtor', query: { id: p.personId } }">
+                    {{ p.fullName }}
+                  </RouterLink>
+                </td>
+                <td class="text-end">
+                  {{ legalMoney(p.debtAmount) }}
+                </td>
+                <td class="text-end">
+                  {{ legalMoney(p.penaltyAmount) }}
                 </td>
                 <td class="text-end font-weight-bold">
-                  {{ legalMoney(row.amount) }}
+                  {{ legalMoney(Number(p.debtAmount) + Number(p.penaltyAmount)) }}
                 </td>
-                <td class="text-end">
-                  {{ legalMoney(Number(row.remainingSnapshot) + Number(row.penaltiesDue)) }}
-                </td>
-                <td>
-                  {{ row.requestedBy }}
-                  <div class="text-caption text-medium-emphasis">
-                    {{ formatUtc(row.requestedAtUtc, true) }}
-                  </div>
-                </td>
-                <td>{{ row.note || '—' }}</td>
-                <td class="text-end">
-                  <VBtn
-                    v-if="row.status === 'Pending'"
-                    size="small"
-                    color="primary"
-                    @click="openAnnul(row)"
-                  >
-                    البت في الطلب
-                  </VBtn>
-                  <template v-else>
-                    <VChip
-                      size="small"
-                      :color="ANNUL_STATUS[row.status]?.color"
-                      variant="tonal"
-                    >
-                      {{ ANNUL_STATUS[row.status]?.label || row.status }}
-                    </VChip>
-                    <div
-                      v-if="row.decidedBy"
-                      class="text-caption text-medium-emphasis"
-                    >
-                      {{ row.decidedBy }} · {{ formatUtc(row.decidedAtUtc) }}
-                    </div>
-                  </template>
-                </td>
+                <td>{{ p.note || '—' }}</td>
+                <td>{{ p.actor }}</td>
               </tr>
-              <tr v-if="!annulLoading && !annulRows.length">
+              <tr v-if="!discountsLoading && !discounts.length">
                 <td
                   colspan="7"
                   class="text-center text-medium-emphasis py-8"
                 >
-                  لا توجد طلبات ابطال
+                  لا توجد خصومات
                 </td>
               </tr>
             </tbody>
           </VTable>
         </VWindowItem>
 
-        <!-- طلبات التسديد الكامل -->
-        <VWindowItem value="settlement">
-          <LegalSettlementRequests
-            @changed="loadPending"
-            @pay="openPay($event, true)"
+        <!-- وصولات النظام القديم -->
+        <VWindowItem value="old">
+          <VCardText class="d-flex flex-wrap align-center justify-space-between gap-3">
+            <div class="text-body-2">
+              <strong>{{ old.length }}</strong> وصل من النظام القديم · المجموع <strong>{{ legalMoney(oldTotal) }}</strong>
+              <span class="text-medium-emphasis"> — للبحث فقط، وأرقامها لا تُعطى لوصل جديد</span>
+            </div>
+            <VTextField
+              v-model="oldQ"
+              placeholder="بحث برقم الوصل أو الاسم أو الفرع"
+              prepend-inner-icon="tabler-search"
+              density="compact"
+              hide-details
+              clearable
+              style="max-inline-size: 320px;"
+              @keyup.enter="loadOld"
+              @click:clear="oldQ = ''; loadOld()"
+            />
+          </VCardText>
+          <VProgressLinear
+            v-if="oldLoading"
+            indeterminate
           />
+          <VTable>
+            <thead>
+              <tr>
+                <th>رقم الوصل</th>
+                <th>التاريخ</th>
+                <th>الاسم</th>
+                <th>الفرع</th>
+                <th class="text-end">
+                  المبلغ
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="r in old"
+                :key="r.receiptNumber"
+              >
+                <td
+                  class="font-weight-medium"
+                  dir="ltr"
+                >
+                  {{ r.receiptNumber }}
+                </td>
+                <td>{{ legalDay(r.paymentDate) }}</td>
+                <td>{{ r.customer }}</td>
+                <td>{{ r.branch }}</td>
+                <td class="text-end font-weight-bold">
+                  {{ legalMoney(r.amount) }}
+                </td>
+              </tr>
+              <tr v-if="!oldLoading && !old.length">
+                <td
+                  colspan="5"
+                  class="text-center text-medium-emphasis py-8"
+                >
+                  لا توجد وصولات مطابقة
+                </td>
+              </tr>
+            </tbody>
+          </VTable>
         </VWindowItem>
       </VWindow>
     </VCard>
 
     <LegalPayDialog
       v-model="payDialog"
-      :person-id="payPerson"
-      :full="payFull"
+      :person-id="current"
       @paid="afterPaid"
     />
-
-    <VDialog
-      v-model="backDialog"
-      max-width="480"
-      :persistent="backSaving"
-    >
-      <VCard>
-        <VCardTitle>إرجاع إلى القانونية — {{ backDebtor?.fullName }}</VCardTitle>
-        <VCardText>
-          <div class="mb-3">
-            يُرفع الابطال عن المدين ويعود في تطبيق القانونية ملفاً عادياً في محطته الحالية. ما سدّده حتى الآن يبقى محسوباً.
-          </div>
-          <VTextField
-            v-model="backNote"
-            label="السبب (اختياري)"
-            density="compact"
-            hide-details
-          />
-        </VCardText>
-        <VCardActions>
-          <VSpacer />
-          <VBtn
-            variant="text"
-            :disabled="backSaving"
-            @click="backDialog = false"
-          >
-            إلغاء
-          </VBtn>
-          <VBtn
-            color="primary"
-            variant="flat"
-            :loading="backSaving"
-            @click="confirmBack"
-          >
-            إرجاع
-          </VBtn>
-        </VCardActions>
-      </VCard>
-    </VDialog>
-
-    <VDialog
-      v-model="annulDialog"
-      max-width="520"
-      :persistent="annulSaving"
-    >
-      <VCard v-if="annulCurrent">
-        <VCardTitle>طلب ابطال — {{ annulCurrent.fullName }}</VCardTitle>
-        <VCardText>
-          <VTable
-            density="compact"
-            class="mb-3"
-          >
-            <tbody>
-              <tr>
-                <td>مبلغ الابطال</td>
-                <td class="text-end font-weight-bold">
-                  {{ legalMoney(annulCurrent.amount) }}
-                </td>
-              </tr>
-              <tr>
-                <td>يُسجَّل على الدين</td>
-                <td class="text-end">
-                  {{ legalMoney(annulSplit.debt) }}
-                </td>
-              </tr>
-              <tr>
-                <td>يُسجَّل على غرامات القانونية</td>
-                <td class="text-end">
-                  {{ legalMoney(annulSplit.penalty) }}
-                </td>
-              </tr>
-              <tr>
-                <td>يبقى عليه بعد القبول</td>
-                <td class="text-end">
-                  {{ legalMoney(Math.max(0, Number(annulCurrent.remainingSnapshot) + Number(annulCurrent.penaltiesDue) - Number(annulCurrent.amount))) }}
-                </td>
-              </tr>
-            </tbody>
-          </VTable>
-          <VAlert
-            v-if="annulSplit.tooMuch"
-            type="error"
-            variant="tonal"
-            density="compact"
-            class="mb-3"
-          >
-            مبلغ الابطال أكبر من كل المطلوب من المدين. ارفض الطلب ليصحّحه الفريق.
-          </VAlert>
-          <div
-            v-if="annulCurrent.note"
-            class="text-body-2 mb-3"
-          >
-            <strong>الاتفاق:</strong> {{ annulCurrent.note }}
-          </div>
-          <VTextField
-            v-model="annulNote"
-            label="ملاحظة (اختياري)"
-            density="compact"
-            hide-details
-          />
-        </VCardText>
-        <VCardActions>
-          <VBtn
-            color="error"
-            variant="text"
-            :disabled="annulSaving"
-            @click="decideAnnul(false)"
-          >
-            رفض
-          </VBtn>
-          <VSpacer />
-          <VBtn
-            variant="text"
-            @click="annulDialog = false"
-          >
-            إغلاق
-          </VBtn>
-          <VBtn
-            color="primary"
-            variant="flat"
-            :loading="annulSaving"
-            :disabled="annulSplit.tooMuch"
-            @click="decideAnnul(true)"
-          >
-            قبول وتسجيل التسديد
-          </VBtn>
-        </VCardActions>
-      </VCard>
-    </VDialog>
+    <LegalDiscountDialog
+      v-model="discountDialog"
+      :person-id="current"
+      @done="afterDiscount"
+    />
+    <LegalReceiptDialog
+      v-model="receiptDialog"
+      :payment-id="receipt.id"
+      :receipt-number="receipt.number"
+    />
   </div>
 </template>

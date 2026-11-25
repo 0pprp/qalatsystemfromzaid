@@ -141,27 +141,6 @@ public sealed class LegalAppController : ControllerBase
         return Ok(new { id });
     }
 
-    public sealed class AnnulBody
-    {
-        public bool Annulled { get; set; }
-        public string? Note { get; set; }
-        /// <summary>مبلغ الابطال — required when asking for ابطال.</summary>
-        public long Amount { get; set; }
-    }
-
-    /// <summary>
-    /// annulled=true: asks محاسب القانونية for ابطال with مبلغ الابطال (the debtor is marked only on acceptance).
-    /// annulled=false: removes ابطال, or withdraws a request that is still waiting.
-    /// </summary>
-    [HttpPost("cases/{id:int}/annul")]
-    public async Task<IActionResult> Annul(int id, [FromBody] AnnulBody body, CancellationToken ct)
-    {
-        if (body.Annulled)
-            return Ok(new { id, requestId = await _store.RequestAnnulAsync(id, body.Amount, body.Note, Actor, ct) });
-        await _store.SetAnnulledAsync(id, false, body.Note, Actor, ct);
-        return Ok(new { id });
-    }
-
     public sealed class DecisionBody
     {
         public string? Text { get; set; }
@@ -186,11 +165,6 @@ public sealed class LegalAppController : ControllerBase
         await _store.SetNoteAsync(id, body.Note, ct);
         return Ok(new { id });
     }
-
-    /// <summary>The debtor wants to pay everything: asks محاسب القانونية to approve the penalty and take the تسديد.</summary>
-    [HttpPost("cases/{id:int}/settlement-request")]
-    public async Task<IActionResult> SettlementRequest(int id, [FromBody] NoteBody? body, CancellationToken ct) =>
-        Ok(new { id = await _store.RequestSettlementAsync(id, body?.Note, Actor, ct) });
 
     [HttpPost("cases/{id:int}/close")]
     public async Task<IActionResult> Close(int id, [FromBody] NoteBody? body, CancellationToken ct)

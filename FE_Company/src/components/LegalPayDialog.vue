@@ -89,7 +89,7 @@ async function pay() {
       note.value,
     )
 
-    toast.success(res.closed ? 'تم التسديد الكامل وأُغلق الملف' : 'تم تسجيل التسديد')
+    toast.success(res.closed ? 'تم التسديد الكامل وأُغلق الملف' : `تم تسجيل التسديد — وصل ${res.receiptNumber || ''}`)
     emit('update:modelValue', false)
     emit('paid', res)
   }

@@ -277,33 +277,6 @@ onMounted(async () => {
             <td>
               <div class="font-weight-medium">
                 {{ row.fullName }}
-                <VChip
-                  v-if="row.isAnnulled"
-                  size="x-small"
-                  color="accent"
-                  variant="flat"
-                  class="ms-1"
-                >
-                  ابطال
-                </VChip>
-                <VChip
-                  v-if="row.pendingAnnulAmount"
-                  size="x-small"
-                  color="accent"
-                  variant="tonal"
-                  class="ms-1"
-                >
-                  طلب ابطال
-                </VChip>
-                <VChip
-                  v-if="row.pendingSettlement"
-                  size="x-small"
-                  color="info"
-                  variant="tonal"
-                  class="ms-1"
-                >
-                  طلب تسديد كامل
-                </VChip>
               </div>
               <div class="text-caption muted">
                 <span class="num">{{ row.phone || '' }}</span>

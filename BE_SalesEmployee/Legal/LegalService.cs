@@ -351,66 +351,26 @@ public sealed class LegalService
     /// <summary>
     /// A تسديد by the legal accountant. The debtor has left his branch, so the whole amount is
     /// recorded in القانونية (debt lines + penalty part); nothing is posted to a branch.
-    /// When nothing is left to pay the open file is closed.
+    /// It gets a receipt number. When nothing is left to pay the open file is closed.
     /// </summary>
-    public async Task<object> PayAsync(int personId, IReadOnlyList<LegalStore.PayLine> lines, long penaltyAmount, string? note,
-        string actor, CancellationToken ct)
-    {
-        var wanted = lines.Where(l => l.Amount != 0).ToList();
-        if (wanted.Any(l => l.Amount < 0) || penaltyAmount < 0)
-            throw new LegalRuleException("المبلغ غير صحيح", 400);
-        if (wanted.Count == 0 && penaltyAmount == 0)
-            throw new LegalRuleException("أدخل مبلغ التسديد", 400);
+    public Task<object> PayAsync(int personId, IReadOnlyList<LegalStore.PayLine> lines, long penaltyAmount, string? note,
+        string actor, CancellationToken ct) =>
+        TakeAsync(personId, lines, penaltyAmount, note, actor, LegalStore.PaymentKinds.Payment, ct);
 
+    /// <summary>
+    /// A خصم: one amount taken off what the debtor owes, against the debt first (oldest account
+    /// first) and then against the legal penalties. Never more than everything he owes. No receipt.
+    /// </summary>
+    public async Task<object> DiscountAsync(int personId, long amount, string? note, string actor, CancellationToken ct)
+    {
+        if (amount <= 0)
+            throw new LegalRuleException("أدخل مبلغ الخصم", 400);
         var accounts = await _store.AccountsAsync(personId, ct);
         if (accounts.Count == 0)
             throw new LegalRuleException("المدين غير موجود", 404);
-        // Refresh balances first so the amounts are checked against current figures.
-        var (_, stale) = await LiveAccountsAsync(accounts, actor, ct);
-
-        var paymentId = await _store.RecordPaymentAsync(personId, wanted, penaltyAmount, note, actor, ct);
-
-        var remaining = (await _store.AccountsAsync(personId, ct)).Sum(a => a.LastRemaining);
-        var penaltiesLeft = await _store.PenaltiesDueAsync(personId, ct);
-        var closed = false;
-        if (stale.Count == 0 && remaining <= 0 && penaltiesLeft <= 0
-            && await _store.OpenCaseIdAsync(personId, ct) is int openCase)
-        {
-            await _store.CloseAsync(openCase, "تسديد كامل", actor, ct);
-            closed = true;
-        }
-
-        return new
-        {
-            paymentId,
-            ok = true,
-            debtPaid = wanted.Sum(l => l.Amount),
-            penaltyTaken = penaltyAmount,
-            remaining,
-            penaltiesDue = penaltiesLeft,
-            closed,
-        };
-    }
-
-    /// <summary>
-    /// محاسب القانونية decides an ابطال request. Accepting records مبلغ الابطال as a تسديد
-    /// (against the debt first, oldest account first, then against the legal penalties) and marks the debtor ابطال.
-    /// </summary>
-    public async Task<object> DecideAnnulAsync(int requestId, bool approve, string? note, string actor, CancellationToken ct)
-    {
-        var request = await _store.AnnulRequestAsync(requestId, ct) ?? throw new LegalRuleException("الطلب غير موجود", 404);
-        if (request.Status != "Pending")
-            throw new LegalRuleException("تم البت في هذا الطلب مسبقاً");
-        if (!approve)
-        {
-            await _store.FinishAnnulRequestAsync(requestId, false, null, note, actor, ct);
-            return new { personId = request.PersonId, approved = false };
-        }
-
-        var accounts = await _store.AccountsAsync(request.PersonId, ct);
         await LiveAccountsAsync(accounts, actor, ct);
-        accounts = await _store.AccountsAsync(request.PersonId, ct);
-        var left = request.Amount;
+        accounts = await _store.AccountsAsync(personId, ct);
+        var left = amount;
         var lines = new List<LegalStore.PayLine>();
         foreach (var account in accounts.Where(a => a.LastRemaining > 0))
         {
@@ -421,13 +381,55 @@ public sealed class LegalService
             left -= part;
         }
 
-        var penaltiesDue = await _store.PenaltiesDueAsync(request.PersonId, ct);
+        var penaltiesDue = await _store.PenaltiesDueAsync(personId, ct);
         if (left > penaltiesDue)
-            throw new LegalRuleException($"مبلغ الابطال ({request.Amount:N0}) أكبر من كل المطلوب من المدين");
-        var result = await PayAsync(request.PersonId, lines, left, $"مبلغ الابطال — طلب رقم {requestId}", actor, ct);
-        int? paymentId = (int?)((dynamic)result).paymentId;
-        await _store.FinishAnnulRequestAsync(requestId, true, paymentId, note, actor, ct);
-        return new { personId = request.PersonId, approved = true, payment = result };
+        {
+            var due = accounts.Sum(a => Math.Max(0, a.LastRemaining)) + Math.Max(0, penaltiesDue);
+            throw new LegalRuleException($"الخصم ({amount:N0}) أكبر من كل المطلوب من المدين ({due:N0})");
+        }
+
+        return await TakeAsync(personId, lines, left, note, actor, LegalStore.PaymentKinds.Discount, ct);
+    }
+
+    private async Task<object> TakeAsync(int personId, IReadOnlyList<LegalStore.PayLine> lines, long penaltyAmount, string? note,
+        string actor, string kind, CancellationToken ct)
+    {
+        var wanted = lines.Where(l => l.Amount != 0).ToList();
+        if (wanted.Any(l => l.Amount < 0) || penaltyAmount < 0)
+            throw new LegalRuleException("المبلغ غير صحيح", 400);
+        if (wanted.Count == 0 && penaltyAmount == 0)
+            throw new LegalRuleException("أدخل المبلغ", 400);
+
+        var accounts = await _store.AccountsAsync(personId, ct);
+        if (accounts.Count == 0)
+            throw new LegalRuleException("المدين غير موجود", 404);
+        // Refresh balances first so the amounts are checked against current figures.
+        var (_, stale) = await LiveAccountsAsync(accounts, actor, ct);
+
+        var record = await _store.RecordPaymentAsync(personId, wanted, penaltyAmount, note, actor, ct, kind);
+
+        var remaining = (await _store.AccountsAsync(personId, ct)).Sum(a => a.LastRemaining);
+        var penaltiesLeft = await _store.PenaltiesDueAsync(personId, ct);
+        var closed = false;
+        if (stale.Count == 0 && remaining <= 0 && penaltiesLeft <= 0
+            && await _store.OpenCaseIdAsync(personId, ct) is int openCase)
+        {
+            await _store.CloseAsync(openCase, kind == LegalStore.PaymentKinds.Discount ? "خصم كامل المتبقي" : "تسديد كامل", actor, ct);
+            closed = true;
+        }
+
+        return new
+        {
+            paymentId = record.Id,
+            receiptNumber = record.ReceiptNumber,
+            kind,
+            ok = true,
+            debtPaid = wanted.Sum(l => l.Amount),
+            penaltyTaken = penaltyAmount,
+            remaining,
+            penaltiesDue = penaltiesLeft,
+            closed,
+        };
     }
 
     // ───────────────────────── كود ارشيف القانونية ─────────────────────────
